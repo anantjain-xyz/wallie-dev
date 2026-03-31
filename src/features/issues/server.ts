@@ -8,6 +8,7 @@ import {
   workspaceLoginRedirectPath,
 } from "@/lib/auth";
 import { loginPath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   buildIssueMemberIndex,
@@ -39,9 +40,7 @@ export async function loadIssueWorkspaceContext(
   workspaceSlug: string,
 ): Promise<IssueWorkspaceContext> {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
     redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));

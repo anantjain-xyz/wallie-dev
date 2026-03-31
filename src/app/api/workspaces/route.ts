@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { ensureProfileForUser } from "@/lib/auth";
 import { workspaceIssuesPath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   createWorkspaceInputSchema,
@@ -24,9 +25,7 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
     return NextResponse.json(

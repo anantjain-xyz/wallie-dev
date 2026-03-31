@@ -9,6 +9,7 @@ import {
   workspaceLoginRedirectPath,
 } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type WorkspaceLayoutProps = {
@@ -24,9 +25,7 @@ export default async function WorkspaceLayout({
 }: WorkspaceLayoutProps) {
   const { workspaceSlug } = await params;
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
     redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));

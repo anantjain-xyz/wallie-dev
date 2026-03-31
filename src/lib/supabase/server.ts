@@ -16,6 +16,38 @@ type CookieAdapterValue = {
   value: string;
 };
 
+const READ_ONLY_COOKIE_ERROR_MESSAGE =
+  "Cookies can only be modified in a Server Action or Route Handler.";
+
+function isReadOnlyCookieError(error: unknown) {
+  return error instanceof Error
+    && error.message.includes(READ_ONLY_COOKIE_ERROR_MESSAGE);
+}
+
+function setSupabaseCookie(
+  cookieStore: CookieStore,
+  { name, options, value }: CookieAdapterValue,
+) {
+  try {
+    cookieStore.set(name, value, options);
+    return;
+  } catch (error) {
+    if (isReadOnlyCookieError(error)) {
+      return;
+    }
+  }
+
+  try {
+    cookieStore.set(name, value);
+  } catch (error) {
+    if (isReadOnlyCookieError(error)) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
 export function toSupabaseCookieValues(
   cookiesToSet: CookieAdapterValue[],
 ): SupabaseCookieValue[] {
@@ -38,16 +70,8 @@ export async function createSupabaseServerClient(
         return resolvedCookieStore.getAll();
       },
       setAll(cookiesToSet) {
-        const fallbackValues = toSupabaseCookieValues(cookiesToSet);
-
-        cookiesToSet.forEach(({ name, options, value }, index) => {
-          try {
-            resolvedCookieStore.set(name, value, options);
-          } catch {
-            const fallbackValue = fallbackValues[index];
-
-            resolvedCookieStore.set(fallbackValue.name, fallbackValue.value);
-          }
+        cookiesToSet.forEach((cookieToSet) => {
+          setSupabaseCookie(resolvedCookieStore, cookieToSet);
         });
       },
     },

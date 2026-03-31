@@ -5,13 +5,12 @@ import {
   resolveAuthenticatedHomePath,
 } from "@/lib/auth";
 import { loginPath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function HomePage() {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
     redirect(loginPath("/"));

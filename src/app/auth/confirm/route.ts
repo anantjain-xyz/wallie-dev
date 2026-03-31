@@ -6,6 +6,7 @@ import {
   normalizeNextPath,
   resolveAuthenticatedHomePath,
 } from "@/lib/auth";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function loginErrorPath(next: string, error: string) {
@@ -41,9 +42,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (user) {
     await ensureProfileForUser(supabase, user);

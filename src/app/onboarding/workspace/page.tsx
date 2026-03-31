@@ -7,13 +7,12 @@ import {
   resolveAuthenticatedHomePath,
 } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export default async function WorkspaceOnboardingPage() {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
     redirect(loginPath(onboardingWorkspacePath()));

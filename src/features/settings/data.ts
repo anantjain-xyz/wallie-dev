@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { getGitHubConfigStatus } from "@/features/github/config";
 import { getStripeConfigStatus } from "@/lib/billing/stripe";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const workspaceSelect =
@@ -67,9 +68,7 @@ export type SettingsPageData = {
 
 export async function loadSettingsPageData(workspaceSlug: string) {
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
     notFound();

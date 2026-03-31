@@ -51,6 +51,8 @@
 - Workspace bootstrap now lands through `POST /api/workspaces`, which delegates transactional owner membership and system `wallie` member creation to the `public.create_workspace(workspace_name text, requested_slug text default null)` RPC.
 - Workspace shell routes under `/w/[workspaceSlug]/*` now require a Supabase session plus RLS-backed workspace membership before the shell renders.
 - Supabase session refresh now runs through `middleware.ts` plus `src/lib/supabase/middleware.ts` so auth cookies stay current for server-rendered routes.
+- `src/lib/supabase/server.ts` now treats cookie writes as best-effort in Server Components: route handlers and server actions can still persist refreshed Supabase cookies, but server-rendered loaders must rely on middleware for session refresh because `cookies()` is read-only there.
+- Invalid Supabase refresh/session cookies now normalize to signed-out state through `src/lib/supabase/auth.ts`, and middleware clears stale `sb-*-auth-token*` cookies when refresh validation fails so bad sessions do not keep looping through `auth.getUser()`.
 - Gate D list and detail entrypoints now live on real server loaders at `/w/[workspaceSlug]/issues` and `/w/[workspaceSlug]/issues/[issueNumber]`, with client-side CRUD shells layered on top of the initial server render.
 - Gate D issue list query params are now `query`, `status`, `priority`, `estimate`, `sort`, and `direction`; the parser still accepts legacy `orderBy` and `orderDirection` aliases from the old app.
 - Gate D stores list sort preference in `workspace_members.preferences.issues.sort` and `.direction`, with the URL remaining the shareable source of truth when explicit query params are present.

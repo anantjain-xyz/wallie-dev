@@ -2,6 +2,7 @@ import "server-only";
 
 import type { User } from "@supabase/supabase-js";
 
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Tables } from "@/lib/supabase/database.types";
 
@@ -50,11 +51,7 @@ type WorkspaceAccessResult =
     });
 
 async function loadCurrentUser(supabase: SupabaseServerClient) {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  return user;
+  return getSupabaseUserOrNull(supabase);
 }
 
 export async function requireWorkspaceAccessById(

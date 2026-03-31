@@ -6,6 +6,7 @@ import {
   normalizeNextPath,
   resolveAuthenticatedHomePath,
 } from "@/lib/auth";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { readFirstValue } from "@/lib/utils";
 
@@ -19,9 +20,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const errorCode = readFirstValue(resolvedSearchParams.error);
   const statusCode = readFirstValue(resolvedSearchParams.status);
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSupabaseUserOrNull(supabase);
 
   if (user) {
     await ensureProfileForUser(supabase, user);
