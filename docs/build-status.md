@@ -42,6 +42,7 @@
 - Shared shell scaffolding is workspace-prefixed and centered on `/w/[workspaceSlug]/*`.
 - Initial placeholder routes exist for `/`, `/login`, `/signup`, `/onboarding/workspace`, `/w/[workspaceSlug]/issues`, `/w/[workspaceSlug]/issues/[issueNumber]`, and `/w/[workspaceSlug]/settings`.
 - Environment schema currently requires app URL, Supabase URL, Supabase publishable key, Supabase secret key, and a Wallie encryption key; `WALLIE_PROCESS_TOKEN`, GitHub, and Stripe envs are optional placeholders.
+- Blank optional GitHub, Stripe, and `WALLIE_PROCESS_TOKEN` process env values now normalize to "missing" instead of failing validation, matching the scaffolded empty placeholders in `.env.example` and local `.env.local`.
 - No ElectricSQL, PGlite, proxy/write servers, offline cache, or client-exposed storage credentials were introduced in bootstrap.
 - Schema v1 uses `auth.uid()` plus `workspace_members` for tenancy and RLS; it does not reuse the old email-claim workspace lookup model.
 - An internal `workspace_issue_counters` table backs the `next_issue_number(workspace_id uuid)` RPC so issue numbers are allocated atomically across separate client transactions.
@@ -130,6 +131,7 @@
 - Route helpers live in `src/lib/routes.ts` and should remain the shared source for workspace-prefixed navigation until a stronger contract is needed.
 - The shared app shell in `src/components/app-shell` is intentionally data-agnostic so schema, auth, and feature agents can replace placeholder panels without reworking navigation chrome.
 - Env validation is present but lazy; future integration agents should call the relevant parser at the server or client boundary they own.
+- Supabase admin helpers now validate only the Supabase admin env contract (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`) so server-rendered issue/detail loads do not depend on unrelated GitHub, Stripe, or Wallie processor env setup.
 - `src/env/client.ts` now resolves `NEXT_PUBLIC_*` values through direct property reads when no explicit env object is passed so Next.js can inline them into client bundles; browser Supabase helpers validate only the publishable key and Supabase URL, while `NEXT_PUBLIC_APP_URL` remains required for server-side redirect/callback flows.
 - The app now requires `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` as the Supabase env contract.
 - Wallie provider credentials such as `ANTHROPIC_API_KEY` remain workspace secrets stored in the database and are not part of the process env contract.
