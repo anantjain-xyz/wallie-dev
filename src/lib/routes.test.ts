@@ -27,6 +27,11 @@ describe("workspace route helpers", () => {
     expect(workspaceSettingsPath("northwind-labs")).toBe(
       "/w/northwind-labs/settings",
     );
+    expect(
+      workspaceSettingsPath("northwind-labs", {
+        github: "connected",
+      }),
+    ).toBe("/w/northwind-labs/settings?github=connected");
   });
 
   it("formats a workspace label from the slug", () => {

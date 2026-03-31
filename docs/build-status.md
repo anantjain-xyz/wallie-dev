@@ -5,11 +5,12 @@
 - Project: `wallie.cc` rebuild
 - Implementation repo: `/Users/anant/src/wallie-cc`
 - Reference repo: `/Users/anant/src/wallie`
-- Status: Gate D core issue workflow verified
+- Status: Gate E integrations verified
 - Baseline verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026
 - Schema verification: `supabase db start`, `supabase db reset --local --yes`, `supabase db lint --local --fail-on error`, and `supabase gen types typescript --local --schema public` all passing on March 30, 2026
 - Gate C verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after auth, onboarding, and workspace route gating landed
 - Gate D verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after issue list, detail editing, comments, and issue links landed
+- Gate E verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after GitHub install/sync routes, issue repo linkage + PR display, Stripe portal/webhooks, encrypted secrets CRUD, and workspace avatar uploads landed
 
 ## Active Agents
 
@@ -25,7 +26,7 @@
 - Gate B, Schema Freeze v1: complete
 - Gate C, Auth + Workspace Entry: complete
 - Gate D, Core Issue Workflow: complete
-- Gate E, Integrations: pending
+- Gate E, Integrations: complete
 - Gate F, Wallie Control Plane: pending
 - Gate G, Production Candidate: pending
 
@@ -55,6 +56,40 @@
 - Gate D models `blocked_by` rows directionally: `source_issue_id = current issue, target_issue_id = other issue` renders as "Blocked by", and the inverse row renders as "Blocks".
 - Gate D models `sub_issue` rows directionally: `source_issue_id` is the child issue and `target_issue_id` is the parent issue; outgoing rows from the current issue surface parent links and incoming rows surface sub-issues.
 - Gate D preserves PR and Wallie timeline sections on the detail route as placeholder shells so later gates can fill them without changing the route contract.
+- Gate E keeps a single `/w/[workspaceSlug]/settings` page for now; GitHub and billing sections render on that page, and nested `/settings/github` plus `/settings/billing` routes stay deferred until the settings surface needs deeper drill-down flows.
+- Gate E surfaces missing GitHub and Stripe configuration inline on the settings page and from route handlers as typed `missing_config` responses with the exact env var names that are absent; the UI treats those as actionable setup states instead of generic failures.
+- Gate E scope for PR visibility is repository assignment on the issue detail route plus persisted branch / PR metadata (`branch_name`, PR number, URL, state, draft flag, timestamps); richer PR review activity stays for later gates.
+- Gate E upload scope is limited to workspace avatar uploads through `POST /api/workspaces/[workspaceId]/avatar`; editor image uploads stay out of scope until the editor surface needs them.
+- Gate E treats the existing billing schema as the stable contract: Stripe webhooks map subscription state into `workspaces.tier`, `workspaces.stripe_customer_id`, `workspaces.current_billing_cycle_start_at`, and `workspaces.successful_agent_runs_this_cycle` rather than introducing a second billing-status column family mid-rebuild.
+- Gate E persists repository language metadata from GitHub sync as `github_repositories.default_programming_language` and displays it in settings; manual overrides are deferred so `github_repositories` remains server-owned in this gate.
+- Gate E settings now render real workspace identity, billing, GitHub integration, and encrypted secret management data instead of placeholder panels.
+- Gate E issue detail now reads workspace repositories plus `github_issue_branches`, allows direct `issues.github_repository_id` assignment under RLS, and applies narrow realtime subscriptions only for the open issue row plus that issue’s PR rows.
+- Gate E avatar uploads use a public Supabase Storage bucket named `workspace-avatars`, but uploads still remain server-mediated so the browser never receives storage credentials.
+
+## Planned Gate E Routes And Interfaces
+
+- `GET /api/github/install?workspaceId=<uuid>` returns a signed GitHub App install URL for a workspace manager.
+- `GET /api/github/callback` verifies signed install state, upserts the workspace installation row, syncs repositories, and redirects back to the workspace settings route with a status query param.
+- `POST /api/github/refresh-repositories` accepts `{ workspaceId }` and resyncs the current installation repositories through the server-owned GitHub App integration.
+- `POST /api/github/webhooks` verifies the GitHub signature, handles installation / installation_repositories / pull_request events, updates `github_installations`, `github_repositories`, `github_issue_branches`, and applies issue status transitions idempotently from persisted branch rows.
+- `POST /api/stripe/portal` accepts `{ workspaceId }`, ensures a Stripe customer exists for the workspace, and returns a customer portal URL.
+- `POST /api/stripe/webhooks` verifies the Stripe signature and maps subscription lifecycle events onto workspace billing fields.
+- `GET /api/secrets?workspaceId=<uuid>` returns preview-only workspace secrets after membership + management checks.
+- `POST /api/secrets` accepts `{ workspaceId, key, value }`, encrypts the value with `WALLIE_ENCRYPTION_KEY`, stores only the preview in client responses, and records `created_by_member_id` from `workspace_members.id`.
+- `DELETE /api/secrets/[key]?workspaceId=<uuid>` deletes a workspace secret through a manager-only route handler.
+- `POST /api/workspaces/[workspaceId]/avatar` accepts multipart form data, uploads a workspace avatar through Supabase Storage, replaces the stored `avatar_path`, and never exposes storage credentials to the browser.
+
+## Gate E Landed Routes
+
+- `/api/github/install`
+- `/api/github/callback`
+- `/api/github/refresh-repositories`
+- `/api/github/webhooks`
+- `/api/stripe/portal`
+- `/api/stripe/webhooks`
+- `/api/secrets`
+- `/api/secrets/[key]`
+- `/api/workspaces/[workspaceId]/avatar`
 
 ## Blockers
 
@@ -66,6 +101,9 @@
 - Gate D uses textarea-backed markdown fields for description, plan, and design instead of a richer editor so the data contract can land before the editor stack is introduced.
 - Gate D list search/filter/sort currently run against the workspace issue set inside the typed server loader instead of pushing every combination into the DB query surface; revisit if workspace issue volume grows materially.
 - Gate D does not enable issue realtime yet; list bulk mutations refresh through the route loader, while detail edits patch the currently open issue/comments/links locally after successful writes.
+- Gate E will add narrow issue-detail realtime only for the current `issues` row and current issue `github_issue_branches` rows so webhook-driven PR/status updates can land live without subscribing to whole tables.
+- Gate E does not implement GitHub installation removal or manual repository language overrides yet; settings exposes install, manage-on-GitHub, and refresh flows only.
+- Gate E limits uploads to workspace avatars and does not add editor-image flows yet, even though the broader handoff mentions future editor-uploaded images.
 
 ## Notes
 

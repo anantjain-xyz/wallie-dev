@@ -58,8 +58,11 @@ export function workspaceIssueDetailPath(
   return `${workspaceIssuesPath(workspaceSlug)}/${issueNumber}`;
 }
 
-export function workspaceSettingsPath(workspaceSlug: string) {
-  return `${workspaceBasePath(workspaceSlug)}/settings`;
+export function workspaceSettingsPath(
+  workspaceSlug: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
 export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] {

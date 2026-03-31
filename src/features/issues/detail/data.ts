@@ -22,6 +22,37 @@ import type {
 export type IssueDetailPageData = {
   comments: IssueComment[];
   currentMember: IssueViewerMember | null;
+  github: {
+    pullRequests: Array<{
+      branchName: string;
+      createdAt: string;
+      githubRepositoryId: string | null;
+      id: string;
+      isDraft: boolean | null;
+      pullRequestNumber: number | null;
+      pullRequestState: string | null;
+      pullRequestUrl: string | null;
+      repository: {
+        defaultBranch: string | null;
+        defaultProgrammingLanguage: string | null;
+        fullName: string;
+        htmlUrl: string;
+        id: string;
+        isArchived: boolean;
+        isPrivate: boolean;
+      } | null;
+      updatedAt: string;
+    }>;
+    repositories: Array<{
+      defaultBranch: string | null;
+      defaultProgrammingLanguage: string | null;
+      fullName: string;
+      htmlUrl: string;
+      id: string;
+      isArchived: boolean;
+      isPrivate: boolean;
+    }>;
+  };
   issue: IssueDetail;
   linkedIssues: IssueSummary[];
   links: Tables<"issue_links">[];
@@ -60,6 +91,8 @@ export async function loadIssueDetailPageData(
   const [
     { data: commentsData, error: commentsError },
     { data: linksData, error: linksError },
+    { data: repositoryData, error: repositoryError },
+    { data: pullRequestData, error: pullRequestError },
   ] = await Promise.all([
     context.supabase
       .from("issue_comments")
@@ -72,6 +105,21 @@ export async function loadIssueDetailPageData(
       .select("*")
       .eq("workspace_id", context.workspace.id)
       .or(`source_issue_id.eq.${issue.id},target_issue_id.eq.${issue.id}`),
+    context.supabase
+      .from("github_repositories")
+      .select(
+        "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
+      )
+      .eq("workspace_id", context.workspace.id)
+      .order("full_name", { ascending: true }),
+    context.supabase
+      .from("github_issue_branches")
+      .select(
+        "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, created_at, updated_at",
+      )
+      .eq("workspace_id", context.workspace.id)
+      .eq("issue_id", issue.id)
+      .order("created_at", { ascending: false }),
   ]);
 
   if (commentsError) {
@@ -82,7 +130,38 @@ export async function loadIssueDetailPageData(
     throw linksError;
   }
 
+  if (repositoryError) {
+    throw repositoryError;
+  }
+
+  if (pullRequestError) {
+    throw pullRequestError;
+  }
+
   const links = (linksData ?? []) as Tables<"issue_links">[];
+  const githubRepositories = ((repositoryData ?? []) as Array<
+    Pick<
+      Tables<"github_repositories">,
+      | "default_branch"
+      | "default_programming_language"
+      | "full_name"
+      | "html_url"
+      | "id"
+      | "is_archived"
+      | "private"
+    >
+  >).map((repository) => ({
+    defaultBranch: repository.default_branch,
+    defaultProgrammingLanguage: repository.default_programming_language,
+    fullName: repository.full_name,
+    htmlUrl: repository.html_url,
+    id: repository.id,
+    isArchived: repository.is_archived,
+    isPrivate: repository.private,
+  }));
+  const githubRepositoryIndex = new Map(
+    githubRepositories.map((repository) => [repository.id, repository]),
+  );
   const linkedIssueIds = Array.from(
     new Set(
       links
@@ -118,6 +197,36 @@ export async function loadIssueDetailPageData(
       (comment) => mapIssueCommentRow(comment, context.memberIndex),
     ),
     currentMember: context.currentMember,
+    github: {
+      pullRequests: ((pullRequestData ?? []) as Array<
+        Pick<
+          Tables<"github_issue_branches">,
+          | "branch_name"
+          | "created_at"
+          | "github_repository_id"
+          | "id"
+          | "is_draft"
+          | "pull_request_number"
+          | "pull_request_state"
+          | "pull_request_url"
+          | "updated_at"
+        >
+      >).map((pullRequest) => ({
+        branchName: pullRequest.branch_name,
+        createdAt: pullRequest.created_at,
+        githubRepositoryId: pullRequest.github_repository_id,
+        id: pullRequest.id,
+        isDraft: pullRequest.is_draft,
+        pullRequestNumber: pullRequest.pull_request_number,
+        pullRequestState: pullRequest.pull_request_state,
+        pullRequestUrl: pullRequest.pull_request_url,
+        repository: pullRequest.github_repository_id
+          ? githubRepositoryIndex.get(pullRequest.github_repository_id) ?? null
+          : null,
+        updatedAt: pullRequest.updated_at,
+      })),
+      repositories: githubRepositories,
+    },
     issue,
     linkedIssues,
     links,

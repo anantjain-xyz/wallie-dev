@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
-import type { TablesUpdate } from "@/lib/supabase/database.types";
+import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import {
   createIssueWithAllocatedNumber,
   resolveIssueByNumber,
@@ -35,7 +35,7 @@ import {
   type IssueMember,
   type IssueStatus,
 } from "@/features/issues/types";
-import { workspaceIssueDetailPath } from "@/lib/routes";
+import { workspaceIssueDetailPath, workspaceSettingsPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +49,29 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   month: "short",
 });
+
+function mapPullRequestRow(
+  row: Tables<"github_issue_branches">,
+  repositoryIndex: ReadonlyMap<
+    string,
+    IssueDetailPageData["github"]["repositories"][number]
+  >,
+) {
+  return {
+    branchName: row.branch_name,
+    createdAt: row.created_at,
+    githubRepositoryId: row.github_repository_id,
+    id: row.id,
+    isDraft: row.is_draft,
+    pullRequestNumber: row.pull_request_number,
+    pullRequestState: row.pull_request_state,
+    pullRequestUrl: row.pull_request_url,
+    repository: row.github_repository_id
+      ? repositoryIndex.get(row.github_repository_id) ?? null
+      : null,
+    updatedAt: row.updated_at,
+  };
+}
 
 function Section({
   children,
@@ -138,6 +161,7 @@ export function IssueDetailPageClient({
   const [comments, setComments] = useState(initialData.comments);
   const [links, setLinks] = useState(initialData.links);
   const [linkedIssues, setLinkedIssues] = useState(initialData.linkedIssues);
+  const [pullRequests, setPullRequests] = useState(initialData.github.pullRequests);
   const [titleDraft, setTitleDraft] = useState(initialData.issue.title);
   const [descriptionDraft, setDescriptionDraft] = useState(
     initialData.issue.descriptionMd,
@@ -165,8 +189,10 @@ export function IssueDetailPageClient({
     setComments(initialData.comments);
     setLinks(initialData.links);
     setLinkedIssues(initialData.linkedIssues);
+    setPullRequests(initialData.github.pullRequests);
   }, [
     initialData.comments,
+    initialData.github.pullRequests,
     initialData.issue,
     initialData.linkedIssues,
     initialData.links,
@@ -181,6 +207,9 @@ export function IssueDetailPageClient({
 
   const currentMember = initialData.currentMember;
   const canManage = isWorkspaceManager(currentMember);
+  const repositoryIndex = new Map(
+    initialData.github.repositories.map((repository) => [repository.id, repository]),
+  );
   const memberIndex = buildMemberIndex(
     initialData.members,
     issue,
@@ -192,6 +221,76 @@ export function IssueDetailPageClient({
     linkedIssues.map((linkedIssue) => [linkedIssue.id, linkedIssue]),
   );
   const relationshipGroups = groupIssueLinks(issue.id, links, linkedIssueIndex);
+  const handleIssueRealtimeUpdate = useEffectEvent((row: Tables<"issues">) => {
+    setIssue(mapIssueDetailRow(row, memberIndex));
+  });
+  const handlePullRequestRealtimeUpdate = useEffectEvent(
+    (row: Tables<"github_issue_branches">) => {
+      const nextPullRequest = mapPullRequestRow(row, repositoryIndex);
+
+      setPullRequests((currentPullRequests) => {
+        const nextPullRequests = currentPullRequests.filter(
+          (pullRequest) => pullRequest.id !== nextPullRequest.id,
+        );
+
+        nextPullRequests.unshift(nextPullRequest);
+        nextPullRequests.sort((left, right) =>
+          right.createdAt.localeCompare(left.createdAt),
+        );
+
+        return nextPullRequests;
+      });
+    },
+  );
+
+  useEffect(() => {
+    const issueChannel = supabase
+      .channel(`issue-detail:${issue.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          filter: `id=eq.${issue.id}`,
+          schema: "public",
+          table: "issues",
+        },
+        (payload) => {
+          handleIssueRealtimeUpdate(payload.new as Tables<"issues">);
+        },
+      )
+      .subscribe();
+    const pullRequestChannel = supabase
+      .channel(`issue-prs:${issue.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `issue_id=eq.${issue.id}`,
+          schema: "public",
+          table: "github_issue_branches",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            setPullRequests((currentPullRequests) =>
+              currentPullRequests.filter(
+                (pullRequest) => pullRequest.id !== payload.old.id,
+              ),
+            );
+            return;
+          }
+
+          handlePullRequestRealtimeUpdate(
+            payload.new as Tables<"github_issue_branches">,
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(issueChannel);
+      void supabase.removeChannel(pullRequestChannel);
+    };
+  }, [issue.id, supabase]);
 
   async function saveIssuePatch(
     patch: TablesUpdate<"issues">,
@@ -933,6 +1032,50 @@ export function IssueDetailPageClient({
                 ))}
               </select>
             </label>
+
+            <label className="space-y-2 text-sm font-semibold text-foreground">
+              <span>Repository</span>
+              <select
+                value={issue.githubRepositoryId ?? ""}
+                onChange={(event) =>
+                  void saveIssuePatch({
+                    github_repository_id: event.target.value || null,
+                  })
+                }
+                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+              >
+                <option value="">No linked repository</option>
+                {initialData.github.repositories.map((repository) => (
+                  <option key={repository.id} value={repository.id}>
+                    {repository.fullName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {issue.githubRepositoryId ? (
+              repositoryIndex.get(issue.githubRepositoryId) ? (
+                <a
+                  href={repositoryIndex.get(issue.githubRepositoryId)?.htmlUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                  className="text-sm font-semibold text-foreground transition hover:text-accent"
+                >
+                  {repositoryIndex.get(issue.githubRepositoryId)?.fullName}
+                </a>
+              ) : null
+            ) : initialData.github.repositories.length === 0 ? (
+              <p className="text-sm leading-6 text-muted">
+                No GitHub repositories are synced yet. Install the workspace GitHub App from{" "}
+                <Link
+                  className="font-semibold text-foreground transition hover:text-accent"
+                  href={workspaceSettingsPath(initialData.workspace.slug)}
+                >
+                  settings
+                </Link>
+                .
+              </p>
+            ) : null}
           </div>
         </Section>
 
@@ -1320,10 +1463,81 @@ export function IssueDetailPageClient({
         </Section>
 
         <Section title="GitHub PRs">
-          <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
-            Gate E owns repository assignment and PR sync. This placeholder shell
-            stays mounted so the detail route shape is stable while the integration
-            layer lands.
+          <div className="space-y-4">
+            {pullRequests.length === 0 ? (
+              <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
+                No PR metadata is linked to this issue yet. Once a tracked branch opens a PR, the webhook sync will surface it here.
+              </div>
+            ) : (
+              pullRequests.map((pullRequest) => (
+                <article
+                  key={pullRequest.id}
+                  className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 font-mono text-xs text-foreground">
+                          {pullRequest.branchName}
+                        </span>
+                        {pullRequest.pullRequestState ? (
+                          <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-foreground">
+                            {pullRequest.pullRequestState}
+                          </span>
+                        ) : null}
+                        {pullRequest.isDraft ? (
+                          <span className="rounded-full border border-amber-400/45 bg-amber-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-amber-950">
+                            Draft
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {pullRequest.pullRequestUrl ? (
+                        <a
+                          href={pullRequest.pullRequestUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                          className="text-sm font-semibold text-foreground transition hover:text-accent"
+                        >
+                          PR #{pullRequest.pullRequestNumber ?? "?"}
+                        </a>
+                      ) : (
+                        <p className="text-sm font-semibold text-foreground">
+                          Branch tracked without a PR URL yet
+                        </p>
+                      )}
+
+                      <p className="text-sm leading-6 text-muted">
+                        {pullRequest.repository ? (
+                          <>
+                            Repo{" "}
+                            <a
+                              className="font-semibold text-foreground transition hover:text-accent"
+                              href={pullRequest.repository.htmlUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              {pullRequest.repository.fullName}
+                            </a>
+                          </>
+                        ) : (
+                          "Repository unavailable"
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="text-right text-xs uppercase tracking-[0.16em] text-muted">
+                      <p>
+                        Created {dateTimeFormatter.format(new Date(pullRequest.createdAt))}
+                      </p>
+                      <p className="mt-2">
+                        Updated {dateTimeFormatter.format(new Date(pullRequest.updatedAt))}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
           </div>
         </Section>
       </div>
