@@ -1,0 +1,2 @@
+-- Seed data is intentionally empty for the rebuild baseline.
+-- Add local-only bootstrap fixtures here when auth and onboarding flows exist.
