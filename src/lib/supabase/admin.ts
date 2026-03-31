@@ -6,9 +6,9 @@ import { resolveSupabaseAdminConfig } from "@/lib/supabase/config";
 export function createSupabaseAdminClient(
   input: Record<string, string | undefined> = process.env,
 ) {
-  const { serviceRoleKey, url } = resolveSupabaseAdminConfig(input);
+  const { secretKey, url } = resolveSupabaseAdminConfig(input);
 
-  return createClient<Database>(url, serviceRoleKey, {
+  return createClient<Database>(url, secretKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

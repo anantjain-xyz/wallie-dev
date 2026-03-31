@@ -41,7 +41,7 @@
 - Added initial Supabase project scaffolding under `supabase/` with the first schema + RLS migration.
 - Shared shell scaffolding is workspace-prefixed and centered on `/w/[workspaceSlug]/*`.
 - Initial placeholder routes exist for `/`, `/login`, `/signup`, `/onboarding/workspace`, `/w/[workspaceSlug]/issues`, `/w/[workspaceSlug]/issues/[issueNumber]`, and `/w/[workspaceSlug]/settings`.
-- Environment schema currently requires app URL, Supabase URL, Supabase anon key, Supabase service role key, and a Wallie encryption key; GitHub and Stripe envs are reserved as optional placeholders.
+- Environment schema currently requires app URL, Supabase URL, Supabase publishable key, Supabase secret key, and a Wallie encryption key; `WALLIE_PROCESS_TOKEN`, GitHub, and Stripe envs are optional placeholders.
 - No ElectricSQL, PGlite, proxy/write servers, offline cache, or client-exposed storage credentials were introduced in bootstrap.
 - Schema v1 uses `auth.uid()` plus `workspace_members` for tenancy and RLS; it does not reuse the old email-claim workspace lookup model.
 - An internal `workspace_issue_counters` table backs the `next_issue_number(workspace_id uuid)` RPC so issue numbers are allocated atomically across separate client transactions.
@@ -75,6 +75,7 @@
 - Gate F uses a deterministic stub executor for now: project-mode runs overwrite `issues.design_md` + `issues.plan_md`, and code-mode runs ensure a stable `github_issue_branches` row exists with placeholder branch metadata instead of attempting real GitHub mutations.
 - Gate F lazily rolls the free-tier Wallie cycle forward when the stored `current_billing_cycle_start_at` is more than one month old, so free workspaces do not require a separate cron just to recover quota.
 - Gate F issue detail realtime expands to the current issue’s `agent_runs` plus per-run `agent_run_messages` subscriptions, keeping run/message updates narrow instead of subscribing to workspace-wide tables.
+- Local `.env.local` now targets the Supabase CLI stack (`http://127.0.0.1:54321` plus the local publishable/secret keys from `supabase status -o env`); Vercel environments should keep the hosted Supabase project values, with `NEXT_PUBLIC_APP_URL` set per environment to the deployed origin.
 
 ## Planned Gate E Routes And Interfaces
 
@@ -126,6 +127,8 @@
 - Route helpers live in `src/lib/routes.ts` and should remain the shared source for workspace-prefixed navigation until a stronger contract is needed.
 - The shared app shell in `src/components/app-shell` is intentionally data-agnostic so schema, auth, and feature agents can replace placeholder panels without reworking navigation chrome.
 - Env validation is present but lazy; future integration agents should call the relevant parser at the server or client boundary they own.
+- The app now requires `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` as the Supabase env contract.
+- Wallie provider credentials such as `ANTHROPIC_API_KEY` remain workspace secrets stored in the database and are not part of the process env contract.
 - Realtime publication is intentionally narrow in schema v1: issues, comments, links, GitHub issue branches, agent runs, and agent run messages.
 - App-side Supabase helpers now live in `src/lib/supabase/*`; future agents should import those helpers instead of creating raw clients ad hoc.
 - On this machine, local Supabase CLI startup hangs in `docker-credential-desktop get` unless commands are run with `DOCKER_CONFIG=/tmp/wallie-cc-docker` and `DOCKER_HOST=unix:///Users/anant/.docker/run/docker.sock`.

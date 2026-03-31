@@ -8,9 +8,9 @@ import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
 export function createSupabaseBrowserClient(
   input: Record<string, string | undefined> = process.env,
 ) {
-  const { anonKey, url } = resolveSupabasePublicConfig(input);
+  const { publishableKey, url } = resolveSupabasePublicConfig(input);
 
-  return createBrowserClient<Database>(url, anonKey);
+  return createBrowserClient<Database>(url, publishableKey);
 }
 
 export const createBrowserSupabaseClient = createSupabaseBrowserClient;

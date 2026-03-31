@@ -8,9 +8,9 @@ export async function updateSupabaseSession(request: NextRequest) {
   let response = NextResponse.next({
     request,
   });
-  const { anonKey, url } = resolveSupabasePublicConfig();
+  const { publishableKey, url } = resolveSupabasePublicConfig();
 
-  const supabase = createServerClient<Database>(url, anonKey, {
+  const supabase = createServerClient<Database>(url, publishableKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();

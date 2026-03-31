@@ -21,7 +21,7 @@ describe("supabase server helpers", () => {
     const client = await createSupabaseServerClient(
       {
         NEXT_PUBLIC_APP_URL: "http://localhost:3000",
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
         NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
       },
       cookieStore,
@@ -29,7 +29,7 @@ describe("supabase server helpers", () => {
 
     expect(mockCreateServerClient).toHaveBeenCalledWith(
       "https://example.supabase.co",
-      "anon-key",
+      "publishable-key",
       {
         cookies: {
           getAll: expect.any(Function),

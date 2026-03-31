@@ -4,9 +4,9 @@ import { parseServerEnv } from "@/env/server";
 
 const validEnv = {
   NEXT_PUBLIC_APP_URL: "http://localhost:3000",
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
-  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+  SUPABASE_SECRET_KEY: "secret-key",
   WALLIE_ENCRYPTION_KEY: "12345678901234567890123456789012",
 };
 

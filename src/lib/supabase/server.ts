@@ -30,9 +30,9 @@ export async function createSupabaseServerClient(
   cookieStore?: CookieStore,
 ) {
   const resolvedCookieStore = cookieStore ?? (await cookies());
-  const { anonKey, url } = resolveSupabasePublicConfig(input);
+  const { publishableKey, url } = resolveSupabasePublicConfig(input);
 
-  return createServerClient<Database>(url, anonKey, {
+  return createServerClient<Database>(url, publishableKey, {
     cookies: {
       getAll() {
         return resolvedCookieStore.getAll();

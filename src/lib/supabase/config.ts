@@ -2,13 +2,13 @@ import { parseClientEnv } from "@/env/client";
 import { parseServerEnv } from "@/env/server";
 
 export type SupabasePublicConfig = Readonly<{
-  anonKey: string;
+  publishableKey: string;
   url: string;
 }>;
 
 export type SupabaseAdminConfig = SupabasePublicConfig &
   Readonly<{
-    serviceRoleKey: string;
+    secretKey: string;
   }>;
 
 export function resolveSupabasePublicConfig(
@@ -17,7 +17,7 @@ export function resolveSupabasePublicConfig(
   const env = parseClientEnv(input);
 
   return {
-    anonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    publishableKey: env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     url: env.NEXT_PUBLIC_SUPABASE_URL,
   };
 }
@@ -28,8 +28,8 @@ export function resolveSupabaseAdminConfig(
   const env = parseServerEnv(input);
 
   return {
-    anonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    publishableKey: env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    secretKey: env.SUPABASE_SECRET_KEY,
     url: env.NEXT_PUBLIC_SUPABASE_URL,
   };
 }
