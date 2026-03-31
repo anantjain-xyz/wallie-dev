@@ -70,11 +70,6 @@ export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] 
       description: "List, filter, and triage workspace issues.",
     },
     {
-      label: "Issue Detail",
-      href: workspaceIssueDetailPath(workspaceSlug, 101),
-      description: "Placeholder for comments, links, plans, and run history.",
-    },
-    {
       label: "Settings",
       href: workspaceSettingsPath(workspaceSlug),
       description: "Workspace-level settings, billing, and integration entry points.",

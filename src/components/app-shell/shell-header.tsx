@@ -21,9 +21,10 @@ export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
             </h1>
           </div>
           <p className="max-w-3xl text-sm leading-7 text-muted sm:text-base">
-            This workspace shell now resolves through Supabase Auth and
-            membership-backed routing, so later gates can layer issue data and
-            integrations on top of a real tenant boundary.
+            This workspace shell now carries the real issue list and detail
+            workflow on top of Supabase Auth and membership-backed routing, so
+            later gates can add integrations without rewriting the core tenant
+            boundary.
           </p>
         </div>
 

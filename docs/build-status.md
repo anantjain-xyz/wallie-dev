@@ -5,10 +5,11 @@
 - Project: `wallie.cc` rebuild
 - Implementation repo: `/Users/anant/src/wallie-cc`
 - Reference repo: `/Users/anant/src/wallie`
-- Status: Gate C auth + workspace entry verified
+- Status: Gate D core issue workflow verified
 - Baseline verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026
 - Schema verification: `supabase db start`, `supabase db reset --local --yes`, `supabase db lint --local --fail-on error`, and `supabase gen types typescript --local --schema public` all passing on March 30, 2026
 - Gate C verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after auth, onboarding, and workspace route gating landed
+- Gate D verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after issue list, detail editing, comments, and issue links landed
 
 ## Active Agents
 
@@ -23,7 +24,7 @@
 - Gate A, Bootstrap Complete: complete
 - Gate B, Schema Freeze v1: complete
 - Gate C, Auth + Workspace Entry: complete
-- Gate D, Core Issue Workflow: pending
+- Gate D, Core Issue Workflow: complete
 - Gate E, Integrations: pending
 - Gate F, Wallie Control Plane: pending
 - Gate G, Production Candidate: pending
@@ -48,6 +49,12 @@
 - Workspace bootstrap now lands through `POST /api/workspaces`, which delegates transactional owner membership and system `wallie` member creation to the `public.create_workspace(workspace_name text, requested_slug text default null)` RPC.
 - Workspace shell routes under `/w/[workspaceSlug]/*` now require a Supabase session plus RLS-backed workspace membership before the shell renders.
 - Supabase session refresh now runs through `middleware.ts` plus `src/lib/supabase/middleware.ts` so auth cookies stay current for server-rendered routes.
+- Gate D list and detail entrypoints now live on real server loaders at `/w/[workspaceSlug]/issues` and `/w/[workspaceSlug]/issues/[issueNumber]`, with client-side CRUD shells layered on top of the initial server render.
+- Gate D issue list query params are now `query`, `status`, `priority`, `estimate`, `sort`, and `direction`; the parser still accepts legacy `orderBy` and `orderDirection` aliases from the old app.
+- Gate D stores list sort preference in `workspace_members.preferences.issues.sort` and `.direction`, with the URL remaining the shareable source of truth when explicit query params are present.
+- Gate D models `blocked_by` rows directionally: `source_issue_id = current issue, target_issue_id = other issue` renders as "Blocked by", and the inverse row renders as "Blocks".
+- Gate D models `sub_issue` rows directionally: `source_issue_id` is the child issue and `target_issue_id` is the parent issue; outgoing rows from the current issue surface parent links and incoming rows surface sub-issues.
+- Gate D preserves PR and Wallie timeline sections on the detail route as placeholder shells so later gates can fill them without changing the route contract.
 
 ## Blockers
 
@@ -56,6 +63,9 @@
 ## Deviations From Handoff
 
 - Root redirect currently selects the most recently updated accessible workspace when a user has multiple workspaces; the handoff’s explicit "last active workspace" preference will need a later server-backed preference contract.
+- Gate D uses textarea-backed markdown fields for description, plan, and design instead of a richer editor so the data contract can land before the editor stack is introduced.
+- Gate D list search/filter/sort currently run against the workspace issue set inside the typed server loader instead of pushing every combination into the DB query surface; revisit if workspace issue volume grows materially.
+- Gate D does not enable issue realtime yet; list bulk mutations refresh through the route loader, while detail edits patch the currently open issue/comments/links locally after successful writes.
 
 ## Notes
 
@@ -68,3 +78,4 @@
 - Feature agents should update this file when they introduce routes, schema assumptions, or shared interfaces.
 - Authenticated entry pages now upsert `profiles` from Supabase user metadata before redirecting into onboarding or workspace routes.
 - The workspace layout returns `notFound()` for inaccessible workspace slugs once the signed-in user already has at least one accessible workspace; users with no accessible workspaces are redirected to `/onboarding/workspace`.
+- Gate D surfaces only one parent issue as an editable target in the UI even though the current schema permits multiple `sub_issue` parent rows for a single child; if older or manual data creates multiple parents, the detail page shows them and requires manual cleanup.
