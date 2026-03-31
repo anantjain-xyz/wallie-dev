@@ -1,5 +1,5 @@
 import { parseSupabasePublicEnv } from "@/env/client";
-import { parseServerEnv } from "@/env/server";
+import { parseSupabaseAdminEnv } from "@/env/server";
 
 export type SupabasePublicConfig = Readonly<{
   publishableKey: string;
@@ -25,7 +25,7 @@ export function resolveSupabasePublicConfig(
 export function resolveSupabaseAdminConfig(
   input: Record<string, string | undefined> = process.env,
 ): SupabaseAdminConfig {
-  const env = parseServerEnv(input);
+  const env = parseSupabaseAdminEnv(input);
 
   return {
     publishableKey: env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,

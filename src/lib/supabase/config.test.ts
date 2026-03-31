@@ -12,9 +12,9 @@ const publicEnv = {
 };
 
 const adminEnv = {
-  ...publicEnv,
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
+  NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SECRET_KEY: "secret-key",
-  WALLIE_ENCRYPTION_KEY: "12345678901234567890123456789012",
 };
 
 describe("supabase config resolvers", () => {
@@ -39,6 +39,21 @@ describe("supabase config resolvers", () => {
 
   it("resolves the admin config from env", () => {
     expect(resolveSupabaseAdminConfig(adminEnv)).toEqual({
+      publishableKey: "publishable-key",
+      secretKey: "secret-key",
+      url: "https://example.supabase.co",
+    });
+  });
+
+  it("ignores unrelated blank integration env placeholders for admin config", () => {
+    expect(
+      resolveSupabaseAdminConfig({
+        ...adminEnv,
+        GITHUB_APP_ID: "",
+        STRIPE_SECRET_KEY: "",
+        WALLIE_PROCESS_TOKEN: "",
+      }),
+    ).toEqual({
       publishableKey: "publishable-key",
       secretKey: "secret-key",
       url: "https://example.supabase.co",
