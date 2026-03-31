@@ -11,6 +11,7 @@ import {
 import type { IssueDetailPageData } from "@/features/issues/detail/data";
 import { buildIssueMarkdown } from "@/features/issues/detail/markdown";
 import { groupIssueLinks } from "@/features/issues/detail/relationships";
+import { IssueWalliePanel } from "@/features/wallie/issue-wallie-panel";
 import {
   buildIssueMemberIndex,
   mapIssueCommentRow,
@@ -939,11 +940,14 @@ export function IssueDetailPageClient({
         </Section>
 
         <Section title="Wallie timeline">
-          <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
-            Gate F owns run enqueueing and persisted timeline messages. This shell
-            stays on the route now so the detail surface does not churn when the
-            control plane lands.
-          </div>
+          <IssueWalliePanel
+            initialData={initialData.wallie}
+            issue={issue}
+            memberIndex={memberIndex}
+            repositories={initialData.github.repositories}
+            supabase={supabase}
+            workspaceSlug={initialData.workspace.slug}
+          />
         </Section>
       </div>
 

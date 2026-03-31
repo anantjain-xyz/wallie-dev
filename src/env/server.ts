@@ -10,6 +10,7 @@ export const serverEnvSchema = clientEnvSchema.extend({
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   WALLIE_ENCRYPTION_KEY: z.string().min(32),
+  WALLIE_PROCESS_TOKEN: z.string().min(1).optional(),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -27,5 +28,6 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     STRIPE_WEBHOOK_SECRET: input.STRIPE_WEBHOOK_SECRET,
     SUPABASE_SERVICE_ROLE_KEY: input.SUPABASE_SERVICE_ROLE_KEY,
     WALLIE_ENCRYPTION_KEY: input.WALLIE_ENCRYPTION_KEY,
+    WALLIE_PROCESS_TOKEN: input.WALLIE_PROCESS_TOKEN,
   });
 }

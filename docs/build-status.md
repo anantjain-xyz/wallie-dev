@@ -5,12 +5,13 @@
 - Project: `wallie.cc` rebuild
 - Implementation repo: `/Users/anant/src/wallie-cc`
 - Reference repo: `/Users/anant/src/wallie`
-- Status: Gate E integrations verified
+- Status: Gate F control plane verified
 - Baseline verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026
 - Schema verification: `supabase db start`, `supabase db reset --local --yes`, `supabase db lint --local --fail-on error`, and `supabase gen types typescript --local --schema public` all passing on March 30, 2026
 - Gate C verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after auth, onboarding, and workspace route gating landed
 - Gate D verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after issue list, detail editing, comments, and issue links landed
 - Gate E verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after GitHub install/sync routes, issue repo linkage + PR display, Stripe portal/webhooks, encrypted secrets CRUD, and workspace avatar uploads landed
+- Gate F verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 31, 2026 after Wallie enqueue/retry routes, the resumable processor entrypoint, persisted run messages, and the issue-detail Wallie timeline landed
 
 ## Active Agents
 
@@ -27,7 +28,7 @@
 - Gate C, Auth + Workspace Entry: complete
 - Gate D, Core Issue Workflow: complete
 - Gate E, Integrations: complete
-- Gate F, Wallie Control Plane: pending
+- Gate F, Wallie Control Plane: complete
 - Gate G, Production Candidate: pending
 
 ## Decisions
@@ -65,6 +66,15 @@
 - Gate E settings now render real workspace identity, billing, GitHub integration, and encrypted secret management data instead of placeholder panels.
 - Gate E issue detail now reads workspace repositories plus `github_issue_branches`, allows direct `issues.github_repository_id` assignment under RLS, and applies narrow realtime subscriptions only for the open issue row plus that issue’s PR rows.
 - Gate E avatar uploads use a public Supabase Storage bucket named `workspace-avatars`, but uploads still remain server-mediated so the browser never receives storage credentials.
+- Gate F infers Wallie run mode from the current issue repository link: issues without `github_repository_id` run in `project` mode, linked issues run in `code` mode, and retries preserve the prior run’s explicit `run_type`.
+- Gate F treats `ANTHROPIC_API_KEY` as the minimum required workspace secret contract for enqueue validation; the issue detail route only exposes missing-key names, never secret values or previews.
+- Gate F enqueues a fresh `agent_jobs` + `agent_runs` pair for every new run or retry attempt, while the `agent_jobs` active dedupe key prevents more than one queued/running Wallie job per issue at a time.
+- Gate F retries are immutable: `POST /api/agent-runs/[runId]/retry` creates a new queued job/run pair instead of mutating the historical run being retried.
+- Gate F schedules immediate background processing with Next.js `after()` from the enqueue/retry routes and also exposes `POST /api/agent-jobs/process` as a resumable one-job processor entrypoint for cron/manual recovery.
+- Gate F’s processor is resumable at the job level: a targeted `jobId` can resume a `queued` or already-`running` job idempotently, while success finalization only increments `workspaces.successful_agent_runs_this_cycle` on the first transition to `agent_runs.status = 'success'`.
+- Gate F uses a deterministic stub executor for now: project-mode runs overwrite `issues.design_md` + `issues.plan_md`, and code-mode runs ensure a stable `github_issue_branches` row exists with placeholder branch metadata instead of attempting real GitHub mutations.
+- Gate F lazily rolls the free-tier Wallie cycle forward when the stored `current_billing_cycle_start_at` is more than one month old, so free workspaces do not require a separate cron just to recover quota.
+- Gate F issue detail realtime expands to the current issue’s `agent_runs` plus per-run `agent_run_messages` subscriptions, keeping run/message updates narrow instead of subscribing to workspace-wide tables.
 
 ## Planned Gate E Routes And Interfaces
 
@@ -90,6 +100,12 @@
 - `/api/secrets`
 - `/api/secrets/[key]`
 - `/api/workspaces/[workspaceId]/avatar`
+
+## Gate F Routes
+
+- `POST /api/agent-runs` accepts `{ issueId, workspaceId }`, validates membership + prerequisites, creates a queued job/run pair when allowed, and schedules background processing with Next.js `after()`.
+- `POST /api/agent-runs/[runId]/retry` accepts `{ workspaceId }`, validates that the referenced run is terminal, and enqueues a fresh retry run/job pair with `trigger_type = 'manual_retry'`.
+- `POST /api/agent-jobs/process` accepts an optional `{ jobId, workspaceId }` scope, processes at most one queued/running Wallie job per invocation, and supports either a manager-scoped request or an optional bearer `WALLIE_PROCESS_TOKEN`.
 
 ## Blockers
 

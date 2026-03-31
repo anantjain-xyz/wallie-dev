@@ -11,6 +11,8 @@ import {
 } from "@/features/issues/model";
 import { loadIssueWorkspaceContext } from "@/features/issues/server";
 import { groupIssueLinks } from "@/features/issues/detail/relationships";
+import { loadWallieIssueData } from "@/features/wallie/server";
+import type { WallieIssueData } from "@/features/wallie/types";
 import type {
   IssueComment,
   IssueDetail,
@@ -58,6 +60,7 @@ export type IssueDetailPageData = {
   links: Tables<"issue_links">[];
   members: IssueMember[];
   relationshipGroups: ReturnType<typeof groupIssueLinks>;
+  wallie: WallieIssueData;
   workspace: WorkspaceSummary;
 };
 
@@ -162,6 +165,15 @@ export async function loadIssueDetailPageData(
   const githubRepositoryIndex = new Map(
     githubRepositories.map((repository) => [repository.id, repository]),
   );
+  const wallie = await loadWallieIssueData({
+    issue: issueData as Pick<Tables<"issues">, "github_repository_id" | "id">,
+    memberIndex: context.memberIndex,
+    repository: issue.githubRepositoryId
+      ? githubRepositoryIndex.get(issue.githubRepositoryId) ?? null
+      : null,
+    supabase: context.supabase,
+    workspaceId: context.workspace.id,
+  });
   const linkedIssueIds = Array.from(
     new Set(
       links
@@ -232,6 +244,7 @@ export async function loadIssueDetailPageData(
     links,
     members: context.members.filter((member) => member.isActive),
     relationshipGroups: groupIssueLinks(issue.id, links, linkedIssueIndex),
+    wallie,
     workspace: context.workspace,
   } satisfies IssueDetailPageData;
 }
