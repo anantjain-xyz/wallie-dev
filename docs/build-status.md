@@ -130,6 +130,7 @@
 - Route helpers live in `src/lib/routes.ts` and should remain the shared source for workspace-prefixed navigation until a stronger contract is needed.
 - The shared app shell in `src/components/app-shell` is intentionally data-agnostic so schema, auth, and feature agents can replace placeholder panels without reworking navigation chrome.
 - Env validation is present but lazy; future integration agents should call the relevant parser at the server or client boundary they own.
+- `src/env/client.ts` now resolves `NEXT_PUBLIC_*` values through direct property reads when no explicit env object is passed so Next.js can inline them into client bundles; browser Supabase helpers validate only the publishable key and Supabase URL, while `NEXT_PUBLIC_APP_URL` remains required for server-side redirect/callback flows.
 - The app now requires `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` as the Supabase env contract.
 - Wallie provider credentials such as `ANTHROPIC_API_KEY` remain workspace secrets stored in the database and are not part of the process env contract.
 - Realtime publication is intentionally narrow in schema v1: issues, comments, links, GitHub issue branches, agent runs, and agent run messages.

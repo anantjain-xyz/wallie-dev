@@ -13,7 +13,6 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 describe("createSupabaseBrowserClient", () => {
   it("passes the resolved public config to Supabase", () => {
     const client = createSupabaseBrowserClient({
-      NEXT_PUBLIC_APP_URL: "http://localhost:3000",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
       NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
     });

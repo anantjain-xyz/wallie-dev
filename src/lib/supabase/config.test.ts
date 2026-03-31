@@ -25,6 +25,18 @@ describe("supabase config resolvers", () => {
     });
   });
 
+  it("does not require NEXT_PUBLIC_APP_URL to resolve Supabase public config", () => {
+    expect(
+      resolveSupabasePublicConfig({
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
+        NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+      }),
+    ).toEqual({
+      publishableKey: "publishable-key",
+      url: "https://example.supabase.co",
+    });
+  });
+
   it("resolves the admin config from env", () => {
     expect(resolveSupabaseAdminConfig(adminEnv)).toEqual({
       publishableKey: "publishable-key",

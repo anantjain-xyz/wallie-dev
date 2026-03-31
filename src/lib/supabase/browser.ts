@@ -6,7 +6,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
 
 export function createSupabaseBrowserClient(
-  input: Record<string, string | undefined> = process.env,
+  input?: Record<string, string | undefined>,
 ) {
   const { publishableKey, url } = resolveSupabasePublicConfig(input);
 
