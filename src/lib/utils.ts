@@ -12,3 +12,9 @@ export function titleFromSlug(slug: string) {
     .map((segment) => segment[0]?.toUpperCase() + segment.slice(1))
     .join(" ");
 }
+
+export function readFirstValue(
+  value: string | string[] | undefined,
+) {
+  return Array.isArray(value) ? value[0] : value;
+}

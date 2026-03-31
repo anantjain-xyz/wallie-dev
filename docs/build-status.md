@@ -5,9 +5,10 @@
 - Project: `wallie.cc` rebuild
 - Implementation repo: `/Users/anant/src/wallie-cc`
 - Reference repo: `/Users/anant/src/wallie`
-- Status: Gate B schema freeze v1 verified
+- Status: Gate C auth + workspace entry verified
 - Baseline verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026
 - Schema verification: `supabase db start`, `supabase db reset --local --yes`, `supabase db lint --local --fail-on error`, and `supabase gen types typescript --local --schema public` all passing on March 30, 2026
+- Gate C verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after auth, onboarding, and workspace route gating landed
 
 ## Active Agents
 
@@ -21,7 +22,7 @@
 
 - Gate A, Bootstrap Complete: complete
 - Gate B, Schema Freeze v1: complete
-- Gate C, Auth + Workspace Entry: pending
+- Gate C, Auth + Workspace Entry: complete
 - Gate D, Core Issue Workflow: pending
 - Gate E, Integrations: pending
 - Gate F, Wallie Control Plane: pending
@@ -43,6 +44,10 @@
 - An internal `workspace_issue_counters` table backs the `next_issue_number(workspace_id uuid)` RPC so issue numbers are allocated atomically across separate client transactions.
 - Client-writable SQL surface is limited to `issues`, `issue_comments`, `issue_links`, `profiles`, and `workspace_members.preferences`; `workspace_secrets` and `agent_jobs` remain service-only.
 - Generated public DB types now live in `src/lib/supabase/database.types.ts` and should be refreshed from local Supabase whenever schema migrations change.
+- Gate C auth entrypoints now live at `/login`, `/signup`, `/auth/oauth`, `/auth/email`, `/auth/callback`, `/auth/confirm`, and `/auth/signout`.
+- Workspace bootstrap now lands through `POST /api/workspaces`, which delegates transactional owner membership and system `wallie` member creation to the `public.create_workspace(workspace_name text, requested_slug text default null)` RPC.
+- Workspace shell routes under `/w/[workspaceSlug]/*` now require a Supabase session plus RLS-backed workspace membership before the shell renders.
+- Supabase session refresh now runs through `middleware.ts` plus `src/lib/supabase/middleware.ts` so auth cookies stay current for server-rendered routes.
 
 ## Blockers
 
@@ -50,7 +55,7 @@
 
 ## Deviations From Handoff
 
-- None yet
+- Root redirect currently selects the most recently updated accessible workspace when a user has multiple workspaces; the handoff’s explicit "last active workspace" preference will need a later server-backed preference contract.
 
 ## Notes
 
@@ -61,3 +66,5 @@
 - App-side Supabase helpers now live in `src/lib/supabase/*`; future agents should import those helpers instead of creating raw clients ad hoc.
 - On this machine, local Supabase CLI startup hangs in `docker-credential-desktop get` unless commands are run with `DOCKER_CONFIG=/tmp/wallie-cc-docker` and `DOCKER_HOST=unix:///Users/anant/.docker/run/docker.sock`.
 - Feature agents should update this file when they introduce routes, schema assumptions, or shared interfaces.
+- Authenticated entry pages now upsert `profiles` from Supabase user metadata before redirecting into onboarding or workspace routes.
+- The workspace layout returns `notFound()` for inaccessible workspace slugs once the signed-in user already has at least one accessible workspace; users with no accessible workspaces are redirected to `/onboarding/workspace`.

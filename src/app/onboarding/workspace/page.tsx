@@ -1,19 +1,42 @@
-import { PlaceholderPanel } from "@/components/shared/placeholder-panel";
+import { redirect } from "next/navigation";
 
-export default function WorkspaceOnboardingPage() {
+import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
+import { PlaceholderPanel } from "@/components/shared/placeholder-panel";
+import {
+  ensureProfileForUser,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
+import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+export default async function WorkspaceOnboardingPage() {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect(loginPath(onboardingWorkspacePath()));
+  }
+
+  await ensureProfileForUser(supabase, user);
+
+  const landingPath = await resolveAuthenticatedHomePath(supabase);
+
+  if (landingPath !== onboardingWorkspacePath()) {
+    redirect(landingPath);
+  }
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl items-center px-4 py-8 sm:px-6 lg:px-8">
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-8 sm:px-6 lg:px-8">
       <PlaceholderPanel
-        eyebrow="Onboarding Scaffold"
-        title="Workspace bootstrap flow is reserved for server-backed creation"
-        summary="This screen marks the handoff point where a signed-in user will create a workspace, become its owner, and receive the system `wallie` member through a privileged route handler."
-        items={[
-          "Target POST /api/workspaces for workspace creation and owner membership bootstrap.",
-          "Keep slug generation, uniqueness, and wallie system-member creation on the server.",
-          "Route users into /w/[workspaceSlug]/issues after successful provisioning.",
-        ]}
-        tone="planned"
-      />
+        eyebrow="Workspace Bootstrap"
+        title="Create the first workspace and enter the app shell"
+        summary="This flow provisions the workspace, owner membership, and system `wallie` member through a server-backed contract before routing into `/w/[workspaceSlug]/issues`."
+        tone="ready"
+      >
+        <WorkspaceOnboardingForm />
+      </PlaceholderPanel>
     </main>
   );
 }

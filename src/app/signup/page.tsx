@@ -1,18 +1,40 @@
-import { PlaceholderPanel } from "@/components/shared/placeholder-panel";
+import { redirect } from "next/navigation";
 
-export default function SignupPage() {
+import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
+import {
+  ensureProfileForUser,
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { readFirstValue } from "@/lib/utils";
+
+type SignupPageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function SignupPage({ searchParams }: SignupPageProps) {
+  const resolvedSearchParams = await searchParams;
+  const next = normalizeNextPath(readFirstValue(resolvedSearchParams.next));
+  const errorCode = readFirstValue(resolvedSearchParams.error);
+  const statusCode = readFirstValue(resolvedSearchParams.status);
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    await ensureProfileForUser(supabase, user);
+    redirect(await resolveAuthenticatedHomePath(supabase));
+  }
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6 lg:px-8">
-      <PlaceholderPanel
-        eyebrow="Auth Scaffold"
-        title="Workspace signup and invitation flows start here"
-        summary="The signup route is parked with the same contracts as login so onboarding can later branch into create-workspace and accept-invite flows without reworking the public app surface."
-        items={[
-          "Reserve this screen for first-run identity creation and invitation acceptance.",
-          "Keep all workspace membership rules in Postgres and RLS rather than duplicating them in the client.",
-          "Wire the next step into /onboarding/workspace once auth is operational.",
-        ]}
-        tone="planned"
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-8 sm:px-6 lg:px-8">
+      <AuthEntryPanel
+        errorCode={errorCode}
+        mode="signup"
+        next={next}
+        statusCode={statusCode}
       />
     </main>
   );

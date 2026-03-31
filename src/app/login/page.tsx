@@ -1,18 +1,40 @@
-import { PlaceholderPanel } from "@/components/shared/placeholder-panel";
+import { redirect } from "next/navigation";
 
-export default function LoginPage() {
+import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
+import {
+  ensureProfileForUser,
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+} from "@/lib/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { readFirstValue } from "@/lib/utils";
+
+type LoginPageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const resolvedSearchParams = await searchParams;
+  const next = normalizeNextPath(readFirstValue(resolvedSearchParams.next));
+  const errorCode = readFirstValue(resolvedSearchParams.error);
+  const statusCode = readFirstValue(resolvedSearchParams.status);
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    await ensureProfileForUser(supabase, user);
+    redirect(await resolveAuthenticatedHomePath(supabase));
+  }
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-4 py-8 sm:px-6 lg:px-8">
-      <PlaceholderPanel
-        eyebrow="Auth Scaffold"
-        title="Supabase Auth login route reserved"
-        summary="This route is intentionally shallow until the auth agent lands Google OAuth, GitHub OAuth, and magic-link sign-in on top of Supabase Auth."
-        items={[
-          "Replace this placeholder with a server-first auth entry point and provider buttons.",
-          "Persist the post-login destination so workspace routing can resume cleanly.",
-          "Do not reintroduce Clerk or email-claim tenancy lookup as the primary auth model.",
-        ]}
-        tone="ready"
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-8 sm:px-6 lg:px-8">
+      <AuthEntryPanel
+        errorCode={errorCode}
+        mode="login"
+        next={next}
+        statusCode={statusCode}
       />
     </main>
   );

@@ -4,13 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { WallieMark } from "@/components/shared/wallie-mark";
+import type { WorkspaceSummary } from "@/lib/auth";
 import { siteConfig } from "@/lib/site-config";
-import { type WorkspaceNavItem, workspaceLabel } from "@/lib/routes";
+import { type WorkspaceNavItem } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type ShellSidebarProps = {
   navItems: WorkspaceNavItem[];
-  workspaceSlug: string;
+  workspace: WorkspaceSummary;
 };
 
 function isActive(pathname: string, href: string) {
@@ -19,7 +20,7 @@ function isActive(pathname: string, href: string) {
 
 export function ShellSidebar({
   navItems,
-  workspaceSlug,
+  workspace,
 }: ShellSidebarProps) {
   const pathname = usePathname();
 
@@ -33,8 +34,9 @@ export function ShellSidebar({
               Implementation Target
             </p>
             <p className="text-lg font-semibold text-foreground">
-              {workspaceLabel(workspaceSlug)}
+              {workspace.name}
             </p>
+            <p className="text-xs font-mono text-muted">/{workspace.slug}</p>
           </div>
         </div>
 

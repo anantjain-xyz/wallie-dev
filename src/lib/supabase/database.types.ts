@@ -749,6 +749,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_workspace: {
+        Args: { requested_slug?: string | null; workspace_name: string }
+        Returns: {
+          avatar_path: string | null
+          created_at: string
+          created_by: string | null
+          current_billing_cycle_start_at: string
+          id: string
+          name: string
+          slug: string
+          stripe_customer_id: string | null
+          successful_agent_runs_this_cycle: number
+          tier: Database["public"]["Enums"]["workspace_tier"]
+          updated_at: string
+        }
+      }
       can_manage_workspace: {
         Args: { target_workspace_id: string }
         Returns: boolean
@@ -943,4 +959,3 @@ export const Constants = {
     },
   },
 } as const
-
