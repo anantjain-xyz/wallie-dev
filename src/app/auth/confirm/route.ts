@@ -19,10 +19,11 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
 
 export async function GET(request: NextRequest) {
   const next = normalizeNextPath(request.nextUrl.searchParams.get("next"));
+  const code = request.nextUrl.searchParams.get("code");
   const tokenHash = request.nextUrl.searchParams.get("token_hash");
   const type = request.nextUrl.searchParams.get("type");
 
-  if (!tokenHash || !isEmailOtpType(type)) {
+  if (!code && (!tokenHash || !isEmailOtpType(type))) {
     return NextResponse.redirect(
       new URL(loginErrorPath(next, "auth_confirmation_failed"), request.url),
       { status: 303 },
@@ -30,10 +31,20 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.verifyOtp({
-    token_hash: tokenHash,
-    type,
-  });
+  let error: Error | null = null;
+
+  if (code) {
+    const result = await supabase.auth.exchangeCodeForSession(code);
+
+    error = result.error;
+  } else if (tokenHash && isEmailOtpType(type)) {
+    const result = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type,
+    });
+
+    error = result.error;
+  }
 
   if (error) {
     return NextResponse.redirect(

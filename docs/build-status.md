@@ -48,6 +48,7 @@
 - Client-writable SQL surface is limited to `issues`, `issue_comments`, `issue_links`, `profiles`, and `workspace_members.preferences`; `workspace_secrets` and `agent_jobs` remain service-only.
 - Generated public DB types now live in `src/lib/supabase/database.types.ts` and should be refreshed from local Supabase whenever schema migrations change.
 - Gate C auth entrypoints now live at `/login`, `/signup`, `/auth/oauth`, `/auth/email`, `/auth/callback`, `/auth/confirm`, and `/auth/signout`.
+- Gate C email confirmation accepts both Supabase email-link callback shapes on `/auth/confirm`: PKCE `code` exchanges from `@supabase/ssr` server-client flows and explicit `token_hash` + `type` OTP verification payloads.
 - Workspace bootstrap now lands through `POST /api/workspaces`, which delegates transactional owner membership and system `wallie` member creation to the `public.create_workspace(workspace_name text, requested_slug text default null)` RPC.
 - Workspace shell routes under `/w/[workspaceSlug]/*` now require a Supabase session plus RLS-backed workspace membership before the shell renders.
 - Supabase session refresh now runs through `middleware.ts` plus `src/lib/supabase/middleware.ts` so auth cookies stay current for server-rendered routes.
