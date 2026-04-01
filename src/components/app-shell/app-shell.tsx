@@ -15,10 +15,10 @@ export function AppShell({ children, viewerEmail, workspace }: AppShellProps) {
   const navItems = getWorkspaceNavItems(workspace.slug);
 
   return (
-    <div className="min-h-screen">
-      <div className="mx-auto flex min-h-screen w-full max-w-[92rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 xl:flex-row">
+    <div className="min-h-screen bg-background">
+      <div className="flex min-h-screen w-full flex-col gap-3 p-3 xl:flex-row">
         <ShellSidebar navItems={navItems} workspace={workspace} />
-        <div className="flex min-w-0 flex-1 flex-col gap-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
           <ShellHeader viewerEmail={viewerEmail} workspace={workspace} />
           <main className="flex-1">{children}</main>
         </div>

@@ -62,19 +62,19 @@ export function AuthEntryPanel({
     : null;
 
   return (
-    <section className="w-full rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur sm:p-8">
+    <section className="ui-panel w-full p-6 sm:p-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-3">
           <StatusChip tone="ready">
             {isSignup ? "Create Access" : "Sign In"}
           </StatusChip>
           <div className="space-y-3">
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-[2.2rem]">
               {isSignup
                 ? "Create your Wallie identity"
                 : "Enter your workspace"}
             </h1>
-            <p className="max-w-2xl text-sm leading-7 text-muted sm:text-base">
+            <p className="max-w-2xl text-sm leading-6 text-muted">
               {isSignup
                 ? "Use magic link or OAuth, then continue into first-workspace setup under Supabase Auth."
                 : "Use magic link or OAuth and Wallie will route you to your workspace or first-run onboarding."}
@@ -84,20 +84,20 @@ export function AuthEntryPanel({
 
         <Link
           href={alternateHref}
-          className="rounded-full border border-border/80 bg-surface-strong/80 px-4 py-2 text-sm font-semibold text-foreground transition hover:border-accent/35 hover:text-accent"
+          className="ui-button"
         >
           {alternateLabel}
         </Link>
       </div>
 
       {statusMessage ? (
-        <div className="mt-6 rounded-[1.5rem] border border-amber-500/40 bg-amber-500/12 px-4 py-3 text-sm leading-6 text-amber-950">
+        <div className="mt-6 rounded-[12px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
           {statusMessage}
         </div>
       ) : null}
 
       {errorMessage ? (
-        <div className="mt-6 rounded-[1.5rem] border border-red-400/50 bg-red-500/10 px-4 py-3 text-sm leading-6 text-red-900">
+        <div className="mt-6 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger">
           {errorMessage}
         </div>
       ) : null}
@@ -106,13 +106,13 @@ export function AuthEntryPanel({
         <form
           action="/auth/email"
           method="post"
-          className="rounded-[1.75rem] border border-border/80 bg-surface-strong/80 p-5"
+          className="ui-subpanel p-5"
         >
           <input type="hidden" name="mode" value={mode} />
           <input type="hidden" name="next" value={next} />
 
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-muted">
+            <p className="text-[11px] font-medium text-muted">
               Magic Link
             </p>
             <h2 className="text-2xl font-semibold tracking-tight text-foreground">
@@ -132,26 +132,26 @@ export function AuthEntryPanel({
               required
               autoComplete="email"
               placeholder="you@company.com"
-              className="mt-2 w-full rounded-2xl border border-border/80 bg-background/70 px-4 py-3 text-base text-foreground outline-none transition focus:border-accent/45"
+              className="ui-input mt-2 text-base"
             />
           </label>
 
           <button
             type="submit"
-            className="mt-5 rounded-full bg-foreground px-5 py-3 text-sm font-semibold text-background transition hover:translate-y-[-1px]"
+            className="ui-button-primary mt-5"
           >
             {isSignup ? "Send sign-up link" : "Send sign-in link"}
           </button>
         </form>
 
-        <div className="rounded-[1.75rem] border border-border/80 bg-foreground p-5 text-background">
-          <p className="text-xs font-semibold uppercase tracking-[0.26em] text-background/70">
+        <div className="ui-subpanel p-5">
+          <p className="text-[11px] font-medium text-muted">
             OAuth
           </p>
-          <h2 className="mt-3 text-2xl font-semibold tracking-tight">
+          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
             Continue with your provider
           </h2>
-          <p className="mt-3 text-sm leading-6 text-background/88">
+          <p className="mt-3 text-sm leading-6 text-muted">
             Supabase Auth handles identity. Workspace access still comes from
             `workspace_members` and RLS after the session is established.
           </p>
@@ -159,19 +159,19 @@ export function AuthEntryPanel({
           <div className="mt-5 grid gap-3">
             <Link
               href={buildOauthHref("google", mode, next)}
-              className="rounded-2xl border border-white/15 bg-white/8 px-4 py-3 text-sm font-semibold transition hover:border-white/30 hover:bg-white/12"
+              className="ui-button"
             >
               Continue with Google
             </Link>
             <Link
               href={buildOauthHref("github", mode, next)}
-              className="rounded-2xl border border-white/15 bg-white/8 px-4 py-3 text-sm font-semibold transition hover:border-white/30 hover:bg-white/12"
+              className="ui-button"
             >
               Continue with GitHub
             </Link>
           </div>
 
-          <p className="mt-5 text-xs leading-6 text-background/70">
+          <p className="mt-5 text-xs leading-6 text-muted">
             If your session already exists, Wallie will skip this screen and send
             you straight to the correct workspace entry route.
           </p>

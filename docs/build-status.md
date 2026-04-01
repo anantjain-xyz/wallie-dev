@@ -12,6 +12,7 @@
 - Gate D verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after issue list, detail editing, comments, and issue links landed
 - Gate E verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after GitHub install/sync routes, issue repo linkage + PR display, Stripe portal/webhooks, encrypted secrets CRUD, and workspace avatar uploads landed
 - Gate F verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 31, 2026 after Wallie enqueue/retry routes, the resumable processor entrypoint, persisted run messages, and the issue-detail Wallie timeline landed
+- UI verification: `pnpm lint`, `pnpm typecheck`, and `pnpm build` all passing on April 1, 2026 after the shared visual system, workspace shell, auth entry, issue list/detail, settings, and Wallie panel shifted to a denser Linear-inspired interface language
 
 ## Active Agents
 
@@ -80,6 +81,7 @@
 - Gate F lazily rolls the free-tier Wallie cycle forward when the stored `current_billing_cycle_start_at` is more than one month old, so free workspaces do not require a separate cron just to recover quota.
 - Gate F issue detail realtime expands to the current issue’s `agent_runs` plus per-run `agent_run_messages` subscriptions, keeping run/message updates narrow instead of subscribing to workspace-wide tables.
 - Local `.env.local` now targets the Supabase CLI stack (`http://127.0.0.1:54321` plus the local publishable/secret keys from `supabase status -o env`); Vercel environments should keep the hosted Supabase project values, with `NEXT_PUBLIC_APP_URL` set per environment to the deployed origin.
+- The workspace-facing UI now uses a Linear-inspired visual contract: Inter-based typography, neutral layered surfaces, compact radii, low-contrast borders, dense controls, and minimal marketing copy in authenticated routes. This is a presentation-only change; route, schema, and API contracts remain unchanged.
 
 ## Planned Gate E Routes And Interfaces
 

@@ -50,10 +50,10 @@ function FilterButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition",
+        "rounded-full border px-2.5 py-1 text-[12px] font-medium transition",
         active
-          ? "border-accent/45 bg-accent text-background"
-          : "border-border/80 bg-background/70 text-muted hover:border-accent/35 hover:text-accent",
+          ? "border-accent/20 bg-accent-soft text-accent"
+          : "border-border bg-surface text-muted hover:bg-surface-muted hover:text-foreground",
       )}
     >
       {children}
@@ -299,27 +299,26 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
         workspaceId={initialData.workspace.id}
       />
 
-      <div className="grid gap-6">
-        <section className="rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur">
+      <div className="grid gap-4">
+        <section className="ui-panel p-5">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted">
-                Gate D
+              <p className="text-[11px] font-medium text-muted">
+                Issues
               </p>
               <div>
-                <h2 className="text-3xl font-semibold tracking-tight text-foreground">
-                  Core issue workflow
+                <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                  All issues
                 </h2>
-                <p className="mt-2 max-w-3xl text-sm leading-7 text-muted">
-                  Server-rendered issue rows hydrate into direct Supabase CRUD under
-                  RLS, with query-param search, filters, sort, create, and bulk
-                  actions.
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
+                  Search, filter, sort, and bulk edit the workspace queue with
+                  server-rendered state and narrow client hydration.
                 </p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/80 px-4 py-3 text-sm leading-6 text-muted">
+              <div className="ui-pill px-3 py-1.5 text-sm text-muted">
                 Showing{" "}
                 <span className="font-semibold text-foreground">{issues.length}</span>{" "}
                 of{" "}
@@ -331,7 +330,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               <button
                 type="button"
                 onClick={() => setIsCreateOpen(true)}
-                className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90"
+                className="ui-button-primary"
               >
                 Create issue
               </button>
@@ -339,7 +338,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur">
+        <section className="ui-panel p-5">
           <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
             <form
               className="space-y-4"
@@ -355,12 +354,12 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   value={searchDraft}
                   onChange={(event) => setSearchDraft(event.target.value)}
                   placeholder="Search title and description"
-                  className="min-w-0 flex-1 rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                  className="ui-input min-w-0 flex-1"
                 />
                 <button
                   type="submit"
                   disabled={isRoutePending}
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   {isRoutePending ? "Refreshing..." : "Search"}
                 </button>
@@ -373,7 +372,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                         query: "",
                       });
                     }}
-                    className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                    className="ui-button"
                   >
                     Clear
                   </button>
@@ -381,7 +380,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               </div>
 
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+                <p className="ui-label">
                   Quick filters
                 </p>
                 <div className="flex flex-wrap gap-2">
@@ -446,7 +445,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       sort: event.target.value as IssueListQueryState["sort"],
                     })
                   }
-                  className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                  className="ui-select"
                 >
                   <option value="updated">Updated</option>
                   <option value="created">Created</option>
@@ -464,7 +463,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       direction: event.target.value as IssueListQueryState["direction"],
                     })
                   }
-                  className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                  className="ui-select"
                 >
                   <option value="desc">Descending</option>
                   <option value="asc">Ascending</option>
@@ -475,7 +474,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
 
           <div className="mt-6 grid gap-5 lg:grid-cols-3">
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+              <p className="ui-label">
                 Status
               </p>
               <div className="flex flex-wrap gap-2">
@@ -492,7 +491,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+              <p className="ui-label">
                 Priority
               </p>
               <div className="flex flex-wrap gap-2">
@@ -509,7 +508,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+              <p className="ui-label">
                 Estimate
               </p>
               <div className="flex flex-wrap gap-2">
@@ -528,22 +527,22 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
         </section>
 
         {errorMessage ? (
-          <div className="rounded-[1.4rem] border border-rose-400/50 bg-rose-500/10 px-5 py-4 text-sm text-rose-900">
+          <div className="rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
             {errorMessage}
           </div>
         ) : null}
 
         {successMessage ? (
-          <div className="rounded-[1.4rem] border border-emerald-400/45 bg-emerald-500/10 px-5 py-4 text-sm text-emerald-950">
+          <div className="rounded-[12px] border border-success/20 bg-success-soft px-4 py-3 text-sm text-success">
             {successMessage}
           </div>
         ) : null}
 
         {selectedIssueIds.length > 0 ? (
-          <section className="rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur">
+          <section className="ui-panel p-5">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted">
+                <p className="ui-label">
                   Bulk actions
                 </p>
                 <p className="mt-2 text-sm leading-6 text-muted">
@@ -561,7 +560,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     onChange={(event) =>
                       setBulkStatus(event.target.value as IssueStatus | "")
                     }
-                    className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                    className="ui-select"
                   >
                     <option value="">Choose</option>
                     {ISSUE_STATUS_VALUES.map((status) => (
@@ -579,7 +578,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     onChange={(event) =>
                       setBulkPriority(event.target.value as IssuePriority | "")
                     }
-                    className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                    className="ui-select"
                   >
                     <option value="">Choose</option>
                     {ISSUE_PRIORITY_VALUES.map((priority) => (
@@ -595,7 +594,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   <select
                     value={bulkEstimate}
                     onChange={(event) => setBulkEstimate(event.target.value)}
-                    className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                    className="ui-select"
                   >
                     <option value="">Choose</option>
                     {ISSUE_ESTIMATE_VALUES.map((estimate) => (
@@ -623,7 +622,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       )
                     : undefined
                 }
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Apply status
               </button>
@@ -638,7 +637,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       )
                     : undefined
                 }
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Apply priority
               </button>
@@ -655,7 +654,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     );
                   }
                 }}
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Apply estimate
               </button>
@@ -663,7 +662,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 type="button"
                 disabled={isMutating}
                 onClick={() => setSelectedIssueIds([])}
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Clear selection
               </button>
@@ -671,7 +670,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 type="button"
                 disabled={isMutating}
                 onClick={() => void handleBulkDelete()}
-                className="rounded-full border border-rose-400/55 bg-rose-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-rose-900 transition hover:bg-rose-500/14 disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button-danger"
               >
                 Delete selected
               </button>
@@ -679,15 +678,15 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
           </section>
         ) : null}
 
-        <section className="overflow-hidden rounded-[2rem] border border-border/90 bg-surface/95 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur">
-          <div className="flex items-center justify-between border-b border-border/70 px-6 py-5">
+        <section className="ui-panel overflow-hidden">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted">
+              <p className="ui-label">
                 Issue list
               </p>
-              <p className="mt-2 text-sm leading-6 text-muted">
-                Membership-gated issue rows scoped to{" "}
-                <span className="font-mono text-foreground">
+              <p className="mt-1 text-sm leading-6 text-muted">
+                Workspace scoped rows for{" "}
+                <span className="font-mono text-foreground/90">
                   /w/{initialData.workspace.slug}
                 </span>
               </p>
@@ -707,11 +706,11 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
           </div>
 
           {issues.length === 0 ? (
-            <div className="px-6 py-16 text-center">
+            <div className="px-4 py-12 text-center">
               <h3 className="text-xl font-semibold text-foreground">
                 No issues match this view
               </h3>
-              <p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-muted">
+              <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-muted">
                 Adjust the current search, filters, or sort state, or create a new
                 issue to seed the workspace.
               </p>
@@ -721,7 +720,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               {issues.map((issue) => (
                 <div
                   key={issue.id}
-                  className="grid gap-4 px-6 py-5 lg:grid-cols-[auto_1fr_auto] lg:items-center"
+                  className="grid gap-3 px-4 py-3 transition hover:bg-surface-strong/60 lg:grid-cols-[auto_1fr_auto] lg:items-center"
                 >
                   <label className="flex items-start gap-3">
                     <input
@@ -734,7 +733,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-                        <span className="rounded-full border border-border/80 bg-background/70 px-3 py-1 font-mono text-xs text-foreground">
+                        <span className="ui-pill font-mono">
                           #{issue.number}
                         </span>
                         <IssueStatusBadge status={issue.status} />
@@ -746,11 +745,11 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                           initialData.workspace.slug,
                           issue.number,
                         )}
-                        className="mt-3 block text-lg font-semibold text-foreground transition hover:text-accent"
+                        className="mt-2 block text-[15px] font-semibold leading-6 text-foreground transition hover:text-accent"
                       >
                         {issue.title}
                       </Link>
-                      <p className="mt-2 line-clamp-2 max-w-3xl text-sm leading-7 text-muted">
+                      <p className="mt-1 line-clamp-2 max-w-3xl text-sm leading-6 text-muted">
                         {issue.descriptionMd || "No description yet."}
                       </p>
                     </div>
@@ -758,7 +757,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
 
                   <div className="grid gap-3 text-sm text-muted sm:grid-cols-2 lg:grid-cols-1">
                     <div>
-                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-muted">
+                      <p className="ui-label">
                         Assignee
                       </p>
                       <div className="mt-2">
@@ -766,7 +765,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       </div>
                     </div>
                     <div>
-                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.2em] text-muted">
+                      <p className="ui-label">
                         Updated
                       </p>
                       <p className="mt-2 text-foreground">
@@ -781,7 +780,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                         initialData.workspace.slug,
                         issue.number,
                       )}
-                      className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                      className="ui-button"
                     >
                       Open issue
                     </Link>

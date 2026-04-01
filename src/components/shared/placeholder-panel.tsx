@@ -27,19 +27,19 @@ export function PlaceholderPanel({
   return (
     <section
       className={cn(
-        "rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur",
+        "ui-panel p-6",
         className,
       )}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted">
+          <p className="text-[11px] font-medium text-muted">
             {eyebrow}
           </p>
           <h2 className="max-w-2xl text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
             {title}
           </h2>
-          <p className="max-w-2xl text-sm leading-7 text-muted sm:text-base">
+          <p className="max-w-2xl text-sm leading-6 text-muted sm:text-base">
             {summary}
           </p>
         </div>
@@ -51,7 +51,7 @@ export function PlaceholderPanel({
           {items.map((item) => (
             <li
               key={item}
-              className="rounded-2xl border border-border/70 bg-surface-strong/80 px-4 py-3"
+              className="ui-subpanel px-4 py-3"
             >
               {item}
             </li>

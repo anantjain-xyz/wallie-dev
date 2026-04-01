@@ -1,5 +1,4 @@
 import type { WorkspaceSummary } from "@/lib/auth";
-import { StatusChip } from "@/components/shared/status-chip";
 
 type ShellHeaderProps = {
   viewerEmail: string | null;
@@ -8,43 +7,26 @@ type ShellHeaderProps = {
 
 export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
   return (
-    <header className="rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-3">
-          <StatusChip tone="ready">Workspace Active</StatusChip>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted">
-              Workspace Route
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              {workspace.name}
-            </h1>
-          </div>
-          <p className="max-w-3xl text-sm leading-7 text-muted sm:text-base">
-            This workspace shell now carries the real issue list and detail
-            workflow on top of Supabase Auth and membership-backed routing, so
-            later gates can add integrations without rewriting the core tenant
-            boundary.
-          </p>
+    <header className="ui-panel flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium text-muted">Workspace</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h1 className="text-sm font-semibold text-foreground">
+            {workspace.name}
+          </h1>
+          <span className="ui-pill font-mono">/w/{workspace.slug}</span>
         </div>
+      </div>
 
-        <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/80 px-4 py-4 text-sm leading-6 text-muted">
-          <p className="font-semibold uppercase tracking-[0.18em] text-foreground">
-            Session
-          </p>
-          <p className="mt-2 font-mono text-foreground">
-            {`/w/${workspace.slug}/*`}
-          </p>
-          <p className="mt-1">{viewerEmail ?? "Authenticated member"}</p>
-          <form action="/auth/signout" method="post" className="mt-3">
-            <button
-              type="submit"
-              className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/35 hover:text-accent"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="ui-pill max-w-full truncate">
+          {viewerEmail ?? "Authenticated member"}
+        </span>
+        <form action="/auth/signout" method="post">
+          <button type="submit" className="ui-button">
+            Sign out
+          </button>
+        </form>
       </div>
     </header>
   );

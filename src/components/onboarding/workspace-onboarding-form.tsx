@@ -82,9 +82,9 @@ export function WorkspaceOnboardingForm() {
       onSubmit={handleSubmit}
       className="mt-6 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]"
     >
-      <section className="rounded-[1.75rem] border border-border/80 bg-surface-strong/80 p-5">
+      <section className="ui-panel p-5">
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.26em] text-muted">
+          <p className="text-[11px] font-medium text-muted">
             Workspace Identity
           </p>
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">
@@ -106,7 +106,7 @@ export function WorkspaceOnboardingForm() {
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Northwind Labs"
-            className="mt-2 w-full rounded-2xl border border-border/80 bg-background/70 px-4 py-3 text-base text-foreground outline-none transition focus:border-accent/45"
+            className="ui-input mt-2 text-base"
           />
         </label>
 
@@ -122,12 +122,12 @@ export function WorkspaceOnboardingForm() {
             value={slug}
             onChange={(event) => setSlug(event.target.value)}
             placeholder={slugifyWorkspaceName(name || "Northwind Labs")}
-            className="mt-2 w-full rounded-2xl border border-border/80 bg-background/70 px-4 py-3 text-base text-foreground outline-none transition focus:border-accent/45"
+            className="ui-input mt-2 text-base"
           />
         </label>
 
         {errorMessage ? (
-          <div className="mt-5 rounded-[1.5rem] border border-red-400/50 bg-red-500/10 px-4 py-3 text-sm leading-6 text-red-900">
+          <div className="mt-5 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger">
             {errorMessage}
           </div>
         ) : null}
@@ -135,28 +135,28 @@ export function WorkspaceOnboardingForm() {
         <button
           type="submit"
           disabled={isPending}
-          className="mt-5 rounded-full bg-foreground px-5 py-3 text-sm font-semibold text-background transition hover:translate-y-[-1px] disabled:cursor-wait disabled:opacity-70"
+          className="ui-button-primary mt-5 disabled:cursor-wait"
         >
           {isPending ? "Creating workspace..." : "Create workspace"}
         </button>
       </section>
 
-      <section className="rounded-[1.75rem] border border-border/80 bg-foreground p-5 text-background">
-        <p className="text-xs font-semibold uppercase tracking-[0.26em] text-background/70">
+      <section className="ui-subpanel p-5">
+        <p className="text-[11px] font-medium text-muted">
           Result
         </p>
-        <h2 className="mt-3 text-2xl font-semibold tracking-tight">
+        <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
           Entry route preview
         </h2>
-        <p className="mt-3 text-sm leading-6 text-background/88">
+        <p className="mt-3 text-sm leading-6 text-muted">
           If the workspace is available, the first landing route will be:
         </p>
 
-        <div className="mt-5 rounded-[1.5rem] border border-white/15 bg-white/8 px-4 py-4 font-mono text-sm text-background/95">
+        <div className="ui-muted-panel mt-5 px-4 py-4 font-mono text-sm text-foreground">
           /w/{slugPreview}/issues
         </div>
 
-        <ul className="mt-5 space-y-3 text-sm leading-6 text-background/88">
+        <ul className="mt-5 space-y-3 text-sm leading-6 text-muted">
           <li>Owner membership is created in the same DB transaction.</li>
           <li>The `wallie` system actor is provisioned automatically.</li>
           <li>Workspace access remains membership-scoped under RLS.</li>

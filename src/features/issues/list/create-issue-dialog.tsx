@@ -95,10 +95,10 @@ export function CreateIssueDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-foreground/28 px-4 py-10 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-[2rem] border border-border/90 bg-surface p-6 shadow-[0_32px_100px_rgba(20,33,61,0.2)]">
+      <div className="ui-panel-elevated w-full max-w-2xl p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-muted">
+            <p className="text-[11px] font-medium text-muted">
               Create Issue
             </p>
             <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
@@ -108,7 +108,7 @@ export function CreateIssueDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent"
+            className="ui-button"
           >
             Close
           </button>
@@ -123,7 +123,7 @@ export function CreateIssueDialog({
               id="issue-title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              className="w-full rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+              className="ui-input"
               placeholder="Document Gate D completion checklist"
             />
           </div>
@@ -139,7 +139,7 @@ export function CreateIssueDialog({
               id="issue-description"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              className="min-h-36 w-full rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-3 text-sm leading-6 text-foreground outline-none transition focus:border-accent/45"
+              className="ui-textarea min-h-36 leading-6"
               placeholder="Add context, acceptance criteria, or notes in markdown."
             />
           </div>
@@ -152,7 +152,7 @@ export function CreateIssueDialog({
                 onChange={(event) =>
                   setStatus(event.target.value as (typeof ISSUE_STATUS_VALUES)[number])
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 {ISSUE_STATUS_VALUES.map((value) => (
                   <option key={value} value={value}>
@@ -171,7 +171,7 @@ export function CreateIssueDialog({
                     event.target.value as (typeof ISSUE_PRIORITY_VALUES)[number],
                   )
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 {ISSUE_PRIORITY_VALUES.map((value) => (
                   <option key={value} value={value}>
@@ -186,7 +186,7 @@ export function CreateIssueDialog({
               <select
                 value={estimate}
                 onChange={(event) => setEstimate(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 <option value="">No estimate</option>
                 {estimateOptions.map((value) => (
@@ -202,7 +202,7 @@ export function CreateIssueDialog({
               <select
                 value={assigneeMemberId}
                 onChange={(event) => setAssigneeMemberId(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 <option value="">Unassigned</option>
                 {members.map((member) => (
@@ -215,7 +215,7 @@ export function CreateIssueDialog({
           </div>
 
           {errorMessage ? (
-            <div className="rounded-[1rem] border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-900">
+            <div className="rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
               {errorMessage}
             </div>
           ) : null}
@@ -224,14 +224,14 @@ export function CreateIssueDialog({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent"
+              className="ui-button"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="ui-button-primary"
             >
               {isSubmitting ? "Creating..." : "Create and open"}
             </button>

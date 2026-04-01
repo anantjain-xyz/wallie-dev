@@ -54,28 +54,28 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
 function flashToneClass(kind: FlashMessage["kind"]) {
   switch (kind) {
     case "error":
-      return "border-rose-400/55 bg-rose-500/10 text-rose-950";
+      return "border-danger/20 bg-danger-soft text-danger";
     case "info":
-      return "border-sky-400/45 bg-sky-500/10 text-sky-950";
+      return "border-accent/20 bg-accent-soft text-accent";
     default:
-      return "border-emerald-400/45 bg-emerald-500/10 text-emerald-950";
+      return "border-success/20 bg-success-soft text-success";
   }
 }
 
 function runStatusToneClass(status: WallieRun["status"]) {
   switch (status) {
     case "queued":
-      return "border-slate-400/45 bg-slate-500/10 text-slate-900";
+      return "border-border-strong bg-surface-muted text-muted";
     case "started":
-      return "border-sky-400/45 bg-sky-500/10 text-sky-950";
+      return "border-accent/20 bg-accent-soft text-accent";
     case "running":
-      return "border-blue-400/45 bg-blue-500/10 text-blue-950";
+      return "border-accent/20 bg-accent-soft text-accent";
     case "success":
-      return "border-emerald-400/45 bg-emerald-500/10 text-emerald-950";
+      return "border-success/20 bg-success-soft text-success";
     case "error":
-      return "border-rose-400/55 bg-rose-500/10 text-rose-950";
+      return "border-danger/20 bg-danger-soft text-danger";
     case "canceled":
-      return "border-amber-400/45 bg-amber-500/10 text-amber-950";
+      return "border-warning/20 bg-warning-soft text-warning";
   }
 }
 
@@ -386,12 +386,12 @@ export function IssueWalliePanel({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-foreground">
+            <span className="ui-pill">
               {formatWallieRunMode(mode)}
             </span>
             {repository ? (
               <a
-                className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-semibold text-foreground transition hover:border-accent/40 hover:text-accent"
+                className="ui-pill transition hover:border-accent/25 hover:text-accent"
                 href={repository.htmlUrl}
                 rel="noreferrer"
                 target="_blank"
@@ -399,7 +399,7 @@ export function IssueWalliePanel({
                 {repository.fullName}
               </a>
             ) : (
-              <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-semibold text-muted">
+              <span className="ui-pill text-muted">
                 No repository linked
               </span>
             )}
@@ -413,7 +413,7 @@ export function IssueWalliePanel({
         </div>
 
         <button
-          className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="ui-button-primary"
           disabled={!canEnqueue || pendingActionId !== null}
           onClick={() => void handleRunWithWallie()}
           type="button"
@@ -425,7 +425,7 @@ export function IssueWalliePanel({
       {flashMessage ? (
         <div
           className={cn(
-            "rounded-[1.35rem] border px-4 py-4 text-sm leading-6",
+            "rounded-[12px] border px-4 py-3 text-sm leading-6",
             flashToneClass(flashMessage.kind),
           )}
         >
@@ -434,8 +434,8 @@ export function IssueWalliePanel({
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-[1.4rem] border border-border/70 bg-surface-strong/65 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+        <div className="ui-subpanel p-4">
+          <p className="ui-label">
             Secrets
           </p>
           <p className="mt-2 text-sm text-foreground">
@@ -448,8 +448,8 @@ export function IssueWalliePanel({
           </p>
         </div>
 
-        <div className="rounded-[1.4rem] border border-border/70 bg-surface-strong/65 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+        <div className="ui-subpanel p-4">
+          <p className="ui-label">
             Billing
           </p>
           <p className="mt-2 text-sm text-foreground">
@@ -462,8 +462,8 @@ export function IssueWalliePanel({
           </p>
         </div>
 
-        <div className="rounded-[1.4rem] border border-border/70 bg-surface-strong/65 p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+        <div className="ui-subpanel p-4">
+          <p className="ui-label">
             Cycle
           </p>
           <p className="mt-2 text-sm text-foreground">
@@ -483,7 +483,7 @@ export function IssueWalliePanel({
       </div>
 
       {blockingReasons.length > 0 ? (
-        <div className="rounded-[1.5rem] border border-amber-400/45 bg-amber-500/10 p-5 text-sm leading-7 text-amber-950">
+        <div className="rounded-[12px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
           <p className="font-semibold">Wallie cannot start a new run yet.</p>
           <ul className="mt-3 space-y-2">
             {blockingReasons.map((reason) => (
@@ -503,7 +503,7 @@ export function IssueWalliePanel({
 
       <div className="space-y-4">
         {runs.length === 0 ? (
-          <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
+          <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
             No Wallie runs yet. Queue one from this issue to create the first
             persisted timeline entry.
           </div>
@@ -518,7 +518,7 @@ export function IssueWalliePanel({
             return (
               <article
                 key={run.id}
-                className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5"
+                className="ui-subpanel p-5"
               >
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <button
@@ -541,16 +541,16 @@ export function IssueWalliePanel({
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={cn(
-                          "rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em]",
+                          "rounded-full border px-2.5 py-1 text-[11px] font-medium",
                           runStatusToneClass(run.status),
                         )}
                       >
                         {formatRunStatus(run.status)}
                       </span>
-                      <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-foreground">
+                      <span className="ui-pill">
                         {formatWallieRunMode(run.runType)}
                       </span>
-                      <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 font-mono text-[11px] text-muted">
+                      <span className="ui-pill font-mono text-muted">
                         {run.modelProvider}/{run.modelName}
                       </span>
                     </div>
@@ -571,7 +571,7 @@ export function IssueWalliePanel({
 
                   {run.canRetry ? (
                     <button
-                      className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ui-button"
                       disabled={pendingActionId !== null}
                       onClick={() => void handleRetryRun(run.id)}
                       type="button"
@@ -584,7 +584,7 @@ export function IssueWalliePanel({
                 {isExpanded ? (
                   <div className="mt-4 space-y-3 border-t border-border/70 pt-4">
                     {run.messages.length === 0 ? (
-                      <div className="rounded-[1.2rem] border border-border/70 bg-background/70 px-4 py-4 text-sm text-muted">
+                      <div className="ui-muted-panel px-4 py-4 text-sm text-muted">
                         {run.isActive
                           ? "Wallie has claimed the run. Messages will appear here as the processor advances."
                           : "No persisted messages were recorded for this run."}
@@ -594,13 +594,13 @@ export function IssueWalliePanel({
                         <div
                           key={message.id}
                           className={cn(
-                            "rounded-[1.2rem] border px-4 py-4 text-sm leading-7",
+                            "rounded-[12px] border px-4 py-4 text-sm leading-7",
                             message.kind === "error"
-                              ? "border-rose-400/55 bg-rose-500/10 text-rose-950"
-                              : "border-border/70 bg-background/70 text-foreground",
+                              ? "border-danger/20 bg-danger-soft text-danger"
+                              : "border-border bg-surface-muted text-foreground",
                           )}
                         >
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-[0.16em] text-muted">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
                             <span>{message.kind}</span>
                             <span>
                               {dateTimeFormatter.format(

@@ -1,14 +1,29 @@
 @import "tailwindcss";
 
 :root {
-  --background: #efe6da;
-  --foreground: #14213d;
-  --surface: #fbf6ef;
-  --surface-strong: #fffdf9;
-  --border: #d6c7b5;
-  --muted: #5d6a79;
-  --accent: #b84f2f;
-  --highlight: #f2c482;
+  --background: #f5f6f8;
+  --foreground: #151821;
+  --surface: #ffffff;
+  --surface-strong: #fafbfc;
+  --surface-muted: #f2f4f7;
+  --border: #e4e7ec;
+  --border-strong: #d7dce4;
+  --muted: #667085;
+  --accent: #5e6ad2;
+  --accent-foreground: #ffffff;
+  --accent-soft: rgba(94, 106, 210, 0.12);
+  --danger: #c23b4a;
+  --danger-soft: rgba(194, 59, 74, 0.12);
+  --success: #1f845a;
+  --success-soft: rgba(31, 132, 90, 0.12);
+  --warning: #a15c17;
+  --warning-soft: rgba(161, 92, 23, 0.12);
+  --shadow-ambient:
+    0 1px 1px rgba(16, 24, 40, 0.04),
+    0 8px 24px rgba(16, 24, 40, 0.04);
+  --shadow-elevated:
+    0 1px 1px rgba(16, 24, 40, 0.04),
+    0 16px 40px rgba(16, 24, 40, 0.08);
 }
 
 @theme inline {
@@ -16,11 +31,20 @@
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-strong: var(--surface-strong);
+  --color-surface-muted: var(--surface-muted);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
-  --color-highlight: var(--highlight);
-  --font-sans: var(--font-space-grotesk);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-ibm-plex-mono);
 }
 
@@ -30,16 +54,15 @@
   }
 
   html {
-    background:
-      radial-gradient(circle at top left, rgba(242, 196, 130, 0.45), transparent 30%),
-      radial-gradient(circle at bottom right, rgba(184, 79, 47, 0.18), transparent 34%),
-      linear-gradient(180deg, #f7f1e7 0%, #efe6da 100%);
+    background: var(--background);
   }
 
   body {
     min-height: 100vh;
-    background: transparent;
+    background: var(--background);
     color: var(--foreground);
+    font-feature-settings: "cv05" 1, "cv10" 1;
+    text-rendering: optimizeLegibility;
   }
 
   a {
@@ -47,8 +70,117 @@
     text-decoration: none;
   }
 
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
   ::selection {
-    background: rgba(184, 79, 47, 0.22);
+    background: var(--accent-soft);
     color: var(--foreground);
+  }
+}
+
+@layer components {
+  .ui-panel {
+    @apply rounded-[14px] border border-border bg-surface;
+    box-shadow: var(--shadow-ambient);
+  }
+
+  .ui-panel-elevated {
+    @apply rounded-[14px] border border-border bg-surface;
+    box-shadow: var(--shadow-elevated);
+  }
+
+  .ui-subpanel {
+    @apply rounded-[12px] border border-border bg-surface-strong;
+  }
+
+  .ui-muted-panel {
+    @apply rounded-[12px] border border-border bg-surface-muted;
+  }
+
+  .ui-label {
+    @apply text-[11px] font-medium text-muted;
+  }
+
+  .ui-input,
+  .ui-select,
+  .ui-textarea {
+    @apply border-border w-full rounded-[10px] border bg-surface px-3 py-2.5 text-sm text-foreground outline-none transition;
+    box-shadow: 0 1px 1px rgba(16, 24, 40, 0.02);
+  }
+
+  .ui-textarea {
+    @apply px-3 py-3;
+  }
+
+  .ui-input::placeholder,
+  .ui-textarea::placeholder {
+    color: var(--muted);
+  }
+
+  .ui-input:focus,
+  .ui-select:focus,
+  .ui-textarea:focus {
+    border-color: color-mix(in srgb, var(--accent) 32%, white);
+    box-shadow: 0 0 0 4px rgba(94, 106, 210, 0.08);
+  }
+
+  .ui-button,
+  .ui-button-primary,
+  .ui-button-danger {
+    @apply inline-flex items-center justify-center rounded-[10px] border px-3 py-2 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60;
+    box-shadow: 0 1px 1px rgba(16, 24, 40, 0.02);
+  }
+
+  .ui-button {
+    @apply border-border bg-surface text-foreground;
+  }
+
+  .ui-button:hover {
+    @apply border-border-strong bg-surface-strong;
+  }
+
+  .ui-button-primary {
+    border-color: var(--foreground);
+    background: var(--foreground);
+    color: var(--accent-foreground);
+  }
+
+  .ui-button-primary:hover {
+    background: color-mix(in srgb, var(--foreground) 90%, white);
+  }
+
+  .ui-button-danger {
+    border-color: color-mix(in srgb, var(--danger) 22%, white);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .ui-button-danger:hover {
+    background: color-mix(in srgb, var(--danger-soft) 88%, white);
+  }
+
+  .ui-pill {
+    @apply inline-flex items-center rounded-full border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-medium text-foreground;
+  }
+
+  .ui-tab {
+    @apply inline-flex items-center rounded-full border border-transparent px-2.5 py-1 text-[12px] font-medium text-muted transition;
+  }
+
+  .ui-tab:hover {
+    @apply bg-surface-muted text-foreground;
+  }
+
+  .ui-tab-active {
+    @apply bg-surface-muted text-foreground;
   }
 }

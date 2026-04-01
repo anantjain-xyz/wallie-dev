@@ -47,8 +47,8 @@ function Section({
   title: string;
 }) {
   return (
-    <section className="rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur">
-      <h2 className="text-lg font-semibold tracking-tight text-foreground">
+    <section className="ui-panel p-5">
+      <h2 className="text-base font-semibold tracking-tight text-foreground">
         {title}
       </h2>
       <div className="mt-4">{children}</div>
@@ -59,11 +59,11 @@ function Section({
 function toneClass(kind: FlashMessage["kind"]) {
   switch (kind) {
     case "error":
-      return "border-rose-400/50 bg-rose-500/10 text-rose-900";
+      return "border-danger/20 bg-danger-soft text-danger";
     case "info":
-      return "border-sky-400/50 bg-sky-500/10 text-sky-950";
+      return "border-accent/20 bg-accent-soft text-accent";
     default:
-      return "border-emerald-400/45 bg-emerald-500/10 text-emerald-950";
+      return "border-success/20 bg-success-soft text-success";
   }
 }
 
@@ -79,7 +79,7 @@ function ConfigState({
   }
 
   return (
-    <div className="rounded-[1.3rem] border border-amber-400/45 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-950">
+    <div className="rounded-[12px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
       <p className="font-semibold">{title}</p>
       <p className="mt-1">Missing env vars: {missingKeys.join(", ")}</p>
     </div>
@@ -90,7 +90,7 @@ function AvatarFallback({ name }: { name: string }) {
   const initial = name.trim().charAt(0).toUpperCase() || "W";
 
   return (
-    <div className="flex h-20 w-20 items-center justify-center rounded-[1.75rem] border border-border/70 bg-surface-strong/70 text-2xl font-semibold text-foreground">
+    <div className="ui-subpanel flex h-20 w-20 items-center justify-center text-2xl font-semibold text-foreground">
       {initial}
     </div>
   );
@@ -457,7 +457,7 @@ export function SettingsPageClient({
     <div className="grid gap-6">
       {flashMessage ? (
         <div
-          className={`rounded-[1.4rem] border px-5 py-4 text-sm ${toneClass(flashMessage.kind)}`}
+          className={`rounded-[12px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
         >
           {flashMessage.text}
         </div>
@@ -491,7 +491,7 @@ export function SettingsPageClient({
               </div>
             </div>
 
-            <div className="grid gap-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4 text-sm text-foreground">
+            <div className="ui-subpanel grid gap-3 p-4 text-sm text-foreground">
               <p>
                 Billing cycle started{" "}
                 <span className="font-semibold">
@@ -515,7 +515,7 @@ export function SettingsPageClient({
             </div>
 
             {isManager ? (
-              <label className="flex w-full cursor-pointer items-center justify-between rounded-[1.5rem] border border-border/80 bg-background/70 px-4 py-4 text-sm font-semibold text-foreground transition hover:border-accent/45">
+              <label className="ui-subpanel flex w-full cursor-pointer items-center justify-between px-4 py-4 text-sm font-semibold text-foreground transition hover:border-accent/45">
                 <span>
                   {isUploadingAvatar ? "Uploading avatar..." : "Upload workspace avatar"}
                 </span>
@@ -548,12 +548,12 @@ export function SettingsPageClient({
               title="Stripe webhook sync disabled"
             />
 
-            <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-foreground">
+            <div className="ui-subpanel p-5 text-sm leading-7 text-foreground">
               Customer portal is the Gate E billing surface. Subscription changes sync back into workspace tier and billing-cycle state through Stripe webhooks.
             </div>
 
             <button
-              className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="ui-button-primary"
               disabled={!isManager || !hasStripePortalConfig || isOpeningBillingPortal}
               onClick={() => void handleOpenBillingPortal()}
               type="button"
@@ -579,7 +579,7 @@ export function SettingsPageClient({
             />
 
             {githubInstallation ? (
-              <div className="space-y-4 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5">
+              <div className="ui-subpanel space-y-4 p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-foreground">
@@ -599,7 +599,7 @@ export function SettingsPageClient({
 
                   <div className="flex flex-wrap gap-3">
                     <button
-                      className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ui-button"
                       disabled={!isManager || isRefreshingRepositories}
                       onClick={() => void handleRefreshRepositories()}
                       type="button"
@@ -607,7 +607,7 @@ export function SettingsPageClient({
                       {isRefreshingRepositories ? "Refreshing..." : "Refresh repositories"}
                     </button>
                     <Link
-                      className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                      className="ui-button"
                       href={githubInstallation.installationUrl}
                       rel="noreferrer"
                       target="_blank"
@@ -619,13 +619,13 @@ export function SettingsPageClient({
 
                 <div className="space-y-3">
                   {repositories.length === 0 ? (
-                    <div className="rounded-[1.4rem] border border-border/70 bg-background/70 p-4 text-sm leading-6 text-muted">
+                    <div className="ui-muted-panel p-4 text-sm leading-6 text-muted">
                       No repositories are synced yet.
                     </div>
                   ) : (
                     repositories.map((repository) => (
                       <div
-                        className="rounded-[1.4rem] border border-border/70 bg-background/70 p-4"
+                        className="ui-muted-panel p-4"
                         key={repository.id}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -657,12 +657,12 @@ export function SettingsPageClient({
                 </div>
               </div>
             ) : (
-              <div className="space-y-4 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5">
+              <div className="ui-subpanel space-y-4 p-5">
                 <p className="text-sm leading-7 text-foreground">
                   Install the workspace GitHub App to sync repositories and let issue PR metadata flow back into Wallie.
                 </p>
                 <button
-                  className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button-primary"
                   disabled={!isManager || !hasGitHubAppConfig || isLaunchingGitHubInstall}
                   onClick={() => void handleGitHubInstall()}
                   type="button"
@@ -682,22 +682,22 @@ export function SettingsPageClient({
 
             {isManager ? (
               <>
-                <div className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4">
+                <div className="ui-subpanel space-y-3 p-4">
                   <input
-                    className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                    className="ui-input"
                     onChange={(event) => setSecretKey(event.target.value)}
                     placeholder="ANTHROPIC_API_KEY"
                     value={secretKey}
                   />
                   <textarea
-                    className="min-h-28 w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                    className="ui-textarea min-h-28"
                     onChange={(event) => setSecretValue(event.target.value)}
                     placeholder="Secret value"
                     value={secretValue}
                   />
                   <div className="flex justify-end">
                     <button
-                      className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ui-button-primary"
                       disabled={isSavingSecret}
                       onClick={() => void handleSaveSecret()}
                       type="button"
@@ -709,17 +709,17 @@ export function SettingsPageClient({
 
                 <div className="space-y-3">
                   {isLoadingSecrets ? (
-                    <div className="rounded-[1.4rem] border border-border/70 bg-surface-strong/65 p-4 text-sm text-muted">
+                    <div className="ui-subpanel p-4 text-sm text-muted">
                       Loading secret previews...
                     </div>
                   ) : secrets.length === 0 ? (
-                    <div className="rounded-[1.4rem] border border-border/70 bg-surface-strong/65 p-4 text-sm text-muted">
+                    <div className="ui-subpanel p-4 text-sm text-muted">
                       No workspace secrets yet.
                     </div>
                   ) : (
                     secrets.map((secret) => (
                       <div
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-border/70 bg-surface-strong/65 p-4"
+                        className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                         key={secret.id}
                       >
                         <div>
@@ -731,7 +731,7 @@ export function SettingsPageClient({
                           </p>
                         </div>
                         <button
-                          className="rounded-full border border-rose-400/55 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-900 transition hover:bg-rose-500/14"
+                          className="ui-button-danger"
                           onClick={() => void handleDeleteSecret(secret.key)}
                           type="button"
                         >
@@ -743,7 +743,7 @@ export function SettingsPageClient({
                 </div>
               </>
             ) : (
-              <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
+              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
                 Workspace admins can manage encrypted secret previews from this surface.
               </div>
             )}

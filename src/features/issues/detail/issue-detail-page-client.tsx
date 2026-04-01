@@ -86,11 +86,11 @@ function Section({
   return (
     <section
       className={cn(
-        "rounded-[2rem] border border-border/90 bg-surface/95 p-6 shadow-[0_24px_80px_rgba(20,33,61,0.08)] backdrop-blur",
+        "ui-panel p-5",
         className,
       )}
     >
-      <h2 className="text-lg font-semibold tracking-tight text-foreground">
+      <h2 className="text-base font-semibold tracking-tight text-foreground">
         {title}
       </h2>
       <div className="mt-4">{children}</div>
@@ -100,8 +100,8 @@ function Section({
 
 function messageToneClass(kind: "error" | "success") {
   return kind === "error"
-    ? "border-rose-400/50 bg-rose-500/10 text-rose-900"
-    : "border-emerald-400/45 bg-emerald-500/10 text-emerald-950";
+    ? "border-danger/20 bg-danger-soft text-danger"
+    : "border-success/20 bg-success-soft text-success";
 }
 
 function buildMemberIndex(
@@ -637,7 +637,7 @@ export function IssueDetailPageClient({
               <IssueStatusBadge status={issue.status} />
               <IssuePriorityBadge priority={issue.priority} />
               <IssueEstimateBadge estimatePoints={issue.estimatePoints} />
-              <span className="rounded-full border border-border/80 bg-background/70 px-3 py-1 font-mono text-xs text-foreground">
+              <span className="ui-pill font-mono">
                 /w/{initialData.workspace.slug}/issues/{issue.number}
               </span>
             </div>
@@ -653,21 +653,21 @@ export function IssueDetailPageClient({
                 }
               }}
             >
-              <label className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+              <label className="ui-label">
                 Title
               </label>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <input
                   value={titleDraft}
                   onChange={(event) => setTitleDraft(event.target.value)}
-                  className="min-w-0 flex-1 rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-3 text-2xl font-semibold tracking-tight text-foreground outline-none transition focus:border-accent/45"
+                  className="ui-input min-w-0 flex-1 px-4 py-3 text-2xl font-semibold tracking-tight"
                 />
                 <button
                   type="submit"
                   disabled={
                     isSaving || !titleDraft.trim() || titleDraft.trim() === issue.title
                   }
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   Save title
                 </button>
@@ -689,7 +689,7 @@ export function IssueDetailPageClient({
                 type="button"
                 onClick={() => void copyAsMarkdown()}
                 disabled={isCopying}
-                className="rounded-full border border-accent/40 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button-primary"
               >
                 {isCopying ? "Copying..." : "Copy as markdown"}
               </button>
@@ -698,7 +698,7 @@ export function IssueDetailPageClient({
                   initialData.workspace.slug,
                   issue.number,
                 )}
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                className="ui-button"
               >
                 Refresh route
               </Link>
@@ -709,7 +709,7 @@ export function IssueDetailPageClient({
         {errorMessage ? (
           <div
             className={cn(
-              "rounded-[1.4rem] border px-5 py-4 text-sm",
+              "rounded-[12px] border px-4 py-3 text-sm",
               messageToneClass("error"),
             )}
           >
@@ -720,7 +720,7 @@ export function IssueDetailPageClient({
         {successMessage ? (
           <div
             className={cn(
-              "rounded-[1.4rem] border px-5 py-4 text-sm",
+              "rounded-[12px] border px-4 py-3 text-sm",
               messageToneClass("success"),
             )}
           >
@@ -743,14 +743,14 @@ export function IssueDetailPageClient({
             <textarea
               value={descriptionDraft}
               onChange={(event) => setDescriptionDraft(event.target.value)}
-              className="min-h-56 w-full rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-4 text-sm leading-7 text-foreground outline-none transition focus:border-accent/45"
+              className="ui-textarea min-h-56 leading-7"
               placeholder="Issue description in markdown"
             />
             <div className="flex justify-end">
               <button
                 type="submit"
                 disabled={isSaving || descriptionDraft === issue.descriptionMd}
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Save description
               </button>
@@ -773,14 +773,14 @@ export function IssueDetailPageClient({
             <textarea
               value={planDraft}
               onChange={(event) => setPlanDraft(event.target.value)}
-              className="min-h-44 w-full rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-4 text-sm leading-7 text-foreground outline-none transition focus:border-accent/45"
+              className="ui-textarea min-h-44 leading-7"
               placeholder="Execution plan in markdown"
             />
             <div className="flex justify-end">
               <button
                 type="submit"
                 disabled={isSaving || planDraft === (issue.planMd ?? "")}
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Save plan
               </button>
@@ -803,14 +803,14 @@ export function IssueDetailPageClient({
             <textarea
               value={designDraft}
               onChange={(event) => setDesignDraft(event.target.value)}
-              className="min-h-44 w-full rounded-[1.2rem] border border-border/80 bg-surface-strong/80 px-4 py-4 text-sm leading-7 text-foreground outline-none transition focus:border-accent/45"
+              className="ui-textarea min-h-44 leading-7"
               placeholder="Design notes in markdown"
             />
             <div className="flex justify-end">
               <button
                 type="submit"
                 disabled={isSaving || designDraft === (issue.designMd ?? "")}
-                className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button"
               >
                 Save design
               </button>
@@ -820,14 +820,14 @@ export function IssueDetailPageClient({
 
         <Section title="Comments">
           <div className="space-y-5">
-            <div className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4">
-              <label className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+            <div className="ui-subpanel space-y-3 p-4">
+              <label className="ui-label">
                 New comment
               </label>
               <textarea
                 value={newCommentBody}
                 onChange={(event) => setNewCommentBody(event.target.value)}
-                className="min-h-32 w-full rounded-[1.2rem] border border-border/80 bg-background/65 px-4 py-4 text-sm leading-7 text-foreground outline-none transition focus:border-accent/45"
+                className="ui-textarea min-h-32 leading-7"
                 placeholder="Leave a comment in markdown"
               />
               <div className="flex justify-end">
@@ -835,7 +835,7 @@ export function IssueDetailPageClient({
                   type="button"
                   disabled={isSaving}
                   onClick={() => void createComment()}
-                  className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+                className="ui-button-primary"
                 >
                   Add comment
                 </button>
@@ -844,7 +844,7 @@ export function IssueDetailPageClient({
 
             <div className="space-y-4">
               {comments.length === 0 ? (
-                <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
+                <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
                   No comments yet.
                 </div>
               ) : (
@@ -855,7 +855,7 @@ export function IssueDetailPageClient({
                   return (
                     <article
                       key={comment.id}
-                      className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5"
+                      className="ui-subpanel p-5"
                     >
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -864,7 +864,7 @@ export function IssueDetailPageClient({
                               comment.author?.username ??
                               "Unknown member"}
                           </p>
-                          <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted">
+                          <p className="mt-1 text-[11px] text-muted">
                             {dateTimeFormatter.format(
                               new Date(comment.createdAt),
                             )}
@@ -882,14 +882,14 @@ export function IssueDetailPageClient({
                                 setEditingCommentId(comment.id);
                                 setEditingCommentBody(comment.bodyMd);
                               }}
-                              className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                              className="ui-button"
                             >
                               Edit
                             </button>
                             <button
                               type="button"
                               onClick={() => void deleteComment(comment.id)}
-                              className="rounded-full border border-rose-400/55 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-900 transition hover:bg-rose-500/14"
+                              className="ui-button-danger"
                             >
                               Delete
                             </button>
@@ -904,7 +904,7 @@ export function IssueDetailPageClient({
                             onChange={(event) =>
                               setEditingCommentBody(event.target.value)
                             }
-                            className="min-h-32 w-full rounded-[1.2rem] border border-border/80 bg-background/65 px-4 py-4 text-sm leading-7 text-foreground outline-none transition focus:border-accent/45"
+                            className="ui-textarea min-h-32 leading-7"
                           />
                           <div className="flex flex-wrap justify-end gap-3">
                             <button
@@ -913,14 +913,14 @@ export function IssueDetailPageClient({
                                 setEditingCommentId(null);
                                 setEditingCommentBody("");
                               }}
-                              className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                              className="ui-button"
                             >
                               Cancel
                             </button>
                             <button
                               type="button"
                               onClick={() => void saveComment(comment.id)}
-                              className="rounded-full border border-accent/45 bg-accent px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-background transition hover:bg-accent/90"
+                              className="ui-button-primary"
                             >
                               Save comment
                             </button>
@@ -963,7 +963,7 @@ export function IssueDetailPageClient({
                     status: event.target.value as IssueStatus,
                   })
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 {ISSUE_STATUS_VALUES.map((status) => (
                   <option key={status} value={status}>
@@ -982,7 +982,7 @@ export function IssueDetailPageClient({
                     priority: event.target.value as IssueDetail["priority"],
                   })
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 {ISSUE_PRIORITY_VALUES.map((priority) => (
                   <option key={priority} value={priority}>
@@ -1004,7 +1004,7 @@ export function IssueDetailPageClient({
                         : Number(event.target.value),
                   })
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 {ISSUE_ESTIMATE_VALUES.map((estimate) => (
                   <option
@@ -1026,7 +1026,7 @@ export function IssueDetailPageClient({
                     assignee_member_id: event.target.value || null,
                   })
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 <option value="">Unassigned</option>
                 {initialData.members.map((member) => (
@@ -1046,7 +1046,7 @@ export function IssueDetailPageClient({
                     github_repository_id: event.target.value || null,
                   })
                 }
-                className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-3 py-3 text-sm font-normal text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 <option value="">No linked repository</option>
                 {initialData.github.repositories.map((repository) => (
@@ -1090,10 +1090,10 @@ export function IssueDetailPageClient({
                 {relationshipGroups.parentIssues.map((parentEntry) => (
                   <div
                     key={parentEntry.linkId}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+                    className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                   >
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+                      <p className="ui-label">
                         Parent
                       </p>
                       <Link
@@ -1109,7 +1109,7 @@ export function IssueDetailPageClient({
                     <button
                       type="button"
                       onClick={() => void removeLink(parentEntry.linkId)}
-                      className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                      className="ui-button"
                     >
                       Remove
                     </button>
@@ -1140,7 +1140,7 @@ export function IssueDetailPageClient({
                   <input
                     value={parentIssueNumber}
                     onChange={(event) => setParentIssueNumber(event.target.value)}
-                    className="w-full rounded-[1rem] border border-border/80 bg-surface-strong/80 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                    className="ui-input"
                     placeholder="42"
                   />
                 </label>
@@ -1148,7 +1148,7 @@ export function IssueDetailPageClient({
                   <button
                     type="submit"
                     disabled={isSaving}
-                    className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                    className="ui-button"
                   >
                     Save parent
                   </button>
@@ -1160,20 +1160,20 @@ export function IssueDetailPageClient({
 
         <Section title="Sub-issues">
           <div className="space-y-5">
-            <div className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+            <div className="ui-subpanel space-y-3 p-4">
+              <p className="ui-label">
                 Create sub-issue
               </p>
               <input
                 value={newSubIssueTitle}
                 onChange={(event) => setNewSubIssueTitle(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-input"
                 placeholder="Add a child issue title"
               />
               <select
                 value={newSubIssueEstimate}
                 onChange={(event) => setNewSubIssueEstimate(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-select"
               >
                 <option value="">No estimate</option>
                 {ISSUE_ESTIMATE_VALUES.filter(
@@ -1189,7 +1189,7 @@ export function IssueDetailPageClient({
                   type="button"
                   disabled={isSaving}
                   onClick={() => void createSubIssue()}
-                  className="rounded-full border border-accent/45 bg-accent px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-background transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button-primary"
                 >
                   Create sub-issue
                 </button>
@@ -1197,7 +1197,7 @@ export function IssueDetailPageClient({
             </div>
 
             <form
-              className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+              className="ui-subpanel space-y-3 p-4"
               onSubmit={(event) => {
                 event.preventDefault();
                 void addRelationship({
@@ -1209,20 +1209,20 @@ export function IssueDetailPageClient({
                 setSubIssueNumber("");
               }}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+              <p className="ui-label">
                 Link existing sub-issue
               </p>
               <input
                 value={subIssueNumber}
                 onChange={(event) => setSubIssueNumber(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-input"
                 placeholder="Issue number"
               />
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   Link sub-issue
                 </button>
@@ -1231,14 +1231,14 @@ export function IssueDetailPageClient({
 
             <div className="space-y-3">
               {relationshipGroups.subIssues.length === 0 ? (
-                <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4 text-sm leading-7 text-muted">
+                <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
                   No sub-issues linked yet.
                 </div>
               ) : (
                 relationshipGroups.subIssues.map((subIssueEntry) => (
                   <div
                     key={subIssueEntry.linkId}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+                    className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                   >
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1258,7 +1258,7 @@ export function IssueDetailPageClient({
                     <button
                       type="button"
                       onClick={() => void removeLink(subIssueEntry.linkId)}
-                      className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                      className="ui-button"
                     >
                       Remove
                     </button>
@@ -1272,7 +1272,7 @@ export function IssueDetailPageClient({
         <Section title="Relationships">
           <div className="space-y-5">
             <form
-              className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+              className="ui-subpanel space-y-3 p-4"
               onSubmit={(event) => {
                 event.preventDefault();
                 void addRelationship({
@@ -1283,20 +1283,20 @@ export function IssueDetailPageClient({
                 setBlockedByNumber("");
               }}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+              <p className="ui-label">
                 Blocked by
               </p>
               <input
                 value={blockedByNumber}
                 onChange={(event) => setBlockedByNumber(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-input"
                 placeholder="Issue number"
               />
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   Add blocked-by
                 </button>
@@ -1304,7 +1304,7 @@ export function IssueDetailPageClient({
             </form>
 
             <form
-              className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+              className="ui-subpanel space-y-3 p-4"
               onSubmit={(event) => {
                 event.preventDefault();
                 void addRelationship({
@@ -1316,20 +1316,20 @@ export function IssueDetailPageClient({
                 setBlocksNumber("");
               }}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+              <p className="ui-label">
                 Blocks
               </p>
               <input
                 value={blocksNumber}
                 onChange={(event) => setBlocksNumber(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-input"
                 placeholder="Issue number"
               />
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   Add blocks
                 </button>
@@ -1337,7 +1337,7 @@ export function IssueDetailPageClient({
             </form>
 
             <form
-              className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+              className="ui-subpanel space-y-3 p-4"
               onSubmit={(event) => {
                 event.preventDefault();
                 void addRelationship({
@@ -1349,20 +1349,20 @@ export function IssueDetailPageClient({
                 setDuplicateNumber("");
               }}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+              <p className="ui-label">
                 Duplicate of
               </p>
               <input
                 value={duplicateNumber}
                 onChange={(event) => setDuplicateNumber(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-input"
                 placeholder="Issue number"
               />
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   Add duplicate
                 </button>
@@ -1370,7 +1370,7 @@ export function IssueDetailPageClient({
             </form>
 
             <form
-              className="space-y-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+              className="ui-subpanel space-y-3 p-4"
               onSubmit={(event) => {
                 event.preventDefault();
                 void addRelationship({
@@ -1382,20 +1382,20 @@ export function IssueDetailPageClient({
                 setRelatedNumber("");
               }}
             >
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+              <p className="ui-label">
                 Related
               </p>
               <input
                 value={relatedNumber}
                 onChange={(event) => setRelatedNumber(event.target.value)}
-                className="w-full rounded-[1rem] border border-border/80 bg-background/70 px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent/45"
+                className="ui-input"
                 placeholder="Issue number"
               />
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
-                  className="rounded-full border border-border/80 bg-background/80 px-5 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-foreground transition hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ui-button"
                 >
                   Add related
                 </button>
@@ -1422,18 +1422,18 @@ export function IssueDetailPageClient({
                 },
               ].map(({ entries, heading }) => (
                 <div key={heading} className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+                  <p className="ui-label">
                     {heading}
                   </p>
                   {entries.length === 0 ? (
-                    <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4 text-sm leading-7 text-muted">
+                    <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
                       No {heading.toLocaleLowerCase()} issues.
                     </div>
                   ) : (
                     entries.map((entry) => (
                       <div
                         key={entry.linkId}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-4"
+                        className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                       >
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
@@ -1453,7 +1453,7 @@ export function IssueDetailPageClient({
                         <button
                           type="button"
                           onClick={() => void removeLink(entry.linkId)}
-                          className="rounded-full border border-border/80 bg-background/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-foreground transition hover:border-accent/40 hover:text-accent"
+                          className="ui-button"
                         >
                           Remove
                         </button>
@@ -1469,28 +1469,28 @@ export function IssueDetailPageClient({
         <Section title="GitHub PRs">
           <div className="space-y-4">
             {pullRequests.length === 0 ? (
-              <div className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5 text-sm leading-7 text-muted">
+              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
                 No PR metadata is linked to this issue yet. Once a tracked branch opens a PR, the webhook sync will surface it here.
               </div>
             ) : (
               pullRequests.map((pullRequest) => (
                 <article
                   key={pullRequest.id}
-                  className="rounded-[1.5rem] border border-border/70 bg-surface-strong/65 p-5"
+                  className="ui-subpanel p-5"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 font-mono text-xs text-foreground">
+                        <span className="ui-pill font-mono">
                           {pullRequest.branchName}
                         </span>
                         {pullRequest.pullRequestState ? (
-                          <span className="rounded-full border border-border/80 bg-background/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-foreground">
+                          <span className="ui-pill">
                             {pullRequest.pullRequestState}
                           </span>
                         ) : null}
                         {pullRequest.isDraft ? (
-                          <span className="rounded-full border border-amber-400/45 bg-amber-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-amber-950">
+                          <span className="ui-pill border-warning/20 bg-warning-soft text-warning">
                             Draft
                           </span>
                         ) : null}
