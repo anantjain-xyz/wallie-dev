@@ -16,11 +16,11 @@ export function AppShell({ children, viewerEmail, workspace }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="flex min-h-screen w-full flex-col gap-3 p-3 xl:flex-row">
+      <div className="flex min-h-screen w-full">
         <ShellSidebar navItems={navItems} workspace={workspace} />
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <div className="flex min-w-0 flex-1 flex-col bg-surface">
           <ShellHeader viewerEmail={viewerEmail} workspace={workspace} />
-          <main className="flex-1">{children}</main>
+          <main className="flex-1 overflow-auto">{children}</main>
         </div>
       </div>
     </div>

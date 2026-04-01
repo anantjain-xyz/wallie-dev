@@ -82,6 +82,7 @@
 - Gate F issue detail realtime expands to the current issue’s `agent_runs` plus per-run `agent_run_messages` subscriptions, keeping run/message updates narrow instead of subscribing to workspace-wide tables.
 - Local `.env.local` now targets the Supabase CLI stack (`http://127.0.0.1:54321` plus the local publishable/secret keys from `supabase status -o env`); Vercel environments should keep the hosted Supabase project values, with `NEXT_PUBLIC_APP_URL` set per environment to the deployed origin.
 - The workspace-facing UI now uses a Linear-inspired visual contract: Inter-based typography, neutral layered surfaces, compact radii, low-contrast borders, dense controls, and minimal marketing copy in authenticated routes. This is a presentation-only change; route, schema, and API contracts remain unchanged.
+- The April 1, 2026 issue-list screenshot pass matches a specific Linear reference more closely in the workspace shell and `/w/[workspaceSlug]/issues` layout, while still rendering Wallie’s existing issue fields instead of introducing Linear-only label/cycle schema.
 
 ## Planned Gate E Routes And Interfaces
 
@@ -127,6 +128,7 @@
 - Gate E will add narrow issue-detail realtime only for the current `issues` row and current issue `github_issue_branches` rows so webhook-driven PR/status updates can land live without subscribing to whole tables.
 - Gate E does not implement GitHub installation removal or manual repository language overrides yet; settings exposes install, manage-on-GitHub, and refresh flows only.
 - Gate E limits uploads to workspace avatars and does not add editor-image flows yet, even though the broader handoff mentions future editor-uploaded images.
+- The Linear screenshot restyle intentionally keeps the existing issue list data contract; row pills reuse current Wallie fields such as priority, status, estimate, and assignee instead of adding a new team/label/cycle model just for UI parity.
 
 ## Notes
 

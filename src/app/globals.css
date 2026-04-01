@@ -1,14 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f6f8;
-  --foreground: #151821;
+  --background: #f7f6f3;
+  --foreground: #2f2d28;
   --surface: #ffffff;
-  --surface-strong: #fafbfc;
-  --surface-muted: #f2f4f7;
-  --border: #e4e7ec;
-  --border-strong: #d7dce4;
-  --muted: #667085;
+  --surface-strong: #faf8f5;
+  --surface-muted: #f2efe9;
+  --border: #ebe7df;
+  --border-strong: #e1dbd1;
+  --muted: #8a857b;
   --accent: #5e6ad2;
   --accent-foreground: #ffffff;
   --accent-soft: rgba(94, 106, 210, 0.12);
@@ -18,12 +18,10 @@
   --success-soft: rgba(31, 132, 90, 0.12);
   --warning: #a15c17;
   --warning-soft: rgba(161, 92, 23, 0.12);
-  --shadow-ambient:
-    0 1px 1px rgba(16, 24, 40, 0.04),
-    0 8px 24px rgba(16, 24, 40, 0.04);
+  --shadow-ambient: 0 1px 2px rgba(31, 28, 22, 0.04);
   --shadow-elevated:
-    0 1px 1px rgba(16, 24, 40, 0.04),
-    0 16px 40px rgba(16, 24, 40, 0.08);
+    0 1px 2px rgba(31, 28, 22, 0.04),
+    0 16px 36px rgba(31, 28, 22, 0.08);
 }
 
 @theme inline {
@@ -182,5 +180,49 @@
 
   .ui-tab-active {
     @apply bg-surface-muted text-foreground;
+  }
+
+  .linear-icon-button {
+    @apply inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface text-muted transition;
+  }
+
+  .linear-icon-button:hover {
+    @apply bg-surface-strong text-foreground;
+  }
+
+  .linear-filter-chip {
+    @apply inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-[13px] font-medium text-muted transition;
+  }
+
+  .linear-filter-chip:hover {
+    @apply bg-surface-strong text-foreground;
+  }
+
+  .linear-filter-chip-active {
+    border-color: var(--border-strong);
+    background: var(--surface-muted);
+    color: var(--foreground);
+  }
+
+  .linear-sidebar-heading {
+    @apply px-3 text-[12px] font-medium text-muted;
+  }
+
+  .linear-sidebar-item {
+    @apply flex items-center gap-2.5 rounded-[8px] px-3 py-[6px] text-[13px] font-medium text-[#666259] transition;
+  }
+
+  .linear-sidebar-item:hover {
+    background: rgba(47, 45, 40, 0.04);
+    color: var(--foreground);
+  }
+
+  .linear-sidebar-item-active {
+    background: #e9e5de;
+    color: var(--foreground);
+  }
+
+  .linear-list-pill {
+    @apply inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-[#fcfbf8] px-3 text-[12px] font-medium text-[#7c786d];
   }
 }
