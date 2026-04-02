@@ -13,6 +13,7 @@
 - Gate E verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 30, 2026 after GitHub install/sync routes, issue repo linkage + PR display, Stripe portal/webhooks, encrypted secrets CRUD, and workspace avatar uploads landed
 - Gate F verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 31, 2026 after Wallie enqueue/retry routes, the resumable processor entrypoint, persisted run messages, and the issue-detail Wallie timeline landed
 - UI verification: `pnpm lint`, `pnpm typecheck`, and `pnpm build` all passing on April 1, 2026 after the shared visual system, workspace shell, auth entry, issue list/detail, settings, and Wallie panel shifted to a denser Linear-inspired interface language
+- Web guideline verification: `pnpm lint`, `pnpm typecheck`, and `pnpm build` all passing on April 1, 2026 after a page-by-page audit against the Vercel Web Interface Guidelines added skip navigation, page-level headings, focus-visible treatments, labeled form controls, live-region feedback, locale-safe date formatting, and URL-backed issue-list UI state
 
 ## Active Agents
 
@@ -83,6 +84,8 @@
 - Local `.env.local` now targets the Supabase CLI stack (`http://127.0.0.1:54321` plus the local publishable/secret keys from `supabase status -o env`); Vercel environments should keep the hosted Supabase project values, with `NEXT_PUBLIC_APP_URL` set per environment to the deployed origin.
 - The workspace-facing UI now uses a Linear-inspired visual contract: Inter-based typography, neutral layered surfaces, compact radii, low-contrast borders, dense controls, and minimal marketing copy in authenticated routes. This is a presentation-only change; route, schema, and API contracts remain unchanged.
 - The April 1, 2026 issue-list screenshot pass matches a specific Linear reference more closely in the workspace shell and `/w/[workspaceSlug]/issues` layout, while still rendering Wallie’s existing issue fields instead of introducing Linear-only label/cycle schema.
+- Routed pages now follow a shared accessibility contract: each rendered page surface exposes a page-level heading, the app exposes a root skip link to `#main-content`, and interactive controls use focus-visible treatments rather than focus-only styling.
+- The issue list now deep-links two page-level UI states through query params: `controls=1` opens the filter/search tray and `create=1` opens the create-issue dialog, which also makes the sidebar search/create affordances land on the exact UI state they advertise.
 
 ## Planned Gate E Routes And Interfaces
 

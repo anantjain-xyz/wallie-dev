@@ -79,6 +79,7 @@ export function WorkspaceOnboardingForm() {
 
   return (
     <form
+      aria-busy={isPending}
       onSubmit={handleSubmit}
       className="mt-6 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]"
     >
@@ -87,8 +88,8 @@ export function WorkspaceOnboardingForm() {
           <p className="text-[11px] font-medium text-muted">
             Workspace Identity
           </p>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-            Name the first workspace
+          <h2 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
+            Name the First Workspace
           </h2>
           <p className="text-sm leading-6 text-muted">
             The server owns slug normalization, uniqueness, owner membership, and
@@ -102,10 +103,10 @@ export function WorkspaceOnboardingForm() {
             type="text"
             name="name"
             required
-            autoFocus
+            autoComplete="organization"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Northwind Labs"
+            placeholder="Northwind Labs…"
             className="ui-input mt-2 text-base"
           />
         </label>
@@ -119,15 +120,22 @@ export function WorkspaceOnboardingForm() {
           <input
             type="text"
             name="slug"
+            autoCapitalize="none"
+            autoComplete="off"
+            spellCheck={false}
             value={slug}
             onChange={(event) => setSlug(event.target.value)}
-            placeholder={slugifyWorkspaceName(name || "Northwind Labs")}
+            placeholder={`${slugifyWorkspaceName(name || "Northwind Labs")}…`}
             className="ui-input mt-2 text-base"
           />
         </label>
 
         {errorMessage ? (
-          <div className="mt-5 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger">
+          <div
+            aria-live="polite"
+            role="status"
+            className="mt-5 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+          >
             {errorMessage}
           </div>
         ) : null}
@@ -137,7 +145,7 @@ export function WorkspaceOnboardingForm() {
           disabled={isPending}
           className="ui-button-primary mt-5 disabled:cursor-wait"
         >
-          {isPending ? "Creating workspace..." : "Create workspace"}
+          {isPending ? "Creating Workspace…" : "Create Workspace"}
         </button>
       </section>
 
@@ -145,8 +153,8 @@ export function WorkspaceOnboardingForm() {
         <p className="text-[11px] font-medium text-muted">
           Result
         </p>
-        <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-          Entry route preview
+        <h2 className="mt-3 text-2xl font-semibold tracking-tight text-balance text-foreground">
+          Entry Route Preview
         </h2>
         <p className="mt-3 text-sm leading-6 text-muted">
           If the workspace is available, the first landing route will be:

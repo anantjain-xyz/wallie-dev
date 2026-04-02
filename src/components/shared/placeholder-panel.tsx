@@ -12,6 +12,7 @@ type PlaceholderPanelProps = {
   items?: string[];
   summary: string;
   title: string;
+  titleAs?: "h1" | "h2" | "h3";
   tone?: PanelTone;
 };
 
@@ -22,8 +23,11 @@ export function PlaceholderPanel({
   items = [],
   summary,
   title,
+  titleAs = "h2",
   tone = "planned",
 }: PlaceholderPanelProps) {
+  const TitleTag = titleAs;
+
   return (
     <section
       className={cn(
@@ -31,20 +35,20 @@ export function PlaceholderPanel({
         className,
       )}
     >
-      <div className="flex items-start justify-between gap-4">
+      <header className="flex items-start justify-between gap-4">
         <div className="space-y-3">
           <p className="text-[11px] font-medium text-muted">
             {eyebrow}
           </p>
-          <h2 className="max-w-2xl text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+          <TitleTag className="max-w-2xl text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
             {title}
-          </h2>
+          </TitleTag>
           <p className="max-w-2xl text-sm leading-6 text-muted sm:text-base">
             {summary}
           </p>
         </div>
         <StatusChip tone={tone}>{tone}</StatusChip>
-      </div>
+      </header>
 
       {items.length ? (
         <ul className="mt-6 grid gap-3 text-sm leading-6 text-foreground/85">

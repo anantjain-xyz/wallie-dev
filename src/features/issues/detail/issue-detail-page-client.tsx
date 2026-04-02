@@ -44,7 +44,7 @@ type IssueDetailPageClientProps = {
   initialData: IssueDetailPageData;
 };
 
-const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
@@ -77,12 +77,16 @@ function mapPullRequestRow(
 function Section({
   children,
   className,
+  headingAs = "h2",
   title,
 }: {
   children: React.ReactNode;
   className?: string;
+  headingAs?: "h1" | "h2" | "h3";
   title: string;
 }) {
+  const HeadingTag = headingAs;
+
   return (
     <section
       className={cn(
@@ -90,9 +94,9 @@ function Section({
         className,
       )}
     >
-      <h2 className="text-base font-semibold tracking-tight text-foreground">
+      <HeadingTag className="text-base font-semibold tracking-tight text-balance text-foreground">
         {title}
-      </h2>
+      </HeadingTag>
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -103,6 +107,9 @@ function messageToneClass(kind: "error" | "success") {
     ? "border-danger/20 bg-danger-soft text-danger"
     : "border-success/20 bg-success-soft text-success";
 }
+
+const interactiveLinkClass =
+  "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
 function buildMemberIndex(
   members: IssueMember[],
@@ -184,6 +191,21 @@ export function IssueDetailPageClient({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
+  const hasUnsavedChanges =
+    titleDraft.trim() !== issue.title ||
+    descriptionDraft !== issue.descriptionMd ||
+    planDraft !== (issue.planMd ?? "") ||
+    designDraft !== (issue.designMd ?? "") ||
+    newCommentBody.trim().length > 0 ||
+    editingCommentId !== null ||
+    parentIssueNumber.trim().length > 0 ||
+    subIssueNumber.trim().length > 0 ||
+    newSubIssueTitle.trim().length > 0 ||
+    newSubIssueEstimate !== "" ||
+    blockedByNumber.trim().length > 0 ||
+    blocksNumber.trim().length > 0 ||
+    duplicateNumber.trim().length > 0 ||
+    relatedNumber.trim().length > 0;
 
   useEffect(() => {
     setIssue(initialData.issue);
@@ -205,6 +227,22 @@ export function IssueDetailPageClient({
     setPlanDraft(issue.planMd ?? "");
     setDesignDraft(issue.designMd ?? "");
   }, [issue]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [hasUnsavedChanges]);
 
   const currentMember = initialData.currentMember;
   const canManage = isWorkspaceManager(currentMember);
@@ -618,7 +656,7 @@ export function IssueDetailPageClient({
       await navigator.clipboard.writeText(
         buildIssueMarkdown(initialData.workspace.slug, issue, comments),
       );
-      setSuccessMessage("Issue copied as markdown.");
+      setSuccessMessage("Issue copied as Markdown.");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Clipboard copy failed.",
@@ -631,7 +669,7 @@ export function IssueDetailPageClient({
   return (
     <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
       <div className="grid gap-6">
-        <Section title={`Issue #${issue.number}`}>
+        <Section title={`Issue #${issue.number}`} headingAs="h1">
           <div className="flex flex-col gap-5">
             <div className="flex flex-wrap items-center gap-3">
               <IssueStatusBadge status={issue.status} />
@@ -653,11 +691,14 @@ export function IssueDetailPageClient({
                 }
               }}
             >
-              <label className="ui-label">
+              <label className="ui-label" htmlFor="issue-title">
                 Title
               </label>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <input
+                  id="issue-title"
+                  autoComplete="off"
+                  name="title"
                   value={titleDraft}
                   onChange={(event) => setTitleDraft(event.target.value)}
                   className="ui-input min-w-0 flex-1 px-4 py-3 text-2xl font-semibold tracking-tight"
@@ -669,12 +710,12 @@ export function IssueDetailPageClient({
                   }
                   className="ui-button"
                 >
-                  Save title
+                  Save Title
                 </button>
               </div>
             </form>
 
-            <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+            <div className="flex flex-wrap items-center gap-3 text-sm tabular-nums text-muted">
               <span>
                 Created {dateTimeFormatter.format(new Date(issue.createdAt))}
               </span>
@@ -691,7 +732,7 @@ export function IssueDetailPageClient({
                 disabled={isCopying}
                 className="ui-button-primary"
               >
-                {isCopying ? "Copying..." : "Copy as markdown"}
+                {isCopying ? "Copying…" : "Copy as Markdown"}
               </button>
               <Link
                 href={workspaceIssueDetailPath(
@@ -700,7 +741,7 @@ export function IssueDetailPageClient({
                 )}
                 className="ui-button"
               >
-                Refresh route
+                Refresh Route
               </Link>
             </div>
           </div>
@@ -708,10 +749,12 @@ export function IssueDetailPageClient({
 
         {errorMessage ? (
           <div
+            aria-live="polite"
             className={cn(
               "rounded-[12px] border px-4 py-3 text-sm",
               messageToneClass("error"),
             )}
+            role="status"
           >
             {errorMessage}
           </div>
@@ -719,10 +762,12 @@ export function IssueDetailPageClient({
 
         {successMessage ? (
           <div
+            aria-live="polite"
             className={cn(
               "rounded-[12px] border px-4 py-3 text-sm",
               messageToneClass("success"),
             )}
+            role="status"
           >
             {successMessage}
           </div>
@@ -740,11 +785,18 @@ export function IssueDetailPageClient({
               }
             }}
           >
+            <label className="ui-label" htmlFor="issue-description">
+              Issue Description
+            </label>
             <textarea
+              id="issue-description"
+              aria-label="Issue Description"
+              autoComplete="off"
+              name="description"
               value={descriptionDraft}
               onChange={(event) => setDescriptionDraft(event.target.value)}
               className="ui-textarea min-h-56 leading-7"
-              placeholder="Issue description in markdown"
+              placeholder="Describe the Issue in Markdown…"
             />
             <div className="flex justify-end">
               <button
@@ -752,7 +804,7 @@ export function IssueDetailPageClient({
                 disabled={isSaving || descriptionDraft === issue.descriptionMd}
                 className="ui-button"
               >
-                Save description
+                Save Description
               </button>
             </div>
           </form>
@@ -770,11 +822,18 @@ export function IssueDetailPageClient({
               }
             }}
           >
+            <label className="ui-label" htmlFor="issue-plan">
+              Execution Plan
+            </label>
             <textarea
+              id="issue-plan"
+              aria-label="Execution Plan"
+              autoComplete="off"
+              name="plan"
               value={planDraft}
               onChange={(event) => setPlanDraft(event.target.value)}
               className="ui-textarea min-h-44 leading-7"
-              placeholder="Execution plan in markdown"
+              placeholder="Outline the Execution Plan in Markdown…"
             />
             <div className="flex justify-end">
               <button
@@ -782,7 +841,7 @@ export function IssueDetailPageClient({
                 disabled={isSaving || planDraft === (issue.planMd ?? "")}
                 className="ui-button"
               >
-                Save plan
+                Save Plan
               </button>
             </div>
           </form>
@@ -800,11 +859,18 @@ export function IssueDetailPageClient({
               }
             }}
           >
+            <label className="ui-label" htmlFor="issue-design">
+              Design Notes
+            </label>
             <textarea
+              id="issue-design"
+              aria-label="Design Notes"
+              autoComplete="off"
+              name="design"
               value={designDraft}
               onChange={(event) => setDesignDraft(event.target.value)}
               className="ui-textarea min-h-44 leading-7"
-              placeholder="Design notes in markdown"
+              placeholder="Capture Design Notes in Markdown…"
             />
             <div className="flex justify-end">
               <button
@@ -812,7 +878,7 @@ export function IssueDetailPageClient({
                 disabled={isSaving || designDraft === (issue.designMd ?? "")}
                 className="ui-button"
               >
-                Save design
+                Save Design
               </button>
             </div>
           </form>
@@ -821,23 +887,26 @@ export function IssueDetailPageClient({
         <Section title="Comments">
           <div className="space-y-5">
             <div className="ui-subpanel space-y-3 p-4">
-              <label className="ui-label">
+              <label className="ui-label" htmlFor="new-comment">
                 New comment
               </label>
               <textarea
+                id="new-comment"
+                autoComplete="off"
+                name="newComment"
                 value={newCommentBody}
                 onChange={(event) => setNewCommentBody(event.target.value)}
                 className="ui-textarea min-h-32 leading-7"
-                placeholder="Leave a comment in markdown"
+                placeholder="Leave a Comment in Markdown…"
               />
               <div className="flex justify-end">
                 <button
                   type="button"
                   disabled={isSaving}
                   onClick={() => void createComment()}
-                className="ui-button-primary"
+                  className="ui-button-primary"
                 >
-                  Add comment
+                  Add Comment
                 </button>
               </div>
             </div>
@@ -900,6 +969,9 @@ export function IssueDetailPageClient({
                       {editingCommentId === comment.id ? (
                         <div className="mt-4 space-y-3">
                           <textarea
+                            aria-label="Edit Comment"
+                            autoComplete="off"
+                            name="editingComment"
                             value={editingCommentBody}
                             onChange={(event) =>
                               setEditingCommentBody(event.target.value)
@@ -922,7 +994,7 @@ export function IssueDetailPageClient({
                               onClick={() => void saveComment(comment.id)}
                               className="ui-button-primary"
                             >
-                              Save comment
+                              Save Comment
                             </button>
                           </div>
                         </div>
@@ -939,7 +1011,7 @@ export function IssueDetailPageClient({
           </div>
         </Section>
 
-        <Section title="Wallie timeline">
+        <Section title="Wallie Timeline">
           <IssueWalliePanel
             initialData={initialData.wallie}
             issue={issue}
@@ -1063,7 +1135,7 @@ export function IssueDetailPageClient({
                   href={repositoryIndex.get(issue.githubRepositoryId)?.htmlUrl}
                   rel="noreferrer"
                   target="_blank"
-                  className="text-sm font-semibold text-foreground transition hover:text-accent"
+                  className={cn("text-sm", interactiveLinkClass)}
                 >
                   {repositoryIndex.get(issue.githubRepositoryId)?.fullName}
                 </a>
@@ -1072,10 +1144,10 @@ export function IssueDetailPageClient({
               <p className="text-sm leading-6 text-muted">
                 No GitHub repositories are synced yet. Install the workspace GitHub App from{" "}
                 <Link
-                  className="font-semibold text-foreground transition hover:text-accent"
+                  className={interactiveLinkClass}
                   href={workspaceSettingsPath(initialData.workspace.slug)}
                 >
-                  settings
+                  Settings
                 </Link>
                 .
               </p>
@@ -1101,7 +1173,7 @@ export function IssueDetailPageClient({
                           initialData.workspace.slug,
                           parentEntry.issue.number,
                         )}
-                        className="text-sm font-semibold text-foreground transition hover:text-accent"
+                        className={cn("text-sm", interactiveLinkClass)}
                       >
                         #{parentEntry.issue.number} {parentEntry.issue.title}
                       </Link>
@@ -1138,10 +1210,15 @@ export function IssueDetailPageClient({
                 <label className="space-y-2 text-sm font-semibold text-foreground">
                   <span>Set parent issue number</span>
                   <input
+                    autoComplete="off"
+                    inputMode="numeric"
+                    name="parentIssueNumber"
+                    pattern="[0-9]*"
+                    spellCheck={false}
                     value={parentIssueNumber}
                     onChange={(event) => setParentIssueNumber(event.target.value)}
                     className="ui-input"
-                    placeholder="42"
+                    placeholder="42…"
                   />
                 </label>
                 <div className="flex justify-end">
@@ -1150,7 +1227,7 @@ export function IssueDetailPageClient({
                     disabled={isSaving}
                     className="ui-button"
                   >
-                    Save parent
+                    Set Parent Issue
                   </button>
                 </div>
               </form>
@@ -1164,26 +1241,35 @@ export function IssueDetailPageClient({
               <p className="ui-label">
                 Create sub-issue
               </p>
-              <input
-                value={newSubIssueTitle}
-                onChange={(event) => setNewSubIssueTitle(event.target.value)}
-                className="ui-input"
-                placeholder="Add a child issue title"
-              />
-              <select
-                value={newSubIssueEstimate}
-                onChange={(event) => setNewSubIssueEstimate(event.target.value)}
-                className="ui-select"
-              >
-                <option value="">No estimate</option>
-                {ISSUE_ESTIMATE_VALUES.filter(
-                  (estimate) => estimate !== null,
-                ).map((estimate) => (
-                  <option key={estimate} value={estimate}>
-                    {estimate} point{estimate === 1 ? "" : "s"}
-                  </option>
-                ))}
-              </select>
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Sub-Issue Title</span>
+                <input
+                  autoComplete="off"
+                  name="newSubIssueTitle"
+                  value={newSubIssueTitle}
+                  onChange={(event) => setNewSubIssueTitle(event.target.value)}
+                  className="ui-input"
+                  placeholder="Add a Child Issue Title…"
+                />
+              </label>
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Estimate</span>
+                <select
+                  name="newSubIssueEstimate"
+                  value={newSubIssueEstimate}
+                  onChange={(event) => setNewSubIssueEstimate(event.target.value)}
+                  className="ui-select"
+                >
+                  <option value="">No estimate</option>
+                  {ISSUE_ESTIMATE_VALUES.filter(
+                    (estimate) => estimate !== null,
+                  ).map((estimate) => (
+                    <option key={estimate} value={estimate}>
+                      {estimate} point{estimate === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="flex justify-end">
                 <button
                   type="button"
@@ -1191,7 +1277,7 @@ export function IssueDetailPageClient({
                   onClick={() => void createSubIssue()}
                   className="ui-button-primary"
                 >
-                  Create sub-issue
+                  Create Sub-Issue
                 </button>
               </div>
             </div>
@@ -1212,19 +1298,27 @@ export function IssueDetailPageClient({
               <p className="ui-label">
                 Link existing sub-issue
               </p>
-              <input
-                value={subIssueNumber}
-                onChange={(event) => setSubIssueNumber(event.target.value)}
-                className="ui-input"
-                placeholder="Issue number"
-              />
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Issue Number</span>
+                <input
+                  autoComplete="off"
+                  inputMode="numeric"
+                  name="subIssueNumber"
+                  pattern="[0-9]*"
+                  spellCheck={false}
+                  value={subIssueNumber}
+                  onChange={(event) => setSubIssueNumber(event.target.value)}
+                  className="ui-input"
+                  placeholder="Issue #42…"
+                />
+              </label>
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
                   className="ui-button"
                 >
-                  Link sub-issue
+                  Link Sub-Issue
                 </button>
               </div>
             </form>
@@ -1250,7 +1344,7 @@ export function IssueDetailPageClient({
                           initialData.workspace.slug,
                           subIssueEntry.issue.number,
                         )}
-                        className="text-sm font-semibold text-foreground transition hover:text-accent"
+                        className={cn("text-sm", interactiveLinkClass)}
                       >
                         #{subIssueEntry.issue.number} {subIssueEntry.issue.title}
                       </Link>
@@ -1286,19 +1380,27 @@ export function IssueDetailPageClient({
               <p className="ui-label">
                 Blocked by
               </p>
-              <input
-                value={blockedByNumber}
-                onChange={(event) => setBlockedByNumber(event.target.value)}
-                className="ui-input"
-                placeholder="Issue number"
-              />
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Issue Number</span>
+                <input
+                  autoComplete="off"
+                  inputMode="numeric"
+                  name="blockedByNumber"
+                  pattern="[0-9]*"
+                  spellCheck={false}
+                  value={blockedByNumber}
+                  onChange={(event) => setBlockedByNumber(event.target.value)}
+                  className="ui-input"
+                  placeholder="Issue #42…"
+                />
+              </label>
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
                   className="ui-button"
                 >
-                  Add blocked-by
+                  Add Blocked-By Link
                 </button>
               </div>
             </form>
@@ -1319,19 +1421,27 @@ export function IssueDetailPageClient({
               <p className="ui-label">
                 Blocks
               </p>
-              <input
-                value={blocksNumber}
-                onChange={(event) => setBlocksNumber(event.target.value)}
-                className="ui-input"
-                placeholder="Issue number"
-              />
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Issue Number</span>
+                <input
+                  autoComplete="off"
+                  inputMode="numeric"
+                  name="blocksNumber"
+                  pattern="[0-9]*"
+                  spellCheck={false}
+                  value={blocksNumber}
+                  onChange={(event) => setBlocksNumber(event.target.value)}
+                  className="ui-input"
+                  placeholder="Issue #42…"
+                />
+              </label>
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
                   className="ui-button"
                 >
-                  Add blocks
+                  Add Blocks Link
                 </button>
               </div>
             </form>
@@ -1352,19 +1462,27 @@ export function IssueDetailPageClient({
               <p className="ui-label">
                 Duplicate of
               </p>
-              <input
-                value={duplicateNumber}
-                onChange={(event) => setDuplicateNumber(event.target.value)}
-                className="ui-input"
-                placeholder="Issue number"
-              />
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Issue Number</span>
+                <input
+                  autoComplete="off"
+                  inputMode="numeric"
+                  name="duplicateNumber"
+                  pattern="[0-9]*"
+                  spellCheck={false}
+                  value={duplicateNumber}
+                  onChange={(event) => setDuplicateNumber(event.target.value)}
+                  className="ui-input"
+                  placeholder="Issue #42…"
+                />
+              </label>
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
                   className="ui-button"
                 >
-                  Add duplicate
+                  Add Duplicate Link
                 </button>
               </div>
             </form>
@@ -1385,19 +1503,27 @@ export function IssueDetailPageClient({
               <p className="ui-label">
                 Related
               </p>
-              <input
-                value={relatedNumber}
-                onChange={(event) => setRelatedNumber(event.target.value)}
-                className="ui-input"
-                placeholder="Issue number"
-              />
+              <label className="space-y-2 text-sm font-semibold text-foreground">
+                <span>Issue Number</span>
+                <input
+                  autoComplete="off"
+                  inputMode="numeric"
+                  name="relatedNumber"
+                  pattern="[0-9]*"
+                  spellCheck={false}
+                  value={relatedNumber}
+                  onChange={(event) => setRelatedNumber(event.target.value)}
+                  className="ui-input"
+                  placeholder="Issue #42…"
+                />
+              </label>
               <div className="flex justify-end">
                 <button
                   type="submit"
                   disabled={isSaving}
                   className="ui-button"
                 >
-                  Add related
+                  Add Related Link
                 </button>
               </div>
             </form>
@@ -1445,7 +1571,7 @@ export function IssueDetailPageClient({
                               initialData.workspace.slug,
                               entry.issue.number,
                             )}
-                            className="text-sm font-semibold text-foreground transition hover:text-accent"
+                            className={cn("text-sm", interactiveLinkClass)}
                           >
                             #{entry.issue.number} {entry.issue.title}
                           </Link>
@@ -1501,7 +1627,7 @@ export function IssueDetailPageClient({
                           href={pullRequest.pullRequestUrl}
                           rel="noreferrer"
                           target="_blank"
-                          className="text-sm font-semibold text-foreground transition hover:text-accent"
+                          className={cn("text-sm", interactiveLinkClass)}
                         >
                           PR #{pullRequest.pullRequestNumber ?? "?"}
                         </a>
@@ -1516,7 +1642,7 @@ export function IssueDetailPageClient({
                           <>
                             Repo{" "}
                             <a
-                              className="font-semibold text-foreground transition hover:text-accent"
+                              className={interactiveLinkClass}
                               href={pullRequest.repository.htmlUrl}
                               rel="noreferrer"
                               target="_blank"
@@ -1530,7 +1656,7 @@ export function IssueDetailPageClient({
                       </p>
                     </div>
 
-                    <div className="text-right text-xs uppercase tracking-[0.16em] text-muted">
+                    <div className="text-right text-xs uppercase tracking-[0.16em] tabular-nums text-muted">
                       <p>
                         Created {dateTimeFormatter.format(new Date(pullRequest.createdAt))}
                       </p>

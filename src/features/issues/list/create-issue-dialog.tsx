@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { createIssueWithAllocatedNumber } from "@/features/issues/client";
 import type { IssueMember } from "@/features/issues/types";
@@ -30,6 +30,8 @@ export function CreateIssueDialog({
   open,
   workspaceId,
 }: CreateIssueDialogProps) {
+  const titleId = useId();
+  const descriptionId = useId();
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -56,6 +58,23 @@ export function CreateIssueDialog({
       setIsSubmitting(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, open]);
 
   if (!open) {
     return null;
@@ -94,16 +113,29 @@ export function CreateIssueDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-foreground/28 px-4 py-10 backdrop-blur-sm">
-      <div className="ui-panel-elevated w-full max-w-2xl p-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-10 backdrop-blur-sm">
+      <div
+        aria-describedby={descriptionId}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="ui-panel-elevated max-h-[calc(100vh-5rem)] w-full max-w-2xl overflow-y-auto overscroll-contain p-6"
+        role="dialog"
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-medium text-muted">
               Create Issue
             </p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-              New workspace issue
+            <h2
+              id={titleId}
+              className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground"
+            >
+              New Workspace Issue
             </h2>
+            <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
+              Capture the issue title, the optional Markdown context, and the
+              initial owner before Wallie opens the new detail route.
+            </p>
           </div>
           <button
             type="button"
@@ -121,10 +153,12 @@ export function CreateIssueDialog({
             </label>
             <input
               id="issue-title"
+              autoComplete="off"
+              name="title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               className="ui-input"
-              placeholder="Document Gate D completion checklist"
+              placeholder="Document Gate D Completion Checklist…"
             />
           </div>
 
@@ -137,10 +171,12 @@ export function CreateIssueDialog({
             </label>
             <textarea
               id="issue-description"
+              autoComplete="off"
+              name="description"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               className="ui-textarea min-h-36 leading-6"
-              placeholder="Add context, acceptance criteria, or notes in markdown."
+              placeholder="Add context, acceptance criteria, or notes in Markdown…"
             />
           </div>
 
@@ -148,6 +184,7 @@ export function CreateIssueDialog({
             <label className="space-y-2 text-sm font-semibold text-foreground">
               <span>Status</span>
               <select
+                name="status"
                 value={status}
                 onChange={(event) =>
                   setStatus(event.target.value as (typeof ISSUE_STATUS_VALUES)[number])
@@ -165,6 +202,7 @@ export function CreateIssueDialog({
             <label className="space-y-2 text-sm font-semibold text-foreground">
               <span>Priority</span>
               <select
+                name="priority"
                 value={priority}
                 onChange={(event) =>
                   setPriority(
@@ -184,6 +222,7 @@ export function CreateIssueDialog({
             <label className="space-y-2 text-sm font-semibold text-foreground">
               <span>Estimate</span>
               <select
+                name="estimate"
                 value={estimate}
                 onChange={(event) => setEstimate(event.target.value)}
                 className="ui-select"
@@ -200,6 +239,7 @@ export function CreateIssueDialog({
             <label className="space-y-2 text-sm font-semibold text-foreground">
               <span>Assignee</span>
               <select
+                name="assigneeMemberId"
                 value={assigneeMemberId}
                 onChange={(event) => setAssigneeMemberId(event.target.value)}
                 className="ui-select"
@@ -215,7 +255,11 @@ export function CreateIssueDialog({
           </div>
 
           {errorMessage ? (
-            <div className="rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
+            <div
+              aria-live="polite"
+              role="status"
+              className="rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+            >
               {errorMessage}
             </div>
           ) : null}
@@ -233,7 +277,7 @@ export function CreateIssueDialog({
               disabled={isSubmitting}
               className="ui-button-primary"
             >
-              {isSubmitting ? "Creating..." : "Create and open"}
+              {isSubmitting ? "Creating…" : "Create & Open"}
             </button>
           </div>
         </form>

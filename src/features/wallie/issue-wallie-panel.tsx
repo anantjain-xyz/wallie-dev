@@ -44,12 +44,15 @@ type IssueWalliePanelProps = {
   workspaceSlug: string;
 };
 
-const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
   month: "short",
 });
+
+const interactiveLinkClass =
+  "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
 function flashToneClass(kind: FlashMessage["kind"]) {
   switch (kind) {
@@ -391,7 +394,9 @@ export function IssueWalliePanel({
             </span>
             {repository ? (
               <a
-                className="ui-pill transition hover:border-accent/25 hover:text-accent"
+                className={cn(
+                  "ui-pill transition-[color,border-color] duration-150 hover:border-accent/25 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
+                )}
                 href={repository.htmlUrl}
                 rel="noreferrer"
                 target="_blank"
@@ -406,9 +411,9 @@ export function IssueWalliePanel({
           </div>
 
           <p className="text-sm leading-6 text-muted">
-            Gate F runs stay explicit. Use this panel to queue Wallie, inspect
-            persisted run messages, and retry completed runs without exposing
-            privileged queue writes to the browser.
+            Queue Wallie from this issue to inspect persisted run messages and
+            retry completed runs without exposing privileged queue writes in the
+            browser.
           </p>
         </div>
 
@@ -418,16 +423,18 @@ export function IssueWalliePanel({
           onClick={() => void handleRunWithWallie()}
           type="button"
         >
-          {pendingActionId === "enqueue" ? "Queueing..." : "Run with Wallie"}
+          {pendingActionId === "enqueue" ? "Queuing…" : "Run With Wallie"}
         </button>
       </div>
 
       {flashMessage ? (
         <div
+          aria-live="polite"
           className={cn(
             "rounded-[12px] border px-4 py-3 text-sm leading-6",
             flashToneClass(flashMessage.kind),
           )}
+          role="status"
         >
           {flashMessage.text}
         </div>
@@ -492,10 +499,10 @@ export function IssueWalliePanel({
           </ul>
           <div className="mt-4">
             <Link
-              className="font-semibold text-foreground transition hover:text-accent"
+              className={interactiveLinkClass}
               href={workspaceSettingsPath(workspaceSlug)}
             >
-              Open workspace settings
+              Open Workspace Settings
             </Link>
           </div>
         </div>
@@ -510,6 +517,7 @@ export function IssueWalliePanel({
         ) : (
           runs.map((run) => {
             const isExpanded = expandedRunIds.has(run.id);
+            const runDetailsId = `wallie-run-details-${run.id}`;
             const triggeredByLabel =
               run.triggeredByMember?.fullName ??
               run.triggeredByMember?.username ??
@@ -522,6 +530,8 @@ export function IssueWalliePanel({
               >
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <button
+                    aria-controls={runDetailsId}
+                    aria-expanded={isExpanded}
                     className="min-w-0 flex-1 text-left"
                     onClick={() =>
                       setExpandedRunIds((currentIds) => {
@@ -576,13 +586,16 @@ export function IssueWalliePanel({
                       onClick={() => void handleRetryRun(run.id)}
                       type="button"
                     >
-                      {pendingActionId === run.id ? "Retrying..." : "Retry run"}
+                      {pendingActionId === run.id ? "Retrying…" : "Retry Run"}
                     </button>
                   ) : null}
                 </div>
 
                 {isExpanded ? (
-                  <div className="mt-4 space-y-3 border-t border-border/70 pt-4">
+                  <div
+                    id={runDetailsId}
+                    className="mt-4 space-y-3 border-t border-border/70 pt-4"
+                  >
                     {run.messages.length === 0 ? (
                       <div className="ui-muted-panel px-4 py-4 text-sm text-muted">
                         {run.isActive

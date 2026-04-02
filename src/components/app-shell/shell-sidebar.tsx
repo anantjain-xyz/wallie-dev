@@ -96,6 +96,8 @@ export function ShellSidebar({
   const settingsHref =
     navItems.find((item) => item.label === "Settings")?.href ??
     workspaceSettingsPath(workspace.slug);
+  const issuesControlsHref = `${issuesHref}?controls=1`;
+  const issuesCreateHref = `${issuesHref}?create=1`;
 
   return (
     <aside className="hidden w-[216px] shrink-0 border-r border-border bg-background md:flex md:flex-col">
@@ -111,20 +113,20 @@ export function ShellSidebar({
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
+          <Link
+            href={issuesControlsHref}
             className="linear-icon-button"
-            aria-label="Search"
+            aria-label="Open Issue Filters"
           >
             <SearchIcon className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
+          </Link>
+          <Link
+            href={issuesCreateHref}
             className="linear-icon-button"
-            aria-label="Create"
+            aria-label="Create Issue"
           >
             <PlusIcon className="h-3.5 w-3.5" />
-          </button>
+          </Link>
         </div>
       </div>
 

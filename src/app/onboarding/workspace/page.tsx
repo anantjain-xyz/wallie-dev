@@ -27,11 +27,15 @@ export default async function WorkspaceOnboardingPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-8 sm:px-6 lg:px-8">
+    <main
+      id="main-content"
+      className="mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-8 sm:px-6 lg:px-8"
+    >
       <PlaceholderPanel
         eyebrow="Workspace Bootstrap"
-        title="Create the first workspace and enter the app shell"
-        summary="This flow provisions the workspace, owner membership, and system `wallie` member through a server-backed contract before routing into `/w/[workspaceSlug]/issues`."
+        title="Create the First Workspace & Enter the App Shell"
+        summary="Create the first workspace, provision the owner membership, and bootstrap the system `wallie` member before Wallie sends you to `/w/[workspaceSlug]/issues`."
+        titleAs="h1"
         tone="ready"
       >
         <WorkspaceOnboardingForm />

@@ -35,7 +35,12 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full font-sans">{children}</body>
+      <body className="min-h-full font-sans">
+        <a href="#main-content" className="ui-skip-link">
+          Skip to Main Content
+        </a>
+        {children}
+      </body>
     </html>
   );
 }

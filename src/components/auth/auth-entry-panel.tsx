@@ -51,9 +51,7 @@ export function AuthEntryPanel({
 }: AuthEntryPanelProps) {
   const isSignup = mode === "signup";
   const alternateHref = isSignup ? loginPath(next) : signupPath(next);
-  const alternateLabel = isSignup
-    ? "Already have access? Open login."
-    : "New here? Create an account first.";
+  const alternateLabel = isSignup ? "Open Login" : "Create Account";
   const errorMessage = errorCode
     ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
     : null;
@@ -69,15 +67,15 @@ export function AuthEntryPanel({
             {isSignup ? "Create Access" : "Sign In"}
           </StatusChip>
           <div className="space-y-3">
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-[2.2rem]">
+            <h1 className="text-3xl font-semibold tracking-tight text-balance text-foreground sm:text-[2.2rem]">
               {isSignup
-                ? "Create your Wallie identity"
-                : "Enter your workspace"}
+                ? "Create Your Wallie Identity"
+                : "Enter Your Workspace"}
             </h1>
             <p className="max-w-2xl text-sm leading-6 text-muted">
               {isSignup
-                ? "Use magic link or OAuth, then continue into first-workspace setup under Supabase Auth."
-                : "Use magic link or OAuth and Wallie will route you to your workspace or first-run onboarding."}
+                ? "Choose Magic Link or OAuth, then continue into first-workspace setup under Supabase Auth."
+                : "Choose Magic Link or OAuth. Wallie routes you to your workspace or first-run onboarding."}
             </p>
           </div>
         </div>
@@ -91,13 +89,21 @@ export function AuthEntryPanel({
       </div>
 
       {statusMessage ? (
-        <div className="mt-6 rounded-[12px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
+        <div
+          aria-live="polite"
+          role="status"
+          className="mt-6 rounded-[12px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning"
+        >
           {statusMessage}
         </div>
       ) : null}
 
       {errorMessage ? (
-        <div className="mt-6 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger">
+        <div
+          aria-live="polite"
+          role="status"
+          className="mt-6 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -115,8 +121,8 @@ export function AuthEntryPanel({
             <p className="text-[11px] font-medium text-muted">
               Magic Link
             </p>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-              Email first, password never
+            <h2 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
+              Email First, Password Never
             </h2>
             <p className="text-sm leading-6 text-muted">
               Wallie sends a single-use sign-in link and returns you to the exact
@@ -131,7 +137,9 @@ export function AuthEntryPanel({
               name="email"
               required
               autoComplete="email"
-              placeholder="you@company.com"
+              inputMode="email"
+              placeholder="name@company.com…"
+              spellCheck={false}
               className="ui-input mt-2 text-base"
             />
           </label>
@@ -140,7 +148,7 @@ export function AuthEntryPanel({
             type="submit"
             className="ui-button-primary mt-5"
           >
-            {isSignup ? "Send sign-up link" : "Send sign-in link"}
+            {isSignup ? "Send Sign-Up Link" : "Send Sign-In Link"}
           </button>
         </form>
 
@@ -148,8 +156,8 @@ export function AuthEntryPanel({
           <p className="text-[11px] font-medium text-muted">
             OAuth
           </p>
-          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-            Continue with your provider
+          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-balance text-foreground">
+            Continue With Your Provider
           </h2>
           <p className="mt-3 text-sm leading-6 text-muted">
             Supabase Auth handles identity. Workspace access still comes from

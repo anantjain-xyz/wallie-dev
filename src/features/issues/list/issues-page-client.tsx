@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { type ReactNode, useEffect, useState, useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
   ChevronDownIcon,
@@ -53,7 +53,7 @@ const sortCycle: IssueListQueryState["sort"][] = [
   "created",
 ];
 
-const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
+const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   month: "short",
 });
@@ -269,13 +269,15 @@ function describeCurrentView(
 export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const controlsRequested = searchParams.get("controls") === "1";
+  const isCreateOpen = searchParams.get("create") === "1";
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const [isRoutePending, startTransition] = useTransition();
   const [issues, setIssues] = useState(initialData.issues);
   const [searchDraft, setSearchDraft] = useState(initialData.queryState.query);
   const [selectedIssueIds, setSelectedIssueIds] = useState<string[]>([]);
   const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -287,12 +289,19 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
   );
   const [showControls, setShowControls] = useState(
     () =>
+      controlsRequested ||
       initialData.queryState.query.length > 0 ||
       initialData.queryState.priorities.length > 0 ||
       initialData.queryState.estimates.some((value) => value !== null) ||
       initialData.queryState.sort !== "updated" ||
       initialData.queryState.direction !== "desc",
   );
+
+  useEffect(() => {
+    if (controlsRequested) {
+      setShowControls(true);
+    }
+  }, [controlsRequested]);
 
   useEffect(() => {
     setIssues(initialData.issues);
@@ -345,15 +354,43 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
   const isUnestimatedPreset = valuesMatch(queryState.estimates, [null]);
   const viewLabel = describeCurrentView(queryState, showOnlyUnassigned);
 
-  function navigateToQueryState(nextState: IssueListQueryState) {
+  function buildPageUrl(
+    nextState: IssueListQueryState,
+    viewState?: {
+      create?: boolean;
+      controls?: boolean;
+    },
+  ) {
     const params = serializeIssueListQueryState(nextState);
-    const nextUrl = params.size > 0 ? `${pathname}?${params.toString()}` : pathname;
+
+    if (viewState?.controls ?? showControls) {
+      params.set("controls", "1");
+    }
+
+    if (viewState?.create ?? isCreateOpen) {
+      params.set("create", "1");
+    }
+
+    return params.size > 0 ? `${pathname}?${params.toString()}` : pathname;
+  }
+
+  function navigateToQueryState(nextState: IssueListQueryState) {
+    const nextUrl = buildPageUrl(nextState);
 
     setErrorMessage(null);
     setSuccessMessage(null);
 
     startTransition(() => {
       router.replace(nextUrl);
+    });
+  }
+
+  function replaceViewState(viewState: {
+    create?: boolean;
+    controls?: boolean;
+  }) {
+    startTransition(() => {
+      router.replace(buildPageUrl(queryState, viewState));
     });
   }
 
@@ -443,6 +480,27 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
     setSelectedIssueIds(checked ? visibleIssues.map((issue) => issue.id) : []);
   }
 
+  function handleControlsToggle() {
+    const nextShowControls = !showControls;
+
+    setShowControls(nextShowControls);
+    replaceViewState({
+      controls: nextShowControls,
+    });
+  }
+
+  function openCreateDialog() {
+    replaceViewState({
+      create: true,
+    });
+  }
+
+  function closeCreateDialog() {
+    replaceViewState({
+      create: false,
+    });
+  }
+
   async function handleBulkUpdate(
     patch: Parameters<typeof updateIssueRows>[2],
     successLabel: string,
@@ -511,9 +569,8 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
     <>
       <CreateIssueDialog
         members={initialData.members}
-        onClose={() => setIsCreateOpen(false)}
+        onClose={closeCreateDialog}
         onCreated={(issueNumber) => {
-          setIsCreateOpen(false);
           router.push(
             workspaceIssueDetailPath(initialData.workspace.slug, issueNumber),
           );
@@ -523,6 +580,33 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
       />
 
       <div className="flex min-h-full flex-col bg-surface">
+        <header className="border-b border-border px-5 py-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-2">
+              <p className="ui-label">
+                Workspace Queue
+              </p>
+              <h1 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
+                Issues
+              </h1>
+              <p className="max-w-2xl text-sm leading-6 text-muted">
+                View <span className="tabular-nums">{visibleIssues.length}</span> of{" "}
+                <span className="tabular-nums">{issues.length}</span> issues.
+                Filters stay in the URL so this view remains shareable.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={openCreateDialog}
+              className="ui-button-primary gap-2 self-start lg:self-auto"
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              Create Issue
+            </button>
+          </div>
+        </header>
+
         <section className="border-b border-border px-5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -578,7 +662,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               <IconButton
                 active={showControls}
                 ariaLabel="Toggle controls"
-                onClick={() => setShowControls((current) => !current)}
+                onClick={handleControlsToggle}
               >
                 <FilterIcon className="h-3.5 w-3.5" />
               </IconButton>
@@ -619,11 +703,18 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
             >
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="relative min-w-0 flex-1 xl:max-w-[28rem]">
+                  <label className="sr-only" htmlFor="issue-search">
+                    Search Issues
+                  </label>
                   <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
                   <input
+                    id="issue-search"
+                    type="search"
+                    name="query"
+                    autoComplete="off"
                     value={searchDraft}
                     onChange={(event) => setSearchDraft(event.target.value)}
-                    placeholder="Search title and description"
+                    placeholder="Search Titles or Descriptions…"
                     className="ui-input h-9 rounded-full py-0 pl-9 pr-3 text-[13px] shadow-none"
                   />
                 </div>
@@ -634,7 +725,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     disabled={isRoutePending}
                     className="ui-button h-9 rounded-full px-4 py-0 text-[12px]"
                   >
-                    {isRoutePending ? "Refreshing..." : "Search"}
+                    {isRoutePending ? "Refreshing…" : "Search Issues"}
                   </button>
                   {queryState.query ? (
                     <button
@@ -652,6 +743,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   ) : null}
 
                   <select
+                    aria-label="Sort Issues"
                     value={queryState.sort}
                     onChange={(event) =>
                       updateQueryState({
@@ -667,6 +759,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   </select>
 
                   <select
+                    aria-label="Change Sort Direction"
                     value={queryState.direction}
                     onChange={(event) =>
                       updateQueryState({
@@ -702,14 +795,14 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       active={isDonePreset}
                       onClick={() => handlePresetStatuses(["done"])}
                     >
-                      done preset
+                      Done Preset
                     </FilterChip>
                     <FilterChip
                       compact
                       active={isCanceledPreset}
                       onClick={() => handlePresetStatuses(["canceled"])}
                     >
-                      canceled preset
+                      Canceled Preset
                     </FilterChip>
                   </div>
                 </div>
@@ -773,12 +866,13 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     }
                     className="h-4 w-4 rounded border-border/80"
                   />
-                  Select visible
+                  Select Visible
                 </label>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
                 <select
+                  aria-label="Bulk Status"
                   value={bulkStatus}
                   onChange={(event) =>
                     setBulkStatus(event.target.value as IssueStatus | "")
@@ -794,6 +888,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 </select>
 
                 <select
+                  aria-label="Bulk Priority"
                   value={bulkPriority}
                   onChange={(event) =>
                     setBulkPriority(event.target.value as IssuePriority | "")
@@ -809,6 +904,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 </select>
 
                 <select
+                  aria-label="Bulk Estimate"
                   value={bulkEstimate}
                   onChange={(event) => setBulkEstimate(event.target.value)}
                   className="ui-select h-9 min-w-[8.5rem] rounded-full py-0 text-[12px] shadow-none"
@@ -839,7 +935,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   }
                   className="ui-button h-9 rounded-full px-4 py-0 text-[12px]"
                 >
-                  Apply status
+                  Apply Status
                 </button>
 
                 <button
@@ -855,7 +951,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   }
                   className="ui-button h-9 rounded-full px-4 py-0 text-[12px]"
                 >
-                  Apply priority
+                  Apply Priority
                 </button>
 
                 <button
@@ -873,7 +969,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   }}
                   className="ui-button h-9 rounded-full px-4 py-0 text-[12px]"
                 >
-                  Apply estimate
+                  Apply Estimate
                 </button>
 
                 <button
@@ -899,13 +995,21 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
         ) : null}
 
         {errorMessage ? (
-          <div className="border-b border-[#f0d7d8] bg-[#fff7f7] px-5 py-3 text-[13px] text-danger">
+          <div
+            aria-live="polite"
+            role="status"
+            className="border-b border-[#f0d7d8] bg-[#fff7f7] px-5 py-3 text-[13px] text-danger"
+          >
             {errorMessage}
           </div>
         ) : null}
 
         {successMessage ? (
-          <div className="border-b border-[#dcecdc] bg-[#f6fcf5] px-5 py-3 text-[13px] text-success">
+          <div
+            aria-live="polite"
+            role="status"
+            className="border-b border-[#dcecdc] bg-[#f6fcf5] px-5 py-3 text-[13px] text-success"
+          >
             {successMessage}
           </div>
         ) : null}
@@ -922,23 +1026,18 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setIsCreateOpen(true)}
-              className="linear-icon-button"
-              aria-label="Create issue"
-            >
-              <PlusIcon className="h-3.5 w-3.5" />
-            </button>
+            <span className="text-[12px] text-muted tabular-nums">
+              {visibleIssues.length} Visible
+            </span>
           </div>
 
           {visibleIssues.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
-              <h2 className="text-[17px] font-semibold text-foreground">
-                No issues match this view
+              <h2 className="text-[17px] font-semibold text-balance text-foreground">
+                No Issues Match This View
               </h2>
               <p className="mt-2 max-w-md text-[13px] leading-6 text-muted">
-                Adjust the current filters or create a new issue to seed the
+                Adjust the current filters or create an issue to seed the
                 workspace queue.
               </p>
             </div>
@@ -951,7 +1050,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   <div
                     key={issue.id}
                     className={cn(
-                      "group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2.5 transition",
+                      "group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2.5 transition-colors duration-150",
                       selectedIssueIdSet.has(issue.id) && "bg-[#faf7f1]",
                       !selectedIssueIdSet.has(issue.id) && "hover:bg-[#fbfaf7]",
                     )}
@@ -964,10 +1063,10 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                           handleSelectIssue(issue.id, event.target.checked)
                         }
                         className={cn(
-                          "h-4 w-4 rounded border border-[#d7d2c9] transition-opacity",
+                          "h-4 w-4 rounded border border-[#d7d2c9] transition-opacity duration-150",
                           selectedIssueIdSet.has(issue.id)
                             ? "opacity-100"
-                            : "opacity-0 group-hover:opacity-100 focus:opacity-100",
+                            : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
                         )}
                       />
                     </label>
@@ -1009,7 +1108,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                         />
                       ) : null}
                       {issue.assignee ? <AssigneePill label={assigneeLabel} /> : null}
-                      <span className="flex items-center gap-1.5 text-[13px] text-[#8c877c]">
+                      <span className="flex items-center gap-1.5 text-[13px] tabular-nums text-[#8c877c]">
                         <UsersIcon className="h-3.5 w-3.5" />
                         {shortDateFormatter.format(new Date(issue.updatedAt))}
                       </span>

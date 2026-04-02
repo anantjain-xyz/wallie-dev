@@ -38,7 +38,9 @@ export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
         <button
           type="button"
           className="linear-icon-button"
-          aria-label="Notifications"
+          aria-label="Notifications Coming Soon"
+          disabled
+          title="Notifications are not available yet."
         >
           <BellIcon className="h-3.5 w-3.5" />
         </button>

@@ -33,11 +33,14 @@ type FlashMessage = {
   text: string;
 };
 
-const dateFormatter = new Intl.DateTimeFormat("en-US", {
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   month: "short",
   year: "numeric",
 });
+
+const interactiveLinkClass =
+  "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
 function Section({
   children,
@@ -194,7 +197,7 @@ export function SettingsPageClient({
     const customerId = initialData.workspace.stripeCustomerId;
 
     return customerId.length > 14
-      ? `${customerId.slice(0, 8)}...${customerId.slice(-4)}`
+      ? `${customerId.slice(0, 8)}…${customerId.slice(-4)}`
       : customerId;
   }, [initialData.workspace.stripeCustomerId]);
 
@@ -455,9 +458,24 @@ export function SettingsPageClient({
 
   return (
     <div className="grid gap-6">
+      <header className="ui-panel p-5">
+        <p className="ui-label">
+          Workspace Admin
+        </p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground">
+          Settings
+        </h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
+          Manage workspace identity, billing, GitHub sync, and encrypted secrets
+          from one route.
+        </p>
+      </header>
+
       {flashMessage ? (
         <div
+          aria-live="polite"
           className={`rounded-[12px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
+          role="status"
         >
           {flashMessage.text}
         </div>
@@ -472,7 +490,9 @@ export function SettingsPageClient({
                 <img
                   alt={`${initialData.workspace.name} avatar`}
                   className="h-20 w-20 rounded-[1.75rem] border border-border/70 object-cover"
+                  height={80}
                   src={workspaceAvatarUrl}
+                  width={80}
                 />
               ) : (
                 <AvatarFallback name={initialData.workspace.name} />
@@ -515,9 +535,9 @@ export function SettingsPageClient({
             </div>
 
             {isManager ? (
-              <label className="ui-subpanel flex w-full cursor-pointer items-center justify-between px-4 py-4 text-sm font-semibold text-foreground transition hover:border-accent/45">
+              <label className="ui-subpanel flex w-full cursor-pointer items-center justify-between px-4 py-4 text-sm font-semibold text-foreground transition-[border-color,box-shadow] duration-150 hover:border-accent/45">
                 <span>
-                  {isUploadingAvatar ? "Uploading avatar..." : "Upload workspace avatar"}
+                  {isUploadingAvatar ? "Uploading Workspace Avatar…" : "Upload Workspace Avatar"}
                 </span>
                 <input
                   accept=".jpg,.jpeg,.png,.webp"
@@ -558,7 +578,7 @@ export function SettingsPageClient({
               onClick={() => void handleOpenBillingPortal()}
               type="button"
             >
-              {isOpeningBillingPortal ? "Opening portal..." : "Open Stripe portal"}
+              {isOpeningBillingPortal ? "Opening Portal…" : "Open Stripe Portal"}
             </button>
           </div>
         </Section>
@@ -604,7 +624,7 @@ export function SettingsPageClient({
                       onClick={() => void handleRefreshRepositories()}
                       type="button"
                     >
-                      {isRefreshingRepositories ? "Refreshing..." : "Refresh repositories"}
+                      {isRefreshingRepositories ? "Refreshing…" : "Refresh Repositories"}
                     </button>
                     <Link
                       className="ui-button"
@@ -631,7 +651,7 @@ export function SettingsPageClient({
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-2">
                             <a
-                              className="text-sm font-semibold text-foreground transition hover:text-accent"
+                              className={`text-sm ${interactiveLinkClass}`}
                               href={repository.htmlUrl}
                               rel="noreferrer"
                               target="_blank"
@@ -667,7 +687,7 @@ export function SettingsPageClient({
                   onClick={() => void handleGitHubInstall()}
                   type="button"
                 >
-                  {isLaunchingGitHubInstall ? "Preparing install..." : "Install GitHub App"}
+                  {isLaunchingGitHubInstall ? "Preparing Install…" : "Install GitHub App"}
                 </button>
               </div>
             )}
@@ -683,18 +703,30 @@ export function SettingsPageClient({
             {isManager ? (
               <>
                 <div className="ui-subpanel space-y-3 p-4">
-                  <input
-                    className="ui-input"
-                    onChange={(event) => setSecretKey(event.target.value)}
-                    placeholder="ANTHROPIC_API_KEY"
-                    value={secretKey}
-                  />
-                  <textarea
-                    className="ui-textarea min-h-28"
-                    onChange={(event) => setSecretValue(event.target.value)}
-                    placeholder="Secret value"
-                    value={secretValue}
-                  />
+                  <label className="space-y-2 text-sm font-semibold text-foreground">
+                    <span>Secret Key</span>
+                    <input
+                      autoCapitalize="characters"
+                      autoComplete="off"
+                      className="ui-input"
+                      name="secretKey"
+                      onChange={(event) => setSecretKey(event.target.value)}
+                      placeholder="ANTHROPIC_API_KEY…"
+                      spellCheck={false}
+                      value={secretKey}
+                    />
+                  </label>
+                  <label className="space-y-2 text-sm font-semibold text-foreground">
+                    <span>Secret Value</span>
+                    <textarea
+                      autoComplete="off"
+                      className="ui-textarea min-h-28"
+                      name="secretValue"
+                      onChange={(event) => setSecretValue(event.target.value)}
+                      placeholder="Paste the Secret Value…"
+                      value={secretValue}
+                    />
+                  </label>
                   <div className="flex justify-end">
                     <button
                       className="ui-button-primary"
@@ -702,7 +734,7 @@ export function SettingsPageClient({
                       onClick={() => void handleSaveSecret()}
                       type="button"
                     >
-                      {isSavingSecret ? "Saving..." : "Save secret"}
+                      {isSavingSecret ? "Saving…" : "Save Secret"}
                     </button>
                   </div>
                 </div>
@@ -710,7 +742,7 @@ export function SettingsPageClient({
                 <div className="space-y-3">
                   {isLoadingSecrets ? (
                     <div className="ui-subpanel p-4 text-sm text-muted">
-                      Loading secret previews...
+                      Loading Secret Previews…
                     </div>
                   ) : secrets.length === 0 ? (
                     <div className="ui-subpanel p-4 text-sm text-muted">
