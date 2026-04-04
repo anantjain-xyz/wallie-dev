@@ -82,7 +82,7 @@ function ConfigState({
   }
 
   return (
-    <div className="rounded-[12px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
+    <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
       <p className="font-semibold">{title}</p>
       <p className="mt-1">Missing env vars: {missingKeys.join(", ")}</p>
     </div>
@@ -474,7 +474,7 @@ export function SettingsPageClient({
       {flashMessage ? (
         <div
           aria-live="polite"
-          className={`rounded-[12px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
+          className={`rounded-[6px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
           role="status"
         >
           {flashMessage.text}

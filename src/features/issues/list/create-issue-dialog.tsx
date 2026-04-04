@@ -258,7 +258,7 @@ export function CreateIssueDialog({
             <div
               aria-live="polite"
               role="status"
-              className="rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+              className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
             >
               {errorMessage}
             </div>
