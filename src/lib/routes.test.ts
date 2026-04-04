@@ -21,12 +21,8 @@ describe("workspace route helpers", () => {
   });
 
   it("builds detail and settings paths", () => {
-    expect(workspaceIssueDetailPath("northwind-labs", 101)).toBe(
-      "/w/northwind-labs/issues/101",
-    );
-    expect(workspaceSettingsPath("northwind-labs")).toBe(
-      "/w/northwind-labs/settings",
-    );
+    expect(workspaceIssueDetailPath("northwind-labs", 101)).toBe("/w/northwind-labs/issues/101");
+    expect(workspaceSettingsPath("northwind-labs")).toBe("/w/northwind-labs/settings");
     expect(
       workspaceSettingsPath("northwind-labs", {
         github: "connected",
@@ -39,12 +35,8 @@ describe("workspace route helpers", () => {
   });
 
   it("builds auth and onboarding paths", () => {
-    expect(loginPath("/w/northwind-labs")).toBe(
-      "/login?next=%2Fw%2Fnorthwind-labs",
-    );
-    expect(signupPath("/onboarding/workspace")).toBe(
-      "/signup?next=%2Fonboarding%2Fworkspace",
-    );
+    expect(loginPath("/w/northwind-labs")).toBe("/login?next=%2Fw%2Fnorthwind-labs");
+    expect(signupPath("/onboarding/workspace")).toBe("/signup?next=%2Fonboarding%2Fworkspace");
     expect(onboardingWorkspacePath()).toBe("/onboarding/workspace");
   });
 });

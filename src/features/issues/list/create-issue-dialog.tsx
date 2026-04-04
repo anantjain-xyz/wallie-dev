@@ -19,9 +19,7 @@ type CreateIssueDialogProps = {
   workspaceId: string;
 };
 
-const estimateOptions = ISSUE_ESTIMATE_VALUES.filter(
-  (estimate) => estimate !== null,
-);
+const estimateOptions = ISSUE_ESTIMATE_VALUES.filter((estimate) => estimate !== null);
 
 export function CreateIssueDialog({
   members,
@@ -35,12 +33,8 @@ export function CreateIssueDialog({
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<(typeof ISSUE_STATUS_VALUES)[number]>(
-    "backlog",
-  );
-  const [priority, setPriority] = useState<(typeof ISSUE_PRIORITY_VALUES)[number]>(
-    "none",
-  );
+  const [status, setStatus] = useState<(typeof ISSUE_STATUS_VALUES)[number]>("backlog");
+  const [priority, setPriority] = useState<(typeof ISSUE_PRIORITY_VALUES)[number]>("none");
   const [estimate, setEstimate] = useState<string>("");
   const [assigneeMemberId, setAssigneeMemberId] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -104,9 +98,7 @@ export function CreateIssueDialog({
 
       onCreated(createdIssue.number);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Failed to create issue.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Failed to create issue.");
     } finally {
       setIsSubmitting(false);
     }
@@ -123,9 +115,7 @@ export function CreateIssueDialog({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] font-medium text-muted">
-              Create Issue
-            </p>
+            <p className="text-[11px] font-medium text-muted">Create Issue</p>
             <h2
               id={titleId}
               className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground"
@@ -133,15 +123,11 @@ export function CreateIssueDialog({
               New Workspace Issue
             </h2>
             <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-              Capture the issue title, the optional Markdown context, and the
-              initial owner before Wallie opens the new detail route.
+              Capture the issue title, the optional Markdown context, and the initial owner before
+              Wallie opens the new detail route.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="ui-button"
-          >
+          <button type="button" onClick={onClose} className="ui-button">
             Close
           </button>
         </div>
@@ -163,10 +149,7 @@ export function CreateIssueDialog({
           </div>
 
           <div className="space-y-2">
-            <label
-              className="text-sm font-semibold text-foreground"
-              htmlFor="issue-description"
-            >
+            <label className="text-sm font-semibold text-foreground" htmlFor="issue-description">
               Description
             </label>
             <textarea
@@ -205,9 +188,7 @@ export function CreateIssueDialog({
                 name="priority"
                 value={priority}
                 onChange={(event) =>
-                  setPriority(
-                    event.target.value as (typeof ISSUE_PRIORITY_VALUES)[number],
-                  )
+                  setPriority(event.target.value as (typeof ISSUE_PRIORITY_VALUES)[number])
                 }
                 className="ui-select"
               >
@@ -265,18 +246,10 @@ export function CreateIssueDialog({
           ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="ui-button"
-            >
+            <button type="button" onClick={onClose} className="ui-button">
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="ui-button-primary"
-            >
+            <button type="submit" disabled={isSubmitting} className="ui-button-primary">
               {isSubmitting ? "Creating…" : "Create & Open"}
             </button>
           </div>

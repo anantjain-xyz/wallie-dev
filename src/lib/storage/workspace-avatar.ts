@@ -4,11 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const workspaceAvatarBucket = "workspace-avatars";
 export const maxWorkspaceAvatarBytes = 2 * 1024 * 1024;
-export const allowedWorkspaceAvatarMimeTypes = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-] as const;
+export const allowedWorkspaceAvatarMimeTypes = ["image/jpeg", "image/png", "image/webp"] as const;
 
 function getFileExtension(file: File) {
   const nameParts = file.name.split(".");

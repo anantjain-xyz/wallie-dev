@@ -8,9 +8,7 @@ type WorkspaceIndexPageProps = {
   }>;
 };
 
-export default async function WorkspaceIndexPage({
-  params,
-}: WorkspaceIndexPageProps) {
+export default async function WorkspaceIndexPage({ params }: WorkspaceIndexPageProps) {
   const { workspaceSlug } = await params;
 
   redirect(workspaceIssuesPath(workspaceSlug));

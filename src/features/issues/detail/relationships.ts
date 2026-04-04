@@ -17,14 +17,9 @@ export type IssueRelationshipGroups = {
   subIssues: IssueRelationshipEntry[];
 };
 
-function pushUniqueRelationship(
-  target: IssueRelationshipEntry[],
-  entry: IssueRelationshipEntry,
-) {
+function pushUniqueRelationship(target: IssueRelationshipEntry[], entry: IssueRelationshipEntry) {
   const duplicate = target.find(
-    (candidate) =>
-      candidate.issue.id === entry.issue.id &&
-      candidate.linkType === entry.linkType,
+    (candidate) => candidate.issue.id === entry.issue.id && candidate.linkType === entry.linkType,
   );
 
   if (!duplicate) {
@@ -91,9 +86,7 @@ export function groupIssueLinks(
   groups.blocks.sort((left, right) => left.issue.number - right.issue.number);
   groups.duplicates.sort((left, right) => left.issue.number - right.issue.number);
   groups.related.sort((left, right) => left.issue.number - right.issue.number);
-  groups.parentIssues.sort(
-    (left, right) => left.issue.number - right.issue.number,
-  );
+  groups.parentIssues.sort((left, right) => left.issue.number - right.issue.number);
 
   return groups;
 }

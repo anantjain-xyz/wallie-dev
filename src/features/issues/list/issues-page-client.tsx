@@ -46,12 +46,7 @@ type IssuesPageClientProps = {
 type MetadataTone = "amber" | "blue" | "gray" | "green" | "purple" | "red";
 
 const activeStatuses: IssueStatus[] = ["todo", "in_progress", "in_review"];
-const sortCycle: IssueListQueryState["sort"][] = [
-  "updated",
-  "priority",
-  "status",
-  "created",
-];
+const sortCycle: IssueListQueryState["sort"][] = ["updated", "priority", "status", "created"];
 
 const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -94,10 +89,7 @@ const priorityTone: Record<IssuePriority, MetadataTone> = {
 };
 
 function valuesMatch<T>(left: readonly T[], right: readonly T[]) {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => value === right[index])
-  );
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function buildWorkspacePrefix(value: string) {
@@ -201,13 +193,7 @@ function IconButton({
   );
 }
 
-function MetadataPill({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: MetadataTone;
-}) {
+function MetadataPill({ label, tone }: { label: string; tone: MetadataTone }) {
   return (
     <span className={cn("linear-list-pill", pillToneClasses[tone])}>
       <span className={cn("h-2.5 w-2.5 rounded-full", pillDotClasses[tone])} />
@@ -235,10 +221,7 @@ function AssigneePill({ label }: { label: string }) {
   );
 }
 
-function describeCurrentView(
-  queryState: IssueListQueryState,
-  showOnlyUnassigned: boolean,
-) {
+function describeCurrentView(queryState: IssueListQueryState, showOnlyUnassigned: boolean) {
   if (showOnlyUnassigned) {
     return "Unassigned current cycle";
   }
@@ -317,9 +300,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
 
   useEffect(() => {
     setSelectedIssueIds((currentIds) =>
-      currentIds.filter((issueId) =>
-        initialData.issues.some((issue) => issue.id === issueId),
-      ),
+      currentIds.filter((issueId) => initialData.issues.some((issue) => issue.id === issueId)),
     );
   }, [initialData.issues]);
 
@@ -327,8 +308,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
     setSelectedIssueIds((currentIds) =>
       currentIds.filter((issueId) =>
         issues.some(
-          (issue) =>
-            issue.id === issueId && (!showOnlyUnassigned || issue.assignee === null),
+          (issue) => issue.id === issueId && (!showOnlyUnassigned || issue.assignee === null),
         ),
       ),
     );
@@ -336,9 +316,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
 
   const queryState = initialData.queryState;
   const selectedIssueIdSet = new Set(selectedIssueIds);
-  const visibleIssues = issues.filter(
-    (issue) => !showOnlyUnassigned || issue.assignee === null,
-  );
+  const visibleIssues = issues.filter((issue) => !showOnlyUnassigned || issue.assignee === null);
   const hasFilters =
     queryState.query.length > 0 ||
     queryState.statuses.length > 0 ||
@@ -385,10 +363,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
     });
   }
 
-  function replaceViewState(viewState: {
-    create?: boolean;
-    controls?: boolean;
-  }) {
+  function replaceViewState(viewState: { create?: boolean; controls?: boolean }) {
     startTransition(() => {
       router.replace(buildPageUrl(queryState, viewState));
     });
@@ -470,9 +445,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
 
   function handleSelectIssue(issueId: string, checked: boolean) {
     setSelectedIssueIds((currentIds) =>
-      checked
-        ? [...currentIds, issueId]
-        : currentIds.filter((currentId) => currentId !== issueId),
+      checked ? [...currentIds, issueId] : currentIds.filter((currentId) => currentId !== issueId),
     );
   }
 
@@ -522,9 +495,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
       setSuccessMessage(successLabel);
       router.refresh();
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Bulk update failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Bulk update failed.");
     } finally {
       setIsMutating(false);
     }
@@ -544,10 +515,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
     setSuccessMessage(null);
 
     try {
-      const { error } = await supabase
-        .from("issues")
-        .delete()
-        .in("id", selectedIssueIds);
+      const { error } = await supabase.from("issues").delete().in("id", selectedIssueIds);
 
       if (error) {
         throw error;
@@ -557,9 +525,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
       setSuccessMessage("Selected issues deleted.");
       router.refresh();
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Bulk delete failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Bulk delete failed.");
     } finally {
       setIsMutating(false);
     }
@@ -571,9 +537,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
         members={initialData.members}
         onClose={closeCreateDialog}
         onCreated={(issueNumber) => {
-          router.push(
-            workspaceIssueDetailPath(initialData.workspace.slug, issueNumber),
-          );
+          router.push(workspaceIssueDetailPath(initialData.workspace.slug, issueNumber));
         }}
         open={isCreateOpen}
         workspaceId={initialData.workspace.id}
@@ -839,12 +803,9 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   <input
                     type="checkbox"
                     checked={
-                      visibleIssues.length > 0 &&
-                      selectedIssueIds.length === visibleIssues.length
+                      visibleIssues.length > 0 && selectedIssueIds.length === visibleIssues.length
                     }
-                    onChange={(event) =>
-                      handleToggleAllVisible(event.target.checked)
-                    }
+                    onChange={(event) => handleToggleAllVisible(event.target.checked)}
                     className="h-4 w-4 rounded border-border/80"
                   />
                   Select Visible
@@ -855,9 +816,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 <select
                   aria-label="Bulk Status"
                   value={bulkStatus}
-                  onChange={(event) =>
-                    setBulkStatus(event.target.value as IssueStatus | "")
-                  }
+                  onChange={(event) => setBulkStatus(event.target.value as IssueStatus | "")}
                   className="ui-select h-9 min-w-[8.5rem] rounded-full py-0 text-[12px] shadow-none"
                 >
                   <option value="">Status</option>
@@ -871,9 +830,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 <select
                   aria-label="Bulk Priority"
                   value={bulkPriority}
-                  onChange={(event) =>
-                    setBulkPriority(event.target.value as IssuePriority | "")
-                  }
+                  onChange={(event) => setBulkPriority(event.target.value as IssuePriority | "")}
                   className="ui-select h-9 min-w-[8.5rem] rounded-full py-0 text-[12px] shadow-none"
                 >
                   <option value="">Priority</option>
@@ -1018,8 +975,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 No Issues Match This View
               </h2>
               <p className="mt-2 max-w-md text-[13px] leading-6 text-muted">
-                Adjust the current filters or create an issue to seed the
-                workspace queue.
+                Adjust the current filters or create an issue to seed the workspace queue.
               </p>
             </div>
           ) : (
@@ -1040,9 +996,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       <input
                         type="checkbox"
                         checked={selectedIssueIdSet.has(issue.id)}
-                        onChange={(event) =>
-                          handleSelectIssue(issue.id, event.target.checked)
-                        }
+                        onChange={(event) => handleSelectIssue(issue.id, event.target.checked)}
                         className={cn(
                           "h-4 w-4 rounded border border-[#d0d0d0] transition-opacity duration-150",
                           selectedIssueIdSet.has(issue.id)
@@ -1053,10 +1007,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     </label>
 
                     <Link
-                      href={workspaceIssueDetailPath(
-                        initialData.workspace.slug,
-                        issue.number,
-                      )}
+                      href={workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}
                       className="flex min-w-0 items-center gap-2.5"
                     >
                       <IssueBarsIcon className="h-3.5 w-3.5 text-[#8c8f94]" />

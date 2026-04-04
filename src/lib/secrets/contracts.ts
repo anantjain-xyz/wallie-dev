@@ -5,10 +5,7 @@ export const workspaceSecretKeySchema = z
   .trim()
   .min(1, "Secret key is required.")
   .max(120, "Secret keys must stay under 120 characters.")
-  .regex(
-    /^[A-Z0-9_]+$/,
-    "Use uppercase letters, numbers, and underscores only for secret keys.",
-  );
+  .regex(/^[A-Z0-9_]+$/, "Use uppercase letters, numbers, and underscores only for secret keys.");
 
 export const listWorkspaceSecretsQuerySchema = z.object({
   workspaceId: z.string().uuid("Workspace id is invalid."),

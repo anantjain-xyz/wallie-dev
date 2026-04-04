@@ -23,10 +23,7 @@ function sortRuns(left: Pick<WallieRun, "createdAt">, right: Pick<WallieRun, "cr
 }
 
 export function mapAgentRunMessageRow(
-  row: Pick<
-    Tables<"agent_run_messages">,
-    "created_at" | "id" | "kind" | "message_md"
-  >,
+  row: Pick<Tables<"agent_run_messages">, "created_at" | "id" | "kind" | "message_md">,
 ): WallieRunMessage {
   return {
     createdAt: row.created_at,
@@ -71,25 +68,20 @@ export function mapAgentRunRow(
     id: row.id,
     isActive: false,
     isTerminal: false,
-    messages: [...messages].sort((left, right) =>
-      left.createdAt.localeCompare(right.createdAt),
-    ),
+    messages: [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     modelName: row.model_name,
     modelProvider: row.model_provider,
     runType: parseWallieRunMode(row.run_type),
     startedAt: row.started_at,
     status: row.status,
     triggeredByMember: row.triggered_by_member_id
-      ? memberIndex.get(row.triggered_by_member_id) ?? null
+      ? (memberIndex.get(row.triggered_by_member_id) ?? null)
       : null,
     triggeredByMemberId: row.triggered_by_member_id,
   };
 }
 
-export function upsertWallieRun(
-  runs: readonly WallieRun[],
-  nextRun: WallieRun,
-) {
+export function upsertWallieRun(runs: readonly WallieRun[], nextRun: WallieRun) {
   const nextRuns = runs.filter((run) => run.id !== nextRun.id);
 
   nextRuns.push(nextRun);
@@ -109,17 +101,13 @@ export function upsertWallieRunMessage(
       return run;
     }
 
-    const nextMessages = run.messages.filter(
-      (message) => message.id !== input.message.id,
-    );
+    const nextMessages = run.messages.filter((message) => message.id !== input.message.id);
 
     nextMessages.push(input.message);
 
     return {
       ...run,
-      messages: nextMessages.sort((left, right) =>
-        left.createdAt.localeCompare(right.createdAt),
-      ),
+      messages: nextMessages.sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     };
   });
 
@@ -152,8 +140,7 @@ export function buildWallieIssueData(input: {
   const messagesByRunId = new Map<string, WallieRunMessage[]>();
 
   for (const message of input.messages) {
-    const currentMessages =
-      messagesByRunId.get(message.agent_run_id) ?? [];
+    const currentMessages = messagesByRunId.get(message.agent_run_id) ?? [];
 
     currentMessages.push(mapAgentRunMessageRow(message));
     messagesByRunId.set(message.agent_run_id, currentMessages);
@@ -163,11 +150,7 @@ export function buildWallieIssueData(input: {
   const mode = inferWallieRunMode(input.issueGithubRepositoryId);
   const runs = normalizeWallieRuns(
     input.runs.map((run) =>
-      mapAgentRunRow(
-        run,
-        input.memberIndex,
-        messagesByRunId.get(run.id) ?? [],
-      ),
+      mapAgentRunRow(run, input.memberIndex, messagesByRunId.get(run.id) ?? []),
     ),
   );
   const blockingReasons = buildWallieBlockingReasons({

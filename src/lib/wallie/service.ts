@@ -4,12 +4,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type {
-  Enums,
-  Tables,
-  TablesInsert,
-  TablesUpdate,
-} from "@/lib/supabase/database.types";
+import type { Enums, Tables, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
 import {
   buildWallieBillingState,
   buildWallieBlockingReasons,
@@ -125,10 +120,7 @@ function isUniqueViolation(error: PostgrestError | null) {
   return error?.code === "23505";
 }
 
-function toBlockingActionError(
-  reasons: WallieBlockingReason[],
-  missingSecretKeys: string[],
-) {
+function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKeys: string[]) {
   const blockingReason = reasons.find((reason) => reason.code !== "active_run");
 
   if (!blockingReason) {
@@ -138,10 +130,8 @@ function toBlockingActionError(
   return new WallieActionError({
     code: blockingReason.code,
     message: reasons.map((reason) => reason.message).join(" "),
-    missingSecretKeys:
-      blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
-    statusCode:
-      blockingReason.code === "billing_limit_reached" ? 403 : 422,
+    missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
+    statusCode: blockingReason.code === "billing_limit_reached" ? 403 : 422,
   });
 }
 
@@ -220,10 +210,7 @@ async function loadRepositoryForRun(
   return data as RepositoryForRun | null;
 }
 
-async function loadMissingSecretKeys(
-  admin: AdminClient,
-  workspaceId: string,
-) {
+async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
   const { data, error } = await admin
     .from("workspace_secrets")
     .select("key")
@@ -236,15 +223,10 @@ async function loadMissingSecretKeys(
 
   const availableKeys = new Set((data ?? []).map((secret) => secret.key));
 
-  return [...WALLIE_REQUIRED_SECRET_KEYS].filter(
-    (secretKey) => !availableKeys.has(secretKey),
-  );
+  return [...WALLIE_REQUIRED_SECRET_KEYS].filter((secretKey) => !availableKeys.has(secretKey));
 }
 
-async function loadActiveRunForIssue(
-  admin: AdminClient,
-  issueId: string,
-) {
+async function loadActiveRunForIssue(admin: AdminClient, issueId: string) {
   const { data, error } = await admin
     .from("agent_runs")
     .select(runSelect)
@@ -327,11 +309,7 @@ async function loadRunByJobId(admin: AdminClient, jobId: string) {
   return data as AgentRunRow | null;
 }
 
-async function waitForRunByJobId(
-  admin: AdminClient,
-  jobId: string,
-  attempts = 5,
-) {
+async function waitForRunByJobId(admin: AdminClient, jobId: string, attempts = 5) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const run = await loadRunByJobId(admin, jobId);
 
@@ -396,11 +374,7 @@ async function validateQueuedRunRequest(input: {
   supabase: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
 }) {
-  const issue = await loadIssueForRun(
-    input.supabase,
-    input.issueId,
-    input.workspace.id,
-  );
+  const issue = await loadIssueForRun(input.supabase, input.issueId, input.workspace.id);
 
   if (!issue) {
     throw new WallieActionError({
@@ -410,12 +384,8 @@ async function validateQueuedRunRequest(input: {
     });
   }
 
-  const workspace = await maybeResetFreeTierBillingCycle(
-    input.admin,
-    input.workspace,
-  );
-  const runType =
-    input.requestedRunType ?? inferWallieRunMode(issue.github_repository_id);
+  const workspace = await maybeResetFreeTierBillingCycle(input.admin, input.workspace);
+  const runType = input.requestedRunType ?? inferWallieRunMode(issue.github_repository_id);
   const [repository, missingSecretKeys, activeRun] = await Promise.all([
     loadRepositoryForRun(input.admin, workspace.id, issue.github_repository_id),
     loadMissingSecretKeys(input.admin, workspace.id),
@@ -459,11 +429,7 @@ async function validateQueuedRunRequest(input: {
 }
 
 async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
-  const { error } = await admin
-    .from("agent_jobs")
-    .delete()
-    .eq("id", jobId)
-    .eq("status", "queued");
+  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
 
   if (error) {
     console.error("Failed to clean up orphaned Wallie job", {
@@ -742,8 +708,7 @@ async function markJobTerminal(input: {
     .from("agent_jobs")
     .update({
       finished_at: new Date().toISOString(),
-      last_error:
-        input.status === "error" ? input.errorMessage ?? "Wallie run failed." : null,
+      last_error: input.status === "error" ? (input.errorMessage ?? "Wallie run failed.") : null,
       status: input.status,
     })
     .eq("id", input.job.id)
@@ -782,10 +747,7 @@ async function finalizeRunError(input: {
   });
 }
 
-async function incrementWorkspaceSuccessfulRuns(
-  admin: AdminClient,
-  workspaceId: string,
-) {
+async function incrementWorkspaceSuccessfulRuns(admin: AdminClient, workspaceId: string) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const { data: workspace, error: workspaceError } = await admin
       .from("workspaces")
@@ -800,14 +762,10 @@ async function incrementWorkspaceSuccessfulRuns(
     const { data, error } = await admin
       .from("workspaces")
       .update({
-        successful_agent_runs_this_cycle:
-          workspace.successful_agent_runs_this_cycle + 1,
+        successful_agent_runs_this_cycle: workspace.successful_agent_runs_this_cycle + 1,
       })
       .eq("id", workspaceId)
-      .eq(
-        "successful_agent_runs_this_cycle",
-        workspace.successful_agent_runs_this_cycle,
-      )
+      .eq("successful_agent_runs_this_cycle", workspace.successful_agent_runs_this_cycle)
       .select("successful_agent_runs_this_cycle")
       .maybeSingle();
 
@@ -917,10 +875,7 @@ async function persistCodeArtifacts(input: {
   return data.id;
 }
 
-async function loadWorkspaceForJob(
-  admin: AdminClient,
-  workspaceId: string,
-) {
+async function loadWorkspaceForJob(admin: AdminClient, workspaceId: string) {
   const { data, error } = await admin
     .from("workspaces")
     .select(workspaceSelect)
@@ -935,11 +890,7 @@ async function loadWorkspaceForJob(
 }
 
 async function loadIssueById(admin: AdminClient, issueId: string) {
-  const { data, error } = await admin
-    .from("issues")
-    .select(issueSelect)
-    .eq("id", issueId)
-    .single();
+  const { data, error } = await admin.from("issues").select(issueSelect).eq("id", issueId).single();
 
   if (error) {
     throw error;
@@ -948,10 +899,7 @@ async function loadIssueById(admin: AdminClient, issueId: string) {
   return data as IssueForRun;
 }
 
-async function claimJobIfQueued(
-  admin: AdminClient,
-  job: AgentJobRow,
-) {
+async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
   if (job.status === "running") {
     return job;
   }
@@ -1020,25 +968,19 @@ async function loadProcessTargetJob(input: {
     .eq("status", "queued")
     .order("created_at", { ascending: true })
     .limit(10);
-  const scopedQuery = input.workspaceId
-    ? query.eq("workspace_id", input.workspaceId)
-    : query;
+  const scopedQuery = input.workspaceId ? query.eq("workspace_id", input.workspaceId) : query;
   const { data, error } = await scopedQuery;
 
   if (error) {
     throw error;
   }
 
-  return claimQueuedJobCandidate(
-    (data ?? []) as AgentJobRow[],
-    async (job) => claimJobIfQueued(input.admin, job),
+  return claimQueuedJobCandidate((data ?? []) as AgentJobRow[], async (job) =>
+    claimJobIfQueued(input.admin, job),
   );
 }
 
-async function processClaimedJob(input: {
-  admin: AdminClient;
-  job: AgentJobRow;
-}) {
+async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }) {
   const run = await loadRunByJobId(input.admin, input.job.id);
 
   if (!run) {
@@ -1100,10 +1042,7 @@ async function processClaimedJob(input: {
 
   let currentRun = await ensureRunStarted(input.admin, run);
 
-  const appendMessage = async (
-    kind: "error" | "output" | "status",
-    message: string,
-  ) => {
+  const appendMessage = async (kind: "error" | "output" | "status", message: string) => {
     await appendRunMessageIfMissing({
       admin: input.admin,
       kind,
@@ -1113,17 +1052,11 @@ async function processClaimedJob(input: {
     });
   };
 
-  await appendMessage(
-    "status",
-    "Wallie control plane claimed this queued run.",
-  );
+  await appendMessage("status", "Wallie control plane claimed this queued run.");
 
   try {
     currentRun = await ensureRunRunning(input.admin, currentRun);
-    await appendMessage(
-      "status",
-      "Wallie validated the issue context and entered executor mode.",
-    );
+    await appendMessage("status", "Wallie validated the issue context and entered executor mode.");
     await executeStubWallieRun({
       appendMessage,
       issue: {
@@ -1180,8 +1113,7 @@ async function processClaimedJob(input: {
       runId: currentRun.id,
     } satisfies ProcessQueuedJobsResult;
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Wallie run failed.";
+    const message = error instanceof Error ? error.message : "Wallie run failed.";
 
     await appendMessage("error", message);
     await finalizeRunError({

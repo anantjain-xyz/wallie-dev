@@ -23,9 +23,7 @@ export function mapIssueMemberRow(row: WorkspaceMemberRow): IssueMember {
   };
 }
 
-export function mapIssueViewerMemberRow(
-  row: WorkspaceViewerMemberRow,
-): IssueViewerMember {
+export function mapIssueViewerMemberRow(row: WorkspaceViewerMemberRow): IssueViewerMember {
   return {
     ...mapIssueMemberRow(row),
     preferences: row.preferences,
@@ -41,14 +39,10 @@ export function mapIssueRow(
   memberIndex: ReadonlyMap<string, IssueMember>,
 ): IssueSummary {
   return {
-    assignee: row.assignee_member_id
-      ? memberIndex.get(row.assignee_member_id) ?? null
-      : null,
+    assignee: row.assignee_member_id ? (memberIndex.get(row.assignee_member_id) ?? null) : null,
     assigneeMemberId: row.assignee_member_id,
     createdAt: row.created_at,
-    creator: row.creator_member_id
-      ? memberIndex.get(row.creator_member_id) ?? null
-      : null,
+    creator: row.creator_member_id ? (memberIndex.get(row.creator_member_id) ?? null) : null,
     creatorMemberId: row.creator_member_id,
     descriptionMd: row.description_md,
     estimatePoints: row.estimate_points,
@@ -79,9 +73,7 @@ export function mapIssueCommentRow(
   memberIndex: ReadonlyMap<string, IssueMember>,
 ): IssueComment {
   return {
-    author: row.author_member_id
-      ? memberIndex.get(row.author_member_id) ?? null
-      : null,
+    author: row.author_member_id ? (memberIndex.get(row.author_member_id) ?? null) : null,
     authorMemberId: row.author_member_id,
     bodyMd: row.body_md,
     createdAt: row.created_at,

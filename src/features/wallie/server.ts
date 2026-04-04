@@ -18,26 +18,27 @@ export async function loadWallieIssueData(input: {
   workspaceId: string;
 }) {
   const admin = createSupabaseAdminClient();
-  const [{ data: runRows, error: runError }, { data: workspace, error: workspaceError }, { data: secretRows, error: secretError }] =
-    await Promise.all([
-      input.supabase
-        .from("agent_runs")
-        .select(runSelect)
-        .eq("issue_id", input.issue.id)
-        .order("created_at", { ascending: false }),
-      input.supabase
-        .from("workspaces")
-        .select(
-          "tier, current_billing_cycle_start_at, successful_agent_runs_this_cycle",
-        )
-        .eq("id", input.workspaceId)
-        .single(),
-      admin
-        .from("workspace_secrets")
-        .select("key")
-        .eq("workspace_id", input.workspaceId)
-        .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]),
-    ]);
+  const [
+    { data: runRows, error: runError },
+    { data: workspace, error: workspaceError },
+    { data: secretRows, error: secretError },
+  ] = await Promise.all([
+    input.supabase
+      .from("agent_runs")
+      .select(runSelect)
+      .eq("issue_id", input.issue.id)
+      .order("created_at", { ascending: false }),
+    input.supabase
+      .from("workspaces")
+      .select("tier, current_billing_cycle_start_at, successful_agent_runs_this_cycle")
+      .eq("id", input.workspaceId)
+      .single(),
+    admin
+      .from("workspace_secrets")
+      .select("key")
+      .eq("workspace_id", input.workspaceId)
+      .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]),
+  ]);
 
   if (runError) {
     throw runError;
@@ -53,10 +54,7 @@ export async function loadWallieIssueData(input: {
 
   const runIds = (runRows ?? []).map((run) => run.id);
   let messageRows: Array<
-    Pick<
-      Tables<"agent_run_messages">,
-      "agent_run_id" | "created_at" | "id" | "kind" | "message_md"
-    >
+    Pick<Tables<"agent_run_messages">, "agent_run_id" | "created_at" | "id" | "kind" | "message_md">
   > = [];
 
   if (runIds.length > 0) {
@@ -89,7 +87,7 @@ export async function loadWallieIssueData(input: {
     messages: messageRows,
     missingSecretKeys,
     repository: input.repository,
-    runs: ((runRows ?? []) as Array<
+    runs: (runRows ?? []) as Array<
       Pick<
         Tables<"agent_runs">,
         | "created_at"
@@ -102,7 +100,7 @@ export async function loadWallieIssueData(input: {
         | "status"
         | "triggered_by_member_id"
       >
-    >),
+    >,
   });
 }
 

@@ -10,17 +10,15 @@ import { buildSecretPreview, encryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
-function mapSecretPreview(
-  row: {
-    created_at: string;
-    created_by_member_id: string | null;
-    id: string;
-    key: string;
-    updated_at: string;
-    value_preview: string | null;
-    workspace_id: string;
-  },
-) {
+function mapSecretPreview(row: {
+  created_at: string;
+  created_by_member_id: string | null;
+  id: string;
+  key: string;
+  updated_at: string;
+  value_preview: string | null;
+  workspace_id: string;
+}) {
   return {
     createdAt: row.created_at,
     createdByMemberId: row.created_by_member_id,
@@ -64,9 +62,7 @@ export async function GET(request: NextRequest) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("workspace_secrets")
-    .select(
-      "id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at",
-    )
+    .select("id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at")
     .eq("workspace_id", access.context.workspace.id)
     .order("key", { ascending: true });
 
@@ -137,9 +133,7 @@ export async function POST(request: Request) {
         onConflict: "workspace_id,key",
       },
     )
-    .select(
-      "id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at",
-    )
+    .select("id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at")
     .single();
 
   if (error) {

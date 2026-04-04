@@ -9,10 +9,7 @@ import {
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
 
-function clearSupabaseAuthCookies(
-  request: NextRequest,
-  response: NextResponse,
-) {
+function clearSupabaseAuthCookies(request: NextRequest, response: NextResponse) {
   const cookieNames = getSupabaseAuthFlowCookieNames(request.cookies.getAll());
 
   cookieNames.forEach((name) => {

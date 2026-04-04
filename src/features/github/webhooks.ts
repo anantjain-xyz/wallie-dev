@@ -179,9 +179,7 @@ export async function handleGitHubPullRequestEvent(
       github_repository_id: repository?.id ?? null,
       is_draft: payload.pull_request.draft,
       pull_request_number: payload.pull_request.number,
-      pull_request_state: payload.pull_request.merged
-        ? "merged"
-        : payload.pull_request.state,
+      pull_request_state: payload.pull_request.merged ? "merged" : payload.pull_request.state,
       pull_request_url: payload.pull_request.html_url,
     })
     .eq("id", branchRow.id);

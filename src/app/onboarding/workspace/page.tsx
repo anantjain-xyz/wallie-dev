@@ -2,10 +2,7 @@ import { redirect } from "next/navigation";
 
 import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
 import { PlaceholderPanel } from "@/components/shared/placeholder-panel";
-import {
-  ensureProfileForUser,
-  resolveAuthenticatedHomePath,
-} from "@/lib/auth";
+import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";

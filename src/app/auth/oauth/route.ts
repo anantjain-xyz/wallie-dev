@@ -17,9 +17,7 @@ function getEntryPath(mode: "login" | "signup", next: string, error: string) {
 
 export async function GET(request: NextRequest) {
   const next = normalizeNextPath(request.nextUrl.searchParams.get("next"));
-  const mode = authModeSchema
-    .catch("login")
-    .parse(request.nextUrl.searchParams.get("mode"));
+  const mode = authModeSchema.catch("login").parse(request.nextUrl.searchParams.get("mode"));
   const providerResult = oauthProviderSchema.safeParse(
     request.nextUrl.searchParams.get("provider"),
   );

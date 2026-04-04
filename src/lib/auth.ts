@@ -1,10 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 
-import {
-  onboardingWorkspacePath,
-  workspaceBasePath,
-  workspaceIssuesPath,
-} from "@/lib/routes";
+import { onboardingWorkspacePath, workspaceBasePath, workspaceIssuesPath } from "@/lib/routes";
 import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -24,10 +20,7 @@ type UserMetadata = {
   picture?: string;
 };
 
-export function normalizeNextPath(
-  value: string | null | undefined,
-  fallback = "/",
-) {
+export function normalizeNextPath(value: string | null | undefined, fallback = "/") {
   if (!value) {
     return fallback;
   }
@@ -53,10 +46,7 @@ export function workspaceLoginRedirectPath(workspaceSlug: string) {
   return normalizeNextPath(workspaceBasePath(workspaceSlug));
 }
 
-export async function ensureProfileForUser(
-  supabase: SupabaseServerClient,
-  user: User,
-) {
+export async function ensureProfileForUser(supabase: SupabaseServerClient, user: User) {
   const metadata = (user.user_metadata ?? {}) as UserMetadata;
   const fullName = metadata.full_name ?? metadata.name ?? null;
   const avatarUrl = metadata.avatar_url ?? metadata.picture ?? null;
@@ -78,9 +68,7 @@ export async function ensureProfileForUser(
   }
 }
 
-export async function getDefaultWorkspace(
-  supabase: SupabaseServerClient,
-) {
+export async function getDefaultWorkspace(supabase: SupabaseServerClient) {
   const { data, error } = await supabase
     .from("workspaces")
     .select("id, name, slug, tier")
@@ -112,18 +100,12 @@ export async function getWorkspaceBySlugForUser(
   return data satisfies WorkspaceSummary | null;
 }
 
-export async function hasAnyWorkspaceForUser(
-  supabase: SupabaseServerClient,
-) {
+export async function hasAnyWorkspaceForUser(supabase: SupabaseServerClient) {
   return (await getDefaultWorkspace(supabase)) !== null;
 }
 
-export async function resolveAuthenticatedHomePath(
-  supabase: SupabaseServerClient,
-) {
+export async function resolveAuthenticatedHomePath(supabase: SupabaseServerClient) {
   const workspace = await getDefaultWorkspace(supabase);
 
-  return workspace
-    ? workspaceIssuesPath(workspace.slug)
-    : onboardingWorkspacePath();
+  return workspace ? workspaceIssuesPath(workspace.slug) : onboardingWorkspacePath();
 }

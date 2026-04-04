@@ -88,26 +88,29 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     notFound();
   }
 
-  const [{ data: currentMember, error: currentMemberError }, { data: installationRows, error: installationError }, { data: repositoryRows, error: repositoryError }] =
-    await Promise.all([
-      supabase
-        .from("workspace_members")
-        .select(currentMemberSelect)
-        .eq("workspace_id", workspace.id)
-        .eq("user_id", user.id)
-        .maybeSingle(),
-      supabase
-        .from("github_installations")
-        .select(installationSelect)
-        .eq("workspace_id", workspace.id)
-        .order("updated_at", { ascending: false })
-        .limit(1),
-      supabase
-        .from("github_repositories")
-        .select(repositorySelect)
-        .eq("workspace_id", workspace.id)
-        .order("full_name", { ascending: true }),
-    ]);
+  const [
+    { data: currentMember, error: currentMemberError },
+    { data: installationRows, error: installationError },
+    { data: repositoryRows, error: repositoryError },
+  ] = await Promise.all([
+    supabase
+      .from("workspace_members")
+      .select(currentMemberSelect)
+      .eq("workspace_id", workspace.id)
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("github_installations")
+      .select(installationSelect)
+      .eq("workspace_id", workspace.id)
+      .order("updated_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("github_repositories")
+      .select(repositorySelect)
+      .eq("workspace_id", workspace.id)
+      .order("full_name", { ascending: true }),
+  ]);
 
   if (currentMemberError) {
     throw currentMemberError;
@@ -129,8 +132,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
 
   return {
     billing: getStripeConfigStatus(),
-    canManage:
-      currentMember.role === "owner" || currentMember.role === "admin",
+    canManage: currentMember.role === "owner" || currentMember.role === "admin",
     currentMember: {
       id: currentMember.id,
       role: currentMember.role,

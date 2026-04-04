@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  normalizeWorkspaceSlug,
-  slugifyWorkspaceName,
-} from "@/lib/workspaces";
+import { normalizeWorkspaceSlug, slugifyWorkspaceName } from "@/lib/workspaces";
 
 describe("workspace helpers", () => {
   it("slugifies workspace names for client previews", () => {

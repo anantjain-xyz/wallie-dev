@@ -1,9 +1,6 @@
 import { redirect } from "next/navigation";
 
-import {
-  ensureProfileForUser,
-  resolveAuthenticatedHomePath,
-} from "@/lib/auth";
+import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";

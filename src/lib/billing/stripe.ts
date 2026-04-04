@@ -16,18 +16,14 @@ export function getMissingStripeEnvKeys(
   return keys.filter((key) => !input[key]?.trim());
 }
 
-export function getStripeConfigStatus(
-  input: Record<string, string | undefined> = process.env,
-) {
+export function getStripeConfigStatus(input: Record<string, string | undefined> = process.env) {
   return {
     missingPortalKeys: getMissingStripeEnvKeys(stripePortalEnvKeys, input),
     missingWebhookKeys: getMissingStripeEnvKeys(stripeWebhookEnvKeys, input),
   };
 }
 
-export function createStripeClient(
-  input: Record<string, string | undefined> = process.env,
-) {
+export function createStripeClient(input: Record<string, string | undefined> = process.env) {
   if (stripeClientSingleton && input === process.env) {
     return stripeClientSingleton;
   }
@@ -94,9 +90,7 @@ export async function ensureStripeCustomerIdForWorkspace(
   return customer.id;
 }
 
-function resolveWorkspaceTierForSubscription(
-  status: Stripe.Subscription.Status,
-) {
+function resolveWorkspaceTierForSubscription(status: Stripe.Subscription.Status) {
   switch (status) {
     case "active":
     case "trialing":
@@ -108,16 +102,10 @@ function resolveWorkspaceTierForSubscription(
   }
 }
 
-function resolveSubscriptionCycleStart(
-  subscription: Stripe.Subscription,
-) {
+function resolveSubscriptionCycleStart(subscription: Stripe.Subscription) {
   const lineItem = subscription.items.data[0];
 
-  return (
-    lineItem?.current_period_start ??
-    subscription.trial_start ??
-    subscription.created
-  );
+  return lineItem?.current_period_start ?? subscription.trial_start ?? subscription.created;
 }
 
 async function findWorkspaceByStripeCustomerId(
@@ -200,9 +188,7 @@ export async function applyStripeSubscriptionUpdate(
   input: Record<string, string | undefined> = process.env,
 ) {
   const customerId =
-    typeof subscription.customer === "string"
-      ? subscription.customer
-      : subscription.customer.id;
+    typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
 
   let workspace = await findWorkspaceByStripeCustomerId(customerId, input);
 
@@ -216,12 +202,9 @@ export async function applyStripeSubscriptionUpdate(
 
   const admin = createSupabaseAdminClient(input);
   const nextTier = resolveWorkspaceTierForSubscription(subscription.status);
-  const cycleStartIso = new Date(
-    resolveSubscriptionCycleStart(subscription) * 1000,
-  ).toISOString();
+  const cycleStartIso = new Date(resolveSubscriptionCycleStart(subscription) * 1000).toISOString();
   const shouldResetRunCounter =
-    cycleStartIso !== workspace.current_billing_cycle_start_at ||
-    nextTier === "free";
+    cycleStartIso !== workspace.current_billing_cycle_start_at || nextTier === "free";
 
   const { data, error } = await admin
     .from("workspaces")

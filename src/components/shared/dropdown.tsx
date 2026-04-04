@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  type ReactNode,
-  useEffect,
-  useEffectEvent,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -17,11 +10,7 @@ type DropdownProps = {
   trigger: ReactNode;
 };
 
-export function Dropdown({
-  align = "left",
-  children,
-  trigger,
-}: DropdownProps) {
+export function Dropdown({ align = "left", children, trigger }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -50,7 +39,7 @@ export function Dropdown({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleKeyDown, handlePointerDown, open]);
+  }, [open]);
 
   return (
     <div ref={containerRef} className="relative min-w-0">

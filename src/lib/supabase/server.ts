@@ -5,10 +5,12 @@ import type { Database } from "@/lib/supabase/database.types";
 import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
 import type { SupabaseCookieValue } from "@/lib/supabase/types";
 
-type CookieStore = Awaited<ReturnType<typeof cookies>> | {
-  getAll: () => { name: string; value: string }[];
-  set: (name: string, value: string, options?: object) => void;
-};
+type CookieStore =
+  | Awaited<ReturnType<typeof cookies>>
+  | {
+      getAll: () => { name: string; value: string }[];
+      set: (name: string, value: string, options?: object) => void;
+    };
 
 type CookieAdapterValue = {
   name: string;
@@ -20,14 +22,10 @@ const READ_ONLY_COOKIE_ERROR_MESSAGE =
   "Cookies can only be modified in a Server Action or Route Handler.";
 
 function isReadOnlyCookieError(error: unknown) {
-  return error instanceof Error
-    && error.message.includes(READ_ONLY_COOKIE_ERROR_MESSAGE);
+  return error instanceof Error && error.message.includes(READ_ONLY_COOKIE_ERROR_MESSAGE);
 }
 
-function setSupabaseCookie(
-  cookieStore: CookieStore,
-  { name, options, value }: CookieAdapterValue,
-) {
+function setSupabaseCookie(cookieStore: CookieStore, { name, options, value }: CookieAdapterValue) {
   try {
     cookieStore.set(name, value, options);
     return;
@@ -48,9 +46,7 @@ function setSupabaseCookie(
   }
 }
 
-export function toSupabaseCookieValues(
-  cookiesToSet: CookieAdapterValue[],
-): SupabaseCookieValue[] {
+export function toSupabaseCookieValues(cookiesToSet: CookieAdapterValue[]): SupabaseCookieValue[] {
   return cookiesToSet.map(({ name, value }) => ({
     name,
     value,

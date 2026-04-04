@@ -14,9 +14,7 @@ import {
   ISSUE_STATUS_VALUES,
 } from "@/features/issues/types";
 
-type SearchParamInput =
-  | Record<string, string | string[] | undefined>
-  | URLSearchParams;
+type SearchParamInput = Record<string, string | string[] | undefined> | URLSearchParams;
 
 export type IssueListQueryState = {
   direction: SortDirection;
@@ -36,9 +34,7 @@ const defaultIssueListQueryState: IssueListQueryState = {
   statuses: [],
 };
 
-function isRecord(
-  value: Json | null | undefined,
-): value is Record<string, Json | undefined> {
+function isRecord(value: Json | null | undefined): value is Record<string, Json | undefined> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -79,9 +75,7 @@ function parseDirection(value: string | undefined) {
   return value === "asc" || value === "desc" ? value : undefined;
 }
 
-export function readIssueListPreferences(
-  value: Json | null | undefined,
-): IssueListPreferences {
+export function readIssueListPreferences(value: Json | null | undefined): IssueListPreferences {
   if (!isRecord(value)) {
     return {};
   }
@@ -92,9 +86,7 @@ export function readIssueListPreferences(
     return {};
   }
 
-  const sort = parseSortField(
-    typeof issues.sort === "string" ? issues.sort : undefined,
-  );
+  const sort = parseSortField(typeof issues.sort === "string" ? issues.sort : undefined);
   const direction = parseDirection(
     typeof issues.direction === "string" ? issues.direction : undefined,
   );
@@ -130,15 +122,12 @@ export function parseIssueListQueryState(
   preferences: IssueListPreferences = {},
 ): IssueListQueryState {
   const sort =
-    parseSortField(
-      readParamValues(input, "sort")[0] ?? readParamValues(input, "orderBy")[0],
-    ) ??
+    parseSortField(readParamValues(input, "sort")[0] ?? readParamValues(input, "orderBy")[0]) ??
     preferences.sort ??
     defaultIssueListQueryState.sort;
   const direction =
     parseDirection(
-      readParamValues(input, "direction")[0] ??
-        readParamValues(input, "orderDirection")[0],
+      readParamValues(input, "direction")[0] ?? readParamValues(input, "orderDirection")[0],
     ) ??
     preferences.direction ??
     defaultIssueListQueryState.direction;
@@ -148,9 +137,8 @@ export function parseIssueListQueryState(
     ),
   );
   const priorities = uniqueValues(
-    splitParamValues(input, "priority").filter(
-      (value): value is IssuePriority =>
-        ISSUE_PRIORITY_VALUES.includes(value as IssuePriority),
+    splitParamValues(input, "priority").filter((value): value is IssuePriority =>
+      ISSUE_PRIORITY_VALUES.includes(value as IssuePriority),
     ),
   );
   const estimates = uniqueValues(
@@ -200,9 +188,7 @@ export function serializeIssueListQueryState(
   if (state.estimates.length > 0) {
     params.set(
       "estimate",
-      state.estimates
-        .map((estimate) => (estimate === null ? "null" : String(estimate)))
-        .join(","),
+      state.estimates.map((estimate) => (estimate === null ? "null" : String(estimate))).join(","),
     );
   }
 

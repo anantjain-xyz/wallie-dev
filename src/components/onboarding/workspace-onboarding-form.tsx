@@ -85,15 +85,13 @@ export function WorkspaceOnboardingForm() {
     >
       <section className="ui-panel p-5">
         <div className="space-y-2">
-          <p className="text-[11px] font-medium text-muted">
-            Workspace Identity
-          </p>
+          <p className="text-[11px] font-medium text-muted">Workspace Identity</p>
           <h2 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
             Name the First Workspace
           </h2>
           <p className="text-sm leading-6 text-muted">
-            The server owns slug normalization, uniqueness, owner membership, and
-            the system `wallie` member bootstrap.
+            The server owns slug normalization, uniqueness, owner membership, and the system
+            `wallie` member bootstrap.
           </p>
         </div>
 
@@ -114,8 +112,7 @@ export function WorkspaceOnboardingForm() {
         <label className="mt-5 block text-sm font-semibold text-foreground">
           Preferred slug
           <span className="mt-1 block text-xs font-normal leading-5 text-muted">
-            Optional. If this is taken, Wallie appends a numeric suffix on the
-            server.
+            Optional. If this is taken, Wallie appends a numeric suffix on the server.
           </span>
           <input
             type="text"
@@ -150,9 +147,7 @@ export function WorkspaceOnboardingForm() {
       </section>
 
       <section className="ui-subpanel p-5">
-        <p className="text-[11px] font-medium text-muted">
-          Result
-        </p>
+        <p className="text-[11px] font-medium text-muted">Result</p>
         <h2 className="mt-3 text-2xl font-semibold tracking-tight text-balance text-foreground">
           Entry Route Preview
         </h2>

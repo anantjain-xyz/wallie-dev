@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildSecretPreview,
-  decryptSecretValue,
-  encryptSecretValue,
-} from "@/lib/secrets/crypto";
+import { buildSecretPreview, decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 
 const testEnv = {
   WALLIE_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef",

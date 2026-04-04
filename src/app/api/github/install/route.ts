@@ -57,9 +57,7 @@ export async function GET(request: NextRequest) {
     workspaceSlug: access.context.workspace.slug,
   });
   const callbackUrl = new URL("/api/github/callback", env.NEXT_PUBLIC_APP_URL);
-  const installUrl = new URL(
-    `https://github.com/apps/${installSlug}/installations/new`,
-  );
+  const installUrl = new URL(`https://github.com/apps/${installSlug}/installations/new`);
 
   installUrl.searchParams.set("redirect_uri", callbackUrl.toString());
   installUrl.searchParams.set("state", state);

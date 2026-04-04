@@ -13,10 +13,7 @@ type StatusChipProps = {
   tone?: keyof typeof toneClasses;
 };
 
-export function StatusChip({
-  children,
-  tone = "planned",
-}: StatusChipProps) {
+export function StatusChip({ children, tone = "planned" }: StatusChipProps) {
   return (
     <span
       className={cn(

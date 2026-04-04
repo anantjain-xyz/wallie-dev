@@ -2,10 +2,7 @@ import { createHmac } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createGitHubInstallState,
-  verifyGitHubInstallState,
-} from "@/features/github/state";
+import { createGitHubInstallState, verifyGitHubInstallState } from "@/features/github/state";
 import { verifyGitHubWebhookRequest } from "@/features/github/webhooks";
 
 const testEnv = {
@@ -62,9 +59,7 @@ describe("github install state", () => {
     ).toString("base64url");
 
     expect(signature).toBeTruthy();
-    expect(
-      verifyGitHubInstallState(`${tamperedPayload}.${signature}`, testEnv),
-    ).toBeNull();
+    expect(verifyGitHubInstallState(`${tamperedPayload}.${signature}`, testEnv)).toBeNull();
     expect(verifyGitHubInstallState(`${payload}.invalid`, testEnv)).toBeNull();
   });
 });
@@ -77,18 +72,13 @@ describe("github webhook verification", () => {
         id: 42,
       },
     });
-    const validSignature = `sha256=${createHmac(
-      "sha256",
-      testEnv.GITHUB_WEBHOOK_SECRET,
-    )
+    const validSignature = `sha256=${createHmac("sha256", testEnv.GITHUB_WEBHOOK_SECRET)
       .update(payload)
       .digest("hex")}`;
 
-    await expect(
-      verifyGitHubWebhookRequest(payload, validSignature, testEnv),
-    ).resolves.toBe(true);
-    await expect(
-      verifyGitHubWebhookRequest(payload, "sha256=deadbeef", testEnv),
-    ).resolves.toBe(false);
+    await expect(verifyGitHubWebhookRequest(payload, validSignature, testEnv)).resolves.toBe(true);
+    await expect(verifyGitHubWebhookRequest(payload, "sha256=deadbeef", testEnv)).resolves.toBe(
+      false,
+    );
   });
 });

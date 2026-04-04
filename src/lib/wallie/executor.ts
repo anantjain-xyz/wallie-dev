@@ -84,9 +84,7 @@ export function buildStubBranchName(issueNumber: number) {
   return `wallie/issue-${issueNumber}`;
 }
 
-export async function executeStubWallieRun(
-  context: StubWallieExecutionContext,
-) {
+export async function executeStubWallieRun(context: StubWallieExecutionContext) {
   await context.appendMessage(
     "status",
     `${formatWallieRunMode(context.run.runType)} selected for issue #${context.issue.number}.`,

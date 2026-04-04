@@ -15,11 +15,7 @@ import {
 } from "@/components/shared/linear-icons";
 import { Dropdown } from "@/components/shared/dropdown";
 import type { WorkspaceSummary } from "@/lib/auth";
-import {
-  type WorkspaceNavItem,
-  workspaceIssuesPath,
-  workspaceSettingsPath,
-} from "@/lib/routes";
+import { type WorkspaceNavItem, workspaceIssuesPath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type ShellSidebarProps = {
@@ -61,9 +57,7 @@ function SidebarEntry({
         <span className="text-[#7a7d84]">{icon}</span>
         <span className="truncate">{label}</span>
       </span>
-      {trailing ? (
-        <span className="shrink-0 text-[11px] text-muted">{trailing}</span>
-      ) : null}
+      {trailing ? <span className="shrink-0 text-[11px] text-muted">{trailing}</span> : null}
     </>
   );
 
@@ -82,15 +76,10 @@ function SidebarEntry({
   );
 }
 
-export function ShellSidebar({
-  navItems,
-  viewerEmail,
-  workspace,
-}: ShellSidebarProps) {
+export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarProps) {
   const pathname = usePathname();
   const issuesHref =
-    navItems.find((item) => item.label === "Issues")?.href ??
-    workspaceIssuesPath(workspace.slug);
+    navItems.find((item) => item.label === "Issues")?.href ?? workspaceIssuesPath(workspace.slug);
   const settingsHref =
     navItems.find((item) => item.label === "Settings")?.href ??
     workspaceSettingsPath(workspace.slug);
@@ -134,11 +123,7 @@ export function ShellSidebar({
           >
             <SearchIcon className="h-3.5 w-3.5" />
           </Link>
-          <Link
-            href={issuesCreateHref}
-            className="linear-icon-button"
-            aria-label="Create Issue"
-          >
+          <Link href={issuesCreateHref} className="linear-icon-button" aria-label="Create Issue">
             <PlusIcon className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -180,11 +165,7 @@ export function ShellSidebar({
           </div>
 
           <form action="/auth/signout" method="post">
-            <button
-              type="submit"
-              className="linear-icon-button"
-              aria-label="Sign out"
-            >
+            <button type="submit" className="linear-icon-button" aria-label="Sign out">
               <LogoutIcon className="h-3.5 w-3.5" />
             </button>
           </form>

@@ -7,11 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const authModeSchema = z.enum(["login", "signup"]);
 
-function getEntryPath(
-  mode: "login" | "signup",
-  next: string,
-  params: Record<string, string>,
-) {
+function getEntryPath(mode: "login" | "signup", next: string, params: Record<string, string>) {
   const basePath = mode === "signup" ? signupPath(next) : loginPath(next);
   const searchParams = new URLSearchParams(params);
   const separator = basePath.includes("?") ? "&" : "?";
@@ -21,7 +17,9 @@ function getEntryPath(
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const email = String(formData.get("email") ?? "")
+    .trim()
+    .toLowerCase();
   const mode = authModeSchema.catch("login").parse(formData.get("mode"));
   const next = normalizeNextPath(String(formData.get("next") ?? ""));
 

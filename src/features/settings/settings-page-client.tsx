@@ -42,13 +42,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 const interactiveLinkClass =
   "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
-function Section({
-  children,
-  title,
-}: {
-  children: ReactNode;
-  title: string;
-}) {
+function Section({ children, title }: { children: ReactNode; title: string }) {
   return (
     <section className="rounded-[20px] bg-surface px-5 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_28px_rgba(16,24,40,0.05)] sm:px-6 sm:py-6">
       <h2 className="text-base font-semibold tracking-tight text-balance text-foreground">
@@ -70,13 +64,7 @@ function toneClass(kind: FlashMessage["kind"]) {
   }
 }
 
-function ConfigState({
-  missingKeys,
-  title,
-}: {
-  missingKeys: string[];
-  title: string;
-}) {
+function ConfigState({ missingKeys, title }: { missingKeys: string[]; title: string }) {
   if (missingKeys.length === 0) {
     return null;
   }
@@ -109,9 +97,7 @@ async function readResponseJson<T>(response: Response) {
     | null;
 
   if (!response.ok) {
-    const detail = payload?.missing?.length
-      ? ` Missing: ${payload.missing.join(", ")}.`
-      : "";
+    const detail = payload?.missing?.length ? ` Missing: ${payload.missing.join(", ")}.` : "";
 
     throw new Error((payload?.error ?? "Request failed.") + detail);
   }
@@ -160,19 +146,14 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
   }
 }
 
-export function SettingsPageClient({
-  initialData,
-  searchState,
-}: SettingsPageClientProps) {
+export function SettingsPageClient({ initialData, searchState }: SettingsPageClientProps) {
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(
     initialFlashMessage(searchState),
   );
-  const [workspaceAvatarUrl, setWorkspaceAvatarUrl] = useState(
-    initialData.workspace.avatarUrl,
+  const [workspaceAvatarUrl, setWorkspaceAvatarUrl] = useState(initialData.workspace.avatarUrl);
+  const [githubInstallation, setGithubInstallation] = useState<GitHubInstallationSummary | null>(
+    initialData.github.installation,
   );
-  const [githubInstallation, setGithubInstallation] = useState<
-    GitHubInstallationSummary | null
-  >(initialData.github.installation);
   const [repositories, setRepositories] = useState<GitHubRepositorySummary[]>(
     initialData.github.repositories,
   );
@@ -218,8 +199,7 @@ export function SettingsPageClient({
             cache: "no-store",
           },
         );
-        const payload =
-          await readResponseJson<ListWorkspaceSecretsResponse>(response);
+        const payload = await readResponseJson<ListWorkspaceSecretsResponse>(response);
 
         if (isActive) {
           setSecrets(payload.secrets);
@@ -228,10 +208,7 @@ export function SettingsPageClient({
         if (isActive) {
           setFlashMessage({
             kind: "error",
-            text:
-              error instanceof Error
-                ? error.message
-                : "Workspace secret loading failed.",
+            text: error instanceof Error ? error.message : "Workspace secret loading failed.",
           });
         }
       } finally {
@@ -264,8 +241,7 @@ export function SettingsPageClient({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "GitHub install preparation failed.",
+        text: error instanceof Error ? error.message : "GitHub install preparation failed.",
       });
       setIsLaunchingGitHubInstall(false);
     }
@@ -284,8 +260,7 @@ export function SettingsPageClient({
         },
         method: "POST",
       });
-      const payload =
-        await readResponseJson<GitHubRepositorySyncResponse>(response);
+      const payload = await readResponseJson<GitHubRepositorySyncResponse>(response);
 
       setGithubInstallation(payload.installation);
       setRepositories(payload.repositories);
@@ -296,8 +271,7 @@ export function SettingsPageClient({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "GitHub repository sync failed.",
+        text: error instanceof Error ? error.message : "GitHub repository sync failed.",
       });
     } finally {
       setIsRefreshingRepositories(false);
@@ -317,15 +291,13 @@ export function SettingsPageClient({
         },
         method: "POST",
       });
-      const payload =
-        await readResponseJson<CreateStripePortalSessionResponse>(response);
+      const payload = await readResponseJson<CreateStripePortalSessionResponse>(response);
 
       window.location.assign(payload.url);
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "Stripe portal launch failed.",
+        text: error instanceof Error ? error.message : "Stripe portal launch failed.",
       });
       setIsOpeningBillingPortal(false);
     }
@@ -352,8 +324,7 @@ export function SettingsPageClient({
           method: "POST",
         },
       );
-      const payload =
-        await readResponseJson<WorkspaceAvatarUploadResponse>(response);
+      const payload = await readResponseJson<WorkspaceAvatarUploadResponse>(response);
 
       setWorkspaceAvatarUrl(payload.avatarUrl);
       setFlashMessage({
@@ -363,8 +334,7 @@ export function SettingsPageClient({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "Workspace avatar upload failed.",
+        text: error instanceof Error ? error.message : "Workspace avatar upload failed.",
       });
     } finally {
       event.target.value = "";
@@ -395,13 +365,10 @@ export function SettingsPageClient({
         },
         method: "POST",
       });
-      const payload =
-        await readResponseJson<UpsertWorkspaceSecretResponse>(response);
+      const payload = await readResponseJson<UpsertWorkspaceSecretResponse>(response);
 
       setSecrets((currentSecrets) => {
-        const nextSecrets = currentSecrets.filter(
-          (secret) => secret.key !== payload.secret.key,
-        );
+        const nextSecrets = currentSecrets.filter((secret) => secret.key !== payload.secret.key);
 
         nextSecrets.push(payload.secret);
         nextSecrets.sort((left, right) => left.key.localeCompare(right.key));
@@ -417,8 +384,7 @@ export function SettingsPageClient({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "Workspace secret save failed.",
+        text: error instanceof Error ? error.message : "Workspace secret save failed.",
       });
     } finally {
       setIsSavingSecret(false);
@@ -437,8 +403,7 @@ export function SettingsPageClient({
           method: "DELETE",
         },
       );
-      const payload =
-        await readResponseJson<DeleteWorkspaceSecretResponse>(response);
+      const payload = await readResponseJson<DeleteWorkspaceSecretResponse>(response);
 
       setSecrets((currentSecrets) =>
         currentSecrets.filter((secret) => secret.key !== payload.deletedKey),
@@ -450,8 +415,7 @@ export function SettingsPageClient({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "Workspace secret deletion failed.",
+        text: error instanceof Error ? error.message : "Workspace secret deletion failed.",
       });
     }
   }
@@ -460,15 +424,12 @@ export function SettingsPageClient({
     <div className="min-h-full bg-[#f6f5f2] px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="rounded-[24px] bg-surface px-6 py-6 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_14px_32px_rgba(16,24,40,0.06)] sm:px-8 sm:py-8">
-          <p className="ui-label">
-            Workspace Admin
-          </p>
+          <p className="ui-label">Workspace Admin</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance text-foreground">
             Settings
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
-            Manage workspace identity, billing, GitHub sync, and encrypted secrets
-            from one route.
+            Manage workspace identity, billing, GitHub sync, and encrypted secrets from one route.
           </p>
         </header>
 
@@ -506,7 +467,10 @@ export function SettingsPageClient({
                   /w/{initialData.workspace.slug}
                 </p>
                 <p className="text-sm text-muted">
-                  Tier: <span className="font-semibold text-foreground">{initialData.workspace.tier}</span>
+                  Tier:{" "}
+                  <span className="font-semibold text-foreground">
+                    {initialData.workspace.tier}
+                  </span>
                 </p>
               </div>
             </div>
@@ -515,9 +479,7 @@ export function SettingsPageClient({
               <p>
                 Billing cycle started{" "}
                 <span className="font-semibold">
-                  {dateFormatter.format(
-                    new Date(initialData.workspace.currentBillingCycleStartAt),
-                  )}
+                  {dateFormatter.format(new Date(initialData.workspace.currentBillingCycleStartAt))}
                 </span>
               </p>
               <p>
@@ -569,7 +531,8 @@ export function SettingsPageClient({
             />
 
             <div className="ui-subpanel p-5 text-sm leading-7 text-foreground">
-              Customer portal is the Gate E billing surface. Subscription changes sync back into workspace tier and billing-cycle state through Stripe webhooks.
+              Customer portal is the Gate E billing surface. Subscription changes sync back into
+              workspace tier and billing-cycle state through Stripe webhooks.
             </div>
 
             <button
@@ -642,10 +605,7 @@ export function SettingsPageClient({
                     </div>
                   ) : (
                     repositories.map((repository) => (
-                      <div
-                        className="ui-muted-panel p-4"
-                        key={repository.id}
-                      >
+                      <div className="ui-muted-panel p-4" key={repository.id}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-2">
                             <a
@@ -657,7 +617,9 @@ export function SettingsPageClient({
                               {repository.fullName}
                             </a>
                             <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.16em] text-muted">
-                              <span>{repository.defaultProgrammingLanguage ?? "language unknown"}</span>
+                              <span>
+                                {repository.defaultProgrammingLanguage ?? "language unknown"}
+                              </span>
                               <span>{repository.defaultBranch ?? "no default branch"}</span>
                               {repository.isPrivate ? <span>private</span> : <span>public</span>}
                               {repository.isArchived ? <span>archived</span> : null}
@@ -677,7 +639,8 @@ export function SettingsPageClient({
             ) : (
               <div className="ui-subpanel space-y-4 p-5">
                 <p className="text-sm leading-7 text-foreground">
-                  Install the workspace GitHub App to sync repositories and let issue PR metadata flow back into Wallie.
+                  Install the workspace GitHub App to sync repositories and let issue PR metadata
+                  flow back into Wallie.
                 </p>
                 <button
                   className="ui-button-primary"
@@ -695,7 +658,8 @@ export function SettingsPageClient({
         <Section title="Secrets">
           <div className="space-y-4">
             <p className="text-sm leading-7 text-muted">
-              Secret values never come back to the client. Wallie shows preview-only rows and writes encrypted values through route handlers.
+              Secret values never come back to the client. Wallie shows preview-only rows and writes
+              encrypted values through route handlers.
             </p>
 
             {isManager ? (
@@ -753,9 +717,7 @@ export function SettingsPageClient({
                         key={secret.id}
                       >
                         <div>
-                          <p className="text-sm font-semibold text-foreground">
-                            {secret.key}
-                          </p>
+                          <p className="text-sm font-semibold text-foreground">{secret.key}</p>
                           <p className="mt-1 font-mono text-xs uppercase tracking-[0.14em] text-muted">
                             {secret.valuePreview ?? "preview unavailable"}
                           </p>

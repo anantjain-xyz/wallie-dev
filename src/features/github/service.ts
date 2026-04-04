@@ -31,9 +31,7 @@ const repositorySelect =
 
 let githubAppSingleton: App | null = null;
 
-export function createGitHubApp(
-  input: Record<string, string | undefined> = process.env,
-) {
+export function createGitHubApp(input: Record<string, string | undefined> = process.env) {
   if (githubAppSingleton && input === process.env) {
     return githubAppSingleton;
   }
@@ -94,12 +92,9 @@ export async function fetchGitHubInstallationFromApp(
   input: Record<string, string | undefined> = process.env,
 ) {
   const app = createGitHubApp(input);
-  const { data } = await app.octokit.request(
-    "GET /app/installations/{installation_id}",
-    {
-      installation_id: installationId,
-    },
-  );
+  const { data } = await app.octokit.request("GET /app/installations/{installation_id}", {
+    installation_id: installationId,
+  });
 
   return data;
 }
@@ -184,24 +179,17 @@ export async function upsertGitHubInstallationForWorkspace(
   input: Record<string, string | undefined> = process.env,
 ) {
   const admin = createSupabaseAdminClient(input);
-  const installation = await fetchGitHubInstallationFromApp(
-    values.installationId,
-    input,
-  );
+  const installation = await fetchGitHubInstallationFromApp(values.installationId, input);
   const { data: existingRows, error: existingError } = await admin
     .from("github_installations")
     .select(installationSelect)
-    .or(
-      `workspace_id.eq.${values.workspaceId},installation_id.eq.${values.installationId}`,
-    );
+    .or(`workspace_id.eq.${values.workspaceId},installation_id.eq.${values.installationId}`);
 
   if (existingError) {
     throw existingError;
   }
 
-  const workspaceRow = (existingRows ?? []).find(
-    (row) => row.workspace_id === values.workspaceId,
-  );
+  const workspaceRow = (existingRows ?? []).find((row) => row.workspace_id === values.workspaceId);
   const installationRow = (existingRows ?? []).find(
     (row) => row.installation_id === values.installationId,
   );

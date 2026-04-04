@@ -8,10 +8,7 @@ type IssuesPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function IssuesPage({
-  params,
-  searchParams,
-}: IssuesPageProps) {
+export default async function IssuesPage({ params, searchParams }: IssuesPageProps) {
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
   const data = await loadIssueListPageData(workspaceSlug, resolvedSearchParams);

@@ -6,10 +6,7 @@ import {
   type AgentRunActionResponse,
 } from "@/features/wallie/contracts";
 import { buildAgentRunActionErrorResponse, buildAgentRunActionResponse } from "@/lib/wallie/http";
-import {
-  processQueuedAgentJobs,
-  retryWallieRun,
-} from "@/lib/wallie/service";
+import { processQueuedAgentJobs, retryWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type RetryAgentRunRouteProps = {
@@ -18,20 +15,13 @@ type RetryAgentRunRouteProps = {
   }>;
 };
 
-export async function POST(
-  request: Request,
-  { params }: RetryAgentRunRouteProps,
-) {
-  const [payload, rawParams] = await Promise.all([
-    request.json().catch(() => null),
-    params,
-  ]);
+export async function POST(request: Request, { params }: RetryAgentRunRouteProps) {
+  const [payload, rawParams] = await Promise.all([request.json().catch(() => null), params]);
   const parsedBody = retryAgentRunSchema.safeParse(payload);
   const parsedParams = retryAgentRunParamsSchema.safeParse(rawParams);
 
   if (!parsedBody.success || !parsedParams.success) {
-    const firstIssue =
-      parsedBody.error?.issues[0] ?? parsedParams.error?.issues[0];
+    const firstIssue = parsedBody.error?.issues[0] ?? parsedParams.error?.issues[0];
 
     return NextResponse.json(
       {

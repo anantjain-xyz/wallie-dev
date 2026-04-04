@@ -15,11 +15,7 @@ import {
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import type {
-  WallieIssueData,
-  WallieIssueRepository,
-  WallieRun,
-} from "@/features/wallie/types";
+import type { WallieIssueData, WallieIssueRepository, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import {
   buildWallieBillingState,
@@ -126,9 +122,9 @@ export function IssueWalliePanel({
     buildDefaultExpandedRunIds(initialData.runs),
   );
   const repository = issue.githubRepositoryId
-    ? repositories.find(
+    ? (repositories.find(
         (candidateRepository) => candidateRepository.id === issue.githubRepositoryId,
-      ) ?? null
+      ) ?? null)
     : null;
   const mode = inferWallieRunMode(issue.githubRepositoryId);
 
@@ -177,8 +173,7 @@ export function IssueWalliePanel({
       const previousRun = currentRuns.find((run) => run.id === row.id);
 
       isNewRun = !previousRun;
-      didTransitionToSuccess =
-        row.status === "success" && previousRun?.status !== "success";
+      didTransitionToSuccess = row.status === "success" && previousRun?.status !== "success";
 
       return upsertWallieRun(
         currentRuns,
@@ -207,16 +202,14 @@ export function IssueWalliePanel({
     }
   });
 
-  const handleRunMessageRealtimeUpdate = useEffectEvent(
-    (row: Tables<"agent_run_messages">) => {
-      setRuns((currentRuns) =>
-        upsertWallieRunMessage(currentRuns, {
-          agentRunId: row.agent_run_id,
-          message: mapAgentRunMessageRow(row),
-        }),
-      );
-    },
-  );
+  const handleRunMessageRealtimeUpdate = useEffectEvent((row: Tables<"agent_run_messages">) => {
+    setRuns((currentRuns) =>
+      upsertWallieRunMessage(currentRuns, {
+        agentRunId: row.agent_run_id,
+        message: mapAgentRunMessageRow(row),
+      }),
+    );
+  });
 
   useEffect(() => {
     const runChannel = supabase
@@ -336,8 +329,7 @@ export function IssueWalliePanel({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "Wallie could not queue that run.",
+        text: error instanceof Error ? error.message : "Wallie could not queue that run.",
       });
     } finally {
       setPendingActionId(null);
@@ -376,8 +368,7 @@ export function IssueWalliePanel({
     } catch (error) {
       setFlashMessage({
         kind: "error",
-        text:
-          error instanceof Error ? error.message : "Wallie could not retry that run.",
+        text: error instanceof Error ? error.message : "Wallie could not retry that run.",
       });
     } finally {
       setPendingActionId(null);
@@ -389,9 +380,7 @@ export function IssueWalliePanel({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="ui-pill">
-              {formatWallieRunMode(mode)}
-            </span>
+            <span className="ui-pill">{formatWallieRunMode(mode)}</span>
             {repository ? (
               <a
                 className={cn(
@@ -404,16 +393,13 @@ export function IssueWalliePanel({
                 {repository.fullName}
               </a>
             ) : (
-              <span className="ui-pill text-muted">
-                No repository linked
-              </span>
+              <span className="ui-pill text-muted">No repository linked</span>
             )}
           </div>
 
           <p className="text-sm leading-6 text-muted">
-            Queue Wallie from this issue to inspect persisted run messages and
-            retry completed runs without exposing privileged queue writes in the
-            browser.
+            Queue Wallie from this issue to inspect persisted run messages and retry completed runs
+            without exposing privileged queue writes in the browser.
           </p>
         </div>
 
@@ -442,9 +428,7 @@ export function IssueWalliePanel({
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="ui-subpanel p-4">
-          <p className="ui-label">
-            Secrets
-          </p>
+          <p className="ui-label">Secrets</p>
           <p className="mt-2 text-sm text-foreground">
             Required: {initialData.requiredSecretKeys.join(", ")}
           </p>
@@ -456,9 +440,7 @@ export function IssueWalliePanel({
         </div>
 
         <div className="ui-subpanel p-4">
-          <p className="ui-label">
-            Billing
-          </p>
+          <p className="ui-label">Billing</p>
           <p className="mt-2 text-sm text-foreground">
             Tier: <span className="font-semibold">{billing.tier}</span>
           </p>
@@ -470,15 +452,11 @@ export function IssueWalliePanel({
         </div>
 
         <div className="ui-subpanel p-4">
-          <p className="ui-label">
-            Cycle
-          </p>
+          <p className="ui-label">Cycle</p>
           <p className="mt-2 text-sm text-foreground">
             Started{" "}
             <span className="font-semibold">
-              {dateTimeFormatter.format(
-                new Date(billing.currentBillingCycleStartAt),
-              )}
+              {dateTimeFormatter.format(new Date(billing.currentBillingCycleStartAt))}
             </span>
           </p>
           <p className="mt-2 text-sm text-muted">
@@ -498,21 +476,18 @@ export function IssueWalliePanel({
             ))}
           </ul>
           <div className="mt-4">
-            <Link
-              className={interactiveLinkClass}
-              href={workspaceSettingsPath(workspaceSlug)}
-            >
+            <Link className={interactiveLinkClass} href={workspaceSettingsPath(workspaceSlug)}>
               Open Workspace Settings
             </Link>
           </div>
         </div>
-    ) : null}
+      ) : null}
 
       <div className="space-y-4">
         {runs.length === 0 ? (
           <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-            No Wallie runs yet. Queue one from this issue to create the first
-            persisted timeline entry.
+            No Wallie runs yet. Queue one from this issue to create the first persisted timeline
+            entry.
           </div>
         ) : (
           runs.map((run) => {
@@ -524,10 +499,7 @@ export function IssueWalliePanel({
               "Unknown member";
 
             return (
-              <article
-                key={run.id}
-                className="ui-subpanel p-5"
-              >
+              <article key={run.id} className="ui-subpanel p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <button
                     aria-controls={runDetailsId}
@@ -557,9 +529,7 @@ export function IssueWalliePanel({
                       >
                         {formatRunStatus(run.status)}
                       </span>
-                      <span className="ui-pill">
-                        {formatWallieRunMode(run.runType)}
-                      </span>
+                      <span className="ui-pill">{formatWallieRunMode(run.runType)}</span>
                       <span className="ui-pill font-mono text-muted">
                         {run.modelProvider}/{run.modelName}
                       </span>
@@ -592,10 +562,7 @@ export function IssueWalliePanel({
                 </div>
 
                 {isExpanded ? (
-                  <div
-                    id={runDetailsId}
-                    className="mt-4 space-y-3 border-t border-border/70 pt-4"
-                  >
+                  <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
                     {run.messages.length === 0 ? (
                       <div className="ui-muted-panel px-4 py-4 text-sm text-muted">
                         {run.isActive
@@ -615,15 +582,9 @@ export function IssueWalliePanel({
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
                             <span>{message.kind}</span>
-                            <span>
-                              {dateTimeFormatter.format(
-                                new Date(message.createdAt),
-                              )}
-                            </span>
+                            <span>{dateTimeFormatter.format(new Date(message.createdAt))}</span>
                           </div>
-                          <div className="mt-3 whitespace-pre-wrap">
-                            {message.messageMd}
-                          </div>
+                          <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
                         </div>
                       ))
                     )}

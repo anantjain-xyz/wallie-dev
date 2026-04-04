@@ -19,8 +19,6 @@ describe("auth helpers", () => {
   });
 
   it("builds the workspace login redirect path", () => {
-    expect(workspaceLoginRedirectPath("northwind-labs")).toBe(
-      "/w/northwind-labs",
-    );
+    expect(workspaceLoginRedirectPath("northwind-labs")).toBe("/w/northwind-labs");
   });
 });

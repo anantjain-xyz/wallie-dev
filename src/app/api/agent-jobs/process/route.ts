@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  processAgentJobsSchema,
-  type ProcessAgentJobsResponse,
-} from "@/features/wallie/contracts";
+import { processAgentJobsSchema, type ProcessAgentJobsResponse } from "@/features/wallie/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { WALLIE_PROCESS_TOKEN_ENV_KEY } from "@/lib/wallie/constants";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";

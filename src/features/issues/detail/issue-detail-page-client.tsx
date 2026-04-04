@@ -4,10 +4,7 @@ import Link from "next/link";
 import { useEffect, useEffectEvent, useState } from "react";
 
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
-import {
-  createIssueWithAllocatedNumber,
-  resolveIssueByNumber,
-} from "@/features/issues/client";
+import { createIssueWithAllocatedNumber, resolveIssueByNumber } from "@/features/issues/client";
 import type { IssueDetailPageData } from "@/features/issues/detail/data";
 import { buildIssueMarkdown } from "@/features/issues/detail/markdown";
 import { groupIssueLinks } from "@/features/issues/detail/relationships";
@@ -53,10 +50,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
 
 function mapPullRequestRow(
   row: Tables<"github_issue_branches">,
-  repositoryIndex: ReadonlyMap<
-    string,
-    IssueDetailPageData["github"]["repositories"][number]
-  >,
+  repositoryIndex: ReadonlyMap<string, IssueDetailPageData["github"]["repositories"][number]>,
 ) {
   return {
     branchName: row.branch_name,
@@ -68,7 +62,7 @@ function mapPullRequestRow(
     pullRequestState: row.pull_request_state,
     pullRequestUrl: row.pull_request_url,
     repository: row.github_repository_id
-      ? repositoryIndex.get(row.github_repository_id) ?? null
+      ? (repositoryIndex.get(row.github_repository_id) ?? null)
       : null,
     updatedAt: row.updated_at,
   };
@@ -88,12 +82,7 @@ function Section({
   const HeadingTag = headingAs;
 
   return (
-    <section
-      className={cn(
-        "ui-panel p-5",
-        className,
-      )}
-    >
+    <section className={cn("ui-panel p-5", className)}>
       <HeadingTag className="text-base font-semibold tracking-tight text-balance text-foreground">
         {title}
       </HeadingTag>
@@ -125,10 +114,7 @@ function buildMemberIndex(
       issue.creator,
       currentMember,
       ...comments.flatMap((comment) => [comment.author]),
-      ...linkedIssues.flatMap((linkedIssue) => [
-        linkedIssue.assignee,
-        linkedIssue.creator,
-      ]),
+      ...linkedIssues.flatMap((linkedIssue) => [linkedIssue.assignee, linkedIssue.creator]),
     ].filter((member): member is IssueMember => member !== null),
   );
 }
@@ -147,23 +133,16 @@ function relationExists(
 
     if (symmetric) {
       return (
-        (link.source_issue_id === sourceIssueId &&
-          link.target_issue_id === targetIssueId) ||
-        (link.source_issue_id === targetIssueId &&
-          link.target_issue_id === sourceIssueId)
+        (link.source_issue_id === sourceIssueId && link.target_issue_id === targetIssueId) ||
+        (link.source_issue_id === targetIssueId && link.target_issue_id === sourceIssueId)
       );
     }
 
-    return (
-      link.source_issue_id === sourceIssueId &&
-      link.target_issue_id === targetIssueId
-    );
+    return link.source_issue_id === sourceIssueId && link.target_issue_id === targetIssueId;
   });
 }
 
-export function IssueDetailPageClient({
-  initialData,
-}: IssueDetailPageClientProps) {
+export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProps) {
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const [issue, setIssue] = useState(initialData.issue);
   const [comments, setComments] = useState(initialData.comments);
@@ -171,9 +150,7 @@ export function IssueDetailPageClient({
   const [linkedIssues, setLinkedIssues] = useState(initialData.linkedIssues);
   const [pullRequests, setPullRequests] = useState(initialData.github.pullRequests);
   const [titleDraft, setTitleDraft] = useState(initialData.issue.title);
-  const [descriptionDraft, setDescriptionDraft] = useState(
-    initialData.issue.descriptionMd,
-  );
+  const [descriptionDraft, setDescriptionDraft] = useState(initialData.issue.descriptionMd);
   const [planDraft, setPlanDraft] = useState(initialData.issue.planMd ?? "");
   const [designDraft, setDesignDraft] = useState(initialData.issue.designMd ?? "");
   const [newCommentBody, setNewCommentBody] = useState("");
@@ -263,24 +240,20 @@ export function IssueDetailPageClient({
   const handleIssueRealtimeUpdate = useEffectEvent((row: Tables<"issues">) => {
     setIssue(mapIssueDetailRow(row, memberIndex));
   });
-  const handlePullRequestRealtimeUpdate = useEffectEvent(
-    (row: Tables<"github_issue_branches">) => {
-      const nextPullRequest = mapPullRequestRow(row, repositoryIndex);
+  const handlePullRequestRealtimeUpdate = useEffectEvent((row: Tables<"github_issue_branches">) => {
+    const nextPullRequest = mapPullRequestRow(row, repositoryIndex);
 
-      setPullRequests((currentPullRequests) => {
-        const nextPullRequests = currentPullRequests.filter(
-          (pullRequest) => pullRequest.id !== nextPullRequest.id,
-        );
+    setPullRequests((currentPullRequests) => {
+      const nextPullRequests = currentPullRequests.filter(
+        (pullRequest) => pullRequest.id !== nextPullRequest.id,
+      );
 
-        nextPullRequests.unshift(nextPullRequest);
-        nextPullRequests.sort((left, right) =>
-          right.createdAt.localeCompare(left.createdAt),
-        );
+      nextPullRequests.unshift(nextPullRequest);
+      nextPullRequests.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
-        return nextPullRequests;
-      });
-    },
-  );
+      return nextPullRequests;
+    });
+  });
 
   useEffect(() => {
     const issueChannel = supabase
@@ -311,16 +284,12 @@ export function IssueDetailPageClient({
         (payload) => {
           if (payload.eventType === "DELETE") {
             setPullRequests((currentPullRequests) =>
-              currentPullRequests.filter(
-                (pullRequest) => pullRequest.id !== payload.old.id,
-              ),
+              currentPullRequests.filter((pullRequest) => pullRequest.id !== payload.old.id),
             );
             return;
           }
 
-          handlePullRequestRealtimeUpdate(
-            payload.new as Tables<"github_issue_branches">,
-          );
+          handlePullRequestRealtimeUpdate(payload.new as Tables<"github_issue_branches">);
         },
       )
       .subscribe();
@@ -331,9 +300,7 @@ export function IssueDetailPageClient({
     };
   }, [issue.id, supabase]);
 
-  async function saveIssuePatch(
-    patch: TablesUpdate<"issues">,
-  ) {
+  async function saveIssuePatch(patch: TablesUpdate<"issues">) {
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -352,9 +319,7 @@ export function IssueDetailPageClient({
 
       setIssue(mapIssueDetailRow(data, memberIndex));
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Issue update failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Issue update failed.");
     } finally {
       setIsSaving(false);
     }
@@ -385,16 +350,11 @@ export function IssueDetailPageClient({
         throw error;
       }
 
-      setComments((currentComments) => [
-        ...currentComments,
-        mapIssueCommentRow(data, memberIndex),
-      ]);
+      setComments((currentComments) => [...currentComments, mapIssueCommentRow(data, memberIndex)]);
       setNewCommentBody("");
       setSuccessMessage("Comment added.");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Comment creation failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Comment creation failed.");
     } finally {
       setIsSaving(false);
     }
@@ -427,17 +387,13 @@ export function IssueDetailPageClient({
       const nextComment = mapIssueCommentRow(data, memberIndex);
 
       setComments((currentComments) =>
-        currentComments.map((comment) =>
-          comment.id === nextComment.id ? nextComment : comment,
-        ),
+        currentComments.map((comment) => (comment.id === nextComment.id ? nextComment : comment)),
       );
       setEditingCommentId(null);
       setEditingCommentBody("");
       setSuccessMessage("Comment updated.");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Comment update failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Comment update failed.");
     } finally {
       setIsSaving(false);
     }
@@ -453,10 +409,7 @@ export function IssueDetailPageClient({
     setSuccessMessage(null);
 
     try {
-      const { error } = await supabase
-        .from("issue_comments")
-        .delete()
-        .eq("id", commentId);
+      const { error } = await supabase.from("issue_comments").delete().eq("id", commentId);
 
       if (error) {
         throw error;
@@ -467,9 +420,7 @@ export function IssueDetailPageClient({
       );
       setSuccessMessage("Comment deleted.");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Comment deletion failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Comment deletion failed.");
     } finally {
       setIsSaving(false);
     }
@@ -523,13 +474,7 @@ export function IssueDetailPageClient({
       }
 
       if (
-        relationExists(
-          links,
-          sourceIssueId,
-          targetIssueId,
-          options.linkType,
-          options.symmetric,
-        )
+        relationExists(links, sourceIssueId, targetIssueId, options.linkType, options.symmetric)
       ) {
         throw new Error("That relationship already exists.");
       }
@@ -560,9 +505,7 @@ export function IssueDetailPageClient({
 
       setSuccessMessage(options.successLabel);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Relationship update failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Relationship update failed.");
     } finally {
       setIsSaving(false);
     }
@@ -607,9 +550,7 @@ export function IssueDetailPageClient({
       setNewSubIssueEstimate("");
       setSuccessMessage(`Created sub-issue #${createdIssue.number}.`);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Sub-issue creation failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Sub-issue creation failed.");
     } finally {
       setIsSaving(false);
     }
@@ -625,23 +566,16 @@ export function IssueDetailPageClient({
     setSuccessMessage(null);
 
     try {
-      const { error } = await supabase
-        .from("issue_links")
-        .delete()
-        .eq("id", linkId);
+      const { error } = await supabase.from("issue_links").delete().eq("id", linkId);
 
       if (error) {
         throw error;
       }
 
-      setLinks((currentLinks) =>
-        currentLinks.filter((link) => link.id !== linkId),
-      );
+      setLinks((currentLinks) => currentLinks.filter((link) => link.id !== linkId));
       setSuccessMessage("Relationship removed.");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Relationship removal failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Relationship removal failed.");
     } finally {
       setIsSaving(false);
     }
@@ -658,9 +592,7 @@ export function IssueDetailPageClient({
       );
       setSuccessMessage("Issue copied as Markdown.");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Clipboard copy failed.",
-      );
+      setErrorMessage(error instanceof Error ? error.message : "Clipboard copy failed.");
     } finally {
       setIsCopying(false);
     }
@@ -705,9 +637,7 @@ export function IssueDetailPageClient({
                 />
                 <button
                   type="submit"
-                  disabled={
-                    isSaving || !titleDraft.trim() || titleDraft.trim() === issue.title
-                  }
+                  disabled={isSaving || !titleDraft.trim() || titleDraft.trim() === issue.title}
                   className="ui-button"
                 >
                   Save Title
@@ -716,12 +646,8 @@ export function IssueDetailPageClient({
             </form>
 
             <div className="flex flex-wrap items-center gap-3 text-sm tabular-nums text-muted">
-              <span>
-                Created {dateTimeFormatter.format(new Date(issue.createdAt))}
-              </span>
-              <span>
-                Updated {dateTimeFormatter.format(new Date(issue.updatedAt))}
-              </span>
+              <span>Created {dateTimeFormatter.format(new Date(issue.createdAt))}</span>
+              <span>Updated {dateTimeFormatter.format(new Date(issue.updatedAt))}</span>
               <IssueMemberBadge fallback="No creator" member={issue.creator} />
             </div>
 
@@ -735,10 +661,7 @@ export function IssueDetailPageClient({
                 {isCopying ? "Copying…" : "Copy as Markdown"}
               </button>
               <Link
-                href={workspaceIssueDetailPath(
-                  initialData.workspace.slug,
-                  issue.number,
-                )}
+                href={workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}
                 className="ui-button"
               >
                 Refresh Route
@@ -750,10 +673,7 @@ export function IssueDetailPageClient({
         {errorMessage ? (
           <div
             aria-live="polite"
-            className={cn(
-              "rounded-[6px] border px-4 py-3 text-sm",
-              messageToneClass("error"),
-            )}
+            className={cn("rounded-[6px] border px-4 py-3 text-sm", messageToneClass("error"))}
             role="status"
           >
             {errorMessage}
@@ -763,10 +683,7 @@ export function IssueDetailPageClient({
         {successMessage ? (
           <div
             aria-live="polite"
-            className={cn(
-              "rounded-[6px] border px-4 py-3 text-sm",
-              messageToneClass("success"),
-            )}
+            className={cn("rounded-[6px] border px-4 py-3 text-sm", messageToneClass("success"))}
             role="status"
           >
             {successMessage}
@@ -913,19 +830,13 @@ export function IssueDetailPageClient({
 
             <div className="space-y-4">
               {comments.length === 0 ? (
-                <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-                  No comments yet.
-                </div>
+                <div className="ui-subpanel p-5 text-sm leading-7 text-muted">No comments yet.</div>
               ) : (
                 comments.map((comment) => {
-                  const editable =
-                    comment.authorMemberId === currentMember?.id || canManage;
+                  const editable = comment.authorMemberId === currentMember?.id || canManage;
 
                   return (
-                    <article
-                      key={comment.id}
-                      className="ui-subpanel p-5"
-                    >
+                    <article key={comment.id} className="ui-subpanel p-5">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <p className="text-sm font-semibold text-foreground">
@@ -934,12 +845,8 @@ export function IssueDetailPageClient({
                               "Unknown member"}
                           </p>
                           <p className="mt-1 text-[11px] text-muted">
-                            {dateTimeFormatter.format(
-                              new Date(comment.createdAt),
-                            )}
-                            {comment.updatedAt !== comment.createdAt
-                              ? " · edited"
-                              : ""}
+                            {dateTimeFormatter.format(new Date(comment.createdAt))}
+                            {comment.updatedAt !== comment.createdAt ? " · edited" : ""}
                           </p>
                         </div>
 
@@ -973,9 +880,7 @@ export function IssueDetailPageClient({
                             autoComplete="off"
                             name="editingComment"
                             value={editingCommentBody}
-                            onChange={(event) =>
-                              setEditingCommentBody(event.target.value)
-                            }
+                            onChange={(event) => setEditingCommentBody(event.target.value)}
                             className="ui-textarea min-h-32 leading-7"
                           />
                           <div className="flex flex-wrap justify-end gap-3">
@@ -1071,9 +976,7 @@ export function IssueDetailPageClient({
                 onChange={(event) =>
                   void saveIssuePatch({
                     estimate_points:
-                      event.target.value === "null"
-                        ? null
-                        : Number(event.target.value),
+                      event.target.value === "null" ? null : Number(event.target.value),
                   })
                 }
                 className="ui-select"
@@ -1165,9 +1068,7 @@ export function IssueDetailPageClient({
                     className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                   >
                     <div className="space-y-2">
-                      <p className="ui-label">
-                        Parent
-                      </p>
+                      <p className="ui-label">Parent</p>
                       <Link
                         href={workspaceIssueDetailPath(
                           initialData.workspace.slug,
@@ -1189,8 +1090,8 @@ export function IssueDetailPageClient({
                 ))}
                 {relationshipGroups.parentIssues.length > 1 ? (
                   <p className="text-sm leading-6 text-muted">
-                    Multiple parent rows exist in data. Gate D surfaces all of them but
-                    only allows adding one parent at a time going forward.
+                    Multiple parent rows exist in data. Gate D surfaces all of them but only allows
+                    adding one parent at a time going forward.
                   </p>
                 ) : null}
               </div>
@@ -1222,11 +1123,7 @@ export function IssueDetailPageClient({
                   />
                 </label>
                 <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="ui-button"
-                  >
+                  <button type="submit" disabled={isSaving} className="ui-button">
                     Set Parent Issue
                   </button>
                 </div>
@@ -1238,9 +1135,7 @@ export function IssueDetailPageClient({
         <Section title="Sub-issues">
           <div className="space-y-5">
             <div className="ui-subpanel space-y-3 p-4">
-              <p className="ui-label">
-                Create sub-issue
-              </p>
+              <p className="ui-label">Create sub-issue</p>
               <label className="space-y-2 text-sm font-semibold text-foreground">
                 <span>Sub-Issue Title</span>
                 <input
@@ -1261,9 +1156,7 @@ export function IssueDetailPageClient({
                   className="ui-select"
                 >
                   <option value="">No estimate</option>
-                  {ISSUE_ESTIMATE_VALUES.filter(
-                    (estimate) => estimate !== null,
-                  ).map((estimate) => (
+                  {ISSUE_ESTIMATE_VALUES.filter((estimate) => estimate !== null).map((estimate) => (
                     <option key={estimate} value={estimate}>
                       {estimate} point{estimate === 1 ? "" : "s"}
                     </option>
@@ -1295,9 +1188,7 @@ export function IssueDetailPageClient({
                 setSubIssueNumber("");
               }}
             >
-              <p className="ui-label">
-                Link existing sub-issue
-              </p>
+              <p className="ui-label">Link existing sub-issue</p>
               <label className="space-y-2 text-sm font-semibold text-foreground">
                 <span>Issue Number</span>
                 <input
@@ -1313,11 +1204,7 @@ export function IssueDetailPageClient({
                 />
               </label>
               <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="ui-button"
-                >
+                <button type="submit" disabled={isSaving} className="ui-button">
                   Link Sub-Issue
                 </button>
               </div>
@@ -1377,9 +1264,7 @@ export function IssueDetailPageClient({
                 setBlockedByNumber("");
               }}
             >
-              <p className="ui-label">
-                Blocked by
-              </p>
+              <p className="ui-label">Blocked by</p>
               <label className="space-y-2 text-sm font-semibold text-foreground">
                 <span>Issue Number</span>
                 <input
@@ -1395,11 +1280,7 @@ export function IssueDetailPageClient({
                 />
               </label>
               <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="ui-button"
-                >
+                <button type="submit" disabled={isSaving} className="ui-button">
                   Add Blocked-By Link
                 </button>
               </div>
@@ -1418,9 +1299,7 @@ export function IssueDetailPageClient({
                 setBlocksNumber("");
               }}
             >
-              <p className="ui-label">
-                Blocks
-              </p>
+              <p className="ui-label">Blocks</p>
               <label className="space-y-2 text-sm font-semibold text-foreground">
                 <span>Issue Number</span>
                 <input
@@ -1436,11 +1315,7 @@ export function IssueDetailPageClient({
                 />
               </label>
               <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="ui-button"
-                >
+                <button type="submit" disabled={isSaving} className="ui-button">
                   Add Blocks Link
                 </button>
               </div>
@@ -1459,9 +1334,7 @@ export function IssueDetailPageClient({
                 setDuplicateNumber("");
               }}
             >
-              <p className="ui-label">
-                Duplicate of
-              </p>
+              <p className="ui-label">Duplicate of</p>
               <label className="space-y-2 text-sm font-semibold text-foreground">
                 <span>Issue Number</span>
                 <input
@@ -1477,11 +1350,7 @@ export function IssueDetailPageClient({
                 />
               </label>
               <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="ui-button"
-                >
+                <button type="submit" disabled={isSaving} className="ui-button">
                   Add Duplicate Link
                 </button>
               </div>
@@ -1500,9 +1369,7 @@ export function IssueDetailPageClient({
                 setRelatedNumber("");
               }}
             >
-              <p className="ui-label">
-                Related
-              </p>
+              <p className="ui-label">Related</p>
               <label className="space-y-2 text-sm font-semibold text-foreground">
                 <span>Issue Number</span>
                 <input
@@ -1518,11 +1385,7 @@ export function IssueDetailPageClient({
                 />
               </label>
               <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="ui-button"
-                >
+                <button type="submit" disabled={isSaving} className="ui-button">
                   Add Related Link
                 </button>
               </div>
@@ -1548,9 +1411,7 @@ export function IssueDetailPageClient({
                 },
               ].map(({ entries, heading }) => (
                 <div key={heading} className="space-y-3">
-                  <p className="ui-label">
-                    {heading}
-                  </p>
+                  <p className="ui-label">{heading}</p>
                   {entries.length === 0 ? (
                     <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
                       No {heading.toLocaleLowerCase()} issues.
@@ -1596,24 +1457,18 @@ export function IssueDetailPageClient({
           <div className="space-y-4">
             {pullRequests.length === 0 ? (
               <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-                No PR metadata is linked to this issue yet. Once a tracked branch opens a PR, the webhook sync will surface it here.
+                No PR metadata is linked to this issue yet. Once a tracked branch opens a PR, the
+                webhook sync will surface it here.
               </div>
             ) : (
               pullRequests.map((pullRequest) => (
-                <article
-                  key={pullRequest.id}
-                  className="ui-subpanel p-5"
-                >
+                <article key={pullRequest.id} className="ui-subpanel p-5">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="ui-pill font-mono">
-                          {pullRequest.branchName}
-                        </span>
+                        <span className="ui-pill font-mono">{pullRequest.branchName}</span>
                         {pullRequest.pullRequestState ? (
-                          <span className="ui-pill">
-                            {pullRequest.pullRequestState}
-                          </span>
+                          <span className="ui-pill">{pullRequest.pullRequestState}</span>
                         ) : null}
                         {pullRequest.isDraft ? (
                           <span className="ui-pill border-warning/20 bg-warning-soft text-warning">
@@ -1657,9 +1512,7 @@ export function IssueDetailPageClient({
                     </div>
 
                     <div className="text-right text-xs uppercase tracking-[0.16em] tabular-nums text-muted">
-                      <p>
-                        Created {dateTimeFormatter.format(new Date(pullRequest.createdAt))}
-                      </p>
+                      <p>Created {dateTimeFormatter.format(new Date(pullRequest.createdAt))}</p>
                       <p className="mt-2">
                         Updated {dateTimeFormatter.format(new Date(pullRequest.updatedAt))}
                       </p>

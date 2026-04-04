@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-const mockCreateClient = vi.hoisted(() =>
-  vi.fn(() => ({ client: "admin" })),
-);
+const mockCreateClient = vi.hoisted(() => vi.fn(() => ({ client: "admin" })));
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: mockCreateClient,
@@ -18,16 +16,12 @@ describe("createSupabaseAdminClient", () => {
       SUPABASE_SECRET_KEY: "secret-key",
     });
 
-    expect(mockCreateClient).toHaveBeenCalledWith(
-      "https://example.supabase.co",
-      "secret-key",
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
+    expect(mockCreateClient).toHaveBeenCalledWith("https://example.supabase.co", "secret-key", {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
       },
-    );
+    });
     expect(client).toEqual({ client: "admin" });
   });
 });

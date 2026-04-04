@@ -25,13 +25,8 @@ function getSigningKey(input: Record<string, string | undefined> = process.env) 
   return parseServerEnv(input).WALLIE_ENCRYPTION_KEY;
 }
 
-function createSignature(
-  payload: string,
-  input: Record<string, string | undefined> = process.env,
-) {
-  return createHmac("sha256", getSigningKey(input))
-    .update(payload)
-    .digest("base64url");
+function createSignature(payload: string, input: Record<string, string | undefined> = process.env) {
+  return createHmac("sha256", getSigningKey(input)).update(payload).digest("base64url");
 }
 
 export function createGitHubInstallState(
