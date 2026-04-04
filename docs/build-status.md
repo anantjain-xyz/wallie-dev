@@ -86,6 +86,7 @@
 - The April 1, 2026 issue-list screenshot pass matches a specific Linear reference more closely in the workspace shell and `/w/[workspaceSlug]/issues` layout, while still rendering Wallie’s existing issue fields instead of introducing Linear-only label/cycle schema.
 - Routed pages now follow a shared accessibility contract: each rendered page surface exposes a page-level heading, the app exposes a root skip link to `#main-content`, and interactive controls use focus-visible treatments rather than focus-only styling.
 - The issue list now deep-links two page-level UI states through query params: `controls=1` opens the filter/search tray and `create=1` opens the create-issue dialog, which also makes the sidebar search/create affordances land on the exact UI state they advertise.
+- The workspace shell now exposes only shipped navigation surfaces in the left rail: the top-left workspace dropdown links to `/w/[workspaceSlug]/settings`, and the persistent team nav keeps only Issues until additional workspace routes are implemented.
 
 ## Planned Gate E Routes And Interfaces
 
