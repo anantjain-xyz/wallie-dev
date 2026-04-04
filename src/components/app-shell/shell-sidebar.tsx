@@ -98,7 +98,7 @@ export function ShellSidebar({
   const issuesCreateHref = `${issuesHref}?create=1`;
 
   return (
-    <aside className="hidden w-[216px] shrink-0 border-r border-border bg-background md:flex md:flex-col">
+    <aside className="hidden h-screen w-[216px] shrink-0 overflow-hidden border-r border-border bg-background md:sticky md:top-0 md:flex md:flex-col">
       <div className="flex items-center justify-between px-4 pb-4 pt-4">
         <Dropdown
           trigger={

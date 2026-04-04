@@ -50,11 +50,11 @@ function Section({
   title: string;
 }) {
   return (
-    <section className="ui-panel p-5">
-      <h2 className="text-base font-semibold tracking-tight text-foreground">
+    <section className="rounded-[20px] bg-surface px-5 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_28px_rgba(16,24,40,0.05)] sm:px-6 sm:py-6">
+      <h2 className="text-base font-semibold tracking-tight text-balance text-foreground">
         {title}
       </h2>
-      <div className="mt-4">{children}</div>
+      <div className="mt-5">{children}</div>
     </section>
   );
 }
@@ -457,31 +457,31 @@ export function SettingsPageClient({
   }
 
   return (
-    <div className="grid gap-6">
-      <header className="ui-panel p-5">
-        <p className="ui-label">
-          Workspace Admin
-        </p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground">
-          Settings
-        </h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-          Manage workspace identity, billing, GitHub sync, and encrypted secrets
-          from one route.
-        </p>
-      </header>
+    <div className="min-h-full bg-[#f6f5f2] px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <header className="rounded-[24px] bg-surface px-6 py-6 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_14px_32px_rgba(16,24,40,0.06)] sm:px-8 sm:py-8">
+          <p className="ui-label">
+            Workspace Admin
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance text-foreground">
+            Settings
+          </h1>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
+            Manage workspace identity, billing, GitHub sync, and encrypted secrets
+            from one route.
+          </p>
+        </header>
 
-      {flashMessage ? (
-        <div
-          aria-live="polite"
-          className={`rounded-[6px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
-          role="status"
-        >
-          {flashMessage.text}
-        </div>
-      ) : null}
+        {flashMessage ? (
+          <div
+            aria-live="polite"
+            className={`rounded-[10px] border px-4 py-3 text-sm shadow-[0_1px_2px_rgba(16,24,40,0.04)] ${toneClass(flashMessage.kind)}`}
+            role="status"
+          >
+            {flashMessage.text}
+          </div>
+        ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Section title="Workspace">
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-4">
@@ -582,9 +582,7 @@ export function SettingsPageClient({
             </button>
           </div>
         </Section>
-      </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Section title="GitHub">
           <div className="space-y-4">
             <ConfigState

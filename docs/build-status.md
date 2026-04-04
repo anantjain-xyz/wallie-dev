@@ -133,7 +133,7 @@
 - Gate E does not implement GitHub installation removal or manual repository language overrides yet; settings exposes install, manage-on-GitHub, and refresh flows only.
 - Gate E limits uploads to workspace avatars and does not add editor-image flows yet, even though the broader handoff mentions future editor-uploaded images.
 - The Linear screenshot restyle intentionally keeps the existing issue list data contract; row pills reuse current Wallie fields such as priority, status, estimate, and assignee instead of adding a new team/label/cycle model just for UI parity.
-- The settings route now follows the shell's divider-and-spacing layout instead of wrapping each top-level section in bordered cards; bordered subpanels remain for alerts, grouped controls, and preview rows.
+- The settings route now centers its content inside a padded max-width canvas and uses one borderless elevated surface per top-level section; bordered subpanels remain for alerts, grouped controls, and preview rows.
 
 ## Notes
 
