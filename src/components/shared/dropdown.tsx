@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -15,21 +15,21 @@ export function Dropdown({ align = "left", children, trigger }: DropdownProps) {
   const panelId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handlePointerDown = useEffectEvent((event: PointerEvent) => {
-    if (!containerRef.current?.contains(event.target as Node)) {
-      setOpen(false);
-    }
-  });
-
-  const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.key === "Escape") {
-      setOpen(false);
-    }
-  });
-
   useEffect(() => {
     if (!open) {
       return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
