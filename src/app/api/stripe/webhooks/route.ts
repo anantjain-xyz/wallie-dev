@@ -9,15 +9,10 @@ import {
 } from "@/lib/billing/stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-async function handleCheckoutSessionCompleted(
-  session: Stripe.Checkout.Session,
-) {
-  const customerId =
-    typeof session.customer === "string" ? session.customer : session.customer?.id;
+async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+  const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id;
   const workspaceId =
-    typeof session.client_reference_id === "string"
-      ? session.client_reference_id
-      : null;
+    typeof session.client_reference_id === "string" ? session.client_reference_id : null;
 
   if (!customerId || !workspaceId) {
     return;
@@ -67,11 +62,7 @@ export async function POST(request: Request) {
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      signature,
-      env.STRIPE_WEBHOOK_SECRET!,
-    );
+    event = stripe.webhooks.constructEvent(rawBody, signature, env.STRIPE_WEBHOOK_SECRET!);
   } catch {
     return NextResponse.json(
       {
@@ -83,16 +74,12 @@ export async function POST(request: Request) {
 
   switch (event.type) {
     case "checkout.session.completed":
-      await handleCheckoutSessionCompleted(
-        event.data.object as Stripe.Checkout.Session,
-      );
+      await handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
       break;
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
-      await applyStripeSubscriptionUpdate(
-        event.data.object as Stripe.Subscription,
-      );
+      await applyStripeSubscriptionUpdate(event.data.object as Stripe.Subscription);
       break;
     default:
       break;

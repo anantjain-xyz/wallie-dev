@@ -16,9 +16,7 @@ const publicEnv = {
 
 describe("supabase auth helpers", () => {
   it("derives the auth cookie base name from the Supabase host", () => {
-    expect(getSupabaseAuthCookieBaseName(publicEnv)).toBe(
-      "sb-example-auth-token",
-    );
+    expect(getSupabaseAuthCookieBaseName(publicEnv)).toBe("sb-example-auth-token");
   });
 
   it("distinguishes session cookies from auth flow cookies", () => {

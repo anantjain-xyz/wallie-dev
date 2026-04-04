@@ -1,7 +1,11 @@
 import { parseServerEnv } from "@/env/server";
 
 export const githubAppEnvKeys = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"] as const;
-export const githubWebhookEnvKeys = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] as const;
+export const githubWebhookEnvKeys = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_WEBHOOK_SECRET",
+] as const;
 
 export function getMissingGitHubEnvKeys(
   keys: readonly string[],
@@ -10,9 +14,7 @@ export function getMissingGitHubEnvKeys(
   return keys.filter((key) => !input[key]?.trim());
 }
 
-export function getGitHubConfigStatus(
-  input: Record<string, string | undefined> = process.env,
-) {
+export function getGitHubConfigStatus(input: Record<string, string | undefined> = process.env) {
   return {
     missingAppKeys: getMissingGitHubEnvKeys(githubAppEnvKeys, input),
     missingWebhookKeys: getMissingGitHubEnvKeys(githubWebhookEnvKeys, input),
@@ -23,9 +25,7 @@ function normalizePrivateKey(value: string) {
   return value.replace(/\\n/g, "\n");
 }
 
-export function resolveGitHubAppConfig(
-  input: Record<string, string | undefined> = process.env,
-) {
+export function resolveGitHubAppConfig(input: Record<string, string | undefined> = process.env) {
   const env = parseServerEnv(input);
 
   if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY) {

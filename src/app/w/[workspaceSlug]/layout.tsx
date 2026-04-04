@@ -19,10 +19,7 @@ type WorkspaceLayoutProps = {
   }>;
 };
 
-export default async function WorkspaceLayout({
-  children,
-  params,
-}: WorkspaceLayoutProps) {
+export default async function WorkspaceLayout({ children, params }: WorkspaceLayoutProps) {
   const { workspaceSlug } = await params;
   const supabase = await createSupabaseServerClient();
   const user = await getSupabaseUserOrNull(supabase);

@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  ensureProfileForUser,
-  normalizeNextPath,
-  resolveAuthenticatedHomePath,
-} from "@/lib/auth";
+import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -39,8 +35,7 @@ export async function GET(request: NextRequest) {
     await ensureProfileForUser(supabase, user);
   }
 
-  const redirectTarget =
-    next === "/" ? await resolveAuthenticatedHomePath(supabase) : next;
+  const redirectTarget = next === "/" ? await resolveAuthenticatedHomePath(supabase) : next;
 
   return NextResponse.redirect(new URL(redirectTarget, request.url), {
     status: 303,

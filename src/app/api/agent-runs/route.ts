@@ -1,14 +1,8 @@
 import { after, NextResponse } from "next/server";
 
-import {
-  enqueueAgentRunSchema,
-  type AgentRunActionResponse,
-} from "@/features/wallie/contracts";
+import { enqueueAgentRunSchema, type AgentRunActionResponse } from "@/features/wallie/contracts";
 import { buildAgentRunActionErrorResponse, buildAgentRunActionResponse } from "@/lib/wallie/http";
-import {
-  enqueueWallieRun,
-  processQueuedAgentJobs,
-} from "@/lib/wallie/service";
+import { enqueueWallieRun, processQueuedAgentJobs } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 export async function POST(request: Request) {

@@ -1,15 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type {
-  Database,
-  Tables,
-  TablesInsert,
-  TablesUpdate,
-} from "@/lib/supabase/database.types";
-import type {
-  IssuePriority,
-  IssueStatus,
-} from "@/features/issues/types";
+import type { Database, Tables, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
+import type { IssuePriority, IssueStatus } from "@/features/issues/types";
 
 export type IssueCreateInput = {
   assigneeMemberId?: string | null;
@@ -27,12 +19,9 @@ export async function createIssueWithAllocatedNumber(
   supabase: SupabaseClient<Database>,
   input: IssueCreateInput,
 ) {
-  const { data: number, error: numberError } = await supabase.rpc(
-    "next_issue_number",
-    {
-      target_workspace_id: input.workspaceId,
-    },
-  );
+  const { data: number, error: numberError } = await supabase.rpc("next_issue_number", {
+    target_workspace_id: input.workspaceId,
+  });
 
   if (numberError) {
     throw numberError;
@@ -51,11 +40,7 @@ export async function createIssueWithAllocatedNumber(
     workspace_id: input.workspaceId,
   };
 
-  const { data: issue, error } = await supabase
-    .from("issues")
-    .insert(payload)
-    .select("*")
-    .single();
+  const { data: issue, error } = await supabase.from("issues").insert(payload).select("*").single();
 
   if (error) {
     throw error;

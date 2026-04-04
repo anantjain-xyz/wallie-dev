@@ -8,19 +8,14 @@ export const createWorkspaceInputSchema = z.object({
     .string()
     .trim()
     .max(63, "Workspace slugs must stay under 64 characters.")
-    .regex(
-      workspaceSlugPattern,
-      "Use lowercase letters, numbers, and single hyphens only.",
-    )
+    .regex(workspaceSlugPattern, "Use lowercase letters, numbers, and single hyphens only.")
     .optional()
     .or(z.literal("")),
 });
 
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
 
-export function normalizeWorkspaceSlug(
-  value: string | null | undefined,
-) {
+export function normalizeWorkspaceSlug(value: string | null | undefined) {
   const normalized = value?.trim().toLowerCase();
 
   return normalized ? normalized : undefined;

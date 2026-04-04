@@ -11,10 +11,7 @@ type SettingsPageProps = {
   }>;
 };
 
-export default async function SettingsPage({
-  params,
-  searchParams,
-}: SettingsPageProps) {
+export default async function SettingsPage({ params, searchParams }: SettingsPageProps) {
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
   const data = await loadSettingsPageData(workspaceSlug);

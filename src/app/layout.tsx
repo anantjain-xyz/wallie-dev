@@ -31,10 +31,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} ${ibmPlexMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${inter.variable} ${ibmPlexMono.variable} h-full antialiased`}>
       <body className="min-h-full font-sans">
         <a href="#main-content" className="ui-skip-link">
           Skip to Main Content

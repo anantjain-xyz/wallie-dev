@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-const mockCreateServerClient = vi.hoisted(() =>
-  vi.fn(() => ({ client: "server" })),
-);
+const mockCreateServerClient = vi.hoisted(() => vi.fn(() => ({ client: "server" })));
 
 vi.mock("@supabase/ssr", () => ({
   createServerClient: mockCreateServerClient,
@@ -30,9 +28,7 @@ type SupabaseCookieAdapter = {
 };
 
 function getSupabaseCookieAdapter() {
-  const lastCall = mockCreateServerClient.mock.calls.at(-1) as
-    | unknown[]
-    | undefined;
+  const lastCall = mockCreateServerClient.mock.calls.at(-1) as unknown[] | undefined;
   const options = lastCall?.[2] as SupabaseCookieAdapter | undefined;
 
   expect(options).toBeDefined();
@@ -48,10 +44,7 @@ describe("supabase server helpers", () => {
       delete: vi.fn(),
     };
 
-    const client = await createSupabaseServerClient(
-      publicSupabaseEnv,
-      cookieStore,
-    );
+    const client = await createSupabaseServerClient(publicSupabaseEnv, cookieStore);
 
     expect(mockCreateServerClient).toHaveBeenCalledWith(
       "https://example.supabase.co",
@@ -111,9 +104,7 @@ describe("supabase server helpers", () => {
     const cookieStore = {
       getAll: () => [],
       set: vi.fn(() => {
-        throw new Error(
-          "Cookies can only be modified in a Server Action or Route Handler.",
-        );
+        throw new Error("Cookies can only be modified in a Server Action or Route Handler.");
       }),
     };
 

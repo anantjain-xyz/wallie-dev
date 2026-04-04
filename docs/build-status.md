@@ -14,6 +14,7 @@
 - Gate F verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` all passing on March 31, 2026 after Wallie enqueue/retry routes, the resumable processor entrypoint, persisted run messages, and the issue-detail Wallie timeline landed
 - UI verification: `pnpm lint`, `pnpm typecheck`, and `pnpm build` all passing on April 1, 2026 after the shared visual system, workspace shell, auth entry, issue list/detail, settings, and Wallie panel shifted to a denser Linear-inspired interface language
 - Web guideline verification: `pnpm lint`, `pnpm typecheck`, and `pnpm build` all passing on April 1, 2026 after a page-by-page audit against the Vercel Web Interface Guidelines added skip navigation, page-level headings, focus-visible treatments, labeled form controls, live-region feedback, locale-safe date formatting, and URL-backed issue-list UI state
+- Tooling verification: `pnpm format:check` and `pnpm lint` passing on April 4, 2026 after Prettier setup, ESLint/Prettier compatibility, and a GitHub Actions style workflow landed
 
 ## Active Agents
 
@@ -87,6 +88,8 @@
 - Routed pages now follow a shared accessibility contract: each rendered page surface exposes a page-level heading, the app exposes a root skip link to `#main-content`, and interactive controls use focus-visible treatments rather than focus-only styling.
 - The issue list now deep-links two page-level UI states through query params: `controls=1` opens the filter/search tray and `create=1` opens the create-issue dialog, which also makes the sidebar search/create affordances land on the exact UI state they advertise.
 - The workspace shell now exposes only shipped navigation surfaces in the left rail: the top-left workspace dropdown links to `/w/[workspaceSlug]/settings`, and the persistent team nav keeps only Issues until additional workspace routes are implemented.
+- Repository formatting now runs through Prettier with `printWidth = 100` and `proseWrap = preserve`; reference docs, generated DB types, local tool metadata, and the lockfile stay outside the formatter surface to avoid noisy churn.
+- GitHub Actions now runs `pnpm format:check` and `pnpm lint` on pushes to `main` and pull requests targeting `main`.
 
 ## Planned Gate E Routes And Interfaces
 

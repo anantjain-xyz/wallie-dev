@@ -13,10 +13,7 @@ const memberSelect = "id, role, is_active, kind";
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 export type WorkspaceAccessContext = {
-  currentMember: Pick<
-    Tables<"workspace_members">,
-    "id" | "is_active" | "kind" | "role"
-  >;
+  currentMember: Pick<Tables<"workspace_members">, "id" | "is_active" | "kind" | "role">;
   supabase: SupabaseServerClient;
   user: User;
   workspace: Pick<
@@ -81,11 +78,7 @@ export async function requireWorkspaceAccessById(
 
   const [{ data: workspace, error: workspaceError }, { data: currentMember, error: memberError }] =
     await Promise.all([
-      supabase
-        .from("workspaces")
-        .select(workspaceSelect)
-        .eq("id", workspaceId)
-        .maybeSingle(),
+      supabase.from("workspaces").select(workspaceSelect).eq("id", workspaceId).maybeSingle(),
       supabase
         .from("workspace_members")
         .select(memberSelect)
@@ -118,11 +111,7 @@ export async function requireWorkspaceAccessById(
     };
   }
 
-  if (
-    options?.requireManager &&
-    currentMember.role !== "owner" &&
-    currentMember.role !== "admin"
-  ) {
+  if (options?.requireManager && currentMember.role !== "owner" && currentMember.role !== "admin") {
     return {
       error: "Workspace admin access is required for this action.",
       ok: false,

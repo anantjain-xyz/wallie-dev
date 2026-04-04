@@ -50,9 +50,9 @@ export function isSupabaseAuthFlowCookieName(
   baseName = getSupabaseAuthCookieBaseName(),
 ) {
   return (
-    isSupabaseSessionCookieName(name, baseName)
-    || name === `${baseName}-code-verifier`
-    || name.startsWith(`${baseName}-code-verifier.`)
+    isSupabaseSessionCookieName(name, baseName) ||
+    name === `${baseName}-code-verifier` ||
+    name.startsWith(`${baseName}-code-verifier.`)
   );
 }
 
@@ -79,22 +79,16 @@ export function isSupabaseInvalidSessionError(error: unknown) {
     return false;
   }
 
-  const code =
-    "code" in error && typeof error.code === "string" ? error.code : null;
-  const message =
-    "message" in error && typeof error.message === "string"
-      ? error.message
-      : "";
+  const code = "code" in error && typeof error.code === "string" ? error.code : null;
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
 
   return (
-    (code !== null && INVALID_SESSION_ERROR_CODES.has(code))
-    || INVALID_SESSION_ERROR_MESSAGES.some((fragment) => message.includes(fragment))
+    (code !== null && INVALID_SESSION_ERROR_CODES.has(code)) ||
+    INVALID_SESSION_ERROR_MESSAGES.some((fragment) => message.includes(fragment))
   );
 }
 
-export async function getSupabaseUserOrNull(
-  supabase: SupabaseAuthClientLike,
-) {
+export async function getSupabaseUserOrNull(supabase: SupabaseAuthClientLike) {
   try {
     const {
       data: { user },

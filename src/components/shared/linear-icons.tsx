@@ -37,19 +37,8 @@ export function SearchIcon({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <circle
-        cx="7"
-        cy="7"
-        r="4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <path
-        d="m10.5 10.5 3 3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+      <circle cx="7" cy="7" r="4" stroke="currentColor" strokeWidth="1.5" />
+      <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -94,12 +83,7 @@ export function LogoutIcon({ className, ...props }: IconProps) {
         strokeWidth="1.4"
         strokeLinecap="round"
       />
-      <path
-        d="M8 8h4.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <path d="M8 8h4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       <path
         d="m10.5 6 2 2-2 2"
         stroke="currentColor"
@@ -120,24 +104,9 @@ export function FilterIcon({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <path
-        d="M3 4h10"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M5 8h6"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M6.5 12h3"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <path d="M3 4h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M5 8h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M6.5 12h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -151,26 +120,9 @@ export function SlidersIcon({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <path
-        d="M4 4h8"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M4 12h8"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <circle
-        cx="6"
-        cy="4"
-        r="1.5"
-        fill="var(--surface)"
-        stroke="currentColor"
-        strokeWidth="1.2"
-      />
+      <path d="M4 4h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M4 12h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="6" cy="4" r="1.5" fill="var(--surface)" stroke="currentColor" strokeWidth="1.2" />
       <circle
         cx="10"
         cy="12"
@@ -192,20 +144,8 @@ export function LayoutIcon({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <rect
-        x="3"
-        y="3"
-        width="10"
-        height="10"
-        rx="2"
-        stroke="currentColor"
-        strokeWidth="1.3"
-      />
-      <path
-        d="M8 3v10"
-        stroke="currentColor"
-        strokeWidth="1.3"
-      />
+      <rect x="3" y="3" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 3v10" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   );
 }
@@ -219,18 +159,8 @@ export function PlusIcon({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <path
-        d="M8 3.5v9"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M3.5 8h9"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
+      <path d="M8 3.5v9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M3.5 8h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
@@ -284,12 +214,7 @@ export function ReviewsIcon({ className, ...props }: IconProps) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path
-        d="M4 6.5h8M4 9.5h8"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
+      <path d="M4 6.5h8M4 9.5h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   );
 }
@@ -500,7 +425,15 @@ export function WorkspaceGlyph({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <rect x="3.25" y="3.25" width="9.5" height="9.5" rx="2.25" fill="currentColor" opacity="0.18" />
+      <rect
+        x="3.25"
+        y="3.25"
+        width="9.5"
+        height="9.5"
+        rx="2.25"
+        fill="currentColor"
+        opacity="0.18"
+      />
       <path
         d="M8 4.5v7M4.5 8h7M5.75 5.75h4.5M5.75 10.25h4.5"
         stroke="currentColor"

@@ -7,9 +7,7 @@ import type {
   WallieRunMode,
 } from "@/lib/wallie/types";
 
-export function inferWallieRunMode(
-  githubRepositoryId: string | null | undefined,
-): WallieRunMode {
+export function inferWallieRunMode(githubRepositoryId: string | null | undefined): WallieRunMode {
   return githubRepositoryId ? "code" : "project";
 }
 
@@ -32,22 +30,14 @@ export function isWallieRunTerminalStatus(status: Enums<"agent_run_status">) {
   return !isWallieRunActiveStatus(status);
 }
 
-export function canRetryWallieRun(
-  status: Enums<"agent_run_status">,
-  hasActiveRun: boolean,
-) {
+export function canRetryWallieRun(status: Enums<"agent_run_status">, hasActiveRun: boolean) {
   return isWallieRunTerminalStatus(status) && !hasActiveRun;
 }
 
-export function buildWallieBillingState(
-  input: WallieBillingSnapshot,
-): WallieBillingState {
-  const runLimit =
-    input.tier === "free" ? WALLIE_FREE_TIER_RUN_LIMIT : null;
+export function buildWallieBillingState(input: WallieBillingSnapshot): WallieBillingState {
+  const runLimit = input.tier === "free" ? WALLIE_FREE_TIER_RUN_LIMIT : null;
   const runsRemaining =
-    runLimit === null
-      ? null
-      : Math.max(runLimit - input.successfulRunsThisCycle, 0);
+    runLimit === null ? null : Math.max(runLimit - input.successfulRunsThisCycle, 0);
 
   return {
     ...input,
@@ -90,8 +80,7 @@ export function buildWallieBlockingReasons(input: {
   if (input.mode === "code" && repositoryIsArchived) {
     reasons.push({
       code: "repository_archived",
-      message:
-        "Wallie cannot start a code-mode run against an archived repository.",
+      message: "Wallie cannot start a code-mode run against an archived repository.",
     });
   }
 

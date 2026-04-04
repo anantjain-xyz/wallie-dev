@@ -1,9 +1,4 @@
-import {
-  Constants,
-  type Enums,
-  type Json,
-  type Tables,
-} from "@/lib/supabase/database.types";
+import { Constants, type Enums, type Json, type Tables } from "@/lib/supabase/database.types";
 
 export type IssueStatus = Enums<"issue_status">;
 export type IssuePriority = Enums<"issue_priority">;
@@ -23,16 +18,7 @@ export const ISSUE_SORT_FIELDS = [
   "created",
   "updated",
 ] as const satisfies readonly IssueSortField[];
-export const ISSUE_ESTIMATE_VALUES = [
-  null,
-  0,
-  1,
-  2,
-  3,
-  5,
-  8,
-  13,
-] as const;
+export const ISSUE_ESTIMATE_VALUES = [null, 0, 1, 2, 3, 5, 8, 13] as const;
 
 export type IssueEstimateValue = (typeof ISSUE_ESTIMATE_VALUES)[number];
 
@@ -92,14 +78,7 @@ export type IssueListPreferences = {
 
 export type WorkspaceMemberRow = Pick<
   Tables<"workspace_members">,
-  | "avatar_url"
-  | "full_name"
-  | "id"
-  | "is_active"
-  | "kind"
-  | "role"
-  | "user_id"
-  | "username"
+  "avatar_url" | "full_name" | "id" | "is_active" | "kind" | "role" | "user_id" | "username"
 >;
 
 export type WorkspaceViewerMemberRow = WorkspaceMemberRow & {

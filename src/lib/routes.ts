@@ -44,24 +44,15 @@ export function onboardingWorkspacePath() {
   return "/onboarding/workspace";
 }
 
-export function workspaceIssuesPath(
-  workspaceSlug: string,
-  query?: Record<string, QueryValue>,
-) {
+export function workspaceIssuesPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/issues`, query);
 }
 
-export function workspaceIssueDetailPath(
-  workspaceSlug: string,
-  issueNumber: number | string,
-) {
+export function workspaceIssueDetailPath(workspaceSlug: string, issueNumber: number | string) {
   return `${workspaceIssuesPath(workspaceSlug)}/${issueNumber}`;
 }
 
-export function workspaceSettingsPath(
-  workspaceSlug: string,
-  query?: Record<string, QueryValue>,
-) {
+export function workspaceSettingsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 

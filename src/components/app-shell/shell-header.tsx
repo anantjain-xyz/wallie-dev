@@ -1,10 +1,6 @@
 import Link from "next/link";
 
-import {
-  BellIcon,
-  LogoutIcon,
-  WorkspaceGlyph,
-} from "@/components/shared/linear-icons";
+import { BellIcon, LogoutIcon, WorkspaceGlyph } from "@/components/shared/linear-icons";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { workspaceIssuesPath } from "@/lib/routes";
 
@@ -23,9 +19,7 @@ export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
         <span className="inline-flex h-5 w-5 items-center justify-center rounded-[5px] bg-[#dff3dc] text-[#4d9b57]">
           <WorkspaceGlyph className="h-3.5 w-3.5" />
         </span>
-        <span className="truncate text-[13px] font-semibold text-foreground">
-          {workspace.name}
-        </span>
+        <span className="truncate text-[13px] font-semibold text-foreground">{workspace.name}</span>
       </Link>
 
       <div className="flex items-center gap-2">
@@ -46,11 +40,7 @@ export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
         </button>
 
         <form action="/auth/signout" method="post">
-          <button
-            type="submit"
-            className="linear-icon-button"
-            aria-label="Sign out"
-          >
+          <button type="submit" className="linear-icon-button" aria-label="Sign out">
             <LogoutIcon className="h-3.5 w-3.5" />
           </button>
         </form>

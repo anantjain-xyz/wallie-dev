@@ -8,9 +8,7 @@ type IssueDetailPageProps = {
   }>;
 };
 
-export default async function IssueDetailPage({
-  params,
-}: IssueDetailPageProps) {
+export default async function IssueDetailPage({ params }: IssueDetailPageProps) {
   const { issueNumber, workspaceSlug } = await params;
   const data = await loadIssueDetailPageData(workspaceSlug, issueNumber);
 

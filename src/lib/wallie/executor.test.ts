@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildStubBranchName,
-  buildStubProjectArtifacts,
-} from "@/lib/wallie/executor";
+import { buildStubBranchName, buildStubProjectArtifacts } from "@/lib/wallie/executor";
 
 describe("wallie stub executor helpers", () => {
   it("builds deterministic project artifacts", () => {

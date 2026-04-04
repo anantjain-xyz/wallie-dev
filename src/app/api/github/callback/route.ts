@@ -48,10 +48,7 @@ export async function GET(request: NextRequest) {
 
   if (!Number.isInteger(installationId) || installationId < 1) {
     return NextResponse.redirect(
-      new URL(
-        buildCallbackRedirectPath(state.workspaceSlug, "failed"),
-        env.NEXT_PUBLIC_APP_URL,
-      ),
+      new URL(buildCallbackRedirectPath(state.workspaceSlug, "failed"), env.NEXT_PUBLIC_APP_URL),
       { status: 303 },
     );
   }
@@ -63,18 +60,12 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      new URL(
-        buildCallbackRedirectPath(state.workspaceSlug, "connected"),
-        env.NEXT_PUBLIC_APP_URL,
-      ),
+      new URL(buildCallbackRedirectPath(state.workspaceSlug, "connected"), env.NEXT_PUBLIC_APP_URL),
       { status: 303 },
     );
   } catch {
     return NextResponse.redirect(
-      new URL(
-        buildCallbackRedirectPath(state.workspaceSlug, "failed"),
-        env.NEXT_PUBLIC_APP_URL,
-      ),
+      new URL(buildCallbackRedirectPath(state.workspaceSlug, "failed"), env.NEXT_PUBLIC_APP_URL),
       { status: 303 },
     );
   }

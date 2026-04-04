@@ -4,11 +4,7 @@ import { notFound } from "next/navigation";
 
 import type { WorkspaceSummary } from "@/lib/auth";
 import type { Tables } from "@/lib/supabase/database.types";
-import {
-  mapIssueCommentRow,
-  mapIssueDetailRow,
-  mapIssueRow,
-} from "@/features/issues/model";
+import { mapIssueCommentRow, mapIssueDetailRow, mapIssueRow } from "@/features/issues/model";
 import { loadIssueWorkspaceContext } from "@/features/issues/server";
 import { groupIssueLinks } from "@/features/issues/detail/relationships";
 import { loadWallieIssueData } from "@/features/wallie/server";
@@ -64,10 +60,7 @@ export type IssueDetailPageData = {
   workspace: WorkspaceSummary;
 };
 
-export async function loadIssueDetailPageData(
-  workspaceSlug: string,
-  issueNumberValue: string,
-) {
+export async function loadIssueDetailPageData(workspaceSlug: string, issueNumberValue: string) {
   const issueNumber = Number(issueNumberValue);
 
   if (!Number.isInteger(issueNumber) || issueNumber < 1) {
@@ -142,18 +135,20 @@ export async function loadIssueDetailPageData(
   }
 
   const links = (linksData ?? []) as Tables<"issue_links">[];
-  const githubRepositories = ((repositoryData ?? []) as Array<
-    Pick<
-      Tables<"github_repositories">,
-      | "default_branch"
-      | "default_programming_language"
-      | "full_name"
-      | "html_url"
-      | "id"
-      | "is_archived"
-      | "private"
+  const githubRepositories = (
+    (repositoryData ?? []) as Array<
+      Pick<
+        Tables<"github_repositories">,
+        | "default_branch"
+        | "default_programming_language"
+        | "full_name"
+        | "html_url"
+        | "id"
+        | "is_archived"
+        | "private"
+      >
     >
-  >).map((repository) => ({
+  ).map((repository) => ({
     defaultBranch: repository.default_branch,
     defaultProgrammingLanguage: repository.default_programming_language,
     fullName: repository.full_name,
@@ -169,7 +164,7 @@ export async function loadIssueDetailPageData(
     issue: issueData as Pick<Tables<"issues">, "github_repository_id" | "id">,
     memberIndex: context.memberIndex,
     repository: issue.githubRepositoryId
-      ? githubRepositoryIndex.get(issue.githubRepositoryId) ?? null
+      ? (githubRepositoryIndex.get(issue.githubRepositoryId) ?? null)
       : null,
     supabase: context.supabase,
     workspaceId: context.workspace.id,
@@ -185,18 +180,17 @@ export async function loadIssueDetailPageData(
   let linkedIssues: IssueSummary[] = [];
 
   if (linkedIssueIds.length > 0) {
-    const { data: linkedIssuesData, error: linkedIssuesError } =
-      await context.supabase
-        .from("issues")
-        .select("*")
-        .in("id", linkedIssueIds);
+    const { data: linkedIssuesData, error: linkedIssuesError } = await context.supabase
+      .from("issues")
+      .select("*")
+      .in("id", linkedIssueIds);
 
     if (linkedIssuesError) {
       throw linkedIssuesError;
     }
 
-    linkedIssues = ((linkedIssuesData ?? []) as Tables<"issues">[]).map(
-      (linkedIssue) => mapIssueRow(linkedIssue, context.memberIndex),
+    linkedIssues = ((linkedIssuesData ?? []) as Tables<"issues">[]).map((linkedIssue) =>
+      mapIssueRow(linkedIssue, context.memberIndex),
     );
   }
 
@@ -205,25 +199,27 @@ export async function loadIssueDetailPageData(
   );
 
   return {
-    comments: ((commentsData ?? []) as Tables<"issue_comments">[]).map(
-      (comment) => mapIssueCommentRow(comment, context.memberIndex),
+    comments: ((commentsData ?? []) as Tables<"issue_comments">[]).map((comment) =>
+      mapIssueCommentRow(comment, context.memberIndex),
     ),
     currentMember: context.currentMember,
     github: {
-      pullRequests: ((pullRequestData ?? []) as Array<
-        Pick<
-          Tables<"github_issue_branches">,
-          | "branch_name"
-          | "created_at"
-          | "github_repository_id"
-          | "id"
-          | "is_draft"
-          | "pull_request_number"
-          | "pull_request_state"
-          | "pull_request_url"
-          | "updated_at"
+      pullRequests: (
+        (pullRequestData ?? []) as Array<
+          Pick<
+            Tables<"github_issue_branches">,
+            | "branch_name"
+            | "created_at"
+            | "github_repository_id"
+            | "id"
+            | "is_draft"
+            | "pull_request_number"
+            | "pull_request_state"
+            | "pull_request_url"
+            | "updated_at"
+          >
         >
-      >).map((pullRequest) => ({
+      ).map((pullRequest) => ({
         branchName: pullRequest.branch_name,
         createdAt: pullRequest.created_at,
         githubRepositoryId: pullRequest.github_repository_id,
@@ -233,7 +229,7 @@ export async function loadIssueDetailPageData(
         pullRequestState: pullRequest.pull_request_state,
         pullRequestUrl: pullRequest.pull_request_url,
         repository: pullRequest.github_repository_id
-          ? githubRepositoryIndex.get(pullRequest.github_repository_id) ?? null
+          ? (githubRepositoryIndex.get(pullRequest.github_repository_id) ?? null)
           : null,
         updatedAt: pullRequest.updated_at,
       })),

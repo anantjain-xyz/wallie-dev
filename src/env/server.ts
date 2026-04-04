@@ -9,8 +9,7 @@ import {
 
 const requiredEnvStringSchema = z.string().min(1);
 const optionalEnvStringSchema = z.preprocess(
-  (value) =>
-    typeof value === "string" && value.trim().length === 0 ? undefined : value,
+  (value) => (typeof value === "string" && value.trim().length === 0 ? undefined : value),
   requiredEnvStringSchema.optional(),
 );
 
@@ -32,14 +31,11 @@ export const supabaseAdminEnvSchema = supabasePublicEnvSchema.extend({
 export type SupabaseAdminEnv = z.infer<typeof supabaseAdminEnvSchema>;
 type EnvInput = Record<string, string | undefined>;
 
-export function parseSupabaseAdminEnv(
-  input: EnvInput = process.env,
-): SupabaseAdminEnv {
+export function parseSupabaseAdminEnv(input: EnvInput = process.env): SupabaseAdminEnv {
   const publicEnv = parseSupabasePublicEnv(input);
 
   return supabaseAdminEnvSchema.parse({
-    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
-      publicEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: publicEnv.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     NEXT_PUBLIC_SUPABASE_URL: publicEnv.NEXT_PUBLIC_SUPABASE_URL,
     SUPABASE_SECRET_KEY: input.SUPABASE_SECRET_KEY,
   });

@@ -4,10 +4,7 @@ import { ensureProfileForUser } from "@/lib/auth";
 import { workspaceIssuesPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import {
-  createWorkspaceInputSchema,
-  normalizeWorkspaceSlug,
-} from "@/lib/workspaces";
+import { createWorkspaceInputSchema, normalizeWorkspaceSlug } from "@/lib/workspaces";
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
@@ -28,10 +25,7 @@ export async function POST(request: Request) {
   const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
-    return NextResponse.json(
-      { error: "Sign in before creating a workspace." },
-      { status: 401 },
-    );
+    return NextResponse.json({ error: "Sign in before creating a workspace." }, { status: 401 });
   }
 
   await ensureProfileForUser(supabase, user);

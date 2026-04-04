@@ -58,9 +58,7 @@ describe("GET /auth/confirm", () => {
     expect(mocked.exchangeCodeForSession).toHaveBeenCalledWith("test-code");
     expect(mocked.verifyOtp).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/onboarding/workspace",
-    );
+    expect(response.headers.get("location")).toBe("http://localhost:3000/onboarding/workspace");
   });
 
   it("verifies token hashes when the redirect includes an OTP payload", async () => {
@@ -85,15 +83,11 @@ describe("GET /auth/confirm", () => {
     });
     expect(mocked.exchangeCodeForSession).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/w/acme/issues",
-    );
+    expect(response.headers.get("location")).toBe("http://localhost:3000/w/acme/issues");
   });
 
   it("redirects back to login when the confirmation link is missing auth parameters", async () => {
-    const response = await GET(
-      new NextRequest("http://localhost:3000/auth/confirm?next=%2F"),
-    );
+    const response = await GET(new NextRequest("http://localhost:3000/auth/confirm?next=%2F"));
 
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.exchangeCodeForSession).not.toHaveBeenCalled();

@@ -3,10 +3,7 @@ import "server-only";
 import { notFound, redirect } from "next/navigation";
 
 import type { WorkspaceSummary } from "@/lib/auth";
-import {
-  getWorkspaceBySlugForUser,
-  workspaceLoginRedirectPath,
-} from "@/lib/auth";
+import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/auth";
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -24,8 +21,7 @@ import type {
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
-const memberSelect =
-  "id, full_name, username, avatar_url, role, kind, user_id, is_active";
+const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";
 const viewerMemberSelect = `${memberSelect}, preferences`;
 
 type IssueWorkspaceContext = {
@@ -78,9 +74,7 @@ export async function loadIssueWorkspaceContext(
     throw currentMemberError;
   }
 
-  const members = ((membersData ?? []) as WorkspaceMemberRow[]).map(
-    mapIssueMemberRow,
-  );
+  const members = ((membersData ?? []) as WorkspaceMemberRow[]).map(mapIssueMemberRow);
   const memberIndex = buildIssueMemberIndex(members);
   const currentMember = currentMemberData
     ? mapIssueViewerMemberRow(currentMemberData as WorkspaceViewerMemberRow)

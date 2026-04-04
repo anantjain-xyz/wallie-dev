@@ -16,10 +16,7 @@ type WorkspaceAvatarRouteContext = {
   }>;
 };
 
-export async function POST(
-  request: Request,
-  context: WorkspaceAvatarRouteContext,
-) {
+export async function POST(request: Request, context: WorkspaceAvatarRouteContext) {
   const params = await context.params;
   const parsedParams = workspaceAvatarParamsSchema.safeParse(params);
 
@@ -99,9 +96,7 @@ export async function POST(
     access.context.workspace.avatar_path &&
     access.context.workspace.avatar_path !== nextAvatarPath
   ) {
-    await admin.storage
-      .from(workspaceAvatarBucket)
-      .remove([access.context.workspace.avatar_path]);
+    await admin.storage.from(workspaceAvatarBucket).remove([access.context.workspace.avatar_path]);
   }
 
   return NextResponse.json(

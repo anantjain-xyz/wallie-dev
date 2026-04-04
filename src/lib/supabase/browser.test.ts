@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-const mockCreateBrowserClient = vi.hoisted(() =>
-  vi.fn(() => ({ client: "browser" })),
-);
+const mockCreateBrowserClient = vi.hoisted(() => vi.fn(() => ({ client: "browser" })));
 
 vi.mock("@supabase/ssr", () => ({
   createBrowserClient: mockCreateBrowserClient,

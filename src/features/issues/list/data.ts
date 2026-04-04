@@ -15,10 +15,7 @@ import type {
   IssueViewerMember,
   SortDirection,
 } from "@/features/issues/types";
-import {
-  ISSUE_PRIORITY_WEIGHTS,
-  ISSUE_STATUS_WEIGHTS,
-} from "@/features/issues/types";
+import { ISSUE_PRIORITY_WEIGHTS, ISSUE_STATUS_WEIGHTS } from "@/features/issues/types";
 import {
   parseIssueListQueryState,
   readIssueListPreferences,
@@ -35,24 +32,12 @@ export type IssueListPageData = {
   workspace: WorkspaceSummary;
 };
 
-function compareNumbers(
-  left: number,
-  right: number,
-  direction: SortDirection,
-) {
+function compareNumbers(left: number, right: number, direction: SortDirection) {
   return direction === "asc" ? left - right : right - left;
 }
 
-function compareDates(
-  left: string,
-  right: string,
-  direction: SortDirection,
-) {
-  return compareNumbers(
-    new Date(left).getTime(),
-    new Date(right).getTime(),
-    direction,
-  );
+function compareDates(left: string, right: string, direction: SortDirection) {
+  return compareNumbers(new Date(left).getTime(), new Date(right).getTime(), direction);
 }
 
 function matchesSearch(issue: IssueSummary, query: string) {
@@ -77,10 +62,7 @@ function matchesPriority(issue: IssueSummary, priorities: IssuePriority[]) {
 }
 
 function matchesEstimate(issue: IssueSummary, estimates: IssueEstimateValue[]) {
-  return (
-    estimates.length === 0 ||
-    estimates.includes(issue.estimatePoints as IssueEstimateValue)
-  );
+  return estimates.length === 0 || estimates.includes(issue.estimatePoints as IssueEstimateValue);
 }
 
 function compareBySortField(
@@ -111,10 +93,7 @@ function compareBySortField(
   }
 }
 
-function filterAndSortIssues(
-  issues: IssueSummary[],
-  queryState: IssueListQueryState,
-) {
+function filterAndSortIssues(issues: IssueSummary[], queryState: IssueListQueryState) {
   return issues
     .filter(
       (issue) =>
@@ -124,12 +103,7 @@ function filterAndSortIssues(
         matchesEstimate(issue, queryState.estimates),
     )
     .sort((left, right) => {
-      const primary = compareBySortField(
-        left,
-        right,
-        queryState.sort,
-        queryState.direction,
-      );
+      const primary = compareBySortField(left, right, queryState.sort, queryState.direction);
 
       if (primary !== 0) {
         return primary;
@@ -145,10 +119,7 @@ function filterAndSortIssues(
     });
 }
 
-export async function loadIssueListPageData(
-  workspaceSlug: string,
-  searchParams: SearchParamInput,
-) {
+export async function loadIssueListPageData(workspaceSlug: string, searchParams: SearchParamInput) {
   const context = await loadIssueWorkspaceContext(workspaceSlug);
   const preferences: IssueListPreferences = readIssueListPreferences(
     context.currentMember?.preferences,

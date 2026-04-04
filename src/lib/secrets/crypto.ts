@@ -43,30 +43,19 @@ export function encryptSecretValue(
   const key = deriveEncryptionKey(getEncryptionSecret(input));
   const iv = randomBytes(ivByteLength);
   const cipher = createCipheriv(algorithm, key, iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
 
-  return [version, encodePart(iv), encodePart(ciphertext), encodePart(authTag)].join(
-    ".",
-  );
+  return [version, encodePart(iv), encodePart(ciphertext), encodePart(authTag)].join(".");
 }
 
 export function decryptSecretValue(
   encrypted: string,
   input: Record<string, string | undefined> = process.env,
 ) {
-  const [encodedVersion, encodedIv, encodedCiphertext, encodedAuthTag] =
-    encrypted.split(".");
+  const [encodedVersion, encodedIv, encodedCiphertext, encodedAuthTag] = encrypted.split(".");
 
-  if (
-    encodedVersion !== version ||
-    !encodedIv ||
-    !encodedCiphertext ||
-    !encodedAuthTag
-  ) {
+  if (encodedVersion !== version || !encodedIv || !encodedCiphertext || !encodedAuthTag) {
     throw new Error("Encrypted secret payload is invalid.");
   }
 

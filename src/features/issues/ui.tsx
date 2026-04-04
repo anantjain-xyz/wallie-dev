@@ -28,13 +28,7 @@ const priorityToneClasses: Record<IssuePriority, string> = {
   none: "border-border-strong bg-surface-muted text-muted",
 };
 
-function Badge({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className: string;
-}) {
+function Badge({ children, className }: { children: ReactNode; className: string }) {
   return (
     <span
       className={cn(
@@ -48,26 +42,14 @@ function Badge({
 }
 
 export function IssueStatusBadge({ status }: { status: IssueStatus }) {
-  return (
-    <Badge className={statusToneClasses[status]}>
-      {formatIssueStatus(status)}
-    </Badge>
-  );
+  return <Badge className={statusToneClasses[status]}>{formatIssueStatus(status)}</Badge>;
 }
 
 export function IssuePriorityBadge({ priority }: { priority: IssuePriority }) {
-  return (
-    <Badge className={priorityToneClasses[priority]}>
-      {formatIssuePriority(priority)}
-    </Badge>
-  );
+  return <Badge className={priorityToneClasses[priority]}>{formatIssuePriority(priority)}</Badge>;
 }
 
-export function IssueEstimateBadge({
-  estimatePoints,
-}: {
-  estimatePoints: number | null;
-}) {
+export function IssueEstimateBadge({ estimatePoints }: { estimatePoints: number | null }) {
   return (
     <Badge className="border-border bg-surface-muted text-muted">
       {formatIssueEstimate(estimatePoints)}
