@@ -751,7 +751,7 @@ export function IssueDetailPageClient({
           <div
             aria-live="polite"
             className={cn(
-              "rounded-[12px] border px-4 py-3 text-sm",
+              "rounded-[6px] border px-4 py-3 text-sm",
               messageToneClass("error"),
             )}
             role="status"
@@ -764,7 +764,7 @@ export function IssueDetailPageClient({
           <div
             aria-live="polite"
             className={cn(
-              "rounded-[12px] border px-4 py-3 text-sm",
+              "rounded-[6px] border px-4 py-3 text-sm",
               messageToneClass("success"),
             )}
             role="status"

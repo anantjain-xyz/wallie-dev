@@ -92,7 +92,7 @@ export function AuthEntryPanel({
         <div
           aria-live="polite"
           role="status"
-          className="mt-6 rounded-[12px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning"
+          className="mt-6 rounded-[6px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning"
         >
           {statusMessage}
         </div>
@@ -102,7 +102,7 @@ export function AuthEntryPanel({
         <div
           aria-live="polite"
           role="status"
-          className="mt-6 rounded-[12px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
+          className="mt-6 rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
         >
           {errorMessage}
         </div>

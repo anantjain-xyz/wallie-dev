@@ -55,13 +55,13 @@ function SidebarEntry({
   const className = cn(
     "linear-sidebar-item justify-between",
     active && "linear-sidebar-item-active",
-    disabled && "cursor-default opacity-70 hover:bg-transparent hover:text-[#666259]",
+    disabled && "cursor-default opacity-70 hover:bg-transparent hover:text-[#6b6f76]",
   );
 
   const content = (
     <>
       <span className="flex min-w-0 items-center gap-2.5">
-        <span className="text-[#757167]">{icon}</span>
+        <span className="text-[#7a7d84]">{icon}</span>
         <span className="truncate">{label}</span>
       </span>
       {trailing ? (
@@ -103,7 +103,7 @@ export function ShellSidebar({
     <aside className="hidden w-[216px] shrink-0 border-r border-border bg-background md:flex md:flex-col">
       <div className="flex items-center justify-between px-4 pb-4 pt-4">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e7dcc8] text-[10px] font-semibold text-[#7a5b31]">
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e0e4ea] text-[10px] font-semibold text-[#5a6070]">
             {workspace.name.slice(0, 1).toUpperCase()}
           </span>
           <div className="flex min-w-0 items-center gap-1 text-[13px] font-semibold text-foreground">
@@ -176,7 +176,7 @@ export function ShellSidebar({
             <ChevronDownIcon className="h-3 w-3" />
           </div>
 
-          <div className="flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-semibold text-[#666259]">
+          <div className="flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-semibold text-[#6b6f76]">
             <span className="inline-flex h-4.5 w-4.5 items-center justify-center rounded-[4px] bg-[#dff3dc] text-[#4d9b57]">
               <WorkspaceGlyph className="h-3.5 w-3.5" />
             </span>

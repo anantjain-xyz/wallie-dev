@@ -431,7 +431,7 @@ export function IssueWalliePanel({
         <div
           aria-live="polite"
           className={cn(
-            "rounded-[12px] border px-4 py-3 text-sm leading-6",
+            "rounded-[6px] border px-4 py-3 text-sm leading-6",
             flashToneClass(flashMessage.kind),
           )}
           role="status"
@@ -490,7 +490,7 @@ export function IssueWalliePanel({
       </div>
 
       {blockingReasons.length > 0 ? (
-        <div className="rounded-[12px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
+        <div className="rounded-[6px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
           <p className="font-semibold">Wallie cannot start a new run yet.</p>
           <ul className="mt-3 space-y-2">
             {blockingReasons.map((reason) => (
@@ -607,7 +607,7 @@ export function IssueWalliePanel({
                         <div
                           key={message.id}
                           className={cn(
-                            "rounded-[12px] border px-4 py-4 text-sm leading-7",
+                            "rounded-[6px] border px-4 py-4 text-sm leading-7",
                             message.kind === "error"
                               ? "border-danger/20 bg-danger-soft text-danger"
                               : "border-border bg-surface-muted text-foreground",

@@ -59,18 +59,18 @@ const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const pillToneClasses: Record<MetadataTone, string> = {
-  amber: "border-[#f3e6ba] bg-[#fffaf0] text-[#8a6c19]",
-  blue: "border-[#dae9ff] bg-[#f7fbff] text-[#5881bf]",
-  gray: "border-[#ebe8e1] bg-[#fcfbf8] text-[#7c786d]",
-  green: "border-[#d8ecda] bg-[#f6fcf5] text-[#4f8c5a]",
-  purple: "border-[#eadfff] bg-[#fbf8ff] text-[#785ac6]",
-  red: "border-[#f2dade] bg-[#fff7f7] text-[#a45e69]",
+  amber: "border-[#ecdcb0] bg-[#fdf8ef] text-[#8a6c19]",
+  blue: "border-[#d0e2f7] bg-[#f4f8fd] text-[#4a75b0]",
+  gray: "border-[#e0e0e0] bg-[#f5f5f5] text-[#6b6f76]",
+  green: "border-[#cde8cf] bg-[#f2faf3] text-[#3d7f4e]",
+  purple: "border-[#e0d6f7] bg-[#f8f5fd] text-[#6b4fb5]",
+  red: "border-[#f0d2d5] bg-[#fdf5f5] text-[#a04855]",
 };
 
 const pillDotClasses: Record<MetadataTone, string> = {
   amber: "bg-[#f3c742]",
   blue: "bg-[#6ba0e7]",
-  gray: "bg-[#bbb5aa]",
+  gray: "bg-[#b0b3b8]",
   green: "bg-[#6db57c]",
   purple: "bg-[#b489ff]",
   red: "bg-[#e28083]",
@@ -226,8 +226,8 @@ function AssigneePill({ label }: { label: string }) {
     .slice(0, 2);
 
   return (
-    <span className="linear-list-pill max-w-[10rem] border-[#ebe8e1] bg-[#fcfbf8] text-[#766f64]">
-      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#e8e3da] text-[9px] font-semibold text-[#605a50]">
+    <span className="linear-list-pill max-w-[10rem] border-[#e0e0e0] bg-[#f5f5f5] text-[#6b6f76]">
+      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#e0e2e6] text-[9px] font-semibold text-[#555a64]">
         {initials || "?"}
       </span>
       <span className="truncate">{label}</span>
@@ -691,7 +691,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
         </section>
 
         {showControls ? (
-          <section className="border-b border-border bg-[#fbfaf7] px-5 py-4">
+          <section className="border-b border-border bg-[#f8f8f8] px-5 py-4">
             <form
               className="grid gap-4"
               onSubmit={(event) => {
@@ -848,9 +848,9 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
         ) : null}
 
         {selectedIssueIds.length > 0 ? (
-          <section className="border-b border-border bg-[#faf8f4] px-5 py-3">
+          <section className="border-b border-border bg-[#f7f7f7] px-5 py-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-wrap items-center gap-3 text-[13px] text-[#6b675f]">
+              <div className="flex flex-wrap items-center gap-3 text-[13px] text-[#6b6f76]">
                 <span className="font-medium text-foreground">
                   {selectedIssueIds.length} selected
                 </span>
@@ -998,7 +998,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
           <div
             aria-live="polite"
             role="status"
-            className="border-b border-[#f0d7d8] bg-[#fff7f7] px-5 py-3 text-[13px] text-danger"
+            className="border-b border-[#f0d2d5] bg-[#fdf5f5] px-5 py-3 text-[13px] text-danger"
           >
             {errorMessage}
           </div>
@@ -1008,19 +1008,19 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
           <div
             aria-live="polite"
             role="status"
-            className="border-b border-[#dcecdc] bg-[#f6fcf5] px-5 py-3 text-[13px] text-success"
+            className="border-b border-[#cde8cf] bg-[#f2faf3] px-5 py-3 text-[13px] text-success"
           >
             {successMessage}
           </div>
         ) : null}
 
         <section className="flex flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-border bg-[#f8f6f2] px-5 py-2.5">
-            <div className="flex min-w-0 items-center gap-2 text-[13px] font-medium text-[#4f4b43]">
-              <ChevronDownIcon className="h-3.5 w-3.5 text-[#b7b1a5]" />
-              <StateCircleIcon className="h-3.5 w-3.5 text-[#c6c0b4]" />
+          <div className="flex items-center justify-between border-b border-border bg-[#f5f5f5] px-5 py-2.5">
+            <div className="flex min-w-0 items-center gap-2 text-[13px] font-medium text-[#4a4d54]">
+              <ChevronDownIcon className="h-3.5 w-3.5 text-[#b0b3b8]" />
+              <StateCircleIcon className="h-3.5 w-3.5 text-[#b8bbc2]" />
               <span>{viewLabel}</span>
-              <span className="flex items-center gap-1 text-[#7e796f]">
+              <span className="flex items-center gap-1 text-[#7a7d84]">
                 <PriorityTriangleIcon className="h-3.5 w-3.5" />
                 {visibleIssues.length}
               </span>
@@ -1042,7 +1042,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-[#f4f1eb]">
+            <div className="divide-y divide-[#efefef]">
               {visibleIssues.map((issue) => {
                 const assigneeLabel = getIssueMemberDisplayName(issue.assignee);
 
@@ -1051,8 +1051,8 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                     key={issue.id}
                     className={cn(
                       "group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2.5 transition-colors duration-150",
-                      selectedIssueIdSet.has(issue.id) && "bg-[#faf7f1]",
-                      !selectedIssueIdSet.has(issue.id) && "hover:bg-[#fbfaf7]",
+                      selectedIssueIdSet.has(issue.id) && "bg-[#f0f0f0]",
+                      !selectedIssueIdSet.has(issue.id) && "hover:bg-[#f8f8f8]",
                     )}
                   >
                     <label className="flex items-center justify-center">
@@ -1063,7 +1063,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                           handleSelectIssue(issue.id, event.target.checked)
                         }
                         className={cn(
-                          "h-4 w-4 rounded border border-[#d7d2c9] transition-opacity duration-150",
+                          "h-4 w-4 rounded border border-[#d0d0d0] transition-opacity duration-150",
                           selectedIssueIdSet.has(issue.id)
                             ? "opacity-100"
                             : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
@@ -1078,12 +1078,12 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                       )}
                       className="flex min-w-0 items-center gap-2.5"
                     >
-                      <IssueBarsIcon className="h-3.5 w-3.5 text-[#8d877b]" />
-                      <span className="min-w-[3.9rem] text-[13px] font-medium text-[#959084]">
+                      <IssueBarsIcon className="h-3.5 w-3.5 text-[#8c8f94]" />
+                      <span className="min-w-[3.9rem] text-[13px] font-medium text-[#8c8f94]">
                         {buildIssueIdentifier(initialData.workspace.name, issue.number)}
                       </span>
-                      <StateCircleIcon className="h-3.5 w-3.5 text-[#c7c1b5]" />
-                      <span className="truncate text-[14px] font-medium text-[#33312c]">
+                      <StateCircleIcon className="h-3.5 w-3.5 text-[#b8bbc2]" />
+                      <span className="truncate text-[14px] font-medium text-[#1d1f22]">
                         {issue.title}
                       </span>
                     </Link>
@@ -1108,7 +1108,7 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                         />
                       ) : null}
                       {issue.assignee ? <AssigneePill label={assigneeLabel} /> : null}
-                      <span className="flex items-center gap-1.5 text-[13px] tabular-nums text-[#8c877c]">
+                      <span className="flex items-center gap-1.5 text-[13px] tabular-nums text-[#8c8f94]">
                         <UsersIcon className="h-3.5 w-3.5" />
                         {shortDateFormatter.format(new Date(issue.updatedAt))}
                       </span>
