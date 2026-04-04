@@ -580,33 +580,6 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
       />
 
       <div className="flex min-h-full flex-col bg-surface">
-        <header className="border-b border-border px-5 py-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-2">
-              <p className="ui-label">
-                Workspace Queue
-              </p>
-              <h1 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
-                Issues
-              </h1>
-              <p className="max-w-2xl text-sm leading-6 text-muted">
-                View <span className="tabular-nums">{visibleIssues.length}</span> of{" "}
-                <span className="tabular-nums">{issues.length}</span> issues.
-                Filters stay in the URL so this view remains shareable.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={openCreateDialog}
-              className="ui-button-primary gap-2 self-start lg:self-auto"
-            >
-              <PlusIcon className="h-3.5 w-3.5" />
-              Create Issue
-            </button>
-          </div>
-        </header>
-
         <section className="border-b border-border px-5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -659,6 +632,14 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openCreateDialog}
+                className="ui-button-primary h-8 gap-2 rounded-full px-3 py-0 text-[12px]"
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                Create
+              </button>
               <IconButton
                 active={showControls}
                 ariaLabel="Toggle controls"

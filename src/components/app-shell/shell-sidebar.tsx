@@ -8,6 +8,7 @@ import {
   ChevronDownIcon,
   InboxIcon,
   IssueBarsIcon,
+  LogoutIcon,
   MoreIcon,
   MyIssuesIcon,
   PlusIcon,
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 
 type ShellSidebarProps = {
   navItems: WorkspaceNavItem[];
+  viewerEmail: string | null;
   workspace: WorkspaceSummary;
 };
 
@@ -87,6 +89,7 @@ function SidebarEntry({
 
 export function ShellSidebar({
   navItems,
+  viewerEmail,
   workspace,
 }: ShellSidebarProps) {
   const pathname = usePathname();
@@ -195,6 +198,27 @@ export function ShellSidebar({
             <SidebarEntry disabled icon={<ViewsIcon className="h-3.5 w-3.5" />} label="Views" />
           </div>
         </section>
+      </div>
+
+      <div className="border-t border-border px-3 py-3">
+        <div className="flex items-center gap-2 rounded-[8px] bg-surface px-2.5 py-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-medium text-foreground">
+              {viewerEmail ?? "Account"}
+            </p>
+            <p className="text-[11px] text-muted">Signed in</p>
+          </div>
+
+          <form action="/auth/signout" method="post">
+            <button
+              type="submit"
+              className="linear-icon-button"
+              aria-label="Sign out"
+            >
+              <LogoutIcon className="h-3.5 w-3.5" />
+            </button>
+          </form>
+        </div>
       </div>
     </aside>
   );
