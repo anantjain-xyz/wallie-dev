@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { BellIcon, LogoutIcon, WorkspaceGlyph } from "@/components/shared/linear-icons";
+import { LogoutIcon, WorkspaceGlyph } from "@/components/shared/linear-icons";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { workspaceIssuesPath } from "@/lib/routes";
 
@@ -28,16 +28,6 @@ export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
             {viewerEmail}
           </span>
         ) : null}
-
-        <button
-          type="button"
-          className="linear-icon-button"
-          aria-label="Notifications Coming Soon"
-          disabled
-          title="Notifications are not available yet."
-        >
-          <BellIcon className="h-3.5 w-3.5" />
-        </button>
 
         <form action="/auth/signout" method="post">
           <button type="submit" className="linear-icon-button" aria-label="Sign out">
