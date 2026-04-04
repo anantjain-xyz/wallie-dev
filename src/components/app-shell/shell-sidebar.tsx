@@ -6,18 +6,13 @@ import { usePathname } from "next/navigation";
 
 import {
   ChevronDownIcon,
-  InboxIcon,
   IssueBarsIcon,
-  MoreIcon,
-  MyIssuesIcon,
   PlusIcon,
-  ProjectsIcon,
-  ReviewsIcon,
   SearchIcon,
-  SparkIcon,
   ViewsIcon,
   WorkspaceGlyph,
 } from "@/components/shared/linear-icons";
+import { Dropdown } from "@/components/shared/dropdown";
 import type { WorkspaceSummary } from "@/lib/auth";
 import {
   type WorkspaceNavItem,
@@ -102,15 +97,31 @@ export function ShellSidebar({
   return (
     <aside className="hidden w-[216px] shrink-0 border-r border-border bg-background md:flex md:flex-col">
       <div className="flex items-center justify-between px-4 pb-4 pt-4">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e0e4ea] text-[10px] font-semibold text-[#5a6070]">
-            {workspace.name.slice(0, 1).toUpperCase()}
-          </span>
-          <div className="flex min-w-0 items-center gap-1 text-[13px] font-semibold text-foreground">
-            <span className="truncate">{workspace.name}</span>
-            <ChevronDownIcon className="h-3 w-3 text-muted" />
-          </div>
-        </div>
+        <Dropdown
+          trigger={
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e0e4ea] text-[10px] font-semibold text-[#5a6070]">
+                {workspace.name.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="flex min-w-0 items-center gap-1 text-[13px] font-semibold text-foreground">
+                <span className="truncate">{workspace.name}</span>
+                <ChevronDownIcon className="h-3 w-3 text-muted" />
+              </span>
+            </span>
+          }
+        >
+          <Link
+            href={settingsHref}
+            role="menuitem"
+            className={cn(
+              "ui-dropdown-item",
+              isActive(pathname, settingsHref) && "bg-[rgba(47,45,40,0.04)] text-foreground",
+            )}
+          >
+            <ViewsIcon className="h-3.5 w-3.5" />
+            <span>Settings</span>
+          </Link>
+        </Dropdown>
 
         <div className="flex items-center gap-1.5">
           <Link
@@ -131,45 +142,6 @@ export function ShellSidebar({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-2 pb-4">
-        <div className="space-y-1">
-          <SidebarEntry disabled icon={<InboxIcon className="h-3.5 w-3.5" />} label="Inbox" />
-          <SidebarEntry disabled icon={<ReviewsIcon className="h-3.5 w-3.5" />} label="Reviews" />
-          <SidebarEntry disabled icon={<MyIssuesIcon className="h-3.5 w-3.5" />} label="My issues" />
-        </div>
-
-        <section className="space-y-1">
-          <div className="linear-sidebar-heading flex items-center gap-1">
-            <span>Workspace</span>
-            <ChevronDownIcon className="h-3 w-3" />
-          </div>
-          <SidebarEntry disabled icon={<SparkIcon className="h-3.5 w-3.5" />} label="Initiatives" />
-          <SidebarEntry disabled icon={<ProjectsIcon className="h-3.5 w-3.5" />} label="Projects" />
-          <SidebarEntry disabled icon={<ViewsIcon className="h-3.5 w-3.5" />} label="Views" />
-          <SidebarEntry
-            href={settingsHref}
-            active={isActive(pathname, settingsHref)}
-            icon={<MoreIcon className="h-3.5 w-3.5" />}
-            label="More"
-          />
-        </section>
-
-        <section className="space-y-1">
-          <div className="linear-sidebar-heading flex items-center gap-1">
-            <span>Favorites</span>
-            <ChevronDownIcon className="h-3 w-3" />
-          </div>
-          <SidebarEntry
-            href={workspaceIssuesPath(workspace.slug, { estimate: "null" })}
-            icon={<ViewsIcon className="h-3.5 w-3.5" />}
-            label="Unestimated current cycle"
-          />
-          <SidebarEntry
-            disabled
-            icon={<MyIssuesIcon className="h-3.5 w-3.5" />}
-            label="Unassigned current cycle"
-          />
-        </section>
-
         <section className="space-y-1">
           <div className="linear-sidebar-heading flex items-center gap-1">
             <span>Your teams</span>
@@ -191,8 +163,6 @@ export function ShellSidebar({
               icon={<IssueBarsIcon className="h-3.5 w-3.5" />}
               label="Issues"
             />
-            <SidebarEntry disabled icon={<ProjectsIcon className="h-3.5 w-3.5" />} label="Projects" />
-            <SidebarEntry disabled icon={<ViewsIcon className="h-3.5 w-3.5" />} label="Views" />
           </div>
         </section>
       </div>
