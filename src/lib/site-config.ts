@@ -1,5 +1,5 @@
 export const siteConfig = {
-  name: "Wallie Cloud",
+  name: "Wallie",
   description:
     "Cloud-native rebuild scaffold for wallie.cc on Next.js App Router and Supabase.",
   sampleWorkspaceSlug: "northwind-labs",
