@@ -268,11 +268,7 @@ function AssigneeAvatar({
   );
 }
 
-function describeCurrentView(queryState: IssueListQueryState, showOnlyUnassigned: boolean) {
-  if (showOnlyUnassigned) {
-    return "Unassigned current cycle";
-  }
-
+function describeCurrentView(queryState: IssueListQueryState) {
   if (valuesMatch(queryState.statuses, ["backlog"])) {
     return "Backlog";
   }
@@ -289,10 +285,6 @@ function describeCurrentView(queryState: IssueListQueryState, showOnlyUnassigned
     return "Canceled";
   }
 
-  if (valuesMatch(queryState.estimates, [null])) {
-    return "Unestimated current cycle";
-  }
-
   return "All issues";
 }
 
@@ -307,7 +299,6 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
   const [issues, setIssues] = useState(initialData.issues);
   const [searchDraft, setSearchDraft] = useState(initialData.queryState.query);
   const [selectedIssueIds, setSelectedIssueIds] = useState<string[]>([]);
-  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -353,31 +344,25 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
 
   useEffect(() => {
     setSelectedIssueIds((currentIds) =>
-      currentIds.filter((issueId) =>
-        issues.some(
-          (issue) => issue.id === issueId && (!showOnlyUnassigned || issue.assignee === null),
-        ),
-      ),
+      currentIds.filter((issueId) => issues.some((issue) => issue.id === issueId)),
     );
-  }, [issues, showOnlyUnassigned]);
+  }, [issues]);
 
   const queryState = initialData.queryState;
   const selectedIssueIdSet = new Set(selectedIssueIds);
-  const visibleIssues = issues.filter((issue) => !showOnlyUnassigned || issue.assignee === null);
+  const visibleIssues = issues;
   const hasFilters =
     queryState.query.length > 0 ||
     queryState.statuses.length > 0 ||
     queryState.priorities.length > 0 ||
     queryState.estimates.length > 0 ||
     queryState.sort !== "updated" ||
-    queryState.direction !== "desc" ||
-    showOnlyUnassigned;
+    queryState.direction !== "desc";
   const isActivePreset = valuesMatch(queryState.statuses, activeStatuses);
   const isBacklogPreset = valuesMatch(queryState.statuses, ["backlog"]);
   const isDonePreset = valuesMatch(queryState.statuses, ["done"]);
   const isCanceledPreset = valuesMatch(queryState.statuses, ["canceled"]);
-  const isUnestimatedPreset = valuesMatch(queryState.estimates, [null]);
-  const viewLabel = describeCurrentView(queryState, showOnlyUnassigned);
+  const viewLabel = describeCurrentView(queryState);
 
   function buildPageUrl(
     nextState: IssueListQueryState,
@@ -484,7 +469,6 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
   }
 
   function handlePresetStatuses(statuses: IssueStatus[]) {
-    setShowOnlyUnassigned(false);
     updateQueryState({
       statuses,
     });
@@ -609,7 +593,6 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               <TabItem
                 active={!hasFilters}
                 onClick={() => {
-                  setShowOnlyUnassigned(false);
                   setSearchDraft("");
                   navigateToQueryState({
                     direction: "desc",
@@ -628,23 +611,6 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               </TabItem>
               <TabItem active={isBacklogPreset} onClick={() => handlePresetStatuses(["backlog"])}>
                 Backlog
-              </TabItem>
-              <TabItem
-                active={isUnestimatedPreset}
-                onClick={() => {
-                  setShowOnlyUnassigned(false);
-                  updateQueryState({
-                    estimates: isUnestimatedPreset ? [] : [null],
-                  });
-                }}
-              >
-                Unestimated
-              </TabItem>
-              <TabItem
-                active={showOnlyUnassigned}
-                onClick={() => setShowOnlyUnassigned((current) => !current)}
-              >
-                Unassigned
               </TabItem>
             </nav>
 
