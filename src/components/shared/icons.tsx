@@ -416,6 +416,185 @@ export function UsersIcon({ className, ...props }: IconProps) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Priority indicator icons                                          */
+/* ------------------------------------------------------------------ */
+
+const priorityBarColors: Record<string, { active: string; inactive: string }> = {
+  urgent: { active: "#e2553a", inactive: "#e2553a" },
+  high: { active: "#f2994a", inactive: "#e8e9ec" },
+  medium: { active: "#f2c94c", inactive: "#e8e9ec" },
+  low: { active: "#8b97a8", inactive: "#e8e9ec" },
+  none: { active: "#e8e9ec", inactive: "#e8e9ec" },
+};
+
+export function PriorityUrgentIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <path
+        d="M3 3.5h10l-1.5 5.5H4.5L3 3.5Z"
+        fill="#e2553a"
+        fillOpacity="0.12"
+        stroke="#e2553a"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path d="M8 5v2.5" stroke="#e2553a" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="8" cy="9" r="0.6" fill="#e2553a" />
+      <path d="M5.5 12h5" stroke="#e2553a" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function PriorityBarIcon({
+  className,
+  priority,
+  ...props
+}: IconProps & { priority: string }) {
+  const colors = priorityBarColors[priority] ?? priorityBarColors.none;
+  const filledBars =
+    priority === "urgent"
+      ? 4
+      : priority === "high"
+        ? 3
+        : priority === "medium"
+          ? 2
+          : priority === "low"
+            ? 1
+            : 0;
+
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      {[0, 1, 2, 3].map((i) => (
+        <rect
+          key={i}
+          x="3"
+          y={3 + i * 3}
+          width="10"
+          height="1.75"
+          rx="0.875"
+          fill={i < filledBars ? colors.active : colors.inactive}
+        />
+      ))}
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Status circle icons                                               */
+/* ------------------------------------------------------------------ */
+
+export function StatusBacklogIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 14 14"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="7" cy="7" r="3.75" stroke="#bec2c8" strokeWidth="1.5" strokeDasharray="1.5 2" />
+    </svg>
+  );
+}
+
+export function StatusTodoIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 14 14"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="7" cy="7" r="3.75" stroke="#e8e9ec" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+export function StatusInProgressIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 14 14"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="7" cy="7" r="3.75" stroke="#f2c94c" strokeWidth="1.5" />
+      <path d="M7 3.25A3.75 3.75 0 0 1 10.75 7H7V3.25Z" fill="#f2c94c" />
+    </svg>
+  );
+}
+
+export function StatusInReviewIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 14 14"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="7" cy="7" r="3.75" stroke="#5e6ad2" strokeWidth="1.5" />
+      <path d="M7 3.25A3.75 3.75 0 0 1 10.75 7 3.75 3.75 0 0 1 7 10.75V3.25Z" fill="#5e6ad2" />
+    </svg>
+  );
+}
+
+export function StatusDoneIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 14 14"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="7" cy="7" r="3.75" fill="#5e6ad2" stroke="#5e6ad2" strokeWidth="1.5" />
+      <path
+        d="M5 7l1.5 1.5L9 5.5"
+        stroke="white"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function StatusCanceledIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 14 14"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="7" cy="7" r="3.75" stroke="#95979f" strokeWidth="1.5" />
+      <path
+        d="M5.25 5.25l3.5 3.5M8.75 5.25l-3.5 3.5"
+        stroke="#95979f"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function WorkspaceGlyph({ className, ...props }: IconProps) {
   return (
     <svg

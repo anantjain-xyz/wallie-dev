@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { LogoutIcon, WorkspaceGlyph } from "@/components/shared/linear-icons";
+import { LogoutIcon, WorkspaceGlyph } from "@/components/shared/icons";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { workspaceIssuesPath } from "@/lib/routes";
 
@@ -30,7 +30,7 @@ export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
         ) : null}
 
         <form action="/auth/signout" method="post">
-          <button type="submit" className="linear-icon-button" aria-label="Sign out">
+          <button type="submit" className="ui-icon-button" aria-label="Sign out">
             <LogoutIcon className="h-3.5 w-3.5" />
           </button>
         </form>

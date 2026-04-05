@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["/Users/anant/src/wallie-cc/.claude/dev.sh"],
+      "port": 3000,
+      "autoPort": false
+    }
+  ]
+}

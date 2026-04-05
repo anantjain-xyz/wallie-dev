@@ -12,7 +12,7 @@ import {
   SearchIcon,
   ViewsIcon,
   WorkspaceGlyph,
-} from "@/components/shared/linear-icons";
+} from "@/components/shared/icons";
 import { Dropdown } from "@/components/shared/dropdown";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { type WorkspaceNavItem, workspaceIssuesPath, workspaceSettingsPath } from "@/lib/routes";
@@ -46,8 +46,8 @@ function SidebarEntry({
   trailing,
 }: SidebarEntryProps) {
   const className = cn(
-    "linear-sidebar-item justify-between",
-    active && "linear-sidebar-item-active",
+    "ui-sidebar-item justify-between",
+    active && "ui-sidebar-item-active",
     disabled && "cursor-default opacity-70 hover:bg-transparent hover:text-[#6b6f76]",
   );
 
@@ -118,12 +118,12 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
         <div className="flex items-center gap-1.5">
           <Link
             href={issuesControlsHref}
-            className="linear-icon-button"
+            className="ui-icon-button"
             aria-label="Open Issue Filters"
           >
             <SearchIcon className="h-3.5 w-3.5" />
           </Link>
-          <Link href={issuesCreateHref} className="linear-icon-button" aria-label="Create Issue">
+          <Link href={issuesCreateHref} className="ui-icon-button" aria-label="Create Issue">
             <PlusIcon className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -131,7 +131,7 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto px-2 pb-4">
         <section className="space-y-1">
-          <div className="linear-sidebar-heading flex items-center gap-1">
+          <div className="ui-sidebar-heading flex items-center gap-1">
             <span>Your teams</span>
             <ChevronDownIcon className="h-3 w-3" />
           </div>
@@ -165,7 +165,7 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
           </div>
 
           <form action="/auth/signout" method="post">
-            <button type="submit" className="linear-icon-button" aria-label="Sign out">
+            <button type="submit" className="ui-icon-button" aria-label="Sign out">
               <LogoutIcon className="h-3.5 w-3.5" />
             </button>
           </form>

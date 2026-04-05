@@ -7,15 +7,18 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronDownIcon,
   FilterIcon,
-  IssueBarsIcon,
-  LayoutIcon,
   PlusIcon,
-  PriorityTriangleIcon,
+  PriorityBarIcon,
+  PriorityUrgentIcon,
   SearchIcon,
   SlidersIcon,
-  StateCircleIcon,
-  UsersIcon,
-} from "@/components/shared/linear-icons";
+  StatusBacklogIcon,
+  StatusCanceledIcon,
+  StatusDoneIcon,
+  StatusInProgressIcon,
+  StatusInReviewIcon,
+  StatusTodoIcon,
+} from "@/components/shared/icons";
 import { updateIssueRows } from "@/features/issues/client";
 import { CreateIssueDialog } from "@/features/issues/list/create-issue-dialog";
 import type { IssueListPageData } from "@/features/issues/list/data";
@@ -27,7 +30,6 @@ import {
 import {
   formatIssuePriority,
   formatIssueStatus,
-  getIssueMemberDisplayName,
   ISSUE_ESTIMATE_VALUES,
   ISSUE_PRIORITY_VALUES,
   ISSUE_STATUS_VALUES,
@@ -43,8 +45,6 @@ type IssuesPageClientProps = {
   initialData: IssueListPageData;
 };
 
-type MetadataTone = "amber" | "blue" | "gray" | "green" | "purple" | "red";
-
 const activeStatuses: IssueStatus[] = ["todo", "in_progress", "in_review"];
 const sortCycle: IssueListQueryState["sort"][] = ["updated", "priority", "status", "created"];
 
@@ -53,39 +53,26 @@ const shortDateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
 });
 
-const pillToneClasses: Record<MetadataTone, string> = {
-  amber: "border-[#ecdcb0] bg-[#fdf8ef] text-[#8a6c19]",
-  blue: "border-[#d0e2f7] bg-[#f4f8fd] text-[#4a75b0]",
-  gray: "border-[#e0e0e0] bg-[#f5f5f5] text-[#6b6f76]",
-  green: "border-[#cde8cf] bg-[#f2faf3] text-[#3d7f4e]",
-  purple: "border-[#e0d6f7] bg-[#f8f5fd] text-[#6b4fb5]",
-  red: "border-[#f0d2d5] bg-[#fdf5f5] text-[#a04855]",
-};
-
-const pillDotClasses: Record<MetadataTone, string> = {
-  amber: "bg-[#f3c742]",
-  blue: "bg-[#6ba0e7]",
-  gray: "bg-[#b0b3b8]",
-  green: "bg-[#6db57c]",
-  purple: "bg-[#b489ff]",
-  red: "bg-[#e28083]",
-};
-
-const statusTone: Record<IssueStatus, MetadataTone> = {
-  backlog: "gray",
-  canceled: "red",
-  done: "green",
-  in_progress: "blue",
-  in_review: "purple",
-  todo: "amber",
-};
-
-const priorityTone: Record<IssuePriority, MetadataTone> = {
-  high: "amber",
-  low: "blue",
-  medium: "purple",
-  none: "gray",
-  urgent: "red",
+const labelColors: Record<string, { bg: string; text: string; border: string }> = {
+  // Issue labels
+  Feature: { bg: "#dbeafe", text: "#3161a3", border: "#bfdbfe" },
+  Improvement: { bg: "#e0e7ff", text: "#4338ca", border: "#c7d2fe" },
+  Bug: { bg: "#fee2e2", text: "#b91c1c", border: "#fecaca" },
+  Infra: { bg: "#f3e8ff", text: "#7c3aed", border: "#e9d5ff" },
+  Security: { bg: "#fef3c7", text: "#92400e", border: "#fde68a" },
+  Moderation: { bg: "#fce7f3", text: "#be185d", border: "#fbcfe8" },
+  Product: { bg: "#d1fae5", text: "#065f46", border: "#a7f3d0" },
+  // Status values
+  todo: { bg: "#fef3c7", text: "#92400e", border: "#fde68a" },
+  "in progress": { bg: "#fef3c7", text: "#b45309", border: "#fde68a" },
+  "in review": { bg: "#e0e7ff", text: "#4338ca", border: "#c7d2fe" },
+  done: { bg: "#d1fae5", text: "#065f46", border: "#a7f3d0" },
+  canceled: { bg: "#f3f4f6", text: "#6b7280", border: "#e5e7eb" },
+  // Priority values
+  urgent: { bg: "#fee2e2", text: "#b91c1c", border: "#fecaca" },
+  high: { bg: "#ffedd5", text: "#c2410c", border: "#fed7aa" },
+  medium: { bg: "#fef3c7", text: "#a16207", border: "#fde68a" },
+  low: { bg: "#dbeafe", text: "#1e60a8", border: "#bfdbfe" },
 };
 
 function valuesMatch<T>(left: readonly T[], right: readonly T[]) {
@@ -141,6 +128,32 @@ function parseEstimateValue(value: string): IssueEstimateValue | undefined {
   return Number.isInteger(parsed) ? (parsed as IssueEstimateValue) : undefined;
 }
 
+function TabItem({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "relative px-3 py-2 text-[13px] font-medium transition-colors duration-100",
+        active ? "text-foreground" : "text-[#6b6f76] hover:text-foreground",
+      )}
+    >
+      {children}
+      {active && (
+        <span className="absolute bottom-0 left-3 right-3 h-[2px] rounded-full bg-[#5e6ad2]" />
+      )}
+    </button>
+  );
+}
+
 function FilterChip({
   active,
   children,
@@ -157,8 +170,8 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "linear-filter-chip",
-        active && "linear-filter-chip-active",
+        "ui-filter-chip",
+        active && "ui-filter-chip-active",
         compact && "h-7 px-2.5 text-[12px]",
       )}
     >
@@ -167,13 +180,11 @@ function FilterChip({
   );
 }
 
-function IconButton({
-  active = false,
+function ToolbarButton({
   ariaLabel,
   children,
   onClick,
 }: {
-  active?: boolean;
   ariaLabel: string;
   children: ReactNode;
   onClick: () => void;
@@ -183,40 +194,76 @@ function IconButton({
       type="button"
       aria-label={ariaLabel}
       onClick={onClick}
-      className={cn(
-        "linear-icon-button",
-        active && "border-border-strong bg-surface-muted text-foreground",
-      )}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#9ca0ab] transition-colors duration-100 hover:bg-[#ebebeb] hover:text-[#6b6f76]"
     >
       {children}
     </button>
   );
 }
 
-function MetadataPill({ label, tone }: { label: string; tone: MetadataTone }) {
+function PriorityIcon({ priority }: { priority: IssuePriority }) {
+  if (priority === "urgent") {
+    return <PriorityUrgentIcon className="h-4 w-4" />;
+  }
+  return <PriorityBarIcon className="h-4 w-4" priority={priority} />;
+}
+
+function StatusIcon({ status }: { status: IssueStatus }) {
+  const icons: Record<IssueStatus, React.ComponentType<{ className?: string }>> = {
+    backlog: StatusBacklogIcon,
+    todo: StatusTodoIcon,
+    in_progress: StatusInProgressIcon,
+    in_review: StatusInReviewIcon,
+    done: StatusDoneIcon,
+    canceled: StatusCanceledIcon,
+  };
+  const Icon = icons[status];
+  return <Icon className="h-3.5 w-3.5" />;
+}
+
+function LabelPill({ label }: { label: string }) {
+  const colors = labelColors[label] ?? { bg: "#f0f0f0", text: "#6b6f76", border: "#e0e0e0" };
   return (
-    <span className={cn("linear-list-pill", pillToneClasses[tone])}>
-      <span className={cn("h-2.5 w-2.5 rounded-full", pillDotClasses[tone])} />
-      <span className="whitespace-nowrap">{label}</span>
+    <span
+      className="inline-flex items-center whitespace-nowrap rounded-full border px-[7px] py-[1px] text-[12px] font-medium capitalize leading-[18px]"
+      style={{ backgroundColor: colors.bg, color: colors.text, borderColor: colors.border }}
+    >
+      {label}
     </span>
   );
 }
 
-function AssigneePill({ label }: { label: string }) {
-  const initials = label
+function AssigneeAvatar({
+  member,
+}: {
+  member: { fullName: string | null; username: string | null; avatarUrl: string | null };
+}) {
+  const name = member.fullName ?? member.username ?? "?";
+  const initials = name
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
+    .map((p) => p[0]?.toUpperCase())
     .join("")
     .slice(0, 2);
 
+  if (member.avatarUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={member.avatarUrl}
+        alt={name}
+        className="h-5 w-5 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+
   return (
-    <span className="linear-list-pill max-w-[10rem] border-[#e0e0e0] bg-[#f5f5f5] text-[#6b6f76]">
-      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#e0e2e6] text-[9px] font-semibold text-[#555a64]">
-        {initials || "?"}
-      </span>
-      <span className="truncate">{label}</span>
+    <span
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#e0e2e6] text-[9px] font-semibold text-[#555a64]"
+      title={name}
+    >
+      {initials || "?"}
     </span>
   );
 }
@@ -544,10 +591,22 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
       />
 
       <div className="flex min-h-full flex-col bg-surface">
-        <section className="border-b border-border px-5 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <FilterChip
+        {/* ── Header ── */}
+        <header className="border-b border-border">
+          {/* Top row: workspace heading */}
+          <div className="flex items-center gap-2 px-6 pb-0 pt-5">
+            <span className="flex h-5 w-5 items-center justify-center rounded-[4px] bg-[#5e6ad2] text-[10px] font-bold text-white">
+              {initialData.workspace.name.charAt(0).toUpperCase()}
+            </span>
+            <h1 className="text-[15px] font-semibold text-foreground">
+              {initialData.workspace.name}
+            </h1>
+          </div>
+
+          {/* Tab bar + toolbar */}
+          <div className="flex items-center justify-between px-6 pt-1">
+            <nav className="flex items-center gap-0.5">
+              <TabItem
                 active={!hasFilters}
                 onClick={() => {
                   setShowOnlyUnassigned(false);
@@ -563,20 +622,14 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 }}
               >
                 All issues
-              </FilterChip>
-              <FilterChip
-                active={isActivePreset}
-                onClick={() => handlePresetStatuses(activeStatuses)}
-              >
+              </TabItem>
+              <TabItem active={isActivePreset} onClick={() => handlePresetStatuses(activeStatuses)}>
                 Active
-              </FilterChip>
-              <FilterChip
-                active={isBacklogPreset}
-                onClick={() => handlePresetStatuses(["backlog"])}
-              >
+              </TabItem>
+              <TabItem active={isBacklogPreset} onClick={() => handlePresetStatuses(["backlog"])}>
                 Backlog
-              </FilterChip>
-              <FilterChip
+              </TabItem>
+              <TabItem
                 active={isUnestimatedPreset}
                 onClick={() => {
                   setShowOnlyUnassigned(false);
@@ -585,34 +638,22 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                   });
                 }}
               >
-                Unestimated current cycle
-              </FilterChip>
-              <FilterChip
+                Unestimated
+              </TabItem>
+              <TabItem
                 active={showOnlyUnassigned}
                 onClick={() => setShowOnlyUnassigned((current) => !current)}
               >
-                Unassigned current cycle
-              </FilterChip>
-            </div>
+                Unassigned
+              </TabItem>
+            </nav>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={openCreateDialog}
-                className="ui-button-primary h-8 gap-2 rounded-full px-3 py-0 text-[12px]"
-              >
-                <PlusIcon className="h-3.5 w-3.5" />
-                Create
-              </button>
-              <IconButton
-                active={showControls}
-                ariaLabel="Toggle controls"
-                onClick={handleControlsToggle}
-              >
+            <div className="flex items-center gap-1">
+              <ToolbarButton ariaLabel="Add filter" onClick={handleControlsToggle}>
                 <FilterIcon className="h-3.5 w-3.5" />
-              </IconButton>
-              <IconButton
-                ariaLabel="Cycle sort field"
+              </ToolbarButton>
+              <ToolbarButton
+                ariaLabel="Display options"
                 onClick={() =>
                   updateQueryState({
                     sort: cycleSortField(queryState.sort),
@@ -620,20 +661,10 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
                 }
               >
                 <SlidersIcon className="h-3.5 w-3.5" />
-              </IconButton>
-              <IconButton
-                ariaLabel="Toggle sort direction"
-                onClick={() =>
-                  updateQueryState({
-                    direction: queryState.direction === "desc" ? "asc" : "desc",
-                  })
-                }
-              >
-                <LayoutIcon className="h-3.5 w-3.5" />
-              </IconButton>
+              </ToolbarButton>
             </div>
           </div>
-        </section>
+        </header>
 
         {showControls ? (
           <section className="border-b border-border bg-[#f8f8f8] px-5 py-4">
@@ -952,21 +983,38 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
           </div>
         ) : null}
 
+        {/* ── Issue list ── */}
         <section className="flex flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-border bg-[#f5f5f5] px-5 py-2.5">
-            <div className="flex min-w-0 items-center gap-2 text-[13px] font-medium text-[#4a4d54]">
-              <ChevronDownIcon className="h-3.5 w-3.5 text-[#b0b3b8]" />
-              <StateCircleIcon className="h-3.5 w-3.5 text-[#b8bbc2]" />
-              <span>{viewLabel}</span>
-              <span className="flex items-center gap-1 text-[#7a7d84]">
-                <PriorityTriangleIcon className="h-3.5 w-3.5" />
-                {visibleIssues.length}
-              </span>
-            </div>
-
-            <span className="text-[12px] text-muted tabular-nums">
-              {visibleIssues.length} Visible
+          {/* Group header */}
+          <div className="flex h-[34px] items-center gap-2 border-b border-[#ebebeb] bg-[#f8f8f7] px-4">
+            <button type="button" className="flex items-center text-[#9ca0ab]">
+              <ChevronDownIcon className="h-3 w-3" />
+            </button>
+            <StatusIcon
+              status={
+                isBacklogPreset
+                  ? "backlog"
+                  : isActivePreset
+                    ? "in_progress"
+                    : isDonePreset
+                      ? "done"
+                      : isCanceledPreset
+                        ? "canceled"
+                        : "backlog"
+              }
+            />
+            <span className="text-[13px] font-medium text-[#3c3f44]">{viewLabel}</span>
+            <span className="ml-0.5 text-[12px] tabular-nums text-[#9ca0ab]">
+              {visibleIssues.length}
             </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={openCreateDialog}
+              className="flex h-5 w-5 items-center justify-center rounded text-[#9ca0ab] transition-colors hover:bg-[#ebebeb] hover:text-[#6b6f76]"
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           {visibleIssues.length === 0 ? (
@@ -979,75 +1027,78 @@ export function IssuesPageClient({ initialData }: IssuesPageClientProps) {
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-[#efefef]">
-              {visibleIssues.map((issue) => {
-                const assigneeLabel = getIssueMemberDisplayName(issue.assignee);
+            <div>
+              {visibleIssues.map((issue) => (
+                <div
+                  key={issue.id}
+                  className={cn(
+                    "group flex h-[44px] items-center border-b border-[#ebebeb] transition-colors duration-100",
+                    selectedIssueIdSet.has(issue.id) ? "bg-[#eff0ff]" : "hover:bg-[#f8f8f7]",
+                  )}
+                >
+                  {/* Checkbox */}
+                  <label className="flex w-[40px] shrink-0 items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={selectedIssueIdSet.has(issue.id)}
+                      onChange={(event) => handleSelectIssue(issue.id, event.target.checked)}
+                      className={cn(
+                        "h-[14px] w-[14px] cursor-pointer rounded-[3px] border border-[#d0d2d6] transition-opacity duration-100",
+                        selectedIssueIdSet.has(issue.id)
+                          ? "opacity-100"
+                          : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                      )}
+                    />
+                  </label>
 
-                return (
-                  <div
-                    key={issue.id}
-                    className={cn(
-                      "group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-2.5 transition-colors duration-150",
-                      selectedIssueIdSet.has(issue.id) && "bg-[#f0f0f0]",
-                      !selectedIssueIdSet.has(issue.id) && "hover:bg-[#f8f8f8]",
-                    )}
-                  >
-                    <label className="flex items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={selectedIssueIdSet.has(issue.id)}
-                        onChange={(event) => handleSelectIssue(issue.id, event.target.checked)}
-                        className={cn(
-                          "h-4 w-4 rounded border border-[#d0d0d0] transition-opacity duration-150",
-                          selectedIssueIdSet.has(issue.id)
-                            ? "opacity-100"
-                            : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-                        )}
-                      />
-                    </label>
-
-                    <Link
-                      href={workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}
-                      className="flex min-w-0 items-center gap-2.5"
-                    >
-                      <IssueBarsIcon className="h-3.5 w-3.5 text-[#8c8f94]" />
-                      <span className="min-w-[3.9rem] text-[13px] font-medium text-[#8c8f94]">
-                        {buildIssueIdentifier(initialData.workspace.name, issue.number)}
-                      </span>
-                      <StateCircleIcon className="h-3.5 w-3.5 text-[#b8bbc2]" />
-                      <span className="truncate text-[14px] font-medium text-[#1d1f22]">
-                        {issue.title}
-                      </span>
-                    </Link>
-
-                    <div className="flex flex-wrap items-center justify-end gap-2 pl-4">
-                      {issue.priority !== "none" ? (
-                        <MetadataPill
-                          label={formatIssuePriority(issue.priority)}
-                          tone={priorityTone[issue.priority]}
-                        />
-                      ) : null}
-                      {issue.status !== "backlog" ? (
-                        <MetadataPill
-                          label={formatIssueStatus(issue.status)}
-                          tone={statusTone[issue.status]}
-                        />
-                      ) : null}
-                      {issue.estimatePoints !== null ? (
-                        <MetadataPill
-                          label={`${issue.estimatePoints} point${issue.estimatePoints === 1 ? "" : "s"}`}
-                          tone="gray"
-                        />
-                      ) : null}
-                      {issue.assignee ? <AssigneePill label={assigneeLabel} /> : null}
-                      <span className="flex items-center gap-1.5 text-[13px] tabular-nums text-[#8c8f94]">
-                        <UsersIcon className="h-3.5 w-3.5" />
-                        {shortDateFormatter.format(new Date(issue.updatedAt))}
-                      </span>
-                    </div>
+                  {/* Priority icon */}
+                  <div className="flex w-[24px] shrink-0 items-center justify-center">
+                    <PriorityIcon priority={issue.priority} />
                   </div>
-                );
-              })}
+
+                  {/* Issue ID */}
+                  <span className="w-[56px] shrink-0 text-[13px] font-medium text-[#9ca0ab]">
+                    {buildIssueIdentifier(initialData.workspace.name, issue.number)}
+                  </span>
+
+                  {/* Title — clicking navigates to detail */}
+                  <Link
+                    href={workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}
+                    className="mr-3 min-w-0 flex-1 truncate text-[14px] font-medium text-[#1b1b18] hover:text-[#5e6ad2]"
+                  >
+                    {issue.title}
+                  </Link>
+
+                  {/* Inline metadata — labels, status, estimate */}
+                  <div className="flex shrink-0 items-center gap-1.5 pr-3">
+                    {issue.status !== "backlog" && (
+                      <LabelPill label={formatIssueStatus(issue.status)} />
+                    )}
+                    {issue.priority !== "none" && (
+                      <LabelPill label={formatIssuePriority(issue.priority)} />
+                    )}
+                    {issue.estimatePoints !== null && (
+                      <span className="inline-flex items-center whitespace-nowrap rounded-full border border-[#e0e0e0] bg-[#f5f5f5] px-[7px] py-[1px] text-[12px] font-medium leading-[18px] text-[#6b6f76]">
+                        {issue.estimatePoints} pt{issue.estimatePoints !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Assignee avatar */}
+                  <div className="flex w-[32px] shrink-0 items-center justify-center">
+                    {issue.assignee ? (
+                      <AssigneeAvatar member={issue.assignee} />
+                    ) : (
+                      <span className="h-5 w-5 rounded-full border border-dashed border-[#d0d2d6]" />
+                    )}
+                  </div>
+
+                  {/* Created date */}
+                  <span className="w-[100px] shrink-0 pr-4 text-right text-[12px] tabular-nums text-[#9ca0ab]">
+                    {shortDateFormatter.format(new Date(issue.createdAt))}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
         </section>
