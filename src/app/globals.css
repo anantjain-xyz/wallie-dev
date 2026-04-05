@@ -258,6 +258,60 @@
   .ui-skip-link:focus-visible {
     transform: translateY(0);
   }
+
+  /* ── Issue detail: Linear-style sidebar controls ── */
+  .sidebar-select {
+    @apply w-full cursor-pointer appearance-none bg-transparent py-0.5 text-[13px] text-foreground outline-none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none'%3e%3cpath d='m4.5 6.5 3.5 3.5 3.5-3.5' stroke='%238c8f94' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 0 center;
+    padding-right: 16px;
+  }
+
+  .sidebar-select:focus-visible {
+    color: var(--accent);
+  }
+
+  .sidebar-input {
+    @apply rounded-[5px] border border-border bg-surface px-2 py-1 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] duration-150;
+  }
+
+  .sidebar-input::placeholder {
+    color: var(--muted);
+    opacity: 0.7;
+  }
+
+  .sidebar-input:focus-visible {
+    border-color: color-mix(in srgb, var(--accent) 40%, white);
+    box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.08);
+  }
+
+  .sidebar-action-btn {
+    @apply inline-flex h-[26px] shrink-0 items-center rounded-[5px] border border-border bg-surface px-2 text-[12px] font-medium text-muted transition-colors duration-100;
+  }
+
+  .sidebar-action-btn:hover {
+    @apply border-border-strong bg-surface-strong text-foreground;
+  }
+
+  .sidebar-action-btn:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* ── Issue detail: borderless textarea ── */
+  .issue-textarea {
+    @apply w-full resize-y rounded-[6px] border border-transparent bg-transparent px-0 py-1 text-[14px] leading-[1.7] text-foreground outline-none transition-[border-color,background-color,box-shadow] duration-150;
+  }
+
+  .issue-textarea::placeholder {
+    color: var(--muted);
+    opacity: 0.6;
+  }
+
+  .issue-textarea:focus {
+    @apply border-border bg-surface px-3 py-2;
+    box-shadow: 0 0 0 3px rgba(94, 106, 210, 0.06);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

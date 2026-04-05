@@ -17,7 +17,6 @@ import {
 } from "@/features/issues/model";
 import {
   IssueEstimateBadge,
-  IssueMemberBadge,
   IssuePriorityBadge,
   IssueStatusBadge,
 } from "@/features/issues/ui";
@@ -33,6 +32,15 @@ import {
   type IssueMember,
   type IssueStatus,
 } from "@/features/issues/types";
+import {
+  PriorityBarIcon,
+  StatusBacklogIcon,
+  StatusCanceledIcon,
+  StatusDoneIcon,
+  StatusInProgressIcon,
+  StatusInReviewIcon,
+  StatusTodoIcon,
+} from "@/components/shared/icons";
 import { workspaceIssueDetailPath, workspaceSettingsPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
@@ -47,6 +55,48 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
   month: "short",
 });
+
+const relativeTimeFormatter = new Intl.RelativeTimeFormat(undefined, {
+  numeric: "auto",
+});
+
+function formatRelativeTime(dateString: string) {
+  const now = Date.now();
+  const then = new Date(dateString).getTime();
+  const diffMs = then - now;
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.round(diffMs / (1000 * 60 * 60));
+  const diffMinutes = Math.round(diffMs / (1000 * 60));
+
+  if (Math.abs(diffDays) >= 7) {
+    const diffWeeks = Math.round(diffDays / 7);
+    return relativeTimeFormatter.format(diffWeeks, "week");
+  }
+  if (Math.abs(diffDays) >= 1) {
+    return relativeTimeFormatter.format(diffDays, "day");
+  }
+  if (Math.abs(diffHours) >= 1) {
+    return relativeTimeFormatter.format(diffHours, "hour");
+  }
+  return relativeTimeFormatter.format(diffMinutes, "minute");
+}
+
+function StatusIcon({ status }: { status: IssueStatus }) {
+  switch (status) {
+    case "backlog":
+      return <StatusBacklogIcon />;
+    case "todo":
+      return <StatusTodoIcon />;
+    case "in_progress":
+      return <StatusInProgressIcon />;
+    case "in_review":
+      return <StatusInReviewIcon />;
+    case "done":
+      return <StatusDoneIcon />;
+    case "canceled":
+      return <StatusCanceledIcon />;
+  }
+}
 
 function mapPullRequestRow(
   row: Tables<"github_issue_branches">,
@@ -68,26 +118,26 @@ function mapPullRequestRow(
   };
 }
 
-function Section({
+function PropertyRow({
   children,
-  className,
-  headingAs = "h2",
-  title,
+  label,
 }: {
   children: React.ReactNode;
-  className?: string;
-  headingAs?: "h1" | "h2" | "h3";
-  title: string;
+  label: string;
 }) {
-  const HeadingTag = headingAs;
-
   return (
-    <section className={cn("ui-panel p-5", className)}>
-      <HeadingTag className="text-base font-semibold tracking-tight text-balance text-foreground">
-        {title}
-      </HeadingTag>
-      <div className="mt-4">{children}</div>
-    </section>
+    <div className="group flex min-h-[32px] items-center rounded-[4px] px-2 transition-colors duration-100 hover:bg-surface-muted">
+      <span className="w-[100px] shrink-0 text-[13px] text-muted">{label}</span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function SidebarHeading({ title }: { title: string }) {
+  return (
+    <h3 className="mb-1 px-2 pt-4 text-[11px] font-medium uppercase tracking-[0.05em] text-muted first:pt-0">
+      {title}
+    </h3>
   );
 }
 
@@ -98,7 +148,7 @@ function messageToneClass(kind: "error" | "success") {
 }
 
 const interactiveLinkClass =
-  "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
+  "font-medium text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
 function buildMemberIndex(
   members: IssueMember[],
@@ -599,517 +649,576 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
-      <div className="grid gap-6">
-        <Section title={`Issue #${issue.number}`} headingAs="h1">
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-wrap items-center gap-3">
-              <IssueStatusBadge status={issue.status} />
-              <IssuePriorityBadge priority={issue.priority} />
-              <IssueEstimateBadge estimatePoints={issue.estimatePoints} />
-              <span className="ui-pill font-mono">
-                /w/{initialData.workspace.slug}/issues/{issue.number}
-              </span>
-            </div>
+    <div>
+      {/* ── Breadcrumb header ── */}
+      <header className="sticky top-0 z-10 flex h-11 items-center gap-1.5 border-b border-border bg-surface px-4">
+        <span className="text-[13px] font-medium text-muted">
+          #{issue.number}
+        </span>
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-muted/50">
+          <path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        </svg>
+        <h1 className="min-w-0 truncate text-[13px] font-medium text-foreground">
+          {issue.title}
+        </h1>
+        <div className="ml-auto flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => void copyAsMarkdown()}
+            disabled={isCopying}
+            className="inline-flex h-7 items-center gap-1.5 rounded-[5px] px-2 text-[12px] font-medium text-muted transition-colors duration-100 hover:bg-surface-muted hover:text-foreground"
+            title="Copy as Markdown"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+              <rect x="5" y="3" width="8" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M3 5.5v7a1.5 1.5 0 0 0 1.5 1.5H11" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            </svg>
+            {isCopying ? "Copying…" : "Copy"}
+          </button>
+          <Link
+            href={workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}
+            className="inline-flex h-7 items-center gap-1.5 rounded-[5px] px-2 text-[12px] font-medium text-muted transition-colors duration-100 hover:bg-surface-muted hover:text-foreground"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+              <path d="M3 8h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <path d="m10.5 5.5 2.5 2.5-2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+        </div>
+      </header>
 
+      {/* ── Toast messages ── */}
+      {errorMessage ? (
+        <div
+          aria-live="polite"
+          className={cn("border-b px-4 py-2.5 text-[13px]", messageToneClass("error"))}
+          role="status"
+        >
+          {errorMessage}
+        </div>
+      ) : null}
+      {successMessage ? (
+        <div
+          aria-live="polite"
+          className={cn("border-b px-4 py-2.5 text-[13px]", messageToneClass("success"))}
+          role="status"
+        >
+          {successMessage}
+        </div>
+      ) : null}
+
+      {/* ── Two-column body ── */}
+      <div className="flex items-start">
+        {/* ── Main content ── */}
+        <div className="min-w-0 flex-1">
+          <div className="mx-auto max-w-[720px] px-10 py-8 xl:px-16">
+            {/* Title */}
             <form
-              className="space-y-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (titleDraft.trim() && titleDraft.trim() !== issue.title) {
-                  void saveIssuePatch({
-                    title: titleDraft.trim(),
-                  });
+                  void saveIssuePatch({ title: titleDraft.trim() });
                 }
               }}
             >
-              <label className="ui-label" htmlFor="issue-title">
-                Title
-              </label>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <input
-                  id="issue-title"
-                  autoComplete="off"
-                  name="title"
-                  value={titleDraft}
-                  onChange={(event) => setTitleDraft(event.target.value)}
-                  className="ui-input min-w-0 flex-1 px-4 py-3 text-2xl font-semibold tracking-tight"
-                />
-                <button
-                  type="submit"
-                  disabled={isSaving || !titleDraft.trim() || titleDraft.trim() === issue.title}
-                  className="ui-button"
-                >
-                  Save Title
-                </button>
-              </div>
+              <input
+                id="issue-title"
+                autoComplete="off"
+                name="title"
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                className="w-full border-none bg-transparent text-[22px] font-semibold tracking-[-0.02em] text-foreground placeholder:text-muted/60 focus:outline-none"
+                placeholder="Issue title"
+              />
+              {titleDraft.trim() !== issue.title && titleDraft.trim() ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <button type="submit" disabled={isSaving} className="ui-button text-[12px]">
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[12px] text-muted hover:text-foreground"
+                    onClick={() => setTitleDraft(issue.title)}
+                  >
+                    Discard
+                  </button>
+                </div>
+              ) : null}
             </form>
 
-            <div className="flex flex-wrap items-center gap-3 text-sm tabular-nums text-muted">
-              <span>Created {dateTimeFormatter.format(new Date(issue.createdAt))}</span>
-              <span>Updated {dateTimeFormatter.format(new Date(issue.updatedAt))}</span>
-              <IssueMemberBadge fallback="No creator" member={issue.creator} />
+            {/* Metadata chips */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+              <span>{dateTimeFormatter.format(new Date(issue.createdAt))}</span>
+              <span className="text-border-strong">·</span>
+              <span>Updated {formatRelativeTime(issue.updatedAt)}</span>
+              {issue.creator ? (
+                <>
+                  <span className="text-border-strong">·</span>
+                  <span>{issue.creator.fullName ?? issue.creator.username}</span>
+                </>
+              ) : null}
             </div>
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => void copyAsMarkdown()}
-                disabled={isCopying}
-                className="ui-button-primary"
+            {/* ── Description ── */}
+            <div className="mt-8">
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (descriptionDraft !== issue.descriptionMd) {
+                    void saveIssuePatch({ description_md: descriptionDraft });
+                  }
+                }}
               >
-                {isCopying ? "Copying…" : "Copy as Markdown"}
-              </button>
-              <Link
-                href={workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}
-                className="ui-button"
-              >
-                Refresh Route
-              </Link>
+                <textarea
+                  id="issue-description"
+                  aria-label="Issue Description"
+                  autoComplete="off"
+                  name="description"
+                  value={descriptionDraft}
+                  onChange={(event) => setDescriptionDraft(event.target.value)}
+                  className="issue-textarea min-h-[140px]"
+                  placeholder="Add description…"
+                />
+                {descriptionDraft !== issue.descriptionMd ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button type="submit" disabled={isSaving} className="ui-button text-[12px]">
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[12px] text-muted hover:text-foreground"
+                      onClick={() => setDescriptionDraft(issue.descriptionMd)}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                ) : null}
+              </form>
             </div>
-          </div>
-        </Section>
 
-        {errorMessage ? (
-          <div
-            aria-live="polite"
-            className={cn("rounded-[6px] border px-4 py-3 text-sm", messageToneClass("error"))}
-            role="status"
-          >
-            {errorMessage}
-          </div>
-        ) : null}
-
-        {successMessage ? (
-          <div
-            aria-live="polite"
-            className={cn("rounded-[6px] border px-4 py-3 text-sm", messageToneClass("success"))}
-            role="status"
-          >
-            {successMessage}
-          </div>
-        ) : null}
-
-        <Section title="Description">
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (descriptionDraft !== issue.descriptionMd) {
-                void saveIssuePatch({
-                  description_md: descriptionDraft,
-                });
-              }
-            }}
-          >
-            <label className="ui-label" htmlFor="issue-description">
-              Issue Description
-            </label>
-            <textarea
-              id="issue-description"
-              aria-label="Issue Description"
-              autoComplete="off"
-              name="description"
-              value={descriptionDraft}
-              onChange={(event) => setDescriptionDraft(event.target.value)}
-              className="ui-textarea min-h-56 leading-7"
-              placeholder="Describe the Issue in Markdown…"
-            />
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={isSaving || descriptionDraft === issue.descriptionMd}
-                className="ui-button"
+            {/* ── Plan ── */}
+            <div className="mt-8">
+              <h2 className="mb-2 text-[13px] font-medium text-muted">Plan</h2>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (planDraft !== (issue.planMd ?? "")) {
+                    void saveIssuePatch({ plan_md: planDraft.trim() ? planDraft : null });
+                  }
+                }}
               >
-                Save Description
-              </button>
+                <textarea
+                  id="issue-plan"
+                  aria-label="Execution Plan"
+                  autoComplete="off"
+                  name="plan"
+                  value={planDraft}
+                  onChange={(event) => setPlanDraft(event.target.value)}
+                  className="issue-textarea min-h-[120px]"
+                  placeholder="Add execution plan…"
+                />
+                {planDraft !== (issue.planMd ?? "") ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button type="submit" disabled={isSaving} className="ui-button text-[12px]">
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[12px] text-muted hover:text-foreground"
+                      onClick={() => setPlanDraft(issue.planMd ?? "")}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                ) : null}
+              </form>
             </div>
-          </form>
-        </Section>
 
-        <Section title="Plan">
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (planDraft !== (issue.planMd ?? "")) {
-                void saveIssuePatch({
-                  plan_md: planDraft.trim() ? planDraft : null,
-                });
-              }
-            }}
-          >
-            <label className="ui-label" htmlFor="issue-plan">
-              Execution Plan
-            </label>
-            <textarea
-              id="issue-plan"
-              aria-label="Execution Plan"
-              autoComplete="off"
-              name="plan"
-              value={planDraft}
-              onChange={(event) => setPlanDraft(event.target.value)}
-              className="ui-textarea min-h-44 leading-7"
-              placeholder="Outline the Execution Plan in Markdown…"
-            />
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={isSaving || planDraft === (issue.planMd ?? "")}
-                className="ui-button"
+            {/* ── Design ── */}
+            <div className="mt-8">
+              <h2 className="mb-2 text-[13px] font-medium text-muted">Design</h2>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (designDraft !== (issue.designMd ?? "")) {
+                    void saveIssuePatch({ design_md: designDraft.trim() ? designDraft : null });
+                  }
+                }}
               >
-                Save Plan
-              </button>
+                <textarea
+                  id="issue-design"
+                  aria-label="Design Notes"
+                  autoComplete="off"
+                  name="design"
+                  value={designDraft}
+                  onChange={(event) => setDesignDraft(event.target.value)}
+                  className="issue-textarea min-h-[120px]"
+                  placeholder="Add design notes…"
+                />
+                {designDraft !== (issue.designMd ?? "") ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <button type="submit" disabled={isSaving} className="ui-button text-[12px]">
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[12px] text-muted hover:text-foreground"
+                      onClick={() => setDesignDraft(issue.designMd ?? "")}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                ) : null}
+              </form>
             </div>
-          </form>
-        </Section>
 
-        <Section title="Design">
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (designDraft !== (issue.designMd ?? "")) {
-                void saveIssuePatch({
-                  design_md: designDraft.trim() ? designDraft : null,
-                });
-              }
-            }}
-          >
-            <label className="ui-label" htmlFor="issue-design">
-              Design Notes
-            </label>
-            <textarea
-              id="issue-design"
-              aria-label="Design Notes"
-              autoComplete="off"
-              name="design"
-              value={designDraft}
-              onChange={(event) => setDesignDraft(event.target.value)}
-              className="ui-textarea min-h-44 leading-7"
-              placeholder="Capture Design Notes in Markdown…"
-            />
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={isSaving || designDraft === (issue.designMd ?? "")}
-                className="ui-button"
-              >
-                Save Design
-              </button>
-            </div>
-          </form>
-        </Section>
+            {/* ── Sub-issues ── */}
+            {(relationshipGroups.subIssues.length > 0 || newSubIssueTitle || subIssueNumber) ? (
+              <div className="mt-8">
+                <h2 className="mb-3 text-[13px] font-medium text-muted">Sub-issues</h2>
+                <div className="space-y-1">
+                  {relationshipGroups.subIssues.map((subIssueEntry) => (
+                    <div
+                      key={subIssueEntry.linkId}
+                      className="group flex items-center gap-2.5 rounded-[5px] px-2 py-1.5 transition-colors duration-100 hover:bg-surface-muted"
+                    >
+                      <StatusIcon status={subIssueEntry.issue.status} />
+                      <Link
+                        href={workspaceIssueDetailPath(
+                          initialData.workspace.slug,
+                          subIssueEntry.issue.number,
+                        )}
+                        className="min-w-0 flex-1 truncate text-[13px] text-foreground hover:text-accent"
+                      >
+                        <span className="text-muted">#{subIssueEntry.issue.number}</span>{" "}
+                        {subIssueEntry.issue.title}
+                      </Link>
+                      <IssuePriorityBadge priority={subIssueEntry.issue.priority} />
+                      <button
+                        type="button"
+                        onClick={() => void removeLink(subIssueEntry.linkId)}
+                        className="hidden text-[11px] text-muted hover:text-danger group-hover:inline-flex"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
-        <Section title="Comments">
-          <div className="space-y-5">
-            <div className="ui-subpanel space-y-3 p-4">
-              <label className="ui-label" htmlFor="new-comment">
-                New comment
-              </label>
-              <textarea
-                id="new-comment"
-                autoComplete="off"
-                name="newComment"
-                value={newCommentBody}
-                onChange={(event) => setNewCommentBody(event.target.value)}
-                className="ui-textarea min-h-32 leading-7"
-                placeholder="Leave a Comment in Markdown…"
-              />
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  disabled={isSaving}
-                  onClick={() => void createComment()}
-                  className="ui-button-primary"
-                >
-                  Add Comment
-                </button>
+            {/* ── Activity / Comments ── */}
+            <div className="mt-10 border-t border-border pt-6">
+              <h2 className="mb-4 text-[13px] font-medium text-muted">Activity</h2>
+
+              {/* Timeline */}
+              <div className="space-y-4">
+                {/* Created event */}
+                <div className="flex items-start gap-3">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-muted text-[10px] font-semibold text-muted">
+                    {(issue.creator?.fullName ?? issue.creator?.username ?? "?")[0]?.toUpperCase()}
+                  </div>
+                  <div className="pt-0.5 text-[13px] text-muted">
+                    <span className="font-medium text-foreground">
+                      {issue.creator?.fullName ?? issue.creator?.username ?? "Unknown"}
+                    </span>{" "}
+                    created the issue{" "}
+                    <span className="text-muted" title={dateTimeFormatter.format(new Date(issue.createdAt))}>
+                      {formatRelativeTime(issue.createdAt)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Comments */}
+                {comments.map((comment) => {
+                  const editable = comment.authorMemberId === currentMember?.id || canManage;
+                  const authorName =
+                    comment.author?.fullName ?? comment.author?.username ?? "Unknown";
+
+                  return (
+                    <div key={comment.id} className="flex items-start gap-3">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[10px] font-semibold text-accent">
+                        {authorName[0]?.toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-[13px] font-medium text-foreground">
+                            {authorName}
+                          </span>
+                          <span className="text-[12px] text-muted" title={dateTimeFormatter.format(new Date(comment.createdAt))}>
+                            {formatRelativeTime(comment.createdAt)}
+                            {comment.updatedAt !== comment.createdAt ? " · edited" : ""}
+                          </span>
+                          {editable ? (
+                            <div className="ml-auto flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCommentId(comment.id);
+                                  setEditingCommentBody(comment.bodyMd);
+                                }}
+                                className="text-[11px] text-muted hover:text-foreground"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteComment(comment.id)}
+                                className="text-[11px] text-muted hover:text-danger"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {editingCommentId === comment.id ? (
+                          <div className="mt-2 space-y-2">
+                            <textarea
+                              aria-label="Edit Comment"
+                              autoComplete="off"
+                              name="editingComment"
+                              value={editingCommentBody}
+                              onChange={(event) => setEditingCommentBody(event.target.value)}
+                              className="issue-textarea min-h-[80px]"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void saveComment(comment.id)}
+                                disabled={isSaving}
+                                className="ui-button-primary text-[12px]"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCommentId(null);
+                                  setEditingCommentBody("");
+                                }}
+                                className="text-[12px] text-muted hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-1 whitespace-pre-wrap text-[13px] leading-[1.65] text-foreground/90">
+                            {comment.bodyMd}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* New comment form */}
+              <div className="mt-6">
+                <div className="rounded-[8px] border border-border bg-surface transition-[border-color,box-shadow] duration-150 focus-within:border-accent/30 focus-within:shadow-[0_0_0_3px_rgba(94,106,210,0.08)]">
+                  <textarea
+                    id="new-comment"
+                    autoComplete="off"
+                    name="newComment"
+                    value={newCommentBody}
+                    onChange={(event) => setNewCommentBody(event.target.value)}
+                    className="w-full resize-none rounded-t-[8px] border-none bg-transparent px-3 py-2.5 text-[13px] leading-[1.65] text-foreground placeholder:text-muted/60 focus:outline-none"
+                    placeholder="Leave a comment…"
+                    rows={3}
+                  />
+                  <div className="flex items-center justify-end border-t border-border/50 px-2 py-1.5">
+                    <button
+                      type="button"
+                      disabled={isSaving || !newCommentBody.trim()}
+                      onClick={() => void createComment()}
+                      className="inline-flex h-7 items-center rounded-[5px] bg-foreground px-3 text-[12px] font-medium text-accent-foreground transition-opacity duration-100 hover:opacity-90 disabled:opacity-40"
+                    >
+                      Comment
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="space-y-4">
-              {comments.length === 0 ? (
-                <div className="ui-subpanel p-5 text-sm leading-7 text-muted">No comments yet.</div>
-              ) : (
-                comments.map((comment) => {
-                  const editable = comment.authorMemberId === currentMember?.id || canManage;
-
-                  return (
-                    <article key={comment.id} className="ui-subpanel p-5">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">
-                            {comment.author?.fullName ??
-                              comment.author?.username ??
-                              "Unknown member"}
-                          </p>
-                          <p className="mt-1 text-[11px] text-muted">
-                            {dateTimeFormatter.format(new Date(comment.createdAt))}
-                            {comment.updatedAt !== comment.createdAt ? " · edited" : ""}
-                          </p>
-                        </div>
-
-                        {editable ? (
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingCommentId(comment.id);
-                                setEditingCommentBody(comment.bodyMd);
-                              }}
-                              className="ui-button"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void deleteComment(comment.id)}
-                              className="ui-button-danger"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {editingCommentId === comment.id ? (
-                        <div className="mt-4 space-y-3">
-                          <textarea
-                            aria-label="Edit Comment"
-                            autoComplete="off"
-                            name="editingComment"
-                            value={editingCommentBody}
-                            onChange={(event) => setEditingCommentBody(event.target.value)}
-                            className="ui-textarea min-h-32 leading-7"
-                          />
-                          <div className="flex flex-wrap justify-end gap-3">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingCommentId(null);
-                                setEditingCommentBody("");
-                              }}
-                              className="ui-button"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void saveComment(comment.id)}
-                              className="ui-button-primary"
-                            >
-                              Save Comment
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-foreground/90">
-                          {comment.bodyMd}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })
-              )}
+            {/* ── Wallie Timeline ── */}
+            <div className="mt-10 border-t border-border pt-6">
+              <h2 className="mb-4 text-[13px] font-medium text-muted">Wallie</h2>
+              <IssueWalliePanel
+                initialData={initialData.wallie}
+                issue={issue}
+                memberIndex={memberIndex}
+                repositories={initialData.github.repositories}
+                supabase={supabase}
+                workspaceSlug={initialData.workspace.slug}
+              />
             </div>
           </div>
-        </Section>
+        </div>
 
-        <Section title="Wallie Timeline">
-          <IssueWalliePanel
-            initialData={initialData.wallie}
-            issue={issue}
-            memberIndex={memberIndex}
-            repositories={initialData.github.repositories}
-            supabase={supabase}
-            workspaceSlug={initialData.workspace.slug}
-          />
-        </Section>
-      </div>
-
-      <div className="grid gap-6">
-        <Section title="Metadata">
-          <div className="grid gap-4">
-            <label className="space-y-2 text-sm font-semibold text-foreground">
-              <span>Status</span>
-              <select
-                value={issue.status}
-                onChange={(event) =>
-                  void saveIssuePatch({
-                    status: event.target.value as IssueStatus,
-                  })
-                }
-                className="ui-select"
-              >
-                {ISSUE_STATUS_VALUES.map((status) => (
-                  <option key={status} value={status}>
-                    {formatIssueStatus(status)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="space-y-2 text-sm font-semibold text-foreground">
-              <span>Priority</span>
-              <select
-                value={issue.priority}
-                onChange={(event) =>
-                  void saveIssuePatch({
-                    priority: event.target.value as IssueDetail["priority"],
-                  })
-                }
-                className="ui-select"
-              >
-                {ISSUE_PRIORITY_VALUES.map((priority) => (
-                  <option key={priority} value={priority}>
-                    {priority}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="space-y-2 text-sm font-semibold text-foreground">
-              <span>Estimate</span>
-              <select
-                value={issue.estimatePoints === null ? "null" : String(issue.estimatePoints)}
-                onChange={(event) =>
-                  void saveIssuePatch({
-                    estimate_points:
-                      event.target.value === "null" ? null : Number(event.target.value),
-                  })
-                }
-                className="ui-select"
-              >
-                {ISSUE_ESTIMATE_VALUES.map((estimate) => (
-                  <option
-                    key={estimate === null ? "null" : estimate}
-                    value={estimate === null ? "null" : String(estimate)}
+        {/* ── Properties sidebar ── */}
+        <aside className="sticky top-[44px] hidden h-[calc(100vh-44px)] w-[272px] shrink-0 overflow-y-auto border-l border-border lg:block">
+          <div className="px-3 py-4">
+            {/* Properties */}
+            <SidebarHeading title="Properties" />
+            <div>
+              <PropertyRow label="Status">
+                <div className="flex items-center gap-1.5">
+                  <StatusIcon status={issue.status} />
+                  <select
+                    value={issue.status}
+                    onChange={(event) =>
+                      void saveIssuePatch({ status: event.target.value as IssueStatus })
+                    }
+                    className="sidebar-select"
                   >
-                    {formatIssueEstimate(estimate)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                    {ISSUE_STATUS_VALUES.map((status) => (
+                      <option key={status} value={status}>
+                        {formatIssueStatus(status)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </PropertyRow>
 
-            <label className="space-y-2 text-sm font-semibold text-foreground">
-              <span>Assignee</span>
-              <select
-                value={issue.assigneeMemberId ?? ""}
-                onChange={(event) =>
-                  void saveIssuePatch({
-                    assignee_member_id: event.target.value || null,
-                  })
-                }
-                className="ui-select"
-              >
-                <option value="">Unassigned</option>
-                {initialData.members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.fullName ?? member.username ?? "Unknown member"}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <PropertyRow label="Priority">
+                <div className="flex items-center gap-1.5">
+                  <PriorityBarIcon priority={issue.priority} />
+                  <select
+                    value={issue.priority}
+                    onChange={(event) =>
+                      void saveIssuePatch({
+                        priority: event.target.value as IssueDetail["priority"],
+                      })
+                    }
+                    className="sidebar-select capitalize"
+                  >
+                    {ISSUE_PRIORITY_VALUES.map((priority) => (
+                      <option key={priority} value={priority}>
+                        {priority}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </PropertyRow>
 
-            <label className="space-y-2 text-sm font-semibold text-foreground">
-              <span>Repository</span>
-              <select
-                value={issue.githubRepositoryId ?? ""}
-                onChange={(event) =>
-                  void saveIssuePatch({
-                    github_repository_id: event.target.value || null,
-                  })
-                }
-                className="ui-select"
-              >
-                <option value="">No linked repository</option>
-                {initialData.github.repositories.map((repository) => (
-                  <option key={repository.id} value={repository.id}>
-                    {repository.fullName}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <PropertyRow label="Assignee">
+                <select
+                  value={issue.assigneeMemberId ?? ""}
+                  onChange={(event) =>
+                    void saveIssuePatch({ assignee_member_id: event.target.value || null })
+                  }
+                  className="sidebar-select"
+                >
+                  <option value="">Unassigned</option>
+                  {initialData.members.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.fullName ?? member.username ?? "Unknown member"}
+                    </option>
+                  ))}
+                </select>
+              </PropertyRow>
 
-            {issue.githubRepositoryId ? (
-              repositoryIndex.get(issue.githubRepositoryId) ? (
+              <PropertyRow label="Estimate">
+                <select
+                  value={issue.estimatePoints === null ? "null" : String(issue.estimatePoints)}
+                  onChange={(event) =>
+                    void saveIssuePatch({
+                      estimate_points:
+                        event.target.value === "null" ? null : Number(event.target.value),
+                    })
+                  }
+                  className="sidebar-select"
+                >
+                  {ISSUE_ESTIMATE_VALUES.map((estimate) => (
+                    <option
+                      key={estimate === null ? "null" : estimate}
+                      value={estimate === null ? "null" : String(estimate)}
+                    >
+                      {formatIssueEstimate(estimate)}
+                    </option>
+                  ))}
+                </select>
+              </PropertyRow>
+
+              <PropertyRow label="Repository">
+                <select
+                  value={issue.githubRepositoryId ?? ""}
+                  onChange={(event) =>
+                    void saveIssuePatch({ github_repository_id: event.target.value || null })
+                  }
+                  className="sidebar-select"
+                >
+                  <option value="">None</option>
+                  {initialData.github.repositories.map((repository) => (
+                    <option key={repository.id} value={repository.id}>
+                      {repository.fullName}
+                    </option>
+                  ))}
+                </select>
+              </PropertyRow>
+            </div>
+
+            {issue.githubRepositoryId && repositoryIndex.get(issue.githubRepositoryId) ? (
+              <div className="mt-1 px-2">
                 <a
                   href={repositoryIndex.get(issue.githubRepositoryId)?.htmlUrl}
                   rel="noreferrer"
                   target="_blank"
-                  className={cn("text-sm", interactiveLinkClass)}
+                  className={cn("text-[12px]", interactiveLinkClass)}
                 >
-                  {repositoryIndex.get(issue.githubRepositoryId)?.fullName}
+                  {repositoryIndex.get(issue.githubRepositoryId)?.fullName} ↗
                 </a>
-              ) : null
+              </div>
             ) : initialData.github.repositories.length === 0 ? (
-              <p className="text-sm leading-6 text-muted">
-                No GitHub repositories are synced yet. Install the workspace GitHub App from{" "}
-                <Link
-                  className={interactiveLinkClass}
-                  href={workspaceSettingsPath(initialData.workspace.slug)}
-                >
+              <p className="mt-1 px-2 text-[12px] leading-5 text-muted">
+                No repos synced.{" "}
+                <Link className={interactiveLinkClass} href={workspaceSettingsPath(initialData.workspace.slug)}>
                   Settings
                 </Link>
-                .
               </p>
             ) : null}
-          </div>
-        </Section>
 
-        <Section title="Parent issue">
-          <div className="space-y-4">
-            {relationshipGroups.parentIssues.length > 0 ? (
-              <div className="space-y-3">
-                {relationshipGroups.parentIssues.map((parentEntry) => (
-                  <div
-                    key={parentEntry.linkId}
-                    className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
-                  >
-                    <div className="space-y-2">
-                      <p className="ui-label">Parent</p>
+            {/* ── Parent issue ── */}
+            <div className="mt-3 border-t border-border pt-3">
+              <SidebarHeading title="Parent" />
+              {relationshipGroups.parentIssues.length > 0 ? (
+                <div className="space-y-1 px-2">
+                  {relationshipGroups.parentIssues.map((parentEntry) => (
+                    <div key={parentEntry.linkId} className="group flex items-center justify-between gap-2">
                       <Link
                         href={workspaceIssueDetailPath(
                           initialData.workspace.slug,
                           parentEntry.issue.number,
                         )}
-                        className={cn("text-sm", interactiveLinkClass)}
+                        className="min-w-0 truncate text-[13px] text-foreground hover:text-accent"
                       >
-                        #{parentEntry.issue.number} {parentEntry.issue.title}
+                        <span className="text-muted">#{parentEntry.issue.number}</span>{" "}
+                        {parentEntry.issue.title}
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => void removeLink(parentEntry.linkId)}
+                        className="hidden shrink-0 text-[11px] text-muted hover:text-danger group-hover:inline"
+                      >
+                        ×
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void removeLink(parentEntry.linkId)}
-                      className="ui-button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                {relationshipGroups.parentIssues.length > 1 ? (
-                  <p className="text-sm leading-6 text-muted">
-                    Multiple parent rows exist in data. Gate D surfaces all of them but only allows
-                    adding one parent at a time going forward.
-                  </p>
-                ) : null}
-              </div>
-            ) : (
-              <form
-                className="space-y-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void addRelationship({
-                    issueNumber: parentIssueNumber,
-                    linkType: "sub_issue",
-                    successLabel: "Parent issue linked.",
-                  });
-                  setParentIssueNumber("");
-                }}
-              >
-                <label className="space-y-2 text-sm font-semibold text-foreground">
-                  <span>Set parent issue number</span>
+                  ))}
+                </div>
+              ) : (
+                <form
+                  className="flex items-center gap-1.5 px-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void addRelationship({
+                      issueNumber: parentIssueNumber,
+                      linkType: "sub_issue",
+                      successLabel: "Parent issue linked.",
+                    });
+                    setParentIssueNumber("");
+                  }}
+                >
                   <input
                     autoComplete="off"
                     inputMode="numeric"
@@ -1118,411 +1227,232 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                     spellCheck={false}
                     value={parentIssueNumber}
                     onChange={(event) => setParentIssueNumber(event.target.value)}
-                    className="ui-input"
-                    placeholder="42…"
+                    className="sidebar-input flex-1"
+                    placeholder="Issue #…"
                   />
-                </label>
-                <div className="flex justify-end">
-                  <button type="submit" disabled={isSaving} className="ui-button">
-                    Set Parent Issue
+                  <button type="submit" disabled={isSaving} className="sidebar-action-btn">
+                    Set
                   </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </Section>
-
-        <Section title="Sub-issues">
-          <div className="space-y-5">
-            <div className="ui-subpanel space-y-3 p-4">
-              <p className="ui-label">Create sub-issue</p>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Sub-Issue Title</span>
-                <input
-                  autoComplete="off"
-                  name="newSubIssueTitle"
-                  value={newSubIssueTitle}
-                  onChange={(event) => setNewSubIssueTitle(event.target.value)}
-                  className="ui-input"
-                  placeholder="Add a Child Issue Title…"
-                />
-              </label>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Estimate</span>
-                <select
-                  name="newSubIssueEstimate"
-                  value={newSubIssueEstimate}
-                  onChange={(event) => setNewSubIssueEstimate(event.target.value)}
-                  className="ui-select"
-                >
-                  <option value="">No estimate</option>
-                  {ISSUE_ESTIMATE_VALUES.filter((estimate) => estimate !== null).map((estimate) => (
-                    <option key={estimate} value={estimate}>
-                      {estimate} point{estimate === 1 ? "" : "s"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  disabled={isSaving}
-                  onClick={() => void createSubIssue()}
-                  className="ui-button-primary"
-                >
-                  Create Sub-Issue
-                </button>
-              </div>
-            </div>
-
-            <form
-              className="ui-subpanel space-y-3 p-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addRelationship({
-                  issueNumber: subIssueNumber,
-                  linkType: "sub_issue",
-                  reverse: true,
-                  successLabel: "Existing sub-issue linked.",
-                });
-                setSubIssueNumber("");
-              }}
-            >
-              <p className="ui-label">Link existing sub-issue</p>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Issue Number</span>
-                <input
-                  autoComplete="off"
-                  inputMode="numeric"
-                  name="subIssueNumber"
-                  pattern="[0-9]*"
-                  spellCheck={false}
-                  value={subIssueNumber}
-                  onChange={(event) => setSubIssueNumber(event.target.value)}
-                  className="ui-input"
-                  placeholder="Issue #42…"
-                />
-              </label>
-              <div className="flex justify-end">
-                <button type="submit" disabled={isSaving} className="ui-button">
-                  Link Sub-Issue
-                </button>
-              </div>
-            </form>
-
-            <div className="space-y-3">
-              {relationshipGroups.subIssues.length === 0 ? (
-                <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
-                  No sub-issues linked yet.
-                </div>
-              ) : (
-                relationshipGroups.subIssues.map((subIssueEntry) => (
-                  <div
-                    key={subIssueEntry.linkId}
-                    className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <IssueStatusBadge status={subIssueEntry.issue.status} />
-                        <IssuePriorityBadge priority={subIssueEntry.issue.priority} />
-                      </div>
-                      <Link
-                        href={workspaceIssueDetailPath(
-                          initialData.workspace.slug,
-                          subIssueEntry.issue.number,
-                        )}
-                        className={cn("text-sm", interactiveLinkClass)}
-                      >
-                        #{subIssueEntry.issue.number} {subIssueEntry.issue.title}
-                      </Link>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void removeLink(subIssueEntry.linkId)}
-                      className="ui-button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))
+                </form>
               )}
             </div>
-          </div>
-        </Section>
 
-        <Section title="Relationships">
-          <div className="space-y-5">
-            <form
-              className="ui-subpanel space-y-3 p-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addRelationship({
-                  issueNumber: blockedByNumber,
-                  linkType: "blocked_by",
-                  successLabel: "Blocked-by relationship added.",
-                });
-                setBlockedByNumber("");
-              }}
-            >
-              <p className="ui-label">Blocked by</p>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Issue Number</span>
-                <input
-                  autoComplete="off"
-                  inputMode="numeric"
-                  name="blockedByNumber"
-                  pattern="[0-9]*"
-                  spellCheck={false}
-                  value={blockedByNumber}
-                  onChange={(event) => setBlockedByNumber(event.target.value)}
-                  className="ui-input"
-                  placeholder="Issue #42…"
-                />
-              </label>
-              <div className="flex justify-end">
-                <button type="submit" disabled={isSaving} className="ui-button">
-                  Add Blocked-By Link
-                </button>
-              </div>
-            </form>
-
-            <form
-              className="ui-subpanel space-y-3 p-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addRelationship({
-                  issueNumber: blocksNumber,
-                  linkType: "blocked_by",
-                  reverse: true,
-                  successLabel: "Blocks relationship added.",
-                });
-                setBlocksNumber("");
-              }}
-            >
-              <p className="ui-label">Blocks</p>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Issue Number</span>
-                <input
-                  autoComplete="off"
-                  inputMode="numeric"
-                  name="blocksNumber"
-                  pattern="[0-9]*"
-                  spellCheck={false}
-                  value={blocksNumber}
-                  onChange={(event) => setBlocksNumber(event.target.value)}
-                  className="ui-input"
-                  placeholder="Issue #42…"
-                />
-              </label>
-              <div className="flex justify-end">
-                <button type="submit" disabled={isSaving} className="ui-button">
-                  Add Blocks Link
-                </button>
-              </div>
-            </form>
-
-            <form
-              className="ui-subpanel space-y-3 p-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addRelationship({
-                  issueNumber: duplicateNumber,
-                  linkType: "duplicate",
-                  symmetric: true,
-                  successLabel: "Duplicate relationship added.",
-                });
-                setDuplicateNumber("");
-              }}
-            >
-              <p className="ui-label">Duplicate of</p>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Issue Number</span>
-                <input
-                  autoComplete="off"
-                  inputMode="numeric"
-                  name="duplicateNumber"
-                  pattern="[0-9]*"
-                  spellCheck={false}
-                  value={duplicateNumber}
-                  onChange={(event) => setDuplicateNumber(event.target.value)}
-                  className="ui-input"
-                  placeholder="Issue #42…"
-                />
-              </label>
-              <div className="flex justify-end">
-                <button type="submit" disabled={isSaving} className="ui-button">
-                  Add Duplicate Link
-                </button>
-              </div>
-            </form>
-
-            <form
-              className="ui-subpanel space-y-3 p-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addRelationship({
-                  issueNumber: relatedNumber,
-                  linkType: "related",
-                  symmetric: true,
-                  successLabel: "Related issue linked.",
-                });
-                setRelatedNumber("");
-              }}
-            >
-              <p className="ui-label">Related</p>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Issue Number</span>
-                <input
-                  autoComplete="off"
-                  inputMode="numeric"
-                  name="relatedNumber"
-                  pattern="[0-9]*"
-                  spellCheck={false}
-                  value={relatedNumber}
-                  onChange={(event) => setRelatedNumber(event.target.value)}
-                  className="ui-input"
-                  placeholder="Issue #42…"
-                />
-              </label>
-              <div className="flex justify-end">
-                <button type="submit" disabled={isSaving} className="ui-button">
-                  Add Related Link
-                </button>
-              </div>
-            </form>
-
-            <div className="space-y-4">
-              {[
-                {
-                  entries: relationshipGroups.blockedBy,
-                  heading: "Blocked by",
-                },
-                {
-                  entries: relationshipGroups.blocks,
-                  heading: "Blocks",
-                },
-                {
-                  entries: relationshipGroups.duplicates,
-                  heading: "Duplicates",
-                },
-                {
-                  entries: relationshipGroups.related,
-                  heading: "Related",
-                },
-              ].map(({ entries, heading }) => (
-                <div key={heading} className="space-y-3">
-                  <p className="ui-label">{heading}</p>
-                  {entries.length === 0 ? (
-                    <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
-                      No {heading.toLocaleLowerCase()} issues.
-                    </div>
-                  ) : (
-                    entries.map((entry) => (
-                      <div
-                        key={entry.linkId}
-                        className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
+            {/* ── Sub-issues (sidebar add) ── */}
+            <div className="mt-3 border-t border-border pt-3">
+              <SidebarHeading title="Sub-issues" />
+              <div className="space-y-2 px-2">
+                <div className="space-y-1.5">
+                  <input
+                    autoComplete="off"
+                    name="newSubIssueTitle"
+                    value={newSubIssueTitle}
+                    onChange={(event) => setNewSubIssueTitle(event.target.value)}
+                    className="sidebar-input w-full"
+                    placeholder="New sub-issue title…"
+                  />
+                  {newSubIssueTitle ? (
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        name="newSubIssueEstimate"
+                        value={newSubIssueEstimate}
+                        onChange={(event) => setNewSubIssueEstimate(event.target.value)}
+                        className="sidebar-select flex-1"
                       >
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <IssueStatusBadge status={entry.issue.status} />
-                            <IssuePriorityBadge priority={entry.issue.priority} />
-                          </div>
+                        <option value="">No estimate</option>
+                        {ISSUE_ESTIMATE_VALUES.filter((e) => e !== null).map((estimate) => (
+                          <option key={estimate} value={estimate}>
+                            {estimate} pt{estimate === 1 ? "" : "s"}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={() => void createSubIssue()}
+                        className="sidebar-action-btn"
+                      >
+                        Create
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <form
+                  className="flex items-center gap-1.5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void addRelationship({
+                      issueNumber: subIssueNumber,
+                      linkType: "sub_issue",
+                      reverse: true,
+                      successLabel: "Existing sub-issue linked.",
+                    });
+                    setSubIssueNumber("");
+                  }}
+                >
+                  <input
+                    autoComplete="off"
+                    inputMode="numeric"
+                    name="subIssueNumber"
+                    pattern="[0-9]*"
+                    spellCheck={false}
+                    value={subIssueNumber}
+                    onChange={(event) => setSubIssueNumber(event.target.value)}
+                    className="sidebar-input flex-1"
+                    placeholder="Link existing #…"
+                  />
+                  <button type="submit" disabled={isSaving} className="sidebar-action-btn">
+                    Link
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            {/* ── Relationships ── */}
+            <div className="mt-3 border-t border-border pt-3">
+              <SidebarHeading title="Relations" />
+              <div className="space-y-3 px-2">
+                {/* Add forms */}
+                {([
+                  { label: "Blocked by", state: blockedByNumber, setter: setBlockedByNumber, linkType: "blocked_by" as const, successLabel: "Blocked-by relationship added." },
+                  { label: "Blocks", state: blocksNumber, setter: setBlocksNumber, linkType: "blocked_by" as const, reverse: true, successLabel: "Blocks relationship added." },
+                  { label: "Duplicate", state: duplicateNumber, setter: setDuplicateNumber, linkType: "duplicate" as const, symmetric: true, successLabel: "Duplicate relationship added." },
+                  { label: "Related", state: relatedNumber, setter: setRelatedNumber, linkType: "related" as const, symmetric: true, successLabel: "Related issue linked." },
+                ] as const).map((rel) => (
+                  <form
+                    key={rel.label}
+                    className="space-y-1"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void addRelationship({
+                        issueNumber: rel.state,
+                        linkType: rel.linkType,
+                        reverse: "reverse" in rel ? rel.reverse : undefined,
+                        symmetric: "symmetric" in rel ? rel.symmetric : undefined,
+                        successLabel: rel.successLabel,
+                      });
+                      rel.setter("");
+                    }}
+                  >
+                    <span className="text-[11px] text-muted">{rel.label}</span>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        autoComplete="off"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        spellCheck={false}
+                        value={rel.state}
+                        onChange={(event) => rel.setter(event.target.value)}
+                        className="sidebar-input flex-1"
+                        placeholder="#…"
+                      />
+                      <button type="submit" disabled={isSaving} className="sidebar-action-btn">
+                        Add
+                      </button>
+                    </div>
+                  </form>
+                ))}
+
+                {/* Existing relationships */}
+                {([
+                  { entries: relationshipGroups.blockedBy, heading: "Blocked by" },
+                  { entries: relationshipGroups.blocks, heading: "Blocks" },
+                  { entries: relationshipGroups.duplicates, heading: "Duplicates" },
+                  { entries: relationshipGroups.related, heading: "Related" },
+                ] as const).map(({ entries, heading }) =>
+                  entries.length > 0 ? (
+                    <div key={heading} className="space-y-1">
+                      <span className="text-[11px] font-medium text-muted">{heading}</span>
+                      {entries.map((entry) => (
+                        <div
+                          key={entry.linkId}
+                          className="group flex items-center gap-2"
+                        >
+                          <StatusIcon status={entry.issue.status} />
                           <Link
                             href={workspaceIssueDetailPath(
                               initialData.workspace.slug,
                               entry.issue.number,
                             )}
-                            className={cn("text-sm", interactiveLinkClass)}
+                            className="min-w-0 flex-1 truncate text-[13px] text-foreground hover:text-accent"
                           >
-                            #{entry.issue.number} {entry.issue.title}
+                            <span className="text-muted">#{entry.issue.number}</span>{" "}
+                            {entry.issue.title}
                           </Link>
+                          <button
+                            type="button"
+                            onClick={() => void removeLink(entry.linkId)}
+                            className="hidden shrink-0 text-[11px] text-muted hover:text-danger group-hover:inline"
+                          >
+                            ×
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void removeLink(entry.linkId)}
-                          className="ui-button"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </Section>
-
-        <Section title="GitHub PRs">
-          <div className="space-y-4">
-            {pullRequests.length === 0 ? (
-              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-                No PR metadata is linked to this issue yet. Once a tracked branch opens a PR, the
-                webhook sync will surface it here.
+                      ))}
+                    </div>
+                  ) : null,
+                )}
               </div>
-            ) : (
-              pullRequests.map((pullRequest) => (
-                <article key={pullRequest.id} className="ui-subpanel p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="ui-pill font-mono">{pullRequest.branchName}</span>
+            </div>
+
+            {/* ── GitHub PRs ── */}
+            <div className="mt-3 border-t border-border pt-3">
+              <SidebarHeading title="Pull Requests" />
+              <div className="space-y-2 px-2">
+                {pullRequests.length === 0 ? (
+                  <p className="text-[12px] leading-5 text-muted">No linked PRs yet.</p>
+                ) : (
+                  pullRequests.map((pullRequest) => (
+                    <div key={pullRequest.id} className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-flex items-center rounded-[4px] bg-surface-muted px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                          {pullRequest.branchName}
+                        </span>
                         {pullRequest.pullRequestState ? (
-                          <span className="ui-pill">{pullRequest.pullRequestState}</span>
+                          <span className={cn(
+                            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
+                            pullRequest.pullRequestState === "open"
+                              ? "bg-success-soft text-success"
+                              : pullRequest.pullRequestState === "merged"
+                                ? "bg-accent-soft text-accent"
+                                : "bg-danger-soft text-danger",
+                          )}>
+                            {pullRequest.pullRequestState}
+                          </span>
                         ) : null}
                         {pullRequest.isDraft ? (
-                          <span className="ui-pill border-warning/20 bg-warning-soft text-warning">
+                          <span className="inline-flex items-center rounded-full bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium text-warning">
                             Draft
                           </span>
                         ) : null}
                       </div>
-
                       {pullRequest.pullRequestUrl ? (
                         <a
                           href={pullRequest.pullRequestUrl}
                           rel="noreferrer"
                           target="_blank"
-                          className={cn("text-sm", interactiveLinkClass)}
+                          className={cn("text-[12px]", interactiveLinkClass)}
                         >
-                          PR #{pullRequest.pullRequestNumber ?? "?"}
+                          PR #{pullRequest.pullRequestNumber ?? "?"} ↗
                         </a>
                       ) : (
-                        <p className="text-sm font-semibold text-foreground">
-                          Branch tracked without a PR URL yet
-                        </p>
+                        <p className="text-[12px] text-muted">No PR yet</p>
                       )}
-
-                      <p className="text-sm leading-6 text-muted">
-                        {pullRequest.repository ? (
-                          <>
-                            Repo{" "}
-                            <a
-                              className={interactiveLinkClass}
-                              href={pullRequest.repository.htmlUrl}
-                              rel="noreferrer"
-                              target="_blank"
-                            >
-                              {pullRequest.repository.fullName}
-                            </a>
-                          </>
-                        ) : (
-                          "Repository unavailable"
-                        )}
-                      </p>
+                      {pullRequest.repository ? (
+                        <a
+                          className={cn("text-[11px]", interactiveLinkClass)}
+                          href={pullRequest.repository.htmlUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {pullRequest.repository.fullName}
+                        </a>
+                      ) : null}
                     </div>
-
-                    <div className="text-right text-xs uppercase tracking-[0.16em] tabular-nums text-muted">
-                      <p>Created {dateTimeFormatter.format(new Date(pullRequest.createdAt))}</p>
-                      <p className="mt-2">
-                        Updated {dateTimeFormatter.format(new Date(pullRequest.updatedAt))}
-                      </p>
-                    </div>
-                  </div>
-                </article>
-              ))
-            )}
+                  ))
+                )}
+              </div>
+            </div>
           </div>
-        </Section>
+        </aside>
       </div>
     </div>
   );
