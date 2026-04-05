@@ -8,6 +8,7 @@ const authErrorMessages = {
   auth_confirmation_failed:
     "The email link could not be confirmed. Request a fresh link and try again.",
   email_sign_in_failed: "Wallie could not send that magic link. Check the email and try again.",
+  password_auth_failed: "Dev password sign-in failed. Check credentials and try again.",
   invalid_provider: "That sign-in provider is not supported on this route.",
   oauth_sign_in_failed: "Wallie could not start that provider sign-in flow.",
 } as const;
@@ -148,6 +149,53 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
           </p>
         </div>
       </div>
+
+      {process.env.NODE_ENV === "development" && (
+        <form action="/auth/password" method="post" className="ui-subpanel mt-6 p-5">
+          <input type="hidden" name="mode" value={mode} />
+          <input type="hidden" name="next" value={next} />
+
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium text-muted">Dev Only</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+              Password Auth
+            </h2>
+            <p className="text-sm leading-6 text-muted">
+              Development-only email + password sign-in. Not available in production.
+            </p>
+          </div>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-semibold text-foreground">
+              Email
+              <input
+                type="email"
+                name="email"
+                required
+                autoComplete="email"
+                placeholder="dev@localhost.com…"
+                className="ui-input mt-2 text-base"
+              />
+            </label>
+            <label className="block text-sm font-semibold text-foreground">
+              Password
+              <input
+                type="password"
+                name="password"
+                required
+                minLength={6}
+                autoComplete="current-password"
+                placeholder="Min 6 characters…"
+                className="ui-input mt-2 text-base"
+              />
+            </label>
+          </div>
+
+          <button type="submit" className="ui-button-primary mt-5">
+            {isSignup ? "Dev Sign Up" : "Dev Sign In"}
+          </button>
+        </form>
+      )}
     </section>
   );
 }
