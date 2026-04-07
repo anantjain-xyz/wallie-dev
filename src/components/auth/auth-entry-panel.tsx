@@ -157,9 +157,7 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
 
           <div className="space-y-2">
             <p className="text-[11px] font-medium text-muted">Dev Only</p>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-              Password Auth
-            </h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Password Auth</h2>
             <p className="text-sm leading-6 text-muted">
               Development-only email + password sign-in. Not available in production.
             </p>

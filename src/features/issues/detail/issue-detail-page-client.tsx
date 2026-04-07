@@ -15,11 +15,7 @@ import {
   mapIssueDetailRow,
   mapIssueRow,
 } from "@/features/issues/model";
-import {
-  IssueEstimateBadge,
-  IssuePriorityBadge,
-  IssueStatusBadge,
-} from "@/features/issues/ui";
+import { IssuePriorityBadge } from "@/features/issues/ui";
 import {
   ISSUE_ESTIMATE_VALUES,
   ISSUE_PRIORITY_VALUES,
@@ -118,13 +114,7 @@ function mapPullRequestRow(
   };
 }
 
-function PropertyRow({
-  children,
-  label,
-}: {
-  children: React.ReactNode;
-  label: string;
-}) {
+function PropertyRow({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <div className="sidebar-property-row">
       <span className="w-[88px] shrink-0 text-[13px] text-muted">{label}</span>
@@ -133,18 +123,10 @@ function PropertyRow({
   );
 }
 
-function SidebarHeading({
-  action,
-  title,
-}: {
-  action?: React.ReactNode;
-  title: string;
-}) {
+function SidebarHeading({ action, title }: { action?: React.ReactNode; title: string }) {
   return (
     <div className="mb-0.5 flex items-center justify-between px-2 pt-5 first:pt-0">
-      <h3 className="text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
-        {title}
-      </h3>
+      <h3 className="text-[11px] font-medium uppercase tracking-[0.05em] text-muted">{title}</h3>
       {action}
     </div>
   );
@@ -756,15 +738,18 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
     <div>
       {/* ── Breadcrumb header ── */}
       <header className="sticky top-0 z-10 flex h-11 items-center gap-1.5 border-b border-border bg-surface px-4">
-        <span className="text-[13px] font-medium text-muted">
-          #{issue.number}
-        </span>
+        <span className="text-[13px] font-medium text-muted">#{issue.number}</span>
         <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-muted/50">
-          <path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          <path
+            d="m6 4 4 4-4 4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            fill="none"
+          />
         </svg>
-        <h1 className="min-w-0 truncate text-[13px] font-medium text-foreground">
-          {issue.title}
-        </h1>
+        <h1 className="min-w-0 truncate text-[13px] font-medium text-foreground">{issue.title}</h1>
         <div className="ml-auto flex items-center gap-0.5">
           <button
             type="button"
@@ -774,8 +759,21 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             title="Copy as Markdown"
           >
             <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
-              <rect x="5" y="3" width="8" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-              <path d="M3 5.5v7a1.5 1.5 0 0 0 1.5 1.5H11" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <rect
+                x="5"
+                y="3"
+                width="8"
+                height="10"
+                rx="1.5"
+                stroke="currentColor"
+                strokeWidth="1.3"
+              />
+              <path
+                d="M3 5.5v7a1.5 1.5 0 0 0 1.5 1.5H11"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+              />
             </svg>
             {isCopying ? "Copying…" : "Copy"}
           </button>
@@ -785,7 +783,13 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
           >
             <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
               <path d="M3 8h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              <path d="m10.5 5.5 2.5 2.5-2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="m10.5 5.5 2.5 2.5-2.5 2.5"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           </Link>
         </div>
@@ -977,7 +981,7 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             </div>
 
             {/* ── Sub-issues ── */}
-            {(relationshipGroups.subIssues.length > 0 || newSubIssueTitle || subIssueNumber) ? (
+            {relationshipGroups.subIssues.length > 0 || newSubIssueTitle || subIssueNumber ? (
               <div className="mt-8">
                 <h2 className="mb-3 text-[13px] font-medium text-muted">Sub-issues</h2>
                 <div className="space-y-1">
@@ -1027,7 +1031,10 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                       {issue.creator?.fullName ?? issue.creator?.username ?? "Unknown"}
                     </span>{" "}
                     created the issue{" "}
-                    <span className="text-muted" title={dateTimeFormatter.format(new Date(issue.createdAt))}>
+                    <span
+                      className="text-muted"
+                      title={dateTimeFormatter.format(new Date(issue.createdAt))}
+                    >
                       {formatRelativeTime(issue.createdAt)}
                     </span>
                   </div>
@@ -1049,7 +1056,10 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                           <span className="text-[13px] font-medium text-foreground">
                             {authorName}
                           </span>
-                          <span className="text-[12px] text-muted" title={dateTimeFormatter.format(new Date(comment.createdAt))}>
+                          <span
+                            className="text-[12px] text-muted"
+                            title={dateTimeFormatter.format(new Date(comment.createdAt))}
+                          >
                             {formatRelativeTime(comment.createdAt)}
                             {comment.updatedAt !== comment.createdAt ? " · edited" : ""}
                           </span>
@@ -1176,8 +1186,17 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               title="Copy issue URL"
             >
               <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
-                <path d="M9.5 4.5h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2Z" stroke="currentColor" strokeWidth="1.25" />
-                <path d="M11.5 6V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3.5a2 2 0 0 0 2 2h1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                <path
+                  d="M9.5 4.5h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2Z"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                />
+                <path
+                  d="M11.5 6V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3.5a2 2 0 0 0 2 2h1"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                />
               </svg>
             </button>
             <button
@@ -1190,13 +1209,21 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               title="Copy issue ID"
             >
               <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
-                <path d="M6 3v10M10 3v10M3 6h10M3 10h10" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                <path
+                  d="M6 3v10M10 3v10M3 6h10M3 10h10"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                />
               </svg>
             </button>
             <button
               type="button"
               onClick={() => {
-                const branchName = `${issue.number}-${issue.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
+                const branchName = `${issue.number}-${issue.title
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/(^-|-$)/g, "")}`;
                 void navigator.clipboard.writeText(branchName);
                 setSuccessMessage("Branch name copied.");
               }}
@@ -1207,7 +1234,12 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                 <circle cx="5" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="1.25" />
                 <circle cx="5" cy="11.5" r="1.5" stroke="currentColor" strokeWidth="1.25" />
                 <circle cx="11" cy="6.5" r="1.5" stroke="currentColor" strokeWidth="1.25" />
-                <path d="M5 6v4M9.5 6.5C8 6.5 5 6.5 5 8.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                <path
+                  d="M5 6v4M9.5 6.5C8 6.5 5 6.5 5 8.5"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                />
               </svg>
             </button>
             <button
@@ -1218,9 +1250,29 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               title="Copy as Markdown"
             >
               <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
-                <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
-                <path d="M5 9.5V6.5l1.5 2 1.5-2v3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M10.5 8 12 9.5M12 8l-1.5 1.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+                <rect
+                  x="2.5"
+                  y="3.5"
+                  width="11"
+                  height="9"
+                  rx="1.5"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                />
+                <path
+                  d="M5 9.5V6.5l1.5 2 1.5-2v3"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M10.5 8 12 9.5M12 8l-1.5 1.5"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             </button>
           </div>
@@ -1233,9 +1285,7 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                 <PropertyDropdown
                   icon={<StatusIcon status={issue.status} />}
                   value={issue.status}
-                  onChange={(status) =>
-                    void saveIssuePatch({ status: status as IssueStatus })
-                  }
+                  onChange={(status) => void saveIssuePatch({ status: status as IssueStatus })}
                   options={ISSUE_STATUS_VALUES.map((status) => ({
                     icon: <StatusIcon status={status} />,
                     label: formatIssueStatus(status),
@@ -1266,24 +1316,53 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                   icon={
                     issue.assigneeMemberId ? (
                       <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[9px] font-bold text-accent">
-                        {(initialData.members.find((m) => m.id === issue.assigneeMemberId)?.fullName ??
-                          initialData.members.find((m) => m.id === issue.assigneeMemberId)?.username ??
+                        {(initialData.members.find((m) => m.id === issue.assigneeMemberId)
+                          ?.fullName ??
+                          initialData.members.find((m) => m.id === issue.assigneeMemberId)
+                            ?.username ??
                           "?")[0]?.toUpperCase()}
                       </span>
                     ) : (
-                      <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-muted" fill="none">
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 16 16"
+                        className="h-4 w-4 shrink-0 text-muted"
+                        fill="none"
+                      >
                         <circle cx="8" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.25" />
-                        <path d="M3.5 13.5c.6-2.5 2.2-4 4.5-4s3.9 1.5 4.5 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                        <path
+                          d="M3.5 13.5c.6-2.5 2.2-4 4.5-4s3.9 1.5 4.5 4"
+                          stroke="currentColor"
+                          strokeWidth="1.25"
+                          strokeLinecap="round"
+                        />
                       </svg>
                     )
                   }
                   value={issue.assigneeMemberId ?? ""}
-                  onChange={(value) =>
-                    void saveIssuePatch({ assignee_member_id: value || null })
-                  }
+                  onChange={(value) => void saveIssuePatch({ assignee_member_id: value || null })}
                   placeholder="Assign"
                   options={[
-                    { icon: <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 text-muted" fill="none"><circle cx="8" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.25" /><path d="M3.5 13.5c.6-2.5 2.2-4 4.5-4s3.9 1.5 4.5 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" /></svg>, label: "Unassigned", value: "" },
+                    {
+                      icon: (
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 16 16"
+                          className="h-4 w-4 text-muted"
+                          fill="none"
+                        >
+                          <circle cx="8" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.25" />
+                          <path
+                            d="M3.5 13.5c.6-2.5 2.2-4 4.5-4s3.9 1.5 4.5 4"
+                            stroke="currentColor"
+                            strokeWidth="1.25"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      ),
+                      label: "Unassigned",
+                      value: "",
+                    },
                     ...initialData.members.map((member) => ({
                       icon: (
                         <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[9px] font-bold text-accent">
@@ -1300,7 +1379,12 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               <PropertyRow label="Estimate">
                 <PropertyDropdown
                   icon={
-                    <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-muted" fill="none">
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="h-4 w-4 shrink-0 text-muted"
+                      fill="none"
+                    >
                       <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.25" />
                       <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1" />
                       <circle cx="8" cy="8" r="0.75" fill="currentColor" />
@@ -1323,15 +1407,30 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               <PropertyRow label="Repository">
                 <PropertyDropdown
                   icon={
-                    <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-muted" fill="none">
-                      <path d="M5.5 2.5v11M5.5 2.5h5a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M5.5 13.5 3.5 12l2-1.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      className="h-4 w-4 shrink-0 text-muted"
+                      fill="none"
+                    >
+                      <path
+                        d="M5.5 2.5v11M5.5 2.5h5a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-5"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M5.5 13.5 3.5 12l2-1.5"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
                     </svg>
                   }
                   value={issue.githubRepositoryId ?? ""}
-                  onChange={(value) =>
-                    void saveIssuePatch({ github_repository_id: value || null })
-                  }
+                  onChange={(value) => void saveIssuePatch({ github_repository_id: value || null })}
                   placeholder="None"
                   options={[
                     { label: "None", value: "" },
@@ -1358,7 +1457,10 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             ) : initialData.github.repositories.length === 0 ? (
               <p className="mt-1 px-2 text-[12px] leading-5 text-muted">
                 No repos synced.{" "}
-                <Link className={interactiveLinkClass} href={workspaceSettingsPath(initialData.workspace.slug)}>
+                <Link
+                  className={interactiveLinkClass}
+                  href={workspaceSettingsPath(initialData.workspace.slug)}
+                >
                   Settings
                 </Link>
               </p>
@@ -1370,7 +1472,10 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               {relationshipGroups.parentIssues.length > 0 ? (
                 <div className="space-y-0.5 px-2 pt-1">
                   {relationshipGroups.parentIssues.map((parentEntry) => (
-                    <div key={parentEntry.linkId} className="group flex items-center justify-between gap-2 rounded-[4px] px-1 py-1 hover:bg-surface-muted">
+                    <div
+                      key={parentEntry.linkId}
+                      className="group flex items-center justify-between gap-2 rounded-[4px] px-1 py-1 hover:bg-surface-muted"
+                    >
                       <Link
                         href={workspaceIssueDetailPath(
                           initialData.workspace.slug,
@@ -1497,12 +1602,41 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
               <SidebarHeading title="Relations" />
               <div className="space-y-3 px-2 pt-1">
                 {/* Add forms */}
-                {([
-                  { label: "Blocked by", state: blockedByNumber, setter: setBlockedByNumber, linkType: "blocked_by" as const, successLabel: "Blocked-by relationship added." },
-                  { label: "Blocks", state: blocksNumber, setter: setBlocksNumber, linkType: "blocked_by" as const, reverse: true, successLabel: "Blocks relationship added." },
-                  { label: "Duplicate", state: duplicateNumber, setter: setDuplicateNumber, linkType: "duplicate" as const, symmetric: true, successLabel: "Duplicate relationship added." },
-                  { label: "Related", state: relatedNumber, setter: setRelatedNumber, linkType: "related" as const, symmetric: true, successLabel: "Related issue linked." },
-                ] as const).map((rel) => (
+                {(
+                  [
+                    {
+                      label: "Blocked by",
+                      state: blockedByNumber,
+                      setter: setBlockedByNumber,
+                      linkType: "blocked_by" as const,
+                      successLabel: "Blocked-by relationship added.",
+                    },
+                    {
+                      label: "Blocks",
+                      state: blocksNumber,
+                      setter: setBlocksNumber,
+                      linkType: "blocked_by" as const,
+                      reverse: true,
+                      successLabel: "Blocks relationship added.",
+                    },
+                    {
+                      label: "Duplicate",
+                      state: duplicateNumber,
+                      setter: setDuplicateNumber,
+                      linkType: "duplicate" as const,
+                      symmetric: true,
+                      successLabel: "Duplicate relationship added.",
+                    },
+                    {
+                      label: "Related",
+                      state: relatedNumber,
+                      setter: setRelatedNumber,
+                      linkType: "related" as const,
+                      symmetric: true,
+                      successLabel: "Related issue linked.",
+                    },
+                  ] as const
+                ).map((rel) => (
                   <form
                     key={rel.label}
                     className="space-y-1"
@@ -1538,12 +1672,14 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                 ))}
 
                 {/* Existing relationships */}
-                {([
-                  { entries: relationshipGroups.blockedBy, heading: "Blocked by" },
-                  { entries: relationshipGroups.blocks, heading: "Blocks" },
-                  { entries: relationshipGroups.duplicates, heading: "Duplicates" },
-                  { entries: relationshipGroups.related, heading: "Related" },
-                ] as const).map(({ entries, heading }) =>
+                {(
+                  [
+                    { entries: relationshipGroups.blockedBy, heading: "Blocked by" },
+                    { entries: relationshipGroups.blocks, heading: "Blocks" },
+                    { entries: relationshipGroups.duplicates, heading: "Duplicates" },
+                    { entries: relationshipGroups.related, heading: "Related" },
+                  ] as const
+                ).map(({ entries, heading }) =>
                   entries.length > 0 ? (
                     <div key={heading} className="space-y-0.5">
                       <span className="text-[11px] font-medium text-muted">{heading}</span>
@@ -1592,14 +1728,16 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                           {pullRequest.branchName}
                         </span>
                         {pullRequest.pullRequestState ? (
-                          <span className={cn(
-                            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
-                            pullRequest.pullRequestState === "open"
-                              ? "bg-success-soft text-success"
-                              : pullRequest.pullRequestState === "merged"
-                                ? "bg-accent-soft text-accent"
-                                : "bg-danger-soft text-danger",
-                          )}>
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
+                              pullRequest.pullRequestState === "open"
+                                ? "bg-success-soft text-success"
+                                : pullRequest.pullRequestState === "merged"
+                                  ? "bg-accent-soft text-accent"
+                                  : "bg-danger-soft text-danger",
+                            )}
+                          >
                             {pullRequest.pullRequestState}
                           </span>
                         ) : null}
