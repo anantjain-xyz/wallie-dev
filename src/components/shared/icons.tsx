@@ -420,12 +420,12 @@ export function UsersIcon({ className, ...props }: IconProps) {
 /*  Priority indicator icons                                          */
 /* ------------------------------------------------------------------ */
 
-const priorityBarColors: Record<string, { active: string; inactive: string }> = {
+const priorityColors: Record<string, { active: string; inactive: string }> = {
   urgent: { active: "#e2553a", inactive: "#e2553a" },
-  high: { active: "#f2994a", inactive: "#e8e9ec" },
-  medium: { active: "#f2c94c", inactive: "#e8e9ec" },
-  low: { active: "#8b97a8", inactive: "#e8e9ec" },
-  none: { active: "#e8e9ec", inactive: "#e8e9ec" },
+  high: { active: "#f2994a", inactive: "#d5d9e0" },
+  medium: { active: "#f2c94c", inactive: "#d5d9e0" },
+  low: { active: "#8b97a8", inactive: "#d5d9e0" },
+  none: { active: "#d5d9e0", inactive: "#d5d9e0" },
 };
 
 export function PriorityUrgentIcon({ className, ...props }: IconProps) {
@@ -438,16 +438,14 @@ export function PriorityUrgentIcon({ className, ...props }: IconProps) {
       {...props}
     >
       <path
-        d="M3 3.5h10l-1.5 5.5H4.5L3 3.5Z"
+        d="M2.457 6.554 6.971 2.04c.58-.58 1.52-.58 2.1 0l4.514 4.514c.58.58.58 1.519 0 2.1L9.071 13.17c-.58.58-1.52.58-2.1 0L2.457 8.654c-.58-.58-.58-1.52 0-2.1Z"
         fill="#e2553a"
-        fillOpacity="0.12"
+        fillOpacity="0.15"
         stroke="#e2553a"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
+        strokeWidth="1"
       />
-      <path d="M8 5v2.5" stroke="#e2553a" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="8" cy="9" r="0.6" fill="#e2553a" />
-      <path d="M5.5 12h5" stroke="#e2553a" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M8 5v3" stroke="#e2553a" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="8" cy="10" r="0.75" fill="#e2553a" />
     </svg>
   );
 }
@@ -457,17 +455,46 @@ export function PriorityBarIcon({
   priority,
   ...props
 }: IconProps & { priority: string }) {
-  const colors = priorityBarColors[priority] ?? priorityBarColors.none;
+  if (priority === "urgent") {
+    return <PriorityUrgentIcon className={className} {...props} />;
+  }
+
+  if (priority === "none") {
+    return (
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 16 16"
+        className={iconClassName(className)}
+        fill="none"
+        {...props}
+      >
+        <path
+          d="M3 4h10M3 8h10M3 12h10"
+          stroke="#bec2c8"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeDasharray="0.5 3.5"
+        />
+      </svg>
+    );
+  }
+
+  const colors = priorityColors[priority] ?? priorityColors.none;
   const filledBars =
-    priority === "urgent"
-      ? 4
-      : priority === "high"
-        ? 3
-        : priority === "medium"
-          ? 2
-          : priority === "low"
-            ? 1
-            : 0;
+    priority === "high"
+      ? 3
+      : priority === "medium"
+        ? 2
+        : priority === "low"
+          ? 1
+          : 0;
+
+  // Vertical ascending bars (signal strength style), bottom-aligned
+  const bars = [
+    { x: 2, height: 3 },    // shortest
+    { x: 5.5, height: 6 },  // medium
+    { x: 9, height: 9 },    // tallest
+  ];
 
   return (
     <svg
@@ -477,14 +504,14 @@ export function PriorityBarIcon({
       fill="none"
       {...props}
     >
-      {[0, 1, 2, 3].map((i) => (
+      {bars.map((bar, i) => (
         <rect
           key={i}
-          x="3"
-          y={3 + i * 3}
-          width="10"
-          height="1.75"
-          rx="0.875"
+          x={bar.x}
+          y={13 - bar.height}
+          width="2.5"
+          height={bar.height}
+          rx="1"
           fill={i < filledBars ? colors.active : colors.inactive}
         />
       ))}

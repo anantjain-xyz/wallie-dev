@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import { createIssueWithAllocatedNumber, resolveIssueByNumber } from "@/features/issues/client";
@@ -126,18 +126,122 @@ function PropertyRow({
   label: string;
 }) {
   return (
-    <div className="group flex min-h-[32px] items-center rounded-[4px] px-2 transition-colors duration-100 hover:bg-surface-muted">
-      <span className="w-[100px] shrink-0 text-[13px] text-muted">{label}</span>
+    <div className="sidebar-property-row">
+      <span className="w-[88px] shrink-0 text-[13px] text-muted">{label}</span>
       <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }
 
-function SidebarHeading({ title }: { title: string }) {
+function SidebarHeading({
+  action,
+  title,
+}: {
+  action?: React.ReactNode;
+  title: string;
+}) {
   return (
-    <h3 className="mb-1 px-2 pt-4 text-[11px] font-medium uppercase tracking-[0.05em] text-muted first:pt-0">
-      {title}
-    </h3>
+    <div className="mb-0.5 flex items-center justify-between px-2 pt-5 first:pt-0">
+      <h3 className="text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
+        {title}
+      </h3>
+      {action}
+    </div>
+  );
+}
+
+type DropdownOption<T extends string> = {
+  icon?: React.ReactNode;
+  label: string;
+  value: T;
+};
+
+function PropertyDropdown<T extends string>({
+  icon,
+  onChange,
+  options,
+  placeholder = "None",
+  value,
+}: {
+  icon?: React.ReactNode;
+  onChange: (value: T) => void;
+  options: DropdownOption<T>[];
+  placeholder?: string;
+  value: T;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="sidebar-property-trigger"
+      >
+        {icon ?? selected?.icon}
+        <span className="truncate capitalize">{selected?.label ?? placeholder}</span>
+      </button>
+      {open ? (
+        <div className="sidebar-dropdown">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              className={cn(
+                "sidebar-dropdown-item",
+                option.value === value && "sidebar-dropdown-item-active",
+              )}
+            >
+              {option.icon ? (
+                <span className="flex w-4 items-center justify-center">{option.icon}</span>
+              ) : null}
+              <span className="capitalize">{option.label}</span>
+              {option.value === value ? (
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 16 16"
+                  className="ml-auto h-3.5 w-3.5 shrink-0 text-accent"
+                  fill="none"
+                >
+                  <path
+                    d="m3.5 8.5 3 3 6-7"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1058,104 +1162,185 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
 
         {/* ── Properties sidebar ── */}
         <aside className="sticky top-[44px] hidden h-[calc(100vh-44px)] w-[272px] shrink-0 overflow-y-auto border-l border-border lg:block">
-          <div className="px-3 py-4">
-            {/* Properties */}
+          {/* ── Quick actions row ── */}
+          <div className="flex items-center gap-0.5 border-b border-border px-3 py-2">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(
+                  `${window.location.origin}${workspaceIssueDetailPath(initialData.workspace.slug, issue.number)}`,
+                );
+                setSuccessMessage("Issue URL copied.");
+              }}
+              className="sidebar-icon-btn"
+              title="Copy issue URL"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
+                <path d="M9.5 4.5h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2Z" stroke="currentColor" strokeWidth="1.25" />
+                <path d="M11.5 6V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3.5a2 2 0 0 0 2 2h1" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(`#${issue.number}`);
+                setSuccessMessage("Issue ID copied.");
+              }}
+              className="sidebar-icon-btn"
+              title="Copy issue ID"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
+                <path d="M6 3v10M10 3v10M3 6h10M3 10h10" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const branchName = `${issue.number}-${issue.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
+                void navigator.clipboard.writeText(branchName);
+                setSuccessMessage("Branch name copied.");
+              }}
+              className="sidebar-icon-btn"
+              title="Copy branch name"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
+                <circle cx="5" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+                <circle cx="5" cy="11.5" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+                <circle cx="11" cy="6.5" r="1.5" stroke="currentColor" strokeWidth="1.25" />
+                <path d="M5 6v4M9.5 6.5C8 6.5 5 6.5 5 8.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyAsMarkdown()}
+              disabled={isCopying}
+              className="sidebar-icon-btn"
+              title="Copy as Markdown"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none">
+                <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
+                <path d="M5 9.5V6.5l1.5 2 1.5-2v3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M10.5 8 12 9.5M12 8l-1.5 1.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="px-3 py-3">
+            {/* ── Properties ── */}
             <SidebarHeading title="Properties" />
-            <div>
+            <div className="mt-0.5">
               <PropertyRow label="Status">
-                <div className="flex items-center gap-1.5">
-                  <StatusIcon status={issue.status} />
-                  <select
-                    value={issue.status}
-                    onChange={(event) =>
-                      void saveIssuePatch({ status: event.target.value as IssueStatus })
-                    }
-                    className="sidebar-select"
-                  >
-                    {ISSUE_STATUS_VALUES.map((status) => (
-                      <option key={status} value={status}>
-                        {formatIssueStatus(status)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <PropertyDropdown
+                  icon={<StatusIcon status={issue.status} />}
+                  value={issue.status}
+                  onChange={(status) =>
+                    void saveIssuePatch({ status: status as IssueStatus })
+                  }
+                  options={ISSUE_STATUS_VALUES.map((status) => ({
+                    icon: <StatusIcon status={status} />,
+                    label: formatIssueStatus(status),
+                    value: status,
+                  }))}
+                />
               </PropertyRow>
 
               <PropertyRow label="Priority">
-                <div className="flex items-center gap-1.5">
-                  <PriorityBarIcon priority={issue.priority} />
-                  <select
-                    value={issue.priority}
-                    onChange={(event) =>
-                      void saveIssuePatch({
-                        priority: event.target.value as IssueDetail["priority"],
-                      })
-                    }
-                    className="sidebar-select capitalize"
-                  >
-                    {ISSUE_PRIORITY_VALUES.map((priority) => (
-                      <option key={priority} value={priority}>
-                        {priority}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <PropertyDropdown
+                  icon={<PriorityBarIcon priority={issue.priority} />}
+                  value={issue.priority}
+                  onChange={(priority) =>
+                    void saveIssuePatch({
+                      priority: priority as IssueDetail["priority"],
+                    })
+                  }
+                  options={ISSUE_PRIORITY_VALUES.map((priority) => ({
+                    icon: <PriorityBarIcon priority={priority} />,
+                    label: priority === "none" ? "No priority" : priority,
+                    value: priority,
+                  }))}
+                />
               </PropertyRow>
 
               <PropertyRow label="Assignee">
-                <select
-                  value={issue.assigneeMemberId ?? ""}
-                  onChange={(event) =>
-                    void saveIssuePatch({ assignee_member_id: event.target.value || null })
+                <PropertyDropdown
+                  icon={
+                    issue.assigneeMemberId ? (
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[9px] font-bold text-accent">
+                        {(initialData.members.find((m) => m.id === issue.assigneeMemberId)?.fullName ??
+                          initialData.members.find((m) => m.id === issue.assigneeMemberId)?.username ??
+                          "?")[0]?.toUpperCase()}
+                      </span>
+                    ) : (
+                      <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-muted" fill="none">
+                        <circle cx="8" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.25" />
+                        <path d="M3.5 13.5c.6-2.5 2.2-4 4.5-4s3.9 1.5 4.5 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                      </svg>
+                    )
                   }
-                  className="sidebar-select"
-                >
-                  <option value="">Unassigned</option>
-                  {initialData.members.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.fullName ?? member.username ?? "Unknown member"}
-                    </option>
-                  ))}
-                </select>
+                  value={issue.assigneeMemberId ?? ""}
+                  onChange={(value) =>
+                    void saveIssuePatch({ assignee_member_id: value || null })
+                  }
+                  placeholder="Assign"
+                  options={[
+                    { icon: <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 text-muted" fill="none"><circle cx="8" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.25" /><path d="M3.5 13.5c.6-2.5 2.2-4 4.5-4s3.9 1.5 4.5 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" /></svg>, label: "Unassigned", value: "" },
+                    ...initialData.members.map((member) => ({
+                      icon: (
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[9px] font-bold text-accent">
+                          {(member.fullName ?? member.username ?? "?")[0]?.toUpperCase()}
+                        </span>
+                      ),
+                      label: member.fullName ?? member.username ?? "Unknown member",
+                      value: member.id,
+                    })),
+                  ]}
+                />
               </PropertyRow>
 
               <PropertyRow label="Estimate">
-                <select
+                <PropertyDropdown
+                  icon={
+                    <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-muted" fill="none">
+                      <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.25" />
+                      <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1" />
+                      <circle cx="8" cy="8" r="0.75" fill="currentColor" />
+                    </svg>
+                  }
                   value={issue.estimatePoints === null ? "null" : String(issue.estimatePoints)}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     void saveIssuePatch({
-                      estimate_points:
-                        event.target.value === "null" ? null : Number(event.target.value),
+                      estimate_points: value === "null" ? null : Number(value),
                     })
                   }
-                  className="sidebar-select"
-                >
-                  {ISSUE_ESTIMATE_VALUES.map((estimate) => (
-                    <option
-                      key={estimate === null ? "null" : estimate}
-                      value={estimate === null ? "null" : String(estimate)}
-                    >
-                      {formatIssueEstimate(estimate)}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Set estimate"
+                  options={ISSUE_ESTIMATE_VALUES.map((estimate) => ({
+                    label: formatIssueEstimate(estimate),
+                    value: estimate === null ? "null" : String(estimate),
+                  }))}
+                />
               </PropertyRow>
 
               <PropertyRow label="Repository">
-                <select
-                  value={issue.githubRepositoryId ?? ""}
-                  onChange={(event) =>
-                    void saveIssuePatch({ github_repository_id: event.target.value || null })
+                <PropertyDropdown
+                  icon={
+                    <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-muted" fill="none">
+                      <path d="M5.5 2.5v11M5.5 2.5h5a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M5.5 13.5 3.5 12l2-1.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
                   }
-                  className="sidebar-select"
-                >
-                  <option value="">None</option>
-                  {initialData.github.repositories.map((repository) => (
-                    <option key={repository.id} value={repository.id}>
-                      {repository.fullName}
-                    </option>
-                  ))}
-                </select>
+                  value={issue.githubRepositoryId ?? ""}
+                  onChange={(value) =>
+                    void saveIssuePatch({ github_repository_id: value || null })
+                  }
+                  placeholder="None"
+                  options={[
+                    { label: "None", value: "" },
+                    ...initialData.github.repositories.map((repository) => ({
+                      label: repository.fullName,
+                      value: repository.id,
+                    })),
+                  ]}
+                />
               </PropertyRow>
             </div>
 
@@ -1180,12 +1365,12 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             ) : null}
 
             {/* ── Parent issue ── */}
-            <div className="mt-3 border-t border-border pt-3">
+            <div className="sidebar-section">
               <SidebarHeading title="Parent" />
               {relationshipGroups.parentIssues.length > 0 ? (
-                <div className="space-y-1 px-2">
+                <div className="space-y-0.5 px-2 pt-1">
                   {relationshipGroups.parentIssues.map((parentEntry) => (
-                    <div key={parentEntry.linkId} className="group flex items-center justify-between gap-2">
+                    <div key={parentEntry.linkId} className="group flex items-center justify-between gap-2 rounded-[4px] px-1 py-1 hover:bg-surface-muted">
                       <Link
                         href={workspaceIssueDetailPath(
                           initialData.workspace.slug,
@@ -1208,7 +1393,7 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                 </div>
               ) : (
                 <form
-                  className="flex items-center gap-1.5 px-2"
+                  className="flex items-center gap-1.5 px-2 pt-1"
                   onSubmit={(event) => {
                     event.preventDefault();
                     void addRelationship({
@@ -1238,9 +1423,9 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             </div>
 
             {/* ── Sub-issues (sidebar add) ── */}
-            <div className="mt-3 border-t border-border pt-3">
+            <div className="sidebar-section">
               <SidebarHeading title="Sub-issues" />
-              <div className="space-y-2 px-2">
+              <div className="space-y-2 px-2 pt-1">
                 <div className="space-y-1.5">
                   <input
                     autoComplete="off"
@@ -1308,9 +1493,9 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             </div>
 
             {/* ── Relationships ── */}
-            <div className="mt-3 border-t border-border pt-3">
+            <div className="sidebar-section">
               <SidebarHeading title="Relations" />
-              <div className="space-y-3 px-2">
+              <div className="space-y-3 px-2 pt-1">
                 {/* Add forms */}
                 {([
                   { label: "Blocked by", state: blockedByNumber, setter: setBlockedByNumber, linkType: "blocked_by" as const, successLabel: "Blocked-by relationship added." },
@@ -1360,12 +1545,12 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
                   { entries: relationshipGroups.related, heading: "Related" },
                 ] as const).map(({ entries, heading }) =>
                   entries.length > 0 ? (
-                    <div key={heading} className="space-y-1">
+                    <div key={heading} className="space-y-0.5">
                       <span className="text-[11px] font-medium text-muted">{heading}</span>
                       {entries.map((entry) => (
                         <div
                           key={entry.linkId}
-                          className="group flex items-center gap-2"
+                          className="group flex items-center gap-2 rounded-[4px] px-1 py-1 hover:bg-surface-muted"
                         >
                           <StatusIcon status={entry.issue.status} />
                           <Link
@@ -1394,9 +1579,9 @@ export function IssueDetailPageClient({ initialData }: IssueDetailPageClientProp
             </div>
 
             {/* ── GitHub PRs ── */}
-            <div className="mt-3 border-t border-border pt-3">
+            <div className="sidebar-section">
               <SidebarHeading title="Pull Requests" />
-              <div className="space-y-2 px-2">
+              <div className="space-y-2 px-2 pt-1">
                 {pullRequests.length === 0 ? (
                   <p className="text-[12px] leading-5 text-muted">No linked PRs yet.</p>
                 ) : (
