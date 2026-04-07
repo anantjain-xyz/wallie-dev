@@ -481,19 +481,13 @@ export function PriorityBarIcon({
 
   const colors = priorityColors[priority] ?? priorityColors.none;
   const filledBars =
-    priority === "high"
-      ? 3
-      : priority === "medium"
-        ? 2
-        : priority === "low"
-          ? 1
-          : 0;
+    priority === "high" ? 3 : priority === "medium" ? 2 : priority === "low" ? 1 : 0;
 
   // Vertical ascending bars (signal strength style), bottom-aligned
   const bars = [
-    { x: 2, height: 3 },    // shortest
-    { x: 5.5, height: 6 },  // medium
-    { x: 9, height: 9 },    // tallest
+    { x: 2, height: 3 }, // shortest
+    { x: 5.5, height: 6 }, // medium
+    { x: 9, height: 9 }, // tallest
   ];
 
   return (
