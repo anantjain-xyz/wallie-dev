@@ -38,6 +38,51 @@ export async function POST(request: Request) {
   }
 
   const payload = JSON.parse(payloadStr);
+
+  // Handle modal submission (view_submission) before action dispatch
+  if (payload.type === "view_submission" && payload.view?.callback_id === "pipeline_feedback") {
+    const metadata = JSON.parse(payload.view.private_metadata) as {
+      pipeline_issue_id: string;
+      version: number;
+    };
+
+    const feedbackText = payload.view.state?.values?.feedback_block?.feedback_input?.value ?? "";
+
+    if (!feedbackText.trim()) {
+      return NextResponse.json({
+        errors: { feedback_block: "Please provide feedback on what needs to change." },
+        response_action: "errors",
+      });
+    }
+
+    const result = await handleRejection({
+      feedbackText: feedbackText.trim(),
+      pipelineIssueId: metadata.pipeline_issue_id,
+      version: metadata.version,
+    });
+
+    if (!result.success) {
+      return NextResponse.json({
+        errors: { feedback_block: result.error ?? "Failed to process feedback." },
+        response_action: "errors",
+      });
+    }
+
+    // Trigger background processing for the re-generation job
+    if (!result.escalated) {
+      after(async () => {
+        try {
+          await processQueuedAgentJobs();
+        } catch (error) {
+          console.error("Pipeline feedback re-generation failed", { error });
+        }
+      });
+    }
+
+    // Close the modal
+    return NextResponse.json({ response_action: "clear" });
+  }
+
   const actions = payload.actions as Array<{
     action_id: string;
     value: string;
@@ -144,50 +189,6 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ ok: true });
-  }
-
-  // Handle modal submission (view_submission)
-  if (payload.type === "view_submission" && payload.view?.callback_id === "pipeline_feedback") {
-    const metadata = JSON.parse(payload.view.private_metadata) as {
-      pipeline_issue_id: string;
-      version: number;
-    };
-
-    const feedbackText = payload.view.state?.values?.feedback_block?.feedback_input?.value ?? "";
-
-    if (!feedbackText.trim()) {
-      return NextResponse.json({
-        response_action: "errors",
-        errors: { feedback_block: "Please provide feedback on what needs to change." },
-      });
-    }
-
-    const result = await handleRejection({
-      feedbackText: feedbackText.trim(),
-      pipelineIssueId: metadata.pipeline_issue_id,
-      version: metadata.version,
-    });
-
-    if (!result.success) {
-      return NextResponse.json({
-        response_action: "errors",
-        errors: { feedback_block: result.error ?? "Failed to process feedback." },
-      });
-    }
-
-    // Trigger background processing for the re-generation job
-    if (!result.escalated) {
-      after(async () => {
-        try {
-          await processQueuedAgentJobs();
-        } catch (error) {
-          console.error("Pipeline feedback re-generation failed", { error });
-        }
-      });
-    }
-
-    // Close the modal
-    return NextResponse.json({ response_action: "clear" });
   }
 
   return NextResponse.json({ ok: true });
