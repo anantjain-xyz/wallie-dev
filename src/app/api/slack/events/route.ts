@@ -51,7 +51,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const payload = JSON.parse(rawBody);
+  // A signed-but-malformed body should NOT throw 500, because Slack would
+  // retry up to 3x on non-2xx responses. Ack with ok:true and drop.
+  let payload: { event?: Record<string, unknown>; team_id?: string };
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ ok: true });
+  }
   const event = payload.event;
 
   if (!event) {
@@ -183,6 +190,12 @@ export async function POST(request: Request) {
     .single();
 
   if (pipelineError || !pipelineIssue) {
+    // 23505 = unique_violation. A concurrent mention raced us and already
+    // created the pipeline_issue for this (workspace_id, linear_issue_id).
+    // Treat it as a silent dedup hit: the other request will enqueue the job.
+    if (pipelineError && "code" in pipelineError && pipelineError.code === "23505") {
+      return NextResponse.json({ ok: true });
+    }
     console.error("Failed to create pipeline_issue", { error: pipelineError });
     return NextResponse.json({ ok: true });
   }

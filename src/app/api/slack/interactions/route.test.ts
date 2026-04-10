@@ -69,6 +69,24 @@ function makeInteractionRequest(
   });
 }
 
+// Every non-verification path now resolves teamId -> workspace_id via
+// slack_installations before dispatch. This helper installs a from() mock
+// that returns a matching install for team "T1".
+function installSlackLookup(workspaceId = "ws-1", botTokenEncrypted = "enc") {
+  const fromMock = vi.fn().mockImplementation(() => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({
+      data: { workspace_id: workspaceId, bot_token_encrypted: botTokenEncrypted },
+      error: null,
+    });
+    return chain;
+  });
+  mocked.createSupabaseAdminClient.mockReturnValue({ from: fromMock });
+  return fromMock;
+}
+
 describe("POST /api/slack/interactions", () => {
   beforeAll(() => {
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
@@ -79,7 +97,10 @@ describe("POST /api/slack/interactions", () => {
   });
 
   it("rejects requests with invalid signatures", async () => {
-    const payload = { actions: [{ action_id: "pipeline_approve", value: "{}" }] };
+    const payload = {
+      actions: [{ action_id: "pipeline_approve", value: "{}" }],
+      team: { id: "T1" },
+    };
     const response = await POST(makeInteractionRequest(payload, { signature: "v0=bad" }));
 
     expect(response.status).toBe(401);
@@ -105,7 +126,37 @@ describe("POST /api/slack/interactions", () => {
     expect(response.status).toBe(400);
   });
 
+  it("returns 400 when payload has no team id", async () => {
+    const payload = {
+      actions: [{ action_id: "pipeline_approve", value: "{}" }],
+    };
+    const response = await POST(makeInteractionRequest(payload));
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 403 when the Slack team is unknown", async () => {
+    const fromMock = vi.fn().mockImplementation(() => {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockReturnValue(chain);
+      chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+      return chain;
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue({ from: fromMock });
+
+    const payload = {
+      actions: [{ action_id: "pipeline_approve", value: "{}" }],
+      team: { id: "T-UNKNOWN" },
+    };
+    const response = await POST(makeInteractionRequest(payload));
+
+    expect(response.status).toBe(403);
+    expect(mocked.handleApproval).not.toHaveBeenCalled();
+  });
+
   it("handles successful approval", async () => {
+    installSlackLookup("ws-1");
     mocked.handleApproval.mockResolvedValue({ success: true });
 
     const payload = {
@@ -115,12 +166,14 @@ describe("POST /api/slack/interactions", () => {
           value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 2 }),
         },
       ],
+      team: { id: "T1" },
     };
 
     const response = await POST(makeInteractionRequest(payload));
     const json = await response.json();
 
     expect(mocked.handleApproval).toHaveBeenCalledWith({
+      expectedWorkspaceId: "ws-1",
       pipelineIssueId: "pi-1",
       version: 2,
     });
@@ -129,6 +182,7 @@ describe("POST /api/slack/interactions", () => {
   });
 
   it("returns ephemeral error on stale version approval", async () => {
+    installSlackLookup();
     mocked.handleApproval.mockResolvedValue({
       error: "Approval failed: spec version is stale or already reviewed.",
       success: false,
@@ -141,6 +195,7 @@ describe("POST /api/slack/interactions", () => {
           value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
         },
       ],
+      team: { id: "T1" },
     };
 
     const response = await POST(makeInteractionRequest(payload));
@@ -151,6 +206,7 @@ describe("POST /api/slack/interactions", () => {
   });
 
   it("handles double-click approval idempotently", async () => {
+    installSlackLookup();
     mocked.handleApproval.mockResolvedValue({
       error: "Approval failed: spec version is stale or already reviewed.",
       success: false,
@@ -163,6 +219,7 @@ describe("POST /api/slack/interactions", () => {
           value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
         },
       ],
+      team: { id: "T1" },
     };
 
     const response = await POST(makeInteractionRequest(payload));
@@ -171,23 +228,12 @@ describe("POST /api/slack/interactions", () => {
     expect(response.status).toBe(200);
   });
 
-  it("opens feedback modal on request changes", async () => {
+  it("opens feedback modal on request changes using the signed team's bot token", async () => {
     const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: () => ({ ok: true }) });
     vi.stubGlobal("fetch", mockFetch);
 
     mocked.decryptSecretValue.mockReturnValue("xoxb-test-token");
-
-    const fromMock = vi.fn().mockImplementation(() => {
-      const chain: Record<string, unknown> = {};
-      chain.select = vi.fn().mockReturnValue(chain);
-      chain.eq = vi.fn().mockReturnValue(chain);
-      chain.maybeSingle = vi.fn().mockResolvedValue({
-        data: { workspace_id: "ws-1", bot_token_encrypted: "enc" },
-        error: null,
-      });
-      return chain;
-    });
-    mocked.createSupabaseAdminClient.mockReturnValue({ from: fromMock });
+    installSlackLookup("ws-1", "enc");
 
     const payload = {
       actions: [
@@ -196,6 +242,7 @@ describe("POST /api/slack/interactions", () => {
           value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
         },
       ],
+      team: { id: "T1" },
       trigger_id: "trigger-123",
     };
 
@@ -208,15 +255,24 @@ describe("POST /api/slack/interactions", () => {
       expect.objectContaining({ method: "POST" }),
     );
 
+    // Verify the modal's private_metadata carries the pipeline_issue_id + version
+    // so the downstream view_submission handler has what it needs.
+    const fetchCall = mockFetch.mock.calls[0]!;
+    const requestBody = JSON.parse(fetchCall[1].body as string);
+    const metadata = JSON.parse(requestBody.view.private_metadata);
+    expect(metadata).toEqual({ pipeline_issue_id: "pi-1", version: 1 });
+
     vi.unstubAllGlobals();
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
   });
 
   it("handles view_submission with feedback text", async () => {
+    installSlackLookup("ws-1");
     mocked.handleRejection.mockResolvedValue({ escalated: false, success: true });
     mocked.processQueuedAgentJobs.mockResolvedValue({});
 
     const payload = {
+      team: { id: "T1" },
       type: "view_submission",
       view: {
         callback_id: "pipeline_feedback",
@@ -237,6 +293,7 @@ describe("POST /api/slack/interactions", () => {
     const json = await response.json();
 
     expect(mocked.handleRejection).toHaveBeenCalledWith({
+      expectedWorkspaceId: "ws-1",
       feedbackText: "Add error handling section",
       pipelineIssueId: "pi-1",
       version: 1,
@@ -245,7 +302,9 @@ describe("POST /api/slack/interactions", () => {
   });
 
   it("rejects empty feedback text in view_submission", async () => {
+    installSlackLookup();
     const payload = {
+      team: { id: "T1" },
       type: "view_submission",
       view: {
         callback_id: "pipeline_feedback",
@@ -270,9 +329,11 @@ describe("POST /api/slack/interactions", () => {
   });
 
   it("does not trigger re-generation when rejection causes escalation", async () => {
+    installSlackLookup();
     mocked.handleRejection.mockResolvedValue({ escalated: true, success: true });
 
     const payload = {
+      team: { id: "T1" },
       type: "view_submission",
       view: {
         callback_id: "pipeline_feedback",
@@ -294,7 +355,8 @@ describe("POST /api/slack/interactions", () => {
   });
 
   it("returns ok for empty actions array", async () => {
-    const payload = { actions: [] };
+    installSlackLookup();
+    const payload = { actions: [], team: { id: "T1" } };
     const response = await POST(makeInteractionRequest(payload));
     const json = await response.json();
 

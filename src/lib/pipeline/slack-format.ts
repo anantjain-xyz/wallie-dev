@@ -2,37 +2,49 @@ import "server-only";
 
 import type { ProductSpec } from "./types";
 
+// Slack mrkdwn escape: `<url|label>` is rendered as a clickable link and
+// `<!channel>` etc are control sequences. LLM-generated spec fields flow
+// into mrkdwn sections, so any unescaped `<` allows a Linear ticket author
+// to plant phishing links in the reviewer channel even if the LLM ignores
+// the injection attempt and simply quotes the hostile string verbatim.
+// Slack's documented escape rule: `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`.
+// Order matters — escape `&` first so we don't double-escape.
+export function escapeMrkdwn(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function formatSpecBlocks(input: {
   linearUrl: string | null;
   pipelineIssueId: string;
   spec: ProductSpec;
   version: number;
 }): Record<string, unknown>[] {
+  const esc = escapeMrkdwn;
   const blocks: Record<string, unknown>[] = [
     {
       text: {
-        text: `*${input.spec.title}* (v${input.version})`,
+        text: `*${esc(input.spec.title)}* (v${input.version})`,
         type: "mrkdwn",
       },
       type: "header",
     },
     {
       text: {
-        text: `*Problem Statement*\n${input.spec.problem_statement}`,
+        text: `*Problem Statement*\n${esc(input.spec.problem_statement)}`,
         type: "mrkdwn",
       },
       type: "section",
     },
     {
       text: {
-        text: `*User Story*\n${input.spec.user_story}`,
+        text: `*User Story*\n${esc(input.spec.user_story)}`,
         type: "mrkdwn",
       },
       type: "section",
     },
     {
       text: {
-        text: `*Acceptance Criteria*\n${input.spec.acceptance_criteria.map((c) => `- ${c}`).join("\n")}`,
+        text: `*Acceptance Criteria*\n${input.spec.acceptance_criteria.map((c) => `- ${esc(c)}`).join("\n")}`,
         type: "mrkdwn",
       },
       type: "section",
@@ -42,7 +54,7 @@ export function formatSpecBlocks(input: {
   if (input.spec.constraints.length > 0) {
     blocks.push({
       text: {
-        text: `*Constraints*\n${input.spec.constraints.map((c) => `- ${c}`).join("\n")}`,
+        text: `*Constraints*\n${input.spec.constraints.map((c) => `- ${esc(c)}`).join("\n")}`,
         type: "mrkdwn",
       },
       type: "section",
@@ -52,7 +64,7 @@ export function formatSpecBlocks(input: {
   if (input.spec.non_goals.length > 0) {
     blocks.push({
       text: {
-        text: `*Non-Goals*\n${input.spec.non_goals.map((n) => `- ${n}`).join("\n")}`,
+        text: `*Non-Goals*\n${input.spec.non_goals.map((n) => `- ${esc(n)}`).join("\n")}`,
         type: "mrkdwn",
       },
       type: "section",
@@ -62,7 +74,7 @@ export function formatSpecBlocks(input: {
   if (input.spec.open_questions.length > 0) {
     blocks.push({
       text: {
-        text: `*Open Questions*\n${input.spec.open_questions.map((q) => `- ${q}`).join("\n")}`,
+        text: `*Open Questions*\n${input.spec.open_questions.map((q) => `- ${esc(q)}`).join("\n")}`,
         type: "mrkdwn",
       },
       type: "section",

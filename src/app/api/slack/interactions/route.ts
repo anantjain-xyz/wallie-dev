@@ -2,6 +2,8 @@ import { after, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
 
 function verifySlackSignature(body: string, timestamp: string, signature: string): boolean {
@@ -37,14 +39,58 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing payload" }, { status: 400 });
   }
 
-  const payload = JSON.parse(payloadStr);
+  let payload: {
+    actions?: Array<{ action_id: string; value: string }>;
+    team?: { id?: string };
+    trigger_id?: string;
+    type?: string;
+    view?: {
+      callback_id?: string;
+      private_metadata?: string;
+      state?: { values?: Record<string, Record<string, { value?: string }>> };
+    };
+  };
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch {
+    return NextResponse.json({ error: "Invalid payload JSON" }, { status: 400 });
+  }
+
+  // Resolve the Slack team that sent this interaction to its workspace_id.
+  // Every downstream action (approve, reject, open feedback modal, submit
+  // feedback) is scoped to this workspace. Without this check a user in
+  // workspace A could approve/reject a pipeline_issue in workspace B simply
+  // by knowing its UUID, because the handlers previously only gated on
+  // (pipelineIssueId, version, status).
+  const teamId = payload.team?.id;
+  if (!teamId) {
+    return NextResponse.json({ error: "Missing team id" }, { status: 400 });
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: slackInstall } = await admin
+    .from("slack_installations")
+    .select("workspace_id, bot_token_encrypted")
+    .eq("team_id", teamId)
+    .maybeSingle();
+
+  if (!slackInstall) {
+    return NextResponse.json({ error: "Unknown Slack workspace" }, { status: 403 });
+  }
+
+  const expectedWorkspaceId = slackInstall.workspace_id;
 
   // Handle modal submission (view_submission) before action dispatch
   if (payload.type === "view_submission" && payload.view?.callback_id === "pipeline_feedback") {
-    const metadata = JSON.parse(payload.view.private_metadata) as {
-      pipeline_issue_id: string;
-      version: number;
-    };
+    let metadata: { pipeline_issue_id: string; version: number };
+    try {
+      metadata = JSON.parse(payload.view.private_metadata ?? "") as {
+        pipeline_issue_id: string;
+        version: number;
+      };
+    } catch {
+      return NextResponse.json({ error: "Invalid view metadata" }, { status: 400 });
+    }
 
     const feedbackText = payload.view.state?.values?.feedback_block?.feedback_input?.value ?? "";
 
@@ -56,6 +102,7 @@ export async function POST(request: Request) {
     }
 
     const result = await handleRejection({
+      expectedWorkspaceId,
       feedbackText: feedbackText.trim(),
       pipelineIssueId: metadata.pipeline_issue_id,
       version: metadata.version,
@@ -103,6 +150,7 @@ export async function POST(request: Request) {
 
   if (action.action_id === "pipeline_approve") {
     const result = await handleApproval({
+      expectedWorkspaceId,
       pipelineIssueId: actionValue.pipeline_issue_id,
       version: actionValue.version,
     });
@@ -126,66 +174,47 @@ export async function POST(request: Request) {
   if (action.action_id === "pipeline_request_changes") {
     // For request changes, we need feedback text.
     // Open a modal to collect feedback if this is the initial button click.
-    const triggerId = payload.trigger_id as string;
+    const triggerId = payload.trigger_id;
 
     if (triggerId) {
-      // Open a modal for feedback input
-      const { decryptSecretValue } = await import("@/lib/secrets/crypto");
-      const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
-      const admin = createSupabaseAdminClient();
+      // Use the bot token from the Slack team that sent the click — NOT a
+      // lookup keyed by pipeline_issue.workspace_id, which is user-supplied
+      // and would leak another workspace's token if spoofed.
+      const botToken = decryptSecretValue(slackInstall.bot_token_encrypted);
 
-      // Get bot token from the workspace associated with this pipeline issue
-      const { data: pipelineIssue } = await admin
-        .from("pipeline_issues")
-        .select("workspace_id")
-        .eq("id", actionValue.pipeline_issue_id)
-        .maybeSingle();
-
-      if (pipelineIssue) {
-        const { data: slackInstall } = await admin
-          .from("slack_installations")
-          .select("bot_token_encrypted")
-          .eq("workspace_id", pipelineIssue.workspace_id)
-          .maybeSingle();
-
-        if (slackInstall) {
-          const botToken = decryptSecretValue(slackInstall.bot_token_encrypted);
-
-          await fetch("https://slack.com/api/views.open", {
-            body: JSON.stringify({
-              trigger_id: triggerId,
-              view: {
-                callback_id: "pipeline_feedback",
-                private_metadata: JSON.stringify(actionValue),
-                submit: { text: "Submit Feedback", type: "plain_text" },
-                title: { text: "Request Changes", type: "plain_text" },
-                blocks: [
-                  {
-                    block_id: "feedback_block",
-                    element: {
-                      action_id: "feedback_input",
-                      multiline: true,
-                      placeholder: {
-                        text: "What needs to change in this spec?",
-                        type: "plain_text",
-                      },
-                      type: "plain_text_input",
-                    },
-                    label: { text: "Feedback", type: "plain_text" },
-                    type: "input",
+      await fetch("https://slack.com/api/views.open", {
+        body: JSON.stringify({
+          trigger_id: triggerId,
+          view: {
+            callback_id: "pipeline_feedback",
+            private_metadata: JSON.stringify(actionValue),
+            submit: { text: "Submit Feedback", type: "plain_text" },
+            title: { text: "Request Changes", type: "plain_text" },
+            blocks: [
+              {
+                block_id: "feedback_block",
+                element: {
+                  action_id: "feedback_input",
+                  multiline: true,
+                  placeholder: {
+                    text: "What needs to change in this spec?",
+                    type: "plain_text",
                   },
-                ],
-                type: "modal",
+                  type: "plain_text_input",
+                },
+                label: { text: "Feedback", type: "plain_text" },
+                type: "input",
               },
-            }),
-            headers: {
-              Authorization: `Bearer ${botToken}`,
-              "Content-Type": "application/json",
-            },
-            method: "POST",
-          });
-        }
-      }
+            ],
+            type: "modal",
+          },
+        }),
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
     }
 
     return NextResponse.json({ ok: true });

@@ -90,6 +90,12 @@ create index pipeline_issues_issue_id_idx
 create index pipeline_issues_linear_issue_id_idx
   on public.pipeline_issues (linear_issue_id);
 
+-- Prevent duplicate pipeline rows for the same Linear issue within a workspace.
+-- Partial index so rows without a linear_issue_id (e.g., non-Linear sources later) are unrestricted.
+create unique index pipeline_issues_workspace_linear_issue_idx
+  on public.pipeline_issues (workspace_id, linear_issue_id)
+  where linear_issue_id is not null;
+
 create unique index pipeline_issues_slack_thread_idx
   on public.pipeline_issues (slack_channel_id, slack_thread_ts)
   where slack_channel_id is not null and slack_thread_ts is not null;
@@ -120,7 +126,12 @@ alter table public.pipeline_artifacts enable row level security;
 -- Service role gets full access (already granted via "grant all on all tables")
 -- For authenticated users: read-only access scoped to workspace membership
 
-grant select on public.slack_installations to authenticated;
+-- slack_installations holds the encrypted bot token. Match the workspace_secrets pattern:
+-- fully revoke from anon/authenticated so the encrypted token can only be read server-side
+-- via the service role. The RLS policy below is belt-and-suspenders in case a future
+-- migration accidentally re-grants SELECT.
+revoke all on public.slack_installations from anon, authenticated;
+
 grant select on public.pipeline_issues to authenticated;
 grant select on public.pipeline_artifacts to authenticated;
 

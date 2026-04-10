@@ -130,6 +130,40 @@ describe("slack block kit formatting", () => {
       const text = header.text as { text: string };
       expect(text.text).toContain("v5");
     });
+
+    it("escapes Slack mrkdwn link syntax in spec fields", () => {
+      // A malicious Linear description that survives the product-agent prompt
+      // injection defense and ends up verbatim in a spec field must not turn
+      // into a clickable link when rendered into a mrkdwn section. Slack
+      // interprets `<url|label>` as a link, so `<`, `>`, `&` must be escaped.
+      const hostileSpec: ProductSpec = {
+        ...baseSpec,
+        acceptance_criteria: ["Valid criterion", "<http://evil.example|Click here>"],
+        problem_statement: "See <http://phishing.example|urgent> for details & more",
+        title: "Feature <tag> & more",
+      };
+
+      const blocks = formatSpecBlocks({
+        linearUrl: null,
+        pipelineIssueId: "pi-1",
+        spec: hostileSpec,
+        version: 1,
+      });
+
+      const allText = blocks
+        .filter((b) => b.type === "header" || b.type === "section")
+        .map((b) => (b.text as { text: string }).text)
+        .join("\n");
+
+      // Raw link syntax must be gone.
+      expect(allText).not.toContain("<http://evil.example|Click here>");
+      expect(allText).not.toContain("<http://phishing.example|urgent>");
+      // Escaped variants must be present.
+      expect(allText).toContain("&lt;http://evil.example|Click here&gt;");
+      expect(allText).toContain("&lt;tag&gt;");
+      // Ampersand is also escaped.
+      expect(allText).toContain("&amp;");
+    });
   });
 
   describe("formatPreScreenFailBlocks", () => {

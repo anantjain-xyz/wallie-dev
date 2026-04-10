@@ -269,6 +269,69 @@ describe("POST /api/slack/events", () => {
     expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
   });
 
+  it("treats 23505 unique_violation on pipeline_issues insert as silent dedup", async () => {
+    const rpcFn = vi.fn().mockResolvedValue({ data: 7, error: null });
+
+    const fromMock = vi.fn().mockImplementation((table: string) => {
+      const tableChain: Record<string, unknown> = {};
+      tableChain.select = vi.fn().mockReturnValue(tableChain);
+      tableChain.eq = vi.fn().mockReturnValue(tableChain);
+      tableChain.insert = vi.fn().mockReturnValue(tableChain);
+      tableChain.rpc = rpcFn;
+
+      if (table === "slack_installations") {
+        tableChain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { workspace_id: "ws-1" },
+          error: null,
+        });
+      } else if (table === "pipeline_issues") {
+        // Pre-insert dedup check: nothing exists yet
+        tableChain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        // The insert races with a concurrent request and hits the partial unique index
+        tableChain.single = vi.fn().mockResolvedValue({
+          data: null,
+          error: { code: "23505", message: "duplicate key value violates unique constraint" },
+        });
+      } else if (table === "workspace_members") {
+        tableChain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { id: "wallie-member-id" },
+          error: null,
+        });
+      } else if (table === "issues") {
+        tableChain.single = vi.fn().mockResolvedValue({
+          data: { id: "anchor-id" },
+          error: null,
+        });
+      } else {
+        tableChain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        tableChain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+      }
+
+      return tableChain;
+    });
+
+    const mockAdmin = { from: fromMock, rpc: rpcFn };
+    mocked.createSupabaseAdminClient.mockReturnValue(mockAdmin);
+
+    const body = JSON.stringify({
+      event: {
+        channel: "C1",
+        text: "<@U123> https://linear.app/team/issue/TEAM-111",
+        ts: "1.1",
+        type: "app_mention",
+      },
+      team_id: "T1",
+    });
+
+    const response = await POST(makeRequest(body));
+    const json = await response.json();
+
+    // 23505 must return ok:true silently (concurrent request will enqueue the job)
+    expect(json.ok).toBe(true);
+    // We must NOT have enqueued a second agent_jobs row after the 23505
+    expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
+  });
+
   it("handles unknown Slack team gracefully", async () => {
     const fromMock = vi.fn().mockImplementation(() => {
       const chain: Record<string, unknown> = {};

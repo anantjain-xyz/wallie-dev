@@ -15,7 +15,7 @@ import {
   postSlackMessage,
 } from "./slack-format";
 import { approvalTimestampField, nextPhase, shouldEscalate } from "./state-machine";
-import type { ProductSpec } from "./types";
+import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey, type ProductSpec } from "./types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type PipelineIssueRow = Tables<"pipeline_issues">;
@@ -65,15 +65,28 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
 
-    // Check if already generating (debounce)
-    if (pipelineIssue.phase_status === "agent_generating") {
-      // Already in progress from another job, skip
+    // Atomic CAS claim: only proceed if the pipeline_issue is in a non-terminal state.
+    // This prevents a second worker from regenerating a spec that has already been
+    // approved or escalated. Terminal states (approved, escalated) are rejected.
+    // Uses a single UPDATE ... WHERE status IN (...) so the check and set are atomic.
+    const { data: claimed, error: claimError } = await admin
+      .from("pipeline_issues")
+      .update({ phase_status: "agent_generating" })
+      .eq("id", pipelineIssue.id)
+      .in("phase_status", ["agent_generating", "awaiting_review", "rejected"])
+      .select("id")
+      .maybeSingle();
+
+    if (claimError) {
+      await markPipelineJobError(admin, job, claimError.message);
+      return { jobId: job.id, processed: true, result: "error", runId: null };
+    }
+
+    if (!claimed) {
+      // Terminal state — nothing to do for this job.
       await markPipelineJobSuccess(admin, job);
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
-
-    // Mark as generating
-    await updatePipelineIssueStatus(admin, pipelineIssue.id, "agent_generating");
 
     // Run pre-screen
     const preScreenResult = await preScreenIssue({
@@ -210,18 +223,24 @@ export async function processPipelineJob(input: {
 
 export async function handleApproval(input: {
   admin?: AdminClient;
+  expectedWorkspaceId: string;
   pipelineIssueId: string;
   version: number;
 }): Promise<{ error?: string; success: boolean }> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
-  // CAS: only approve if version matches and status is awaiting_review
+  // CAS: only approve if version matches, status is awaiting_review, AND the
+  // pipeline_issue belongs to the workspace of the Slack team that sent the
+  // interaction. expectedWorkspaceId is resolved from the signed Slack team_id
+  // in the interactions route, so this prevents one workspace from approving
+  // another workspace's pipeline_issue by guessing its UUID.
   const { data, error } = await admin
     .from("pipeline_issues")
     .update({
       phase_status: "approved",
     })
     .eq("id", input.pipelineIssueId)
+    .eq("workspace_id", input.expectedWorkspaceId)
     .eq("current_artifact_version", input.version)
     .eq("phase_status", "awaiting_review")
     .select("id, phase, workspace_id, slack_channel_id, slack_thread_ts, linear_issue_url")
@@ -246,7 +265,17 @@ export async function handleApproval(input: {
 
   // Advance to next phase (if any)
   const next = nextPhase(data.phase);
-  if (next && next !== "shipped") {
+  if (next === "shipped") {
+    // Terminal transition: engineering approval → shipped
+    await admin
+      .from("pipeline_issues")
+      .update({
+        phase: "shipped",
+        phase_status: "approved",
+      })
+      .eq("id", input.pipelineIssueId);
+  } else if (next) {
+    // Intermediate transition: move to next phase and kick off generation
     await admin
       .from("pipeline_issues")
       .update({
@@ -265,6 +294,7 @@ export async function handleApproval(input: {
 
 export async function handleRejection(input: {
   admin?: AdminClient;
+  expectedWorkspaceId: string;
   feedbackText: string;
   pipelineIssueId: string;
   version: number;
@@ -274,6 +304,13 @@ export async function handleRejection(input: {
   // Load current state
   const pipelineIssue = await loadPipelineIssueById(admin, input.pipelineIssueId);
   if (!pipelineIssue) {
+    return { escalated: false, error: "Pipeline issue not found.", success: false };
+  }
+
+  // Cross-workspace guard: the Slack team that sent the feedback modal must
+  // own this pipeline_issue. Checked here (in addition to the CAS below) so
+  // the load-then-branch logic never leaks rows across tenants.
+  if (pipelineIssue.workspace_id !== input.expectedWorkspaceId) {
     return { escalated: false, error: "Pipeline issue not found.", success: false };
   }
 
@@ -287,6 +324,33 @@ export async function handleRejection(input: {
 
   const newRejectionCount = pipelineIssue.rejection_count + 1;
 
+  // Atomic CAS on rejection_count: only the first rejection that observed the
+  // current count can advance it. A concurrent second rejection (e.g. Submit
+  // Feedback double-click) sees rows-updated=0 and exits without double-counting.
+  // This also implicitly re-checks phase_status, version, and workspace_id.
+  const { data: claimedRejection, error: claimRejectionError } = await admin
+    .from("pipeline_issues")
+    .update({ rejection_count: newRejectionCount })
+    .eq("id", input.pipelineIssueId)
+    .eq("workspace_id", input.expectedWorkspaceId)
+    .eq("rejection_count", pipelineIssue.rejection_count)
+    .eq("phase_status", "awaiting_review")
+    .eq("current_artifact_version", input.version)
+    .select("id")
+    .maybeSingle();
+
+  if (claimRejectionError) {
+    return { escalated: false, error: claimRejectionError.message, success: false };
+  }
+
+  if (!claimedRejection) {
+    return {
+      escalated: false,
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    };
+  }
+
   // Save feedback on the current artifact
   await admin
     .from("pipeline_artifacts")
@@ -296,12 +360,12 @@ export async function handleRejection(input: {
     .eq("version", input.version);
 
   if (shouldEscalate(newRejectionCount)) {
-    // Escalation
+    // Escalation. rejection_count was already advanced by the CAS above; only
+    // update phase_status here.
     await admin
       .from("pipeline_issues")
       .update({
         phase_status: "escalated",
-        rejection_count: newRejectionCount,
       })
       .eq("id", input.pipelineIssueId);
 
@@ -342,25 +406,36 @@ export async function handleRejection(input: {
     return { escalated: true, success: true };
   }
 
-  // Not escalated: mark as rejected and enqueue a new generation job
+  // Not escalated: mark as rejected and enqueue a new generation job. rejection_count
+  // was already advanced by the CAS above; only update phase_status here.
   await admin
     .from("pipeline_issues")
     .update({
       phase_status: "rejected",
-      rejection_count: newRejectionCount,
     })
     .eq("id", input.pipelineIssueId);
 
-  // Enqueue a new pipeline job to regenerate with feedback
+  // Enqueue a new pipeline job to regenerate with feedback.
+  // Use the same dedupe_key as the original enqueue so the partial unique index on
+  // agent_jobs(workspace_id, dedupe_key) where status in ('queued','running') prevents
+  // a double-click on Submit Feedback from enqueueing two retry jobs.
   const wallieMember = await loadWallieSystemMember(admin, pipelineIssue.workspace_id);
 
-  await admin.from("agent_jobs").insert({
+  const { error: enqueueError } = await admin.from("agent_jobs").insert({
+    dedupe_key: pipelineIssue.linear_issue_id
+      ? buildPipelineDedupeKey(pipelineIssue.linear_issue_id)
+      : null,
     issue_id: pipelineIssue.issue_id,
-    job_type: "pipeline",
+    job_type: PIPELINE_JOB_TYPE,
     requested_by_member_id: wallieMember?.id ?? null,
     trigger_type: "slack_mention",
     workspace_id: pipelineIssue.workspace_id,
   });
+
+  // 23505 = unique_violation: a concurrent retry already exists. Silent success.
+  if (enqueueError && enqueueError.code !== "23505") {
+    return { escalated: false, error: enqueueError.message, success: false };
+  }
 
   return { escalated: false, success: true };
 }
