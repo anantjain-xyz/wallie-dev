@@ -458,7 +458,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-foreground">
-                      Connected to {githubInstallation.targetType.toLowerCase()}{" "}
+                      Connected to{" "}
+                      {githubInstallation.targetType.charAt(0).toUpperCase() +
+                        githubInstallation.targetType.slice(1).toLowerCase()}{" "}
                       <span className="font-mono">{githubInstallation.targetName}</span>
                     </p>
                     <p className="mt-1 text-sm text-muted">
@@ -532,10 +534,17 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               </div>
             ) : (
               <div className="ui-subpanel space-y-4 p-5">
-                <p className="text-sm leading-7 text-foreground">
-                  Install the workspace GitHub App to sync repositories and let issue PR metadata
-                  flow back into Wallie.
-                </p>
+                <div className="space-y-2">
+                  <p className="text-sm leading-7 text-foreground">
+                    Install the workspace GitHub App so PR status appears on each issue
+                    automatically and Wallie can open PRs from agent runs.
+                  </p>
+                  <p className="text-xs leading-6 text-muted">
+                    Workspace admins only. The app requests read access to repositories and
+                    metadata, plus write access to pull requests on the repos you select during
+                    install.
+                  </p>
+                </div>
                 <button
                   className="ui-button-primary"
                   disabled={!isManager || !hasGitHubAppConfig || isLaunchingGitHubInstall}
