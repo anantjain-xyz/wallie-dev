@@ -323,30 +323,27 @@ export async function handleApproval(input: {
       .eq("id", input.pipelineIssueId);
   }
 
-  // Advance to next phase (if any)
+  // Advance to next phase (if any).
+  //
+  // Phase 1 ships only the product agent — design and engineering workers
+  // don't exist yet, so we cannot enqueue a next-phase agent_jobs row here
+  // without wedging the row in `agent_generating` forever. For now the row
+  // stays at `phase=<current>, phase_status=approved` on intermediate
+  // approval, which is the correct terminal state for Phase 1.
+  //
+  // The terminal engineering → shipped transition is kept because it's
+  // cheap and self-contained: it writes `shipped_at` and sets the final
+  // phase. It becomes reachable once the engineering agent lands.
   const next = nextPhase(data.phase);
   if (next === "shipped") {
-    // Terminal transition: engineering approval → shipped
     await admin
       .from("pipeline_issues")
       .update({
         phase: "shipped",
         phase_status: "approved",
+        shipped_at: new Date().toISOString(),
       })
       .eq("id", input.pipelineIssueId);
-  } else if (next) {
-    // Intermediate transition: move to next phase and kick off generation
-    await admin
-      .from("pipeline_issues")
-      .update({
-        phase: next,
-        phase_status: "agent_generating",
-        rejection_count: 0,
-      })
-      .eq("id", input.pipelineIssueId);
-
-    // TODO: Enqueue next phase agent job (design agent, engineering agent)
-    // For Phase 1, only product phase is implemented
   }
 
   return { success: true };
