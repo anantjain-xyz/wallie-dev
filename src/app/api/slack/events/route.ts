@@ -36,7 +36,15 @@ export async function POST(request: Request) {
   const timestamp = request.headers.get("x-slack-request-timestamp") ?? "";
   const signature = request.headers.get("x-slack-signature") ?? "";
 
-  // Slack URL verification challenge (no signature check needed for initial setup)
+  // Verify signature before doing anything else, including url_verification.
+  // The challenge echo is harmless, but answering it without a signature check
+  // lets any unauthenticated caller confirm the endpoint is alive and reflect
+  // arbitrary JSON back. Slack signs url_verification the same as other events.
+  if (!verifySlackSignature(rawBody, timestamp, signature)) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
+
+  // Slack URL verification challenge — respond after signature verification.
   try {
     const payload = JSON.parse(rawBody);
     if (payload.type === "url_verification") {
@@ -44,11 +52,6 @@ export async function POST(request: Request) {
     }
   } catch {
     // Not JSON, continue
-  }
-
-  // Verify signature
-  if (!verifySlackSignature(rawBody, timestamp, signature)) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
   // A signed-but-malformed body should NOT throw 500, because Slack would
@@ -190,18 +193,21 @@ export async function POST(request: Request) {
     .single();
 
   if (pipelineError || !pipelineIssue) {
-    // 23505 = unique_violation. A concurrent mention raced us and already
-    // created the pipeline_issue for this (workspace_id, linear_issue_id).
-    // Treat it as a silent dedup hit: the other request will enqueue the job.
-    if (pipelineError && "code" in pipelineError && pipelineError.code === "23505") {
-      return NextResponse.json({ ok: true });
+    // Either we lost a unique-violation race on (workspace_id, linear_issue_id)
+    // or the insert failed outright. In both cases the anchor `issues` row we
+    // just created is now orphaned — the winning request created its own, and
+    // this one will never be wired to a pipeline_issue. Delete it so we don't
+    // leave a ghost row on the issues table on every concurrent race.
+    const isDedupe = pipelineError && "code" in pipelineError && pipelineError.code === "23505";
+    if (!isDedupe) {
+      console.error("Failed to create pipeline_issue", { error: pipelineError });
     }
-    console.error("Failed to create pipeline_issue", { error: pipelineError });
+    await admin.from("issues").delete().eq("id", anchorIssue.id);
     return NextResponse.json({ ok: true });
   }
 
   // Enqueue pipeline job
-  const { data: newJob } = await admin
+  const { data: newJob, error: jobError } = await admin
     .from("agent_jobs")
     .insert({
       dedupe_key: buildPipelineDedupeKey(linearInfo.issueId),
@@ -214,16 +220,26 @@ export async function POST(request: Request) {
     .select("id")
     .single();
 
-  // Trigger background processing
-  if (newJob) {
-    after(async () => {
-      try {
-        await processQueuedAgentJobs({ requestedJobId: newJob.id });
-      } catch (error) {
-        console.error("Pipeline job processing failed", { error, jobId: newJob.id });
-      }
-    });
+  if (jobError || !newJob) {
+    // The pipeline_issues row already exists in `agent_generating` state but no
+    // worker will ever pick it up. Roll the status back so a future mention
+    // can retry cleanly instead of silently wedging.
+    console.error("Failed to enqueue pipeline agent_job", { error: jobError });
+    await admin
+      .from("pipeline_issues")
+      .update({ phase_status: "rejected" })
+      .eq("id", pipelineIssue.id);
+    return NextResponse.json({ ok: true });
   }
+
+  // Trigger background processing
+  after(async () => {
+    try {
+      await processQueuedAgentJobs({ requestedJobId: newJob.id });
+    } catch (error) {
+      console.error("Pipeline job processing failed", { error, jobId: newJob.id });
+    }
+  });
 
   return NextResponse.json({ ok: true });
 }

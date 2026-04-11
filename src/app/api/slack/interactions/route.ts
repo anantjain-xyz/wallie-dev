@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
+import { openSlackView } from "@/lib/pipeline/slack-format";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
@@ -182,14 +183,11 @@ export async function POST(request: Request) {
       // and would leak another workspace's token if spoofed.
       const botToken = decryptSecretValue(slackInstall.bot_token_encrypted);
 
-      await fetch("https://slack.com/api/views.open", {
-        body: JSON.stringify({
-          trigger_id: triggerId,
+      try {
+        await openSlackView({
+          botToken,
+          triggerId,
           view: {
-            callback_id: "pipeline_feedback",
-            private_metadata: JSON.stringify(actionValue),
-            submit: { text: "Submit Feedback", type: "plain_text" },
-            title: { text: "Request Changes", type: "plain_text" },
             blocks: [
               {
                 block_id: "feedback_block",
@@ -206,15 +204,23 @@ export async function POST(request: Request) {
                 type: "input",
               },
             ],
+            callback_id: "pipeline_feedback",
+            private_metadata: JSON.stringify(actionValue),
+            submit: { text: "Submit Feedback", type: "plain_text" },
+            title: { text: "Request Changes", type: "plain_text" },
             type: "modal",
           },
-        }),
-        headers: {
-          Authorization: `Bearer ${botToken}`,
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
+        });
+      } catch (viewError) {
+        console.error("Failed to open feedback modal", {
+          error: viewError instanceof Error ? viewError.message : String(viewError),
+        });
+        return NextResponse.json({
+          replace_original: false,
+          response_type: "ephemeral",
+          text: ":warning: Couldn't open the feedback form. Please try again, or ping an operator if this keeps happening.",
+        });
+      }
     }
 
     return NextResponse.json({ ok: true });

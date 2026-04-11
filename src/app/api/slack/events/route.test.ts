@@ -272,6 +272,7 @@ describe("POST /api/slack/events", () => {
   it("treats 23505 unique_violation on pipeline_issues insert as silent dedup", async () => {
     const rpcFn = vi.fn().mockResolvedValue({ data: 7, error: null });
 
+    const issuesDelete = vi.fn();
     const fromMock = vi.fn().mockImplementation((table: string) => {
       const tableChain: Record<string, unknown> = {};
       tableChain.select = vi.fn().mockReturnValue(tableChain);
@@ -302,6 +303,11 @@ describe("POST /api/slack/events", () => {
           data: { id: "anchor-id" },
           error: null,
         });
+        // Orphan-issues compensator: events route deletes the anchor row
+        // after a failed pipeline_issues insert to avoid ghost rows.
+        tableChain.delete = issuesDelete.mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        });
       } else {
         tableChain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
         tableChain.single = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -330,6 +336,10 @@ describe("POST /api/slack/events", () => {
     expect(json.ok).toBe(true);
     // We must NOT have enqueued a second agent_jobs row after the 23505
     expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
+    // Orphan-issues compensator must have fired: the anchor issues row we
+    // just created is deleted since the losing race can never wire it to a
+    // pipeline_issue.
+    expect(issuesDelete).toHaveBeenCalled();
   });
 
   it("handles unknown Slack team gracefully", async () => {

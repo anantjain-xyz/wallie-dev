@@ -23,8 +23,11 @@ export function formatSpecBlocks(input: {
   const blocks: Record<string, unknown>[] = [
     {
       text: {
-        text: `*${esc(input.spec.title)}* (v${input.version})`,
-        type: "mrkdwn",
+        // Slack `header` blocks require plain_text. The title is already the
+        // header's bold style; no mrkdwn wrapping.
+        emoji: true,
+        text: `${input.spec.title} (v${input.version})`,
+        type: "plain_text",
       },
       type: "header",
     },
@@ -83,10 +86,12 @@ export function formatSpecBlocks(input: {
 
   if (input.linearUrl) {
     blocks.push({
-      text: {
-        text: `<${input.linearUrl}|View in Linear>`,
-        type: "mrkdwn",
-      },
+      elements: [
+        {
+          text: `<${input.linearUrl}|View in Linear>`,
+          type: "mrkdwn",
+        },
+      ],
       type: "context",
     });
   }
@@ -125,7 +130,7 @@ export function formatPreScreenFailBlocks(reason: string): Record<string, unknow
   return [
     {
       text: {
-        text: `:warning: This issue needs more detail before I can generate a spec.\n\n*Reason:* ${reason}`,
+        text: `:warning: This issue needs more detail before I can generate a spec.\n\n*Reason:* ${escapeMrkdwn(reason)}`,
         type: "mrkdwn",
       },
       type: "section",
@@ -143,16 +148,18 @@ export function formatEscalationDmBlocks(input: {
   const blocks: Record<string, unknown>[] = [
     {
       text: {
-        text: `:rotating_light: *Spec escalation: ${input.specTitle}*\n\nThis spec has been rejected ${input.rejectionCount} times. The reviewer may need your help resolving the feedback.`,
+        text: `:rotating_light: *Spec escalation: ${escapeMrkdwn(input.specTitle)}*\n\nThis spec has been rejected ${input.rejectionCount} times. The reviewer may need your help resolving the feedback.`,
         type: "mrkdwn",
       },
       type: "section",
     },
     {
-      text: {
-        text: `<https://slack.com/archives/${input.channelId}/p${input.threadTs.replace(".", "")}|View Slack thread>${input.linearUrl ? ` | <${input.linearUrl}|View in Linear>` : ""}`,
-        type: "mrkdwn",
-      },
+      elements: [
+        {
+          text: `<https://slack.com/archives/${input.channelId}/p${input.threadTs.replace(".", "")}|View Slack thread>${input.linearUrl ? ` | <${input.linearUrl}|View in Linear>` : ""}`,
+          type: "mrkdwn",
+        },
+      ],
       type: "context",
     },
   ];
@@ -204,13 +211,45 @@ export function formatSpecDiffBlocks(input: {
   ];
 }
 
+// Slack Web API responds 200 OK with `{ ok: false, error: "..." }` for most
+// logical failures (invalid_auth, missing_scope, channel_not_found,
+// thread_not_found, invalid_blocks). Earlier versions of these helpers
+// returned the raw body and every caller forgot to check `ok`, so a failed
+// post would silently advance pipeline state. These helpers now throw on
+// `ok: false` so an outer try/catch is the only way to continue past a
+// Slack failure — which makes the failure path explicit at every call site.
+async function callSlackApi<T extends { ok: boolean; error?: string }>(
+  url: string,
+  body: Record<string, unknown>,
+  botToken: string,
+): Promise<T> {
+  const response = await fetch(url, {
+    body: JSON.stringify(body),
+    headers: {
+      Authorization: `Bearer ${botToken}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Slack API ${url} returned HTTP ${response.status}`);
+  }
+
+  const data = (await response.json()) as T;
+  if (!data.ok) {
+    throw new Error(`Slack API ${url} returned ok:false (${data.error ?? "unknown"})`);
+  }
+  return data;
+}
+
 export async function postSlackMessage(input: {
   blocks: Record<string, unknown>[];
   botToken: string;
   channel: string;
   text: string;
   threadTs?: string;
-}): Promise<{ ok: boolean; ts?: string }> {
+}): Promise<{ ts: string }> {
   const body: Record<string, unknown> = {
     blocks: input.blocks,
     channel: input.channel,
@@ -220,16 +259,12 @@ export async function postSlackMessage(input: {
     body.thread_ts = input.threadTs;
   }
 
-  const response = await fetch("https://slack.com/api/chat.postMessage", {
-    body: JSON.stringify(body),
-    headers: {
-      Authorization: `Bearer ${input.botToken}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  });
-
-  return (await response.json()) as { ok: boolean; ts?: string };
+  const data = await callSlackApi<{ ok: boolean; error?: string; ts?: string }>(
+    "https://slack.com/api/chat.postMessage",
+    body,
+    input.botToken,
+  );
+  return { ts: data.ts ?? "" };
 }
 
 export async function updateSlackMessage(input: {
@@ -238,40 +273,41 @@ export async function updateSlackMessage(input: {
   channel: string;
   text: string;
   ts: string;
-}): Promise<{ ok: boolean }> {
-  const response = await fetch("https://slack.com/api/chat.update", {
-    body: JSON.stringify({
+}): Promise<void> {
+  await callSlackApi<{ ok: boolean; error?: string }>(
+    "https://slack.com/api/chat.update",
+    {
       blocks: input.blocks,
       channel: input.channel,
       text: input.text,
       ts: input.ts,
-    }),
-    headers: {
-      Authorization: `Bearer ${input.botToken}`,
-      "Content-Type": "application/json",
     },
-    method: "POST",
-  });
-
-  return (await response.json()) as { ok: boolean };
+    input.botToken,
+  );
 }
 
-export async function openSlackDm(input: {
-  botToken: string;
-  userId: string;
-}): Promise<string | null> {
-  const response = await fetch("https://slack.com/api/conversations.open", {
-    body: JSON.stringify({ users: input.userId }),
-    headers: {
-      Authorization: `Bearer ${input.botToken}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  });
-
-  const data = (await response.json()) as {
+export async function openSlackDm(input: { botToken: string; userId: string }): Promise<string> {
+  const data = await callSlackApi<{
     channel?: { id?: string };
+    error?: string;
     ok: boolean;
-  };
-  return data.ok ? (data.channel?.id ?? null) : null;
+  }>("https://slack.com/api/conversations.open", { users: input.userId }, input.botToken);
+
+  const channelId = data.channel?.id;
+  if (!channelId) {
+    throw new Error("Slack conversations.open returned ok:true but no channel.id");
+  }
+  return channelId;
+}
+
+export async function openSlackView(input: {
+  botToken: string;
+  triggerId: string;
+  view: Record<string, unknown>;
+}): Promise<void> {
+  await callSlackApi<{ ok: boolean; error?: string }>(
+    "https://slack.com/api/views.open",
+    { trigger_id: input.triggerId, view: input.view },
+    input.botToken,
+  );
 }

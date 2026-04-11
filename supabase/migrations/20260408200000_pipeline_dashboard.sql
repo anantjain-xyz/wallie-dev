@@ -103,9 +103,12 @@ create unique index pipeline_issues_slack_thread_idx
 create index pipeline_artifacts_pipeline_issue_id_idx
   on public.pipeline_artifacts (pipeline_issue_id);
 
-create index agent_jobs_job_type_status_idx
-  on public.agent_jobs (job_type, status)
-  where status in ('queued', 'running');
+-- agent_jobs already exists with rows in prod. A non-concurrent index build
+-- on this table takes an ACCESS EXCLUSIVE / ShareLock that blocks writes for
+-- the duration of the build, which can stall the job queue. Build it
+-- concurrently instead — this requires statement-level execution outside a
+-- transaction, so the index is created in the follow-up migration
+-- 20260408210000_pipeline_dashboard_concurrent_index.sql.
 
 -- Triggers: updated_at
 create trigger slack_installations_touch_updated_at
@@ -117,6 +120,25 @@ create trigger pipeline_issues_touch_updated_at
 before update on public.pipeline_issues
 for each row
 execute function internal.touch_updated_at();
+
+-- Workspace-consistency enforcement: match the enforce_*_refs pattern used by
+-- the rest of the schema so service-role bugs cannot cross-link rows across
+-- workspaces without DB rejection.
+create or replace function internal.enforce_pipeline_issue_refs()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform internal.assert_workspace_match(new.workspace_id, 'public.issues', new.issue_id, 'issue_id');
+  return new;
+end;
+$$;
+
+create trigger pipeline_issues_enforce_refs
+before insert or update on public.pipeline_issues
+for each row
+execute function internal.enforce_pipeline_issue_refs();
 
 -- RLS
 alter table public.slack_installations enable row level security;

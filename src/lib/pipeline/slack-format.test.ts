@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProductSpec } from "./types";
 import {
@@ -6,6 +6,10 @@ import {
   formatPreScreenFailBlocks,
   formatSpecBlocks,
   formatSpecDiffBlocks,
+  openSlackDm,
+  openSlackView,
+  postSlackMessage,
+  updateSlackMessage,
 } from "./slack-format";
 
 const baseSpec: ProductSpec = {
@@ -150,19 +154,26 @@ describe("slack block kit formatting", () => {
         version: 1,
       });
 
-      const allText = blocks
-        .filter((b) => b.type === "header" || b.type === "section")
+      // Section blocks are mrkdwn — hostile `<url|label>` must be escaped to
+      // `&lt;...&gt;` so Slack doesn't render a clickable link.
+      const sectionText = blocks
+        .filter((b) => b.type === "section")
         .map((b) => (b.text as { text: string }).text)
         .join("\n");
 
-      // Raw link syntax must be gone.
-      expect(allText).not.toContain("<http://evil.example|Click here>");
-      expect(allText).not.toContain("<http://phishing.example|urgent>");
-      // Escaped variants must be present.
-      expect(allText).toContain("&lt;http://evil.example|Click here&gt;");
-      expect(allText).toContain("&lt;tag&gt;");
-      // Ampersand is also escaped.
-      expect(allText).toContain("&amp;");
+      expect(sectionText).not.toContain("<http://evil.example|Click here>");
+      expect(sectionText).not.toContain("<http://phishing.example|urgent>");
+      expect(sectionText).toContain("&lt;http://evil.example|Click here&gt;");
+      expect(sectionText).toContain("&amp;");
+
+      // The header block is plain_text — Slack does not interpret `<...>` as
+      // a link in plain_text, so hostile characters render literally and do
+      // not need to be HTML-escaped. Assert the title is passed through raw.
+      const header = blocks.find((b) => b.type === "header") as Record<string, unknown>;
+      const headerText = (header.text as { text: string; type: string }).text;
+      expect((header.text as { type: string }).type).toBe("plain_text");
+      expect(headerText).toContain("<tag>");
+      expect(headerText).toContain("&");
     });
   });
 
@@ -202,8 +213,9 @@ describe("slack block kit formatting", () => {
         threadTs: "1234567890.123456",
       });
 
-      const context = blocks.find((b) => b.type === "context");
-      const contextText = (context!.text as { text: string }).text;
+      const context = blocks.find((b) => b.type === "context") as Record<string, unknown>;
+      const elements = context.elements as Array<{ text: string; type: string }>;
+      const contextText = elements[0]!.text;
       expect(contextText).toContain("slack.com/archives/C123");
       expect(contextText).toContain("linear.app");
     });
@@ -217,8 +229,9 @@ describe("slack block kit formatting", () => {
         threadTs: "1234567890.123456",
       });
 
-      const context = blocks.find((b) => b.type === "context");
-      const contextText = (context!.text as { text: string }).text;
+      const context = blocks.find((b) => b.type === "context") as Record<string, unknown>;
+      const elements = context.elements as Array<{ text: string; type: string }>;
+      const contextText = elements[0]!.text;
       expect(contextText).not.toContain("linear.app");
     });
   });
@@ -276,6 +289,129 @@ describe("slack block kit formatting", () => {
 
       const text = (blocks[0]!.text as { text: string }).text;
       expect(text).toContain("Minor wording changes");
+    });
+  });
+
+  describe("Slack API helpers fail closed on ok:false", () => {
+    // Slack Web API returns HTTP 200 with `{ ok: false, error: "..." }` for
+    // logical failures (invalid_auth, missing_scope, channel_not_found,
+    // thread_not_found, invalid_blocks, etc.). The Phase 1 helpers used to
+    // return the raw body and every caller forgot to check `ok`, so a failed
+    // post silently advanced pipeline state. These tests pin the new
+    // throw-on-ok:false contract so regressions surface loudly.
+    const originalFetch = globalThis.fetch;
+
+    beforeEach(() => {
+      globalThis.fetch = vi.fn();
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      vi.clearAllMocks();
+    });
+
+    function mockSlackResponse(body: unknown, httpOk = true) {
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        json: async () => body,
+        ok: httpOk,
+        status: httpOk ? 200 : 500,
+      });
+    }
+
+    it("postSlackMessage throws when Slack returns ok:false", async () => {
+      mockSlackResponse({ error: "channel_not_found", ok: false });
+
+      await expect(
+        postSlackMessage({
+          blocks: [{ text: { text: "hi", type: "mrkdwn" }, type: "section" }],
+          botToken: "xoxb-test",
+          channel: "C-gone",
+          text: "hi",
+        }),
+      ).rejects.toThrow(/channel_not_found/);
+    });
+
+    it("postSlackMessage returns ts on ok:true", async () => {
+      mockSlackResponse({ ok: true, ts: "1700000000.123456" });
+
+      const result = await postSlackMessage({
+        blocks: [],
+        botToken: "xoxb-test",
+        channel: "C-1",
+        text: "hi",
+      });
+      expect(result.ts).toBe("1700000000.123456");
+    });
+
+    it("postSlackMessage throws on non-2xx HTTP", async () => {
+      mockSlackResponse({ error: "server_error", ok: false }, false);
+
+      await expect(
+        postSlackMessage({
+          blocks: [],
+          botToken: "xoxb-test",
+          channel: "C-1",
+          text: "hi",
+        }),
+      ).rejects.toThrow(/HTTP 500/);
+    });
+
+    it("updateSlackMessage throws on ok:false", async () => {
+      mockSlackResponse({ error: "message_not_found", ok: false });
+
+      await expect(
+        updateSlackMessage({
+          blocks: [],
+          botToken: "xoxb-test",
+          channel: "C-1",
+          text: "updated",
+          ts: "1700000000.000001",
+        }),
+      ).rejects.toThrow(/message_not_found/);
+    });
+
+    it("openSlackDm throws on ok:false", async () => {
+      mockSlackResponse({ error: "user_not_found", ok: false });
+
+      await expect(
+        openSlackDm({
+          botToken: "xoxb-test",
+          userId: "U-ghost",
+        }),
+      ).rejects.toThrow(/user_not_found/);
+    });
+
+    it("openSlackDm throws when ok:true but channel.id missing", async () => {
+      mockSlackResponse({ channel: {}, ok: true });
+
+      await expect(
+        openSlackDm({
+          botToken: "xoxb-test",
+          userId: "U-1",
+        }),
+      ).rejects.toThrow(/no channel\.id/);
+    });
+
+    it("openSlackDm returns the DM channel id on ok:true", async () => {
+      mockSlackResponse({ channel: { id: "D-12345" }, ok: true });
+
+      const result = await openSlackDm({
+        botToken: "xoxb-test",
+        userId: "U-1",
+      });
+      expect(result).toBe("D-12345");
+    });
+
+    it("openSlackView throws on ok:false (e.g. expired trigger)", async () => {
+      mockSlackResponse({ error: "expired_trigger_id", ok: false });
+
+      await expect(
+        openSlackView({
+          botToken: "xoxb-test",
+          triggerId: "trigger-old",
+          view: { type: "modal" },
+        }),
+      ).rejects.toThrow(/expired_trigger_id/);
     });
   });
 });

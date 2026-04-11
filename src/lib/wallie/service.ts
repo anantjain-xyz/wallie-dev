@@ -958,6 +958,15 @@ async function loadProcessTargetJob(input: {
     }
 
     if (job.status === "running") {
+      // Wallie jobs can resume a running row (long-running codegen pauses and
+      // a later trigger picks up where it left off). Pipeline jobs are one-
+      // shot and not designed to be re-entered concurrently — the processor
+      // would regenerate the spec and double-post to Slack. Refuse to re-
+      // dispatch a running pipeline job. Stuck rows (processor crash mid-
+      // flight) are recovered manually for now.
+      if (job.job_type === PIPELINE_JOB_TYPE) {
+        return null;
+      }
       return job;
     }
 

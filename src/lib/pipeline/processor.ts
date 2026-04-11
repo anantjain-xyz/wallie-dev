@@ -7,6 +7,7 @@ import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { preScreenIssue } from "./pre-screen";
 import { generateProductSpec } from "./product-agent";
 import {
+  escapeMrkdwn,
   formatEscalationDmBlocks,
   formatPreScreenFailBlocks,
   formatSpecBlocks,
@@ -96,18 +97,35 @@ export async function processPipelineJob(input: {
     });
 
     if (!preScreenResult.pass) {
-      // Post pre-screen fail to Slack
+      // Post pre-screen fail to Slack. If the post fails (invalid_auth,
+      // channel_not_found, etc.), the pipeline_issue is still logically
+      // rejected — the reviewer just won't see a warning. Record the state
+      // flip either way and mark the job as errored so operators can
+      // investigate in agent_jobs.last_error.
+      let slackPostError: string | null = null;
       if (pipelineIssue.slack_channel_id) {
-        await postSlackMessage({
-          blocks: formatPreScreenFailBlocks(preScreenResult.reason),
-          botToken,
-          channel: pipelineIssue.slack_channel_id,
-          text: `Issue needs more detail: ${preScreenResult.reason}`,
-          threadTs: pipelineIssue.slack_thread_ts ?? undefined,
-        });
+        try {
+          await postSlackMessage({
+            blocks: formatPreScreenFailBlocks(preScreenResult.reason),
+            botToken,
+            channel: pipelineIssue.slack_channel_id,
+            text: `Issue needs more detail: ${preScreenResult.reason}`,
+            threadTs: pipelineIssue.slack_thread_ts ?? undefined,
+          });
+        } catch (postError) {
+          slackPostError = postError instanceof Error ? postError.message : String(postError);
+        }
       }
 
       await updatePipelineIssueStatus(admin, pipelineIssue.id, "rejected");
+      if (slackPostError) {
+        await markPipelineJobError(
+          admin,
+          job,
+          `Pre-screen failed; Slack notification also failed: ${slackPostError}`,
+        );
+        return { jobId: job.id, processed: true, result: "error", runId: null };
+      }
       await markPipelineJobSuccess(admin, job);
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
@@ -123,8 +141,16 @@ export async function processPipelineJob(input: {
       }
     }
 
-    // Generate spec
+    // Generate spec AND persist the artifact + version pointer + plan_md
+    // mirror. Bundled into a single try/catch because a failure anywhere in
+    // this block leaves the pipeline in the same observable state (no spec to
+    // review) and must recover the same way: post a generic Slack warning,
+    // flip phase_status to 'rejected', error the agent_job. Without the
+    // compensating delete below, a partial save would wedge the next retry on
+    // the unique (pipeline_issue_id, phase, version) constraint.
+    const newVersion = pipelineIssue.current_artifact_version + 1;
     let spec: ProductSpec;
+    let artifactInserted = false;
     try {
       spec = await generateProductSpec({
         anthropicApiKey: secrets.anthropicApiKey,
@@ -133,57 +159,91 @@ export async function processPipelineJob(input: {
         issueTitle: issue.title,
         previousSpec,
       });
+
+      await insertArtifact(admin, {
+        artifactJson: spec,
+        feedbackText: null,
+        phase: pipelineIssue.phase,
+        pipelineIssueId: pipelineIssue.id,
+        version: newVersion,
+      });
+      artifactInserted = true;
+
+      // Bump version pointer AND flip to awaiting_review in one write. If this
+      // fails after the artifact insert, the catch below compensates by
+      // deleting the orphan artifact so the retry's newVersion doesn't collide.
+      const { error: pointerError } = await admin
+        .from("pipeline_issues")
+        .update({
+          current_artifact_version: newVersion,
+          phase_status: "awaiting_review",
+        })
+        .eq("id", pipelineIssue.id);
+      if (pointerError) throw pointerError;
+
+      // plan_md is a non-authoritative mirror of the spec for the anchor
+      // issues row. Failure here is not fatal — the real spec lives in
+      // pipeline_artifacts — but a failure to update it is rare enough that
+      // we still want it inside the try so the job doesn't silently diverge.
+      const { error: planError } = await admin
+        .from("issues")
+        .update({ plan_md: JSON.stringify(spec, null, 2) })
+        .eq("id", issue.id);
+      if (planError) throw planError;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Spec generation failed";
 
-      // Post raw error to Slack with warning
+      // Compensate: if we inserted the artifact but a downstream write failed,
+      // delete the orphan so the next retry computes newVersion against the
+      // pre-insert pointer and doesn't hit 23505 on (pipeline_issue_id, phase,
+      // version). We ignore the delete's own error — it's best-effort and a
+      // leftover orphan is still recoverable by operator intervention.
+      if (artifactInserted) {
+        await admin
+          .from("pipeline_artifacts")
+          .delete()
+          .eq("pipeline_issue_id", pipelineIssue.id)
+          .eq("phase", pipelineIssue.phase)
+          .eq("version", newVersion);
+      }
+
+      // Post a generic warning to the Slack thread. We intentionally do not
+      // surface the raw SDK/LLM error message — it can contain unescaped Slack
+      // mrkdwn that renders as phishing links, and it can leak provider
+      // internals. Operators can read the full message from agent_jobs.last_error.
+      // The warning post is best-effort: if it throws (ok:false), we still
+      // need to flip phase_status to 'rejected' and mark the job error so the
+      // original failure is what operators see in last_error.
       if (pipelineIssue.slack_channel_id) {
-        await postSlackMessage({
-          blocks: [
-            {
-              text: {
-                text: `:warning: Spec generation failed: ${message}`,
-                type: "mrkdwn",
+        const friendly = ":warning: Spec generation failed. An operator will investigate.";
+        try {
+          await postSlackMessage({
+            blocks: [
+              {
+                text: {
+                  text: friendly,
+                  type: "mrkdwn",
+                },
+                type: "section",
               },
-              type: "section",
-            },
-          ],
-          botToken,
-          channel: pipelineIssue.slack_channel_id,
-          text: `Spec generation failed: ${message}`,
-          threadTs: pipelineIssue.slack_thread_ts ?? undefined,
-        });
+            ],
+            botToken,
+            channel: pipelineIssue.slack_channel_id,
+            text: "Spec generation failed",
+            threadTs: pipelineIssue.slack_thread_ts ?? undefined,
+          });
+        } catch (warnError) {
+          console.error("Failed to post spec-gen warning to Slack", {
+            error: warnError instanceof Error ? warnError.message : String(warnError),
+            pipelineIssueId: pipelineIssue.id,
+          });
+        }
       }
 
       await updatePipelineIssueStatus(admin, pipelineIssue.id, "rejected");
       await markPipelineJobError(admin, job, message);
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
-
-    // Save artifact
-    const newVersion = pipelineIssue.current_artifact_version + 1;
-    await insertArtifact(admin, {
-      artifactJson: spec,
-      feedbackText: null,
-      phase: pipelineIssue.phase,
-      pipelineIssueId: pipelineIssue.id,
-      version: newVersion,
-    });
-
-    // Update pipeline_issue version and status
-    await admin
-      .from("pipeline_issues")
-      .update({
-        current_artifact_version: newVersion,
-        phase_status: "awaiting_review",
-      })
-      .eq("id", pipelineIssue.id);
-
-    // Store spec in issue.plan_md for the anchor row
-    await admin
-      .from("issues")
-      .update({ plan_md: JSON.stringify(spec, null, 2) })
-      .eq("id", issue.id);
 
     // Post to Slack
     if (pipelineIssue.slack_channel_id) {
@@ -207,7 +267,7 @@ export async function processPipelineJob(input: {
         blocks,
         botToken,
         channel: pipelineIssue.slack_channel_id,
-        text: `Product spec for "${spec.title}" (v${newVersion})`,
+        text: `Product spec for "${escapeMrkdwn(spec.title)}" (v${newVersion})`,
         threadTs: pipelineIssue.slack_thread_ts ?? undefined,
       });
     }
@@ -375,11 +435,16 @@ export async function handleRejection(input: {
     const secrets = await loadPipelineSecrets(admin, pipelineIssue.workspace_id);
 
     if (botToken && secrets.emSlackUserId) {
-      const dmChannelId = await openSlackDm({
-        botToken,
-        userId: secrets.emSlackUserId,
-      });
-      if (dmChannelId) {
+      // Escalation state is already persisted. Failing to deliver the EM DM
+      // here is recoverable — the pipeline dashboard still shows the
+      // escalated state, and an operator can re-run the DM manually. Log but
+      // do not roll back; returning an error to the reviewer's modal would
+      // imply their click failed, which it didn't.
+      try {
+        const dmChannelId = await openSlackDm({
+          botToken,
+          userId: secrets.emSlackUserId,
+        });
         const latestArtifact = await loadLatestArtifact(
           admin,
           pipelineIssue.id,
@@ -400,25 +465,27 @@ export async function handleRejection(input: {
           channel: dmChannelId,
           text: `Spec escalation: ${specTitle} has been rejected ${newRejectionCount} times.`,
         });
+      } catch (dmError) {
+        console.error("Failed to deliver escalation DM", {
+          error: dmError instanceof Error ? dmError.message : String(dmError),
+          pipelineIssueId: input.pipelineIssueId,
+        });
       }
     }
 
     return { escalated: true, success: true };
   }
 
-  // Not escalated: mark as rejected and enqueue a new generation job. rejection_count
-  // was already advanced by the CAS above; only update phase_status here.
-  await admin
-    .from("pipeline_issues")
-    .update({
-      phase_status: "rejected",
-    })
-    .eq("id", input.pipelineIssueId);
-
-  // Enqueue a new pipeline job to regenerate with feedback.
-  // Use the same dedupe_key as the original enqueue so the partial unique index on
-  // agent_jobs(workspace_id, dedupe_key) where status in ('queued','running') prevents
-  // a double-click on Submit Feedback from enqueueing two retry jobs.
+  // Not escalated: enqueue a new generation job BEFORE flipping phase_status
+  // to 'rejected'. If the enqueue fails with a non-dedupe error we must not
+  // transition into 'rejected', because 'rejected' with no queued worker is
+  // a wedged state the UI cannot recover from. Leaving phase_status at
+  // 'awaiting_review' lets the reviewer click Submit Feedback again.
+  //
+  // Use the same dedupe_key as the original enqueue so the partial unique
+  // index on agent_jobs(workspace_id, dedupe_key) where status in
+  // ('queued','running') turns a double-click on Submit Feedback into a
+  // silent 23505 (dedupe hit).
   const wallieMember = await loadWallieSystemMember(admin, pipelineIssue.workspace_id);
 
   const { error: enqueueError } = await admin.from("agent_jobs").insert({
@@ -432,10 +499,19 @@ export async function handleRejection(input: {
     workspace_id: pipelineIssue.workspace_id,
   });
 
-  // 23505 = unique_violation: a concurrent retry already exists. Silent success.
+  // 23505 = unique_violation: a concurrent retry already exists. Silent success
+  // — the existing queued job will pick up the feedback we just saved.
   if (enqueueError && enqueueError.code !== "23505") {
     return { escalated: false, error: enqueueError.message, success: false };
   }
+
+  // Retry is now durably queued (or the dedupe target already is). Flip state.
+  await admin
+    .from("pipeline_issues")
+    .update({
+      phase_status: "rejected",
+    })
+    .eq("id", input.pipelineIssueId);
 
   return { escalated: false, success: true };
 }
