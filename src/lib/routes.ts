@@ -56,12 +56,21 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
+export function workspacePipelinePath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/pipeline`, query);
+}
+
 export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] {
   return [
     {
       label: "Issues",
       href: workspaceIssuesPath(workspaceSlug),
       description: "List, filter, and triage workspace issues.",
+    },
+    {
+      label: "Pipeline",
+      href: workspacePipelinePath(workspaceSlug),
+      description: "Slack/Linear pipeline review board across product, design, and engineering.",
     },
     {
       label: "Settings",

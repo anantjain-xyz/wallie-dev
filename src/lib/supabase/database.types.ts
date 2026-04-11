@@ -912,6 +912,22 @@ export type Database = {
         Args: { target_workspace_id: string }
         Returns: number
       }
+      approve_pipeline_phase: {
+        Args: {
+          pipeline_issue_id: string
+          expected_workspace_id: string
+          expected_version: number
+        }
+        Returns: {
+          id: string
+          phase: Database["public"]["Enums"]["pipeline_phase"]
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          workspace_id: string
+          slack_channel_id: string | null
+          slack_thread_ts: string | null
+          linear_issue_url: string | null
+        }[]
+      }
     }
     Enums: {
       agent_job_status: "queued" | "running" | "success" | "error" | "canceled"

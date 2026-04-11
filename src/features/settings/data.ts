@@ -3,6 +3,8 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import { getSlackConfigStatus } from "@/features/slack/config";
+import { getSlackInstallationForWorkspace } from "@/features/slack/service";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -46,6 +48,16 @@ export type SettingsPageData = {
       name: string;
       repoId: number;
     }>;
+  };
+  slack: {
+    installation: {
+      id: string;
+      installedAt: string;
+      teamId: string;
+      teamName: string | null;
+      updatedAt: string;
+    } | null;
+    missingAppKeys: string[];
   };
   workspace: {
     avatarPath: string | null;
@@ -119,6 +131,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
   }
 
   const installation = installationRows?.[0] ?? null;
+  const slackInstallation = await getSlackInstallationForWorkspace(workspace.id);
 
   return {
     canManage: currentMember.role === "owner" || currentMember.role === "admin",
@@ -153,6 +166,10 @@ export async function loadSettingsPageData(workspaceSlug: string) {
         name: repository.name,
         repoId: repository.repo_id,
       })),
+    },
+    slack: {
+      installation: slackInstallation,
+      ...getSlackConfigStatus(),
     },
     workspace: {
       avatarPath: workspace.avatar_path,

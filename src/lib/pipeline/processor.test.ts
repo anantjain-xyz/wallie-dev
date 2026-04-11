@@ -108,60 +108,42 @@ describe("handleApproval", () => {
     vi.clearAllMocks();
   });
 
-  it("returns success on a valid version + workspace + awaiting_review match", async () => {
-    const updateCalls: unknown[] = [];
-    const admin = {
-      from: vi.fn(() => {
-        const chain: Record<string, unknown> = {};
-        chain.update = vi.fn((payload: unknown) => {
-          updateCalls.push(payload);
-          return chain;
-        });
-        chain.eq = vi.fn(() => chain);
-        chain.select = vi.fn(() => chain);
-        chain.maybeSingle = vi.fn().mockResolvedValue({
-          data: {
-            id: "pi-1",
-            phase: "product",
-            workspace_id: "ws-1",
-            slack_channel_id: "C1",
-            slack_thread_ts: "1.1",
-            linear_issue_url: "u",
-          },
-          error: null,
-        });
-        // Direct-await path for subsequent writes (approval_at + phase advance)
-        (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
-          resolve({ data: null, error: null });
-        return chain;
-      }),
-    };
+  it("returns success when the RPC returns an updated row", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "pi-1",
+          linear_issue_url: "u",
+          phase: "product",
+          phase_status: "approved",
+          slack_channel_id: "C1",
+          slack_thread_ts: "1.1",
+          workspace_id: "ws-1",
+        },
+      ],
+      error: null,
+    });
 
     const result = await handleApproval({
-      admin: admin as never,
+      admin: { rpc } as never,
       expectedWorkspaceId: "ws-1",
       pipelineIssueId: "pi-1",
       version: 1,
     });
 
     expect(result).toEqual({ success: true });
-    expect(updateCalls.length).toBeGreaterThan(0);
+    expect(rpc).toHaveBeenCalledWith("approve_pipeline_phase", {
+      expected_version: 1,
+      expected_workspace_id: "ws-1",
+      pipeline_issue_id: "pi-1",
+    });
   });
 
-  it("returns a stale-version error when the CAS finds no matching row", async () => {
-    const admin = {
-      from: vi.fn(() => {
-        const chain: Record<string, unknown> = {};
-        chain.update = vi.fn(() => chain);
-        chain.eq = vi.fn(() => chain);
-        chain.select = vi.fn(() => chain);
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        return chain;
-      }),
-    };
+  it("returns a stale-version error when the RPC returns no rows", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
 
     const result = await handleApproval({
-      admin: admin as never,
+      admin: { rpc } as never,
       expectedWorkspaceId: "ws-1",
       pipelineIssueId: "pi-1",
       version: 99,
@@ -171,33 +153,39 @@ describe("handleApproval", () => {
     expect(result.error).toContain("stale");
   });
 
-  it("cross-workspace CAS: approval for a different workspace_id finds nothing", async () => {
-    const recordedEqs: unknown[] = [];
-    const admin = {
-      from: vi.fn(() => {
-        const chain: Record<string, unknown> = {};
-        chain.update = vi.fn(() => chain);
-        chain.eq = vi.fn((col: string, val: unknown) => {
-          recordedEqs.push([col, val]);
-          return chain;
-        });
-        chain.select = vi.fn(() => chain);
-        // No row matches because expectedWorkspaceId doesn't match the row.
-        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-        return chain;
-      }),
-    };
+  it("cross-workspace CAS is enforced inside the RPC", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
 
     const result = await handleApproval({
-      admin: admin as never,
+      admin: { rpc } as never,
       expectedWorkspaceId: "attacker-ws",
       pipelineIssueId: "pi-1",
       version: 1,
     });
 
     expect(result.success).toBe(false);
-    // Must have passed workspace_id as a CAS filter.
-    expect(recordedEqs).toContainEqual(["workspace_id", "attacker-ws"]);
+    // The route still passes the workspace_id into the RPC; the database
+    // function applies it as a CAS filter so the wrong workspace gets nothing.
+    expect(rpc).toHaveBeenCalledWith(
+      "approve_pipeline_phase",
+      expect.objectContaining({ expected_workspace_id: "attacker-ws" }),
+    );
+  });
+
+  it("propagates RPC errors as-is", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: "boom" },
+    });
+
+    const result = await handleApproval({
+      admin: { rpc } as never,
+      expectedWorkspaceId: "ws-1",
+      pipelineIssueId: "pi-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({ error: "boom", success: false });
   });
 });
 

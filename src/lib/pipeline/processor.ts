@@ -15,7 +15,7 @@ import {
   openSlackDm,
   postSlackMessage,
 } from "./slack-format";
-import { approvalTimestampField, nextPhase, shouldEscalate } from "./state-machine";
+import { shouldEscalate } from "./state-machine";
 import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey, type ProductSpec } from "./types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
@@ -289,61 +289,30 @@ export async function handleApproval(input: {
 }): Promise<{ error?: string; success: boolean }> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
-  // CAS: only approve if version matches, status is awaiting_review, AND the
-  // pipeline_issue belongs to the workspace of the Slack team that sent the
-  // interaction. expectedWorkspaceId is resolved from the signed Slack team_id
-  // in the interactions route, so this prevents one workspace from approving
-  // another workspace's pipeline_issue by guessing its UUID.
-  const { data, error } = await admin
-    .from("pipeline_issues")
-    .update({
-      phase_status: "approved",
-    })
-    .eq("id", input.pipelineIssueId)
-    .eq("workspace_id", input.expectedWorkspaceId)
-    .eq("current_artifact_version", input.version)
-    .eq("phase_status", "awaiting_review")
-    .select("id, phase, workspace_id, slack_channel_id, slack_thread_ts, linear_issue_url")
-    .maybeSingle();
+  // Atomic approval: a single Postgres function call now handles the CAS,
+  // approval timestamp, and shipped-phase advancement in one transaction.
+  // The previous implementation issued three sequential UPDATEs and could
+  // leave the row in `approved` without a timestamp or without phase
+  // advancement if the worker died between writes. The RPC also enforces the
+  // workspace match, so a Slack interaction from workspace A still cannot
+  // approve a pipeline_issue in workspace B.
+  const { data, error } = await admin.rpc("approve_pipeline_phase", {
+    expected_version: input.version,
+    expected_workspace_id: input.expectedWorkspaceId,
+    pipeline_issue_id: input.pipelineIssueId,
+  });
 
   if (error) {
     return { error: error.message, success: false };
   }
 
-  if (!data) {
-    return { error: "Approval failed: spec version is stale or already reviewed.", success: false };
-  }
+  const row = Array.isArray(data) ? data[0] : null;
 
-  // Set approval timestamp
-  const tsField = approvalTimestampField(data.phase);
-  if (tsField) {
-    await admin
-      .from("pipeline_issues")
-      .update({ [tsField]: new Date().toISOString() })
-      .eq("id", input.pipelineIssueId);
-  }
-
-  // Advance to next phase (if any).
-  //
-  // Phase 1 ships only the product agent — design and engineering workers
-  // don't exist yet, so we cannot enqueue a next-phase agent_jobs row here
-  // without wedging the row in `agent_generating` forever. For now the row
-  // stays at `phase=<current>, phase_status=approved` on intermediate
-  // approval, which is the correct terminal state for Phase 1.
-  //
-  // The terminal engineering → shipped transition is kept because it's
-  // cheap and self-contained: it writes `shipped_at` and sets the final
-  // phase. It becomes reachable once the engineering agent lands.
-  const next = nextPhase(data.phase);
-  if (next === "shipped") {
-    await admin
-      .from("pipeline_issues")
-      .update({
-        phase: "shipped",
-        phase_status: "approved",
-        shipped_at: new Date().toISOString(),
-      })
-      .eq("id", input.pipelineIssueId);
+  if (!row) {
+    return {
+      error: "Approval failed: spec version is stale or already reviewed.",
+      success: false,
+    };
   }
 
   return { success: true };

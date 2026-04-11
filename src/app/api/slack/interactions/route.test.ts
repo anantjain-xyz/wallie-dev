@@ -126,13 +126,52 @@ describe("POST /api/slack/interactions", () => {
     expect(response.status).toBe(400);
   });
 
-  it("returns 400 when payload has no team id", async () => {
+  it("returns 400 when payload has neither team.id nor enterprise.id", async () => {
     const payload = {
       actions: [{ action_id: "pipeline_approve", value: "{}" }],
     };
     const response = await POST(makeInteractionRequest(payload));
 
     expect(response.status).toBe(400);
+  });
+
+  it("falls back to enterprise.id when team.id is missing", async () => {
+    const lookups: Array<{ col: string; value: unknown }> = [];
+    const fromMock = vi.fn().mockImplementation(() => {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockImplementation((col: string, value: unknown) => {
+        lookups.push({ col, value });
+        return chain;
+      });
+      chain.maybeSingle = vi.fn().mockResolvedValue({
+        data: { workspace_id: "ws-grid", bot_token_encrypted: "enc" },
+        error: null,
+      });
+      return chain;
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue({ from: fromMock });
+    mocked.handleApproval.mockResolvedValue({ success: true });
+
+    const payload = {
+      actions: [
+        {
+          action_id: "pipeline_approve",
+          value: JSON.stringify({ pipeline_issue_id: "pi-grid", version: 1 }),
+        },
+      ],
+      enterprise: { id: "E-GRID" },
+    };
+
+    const response = await POST(makeInteractionRequest(payload));
+
+    expect(response.status).toBe(200);
+    expect(mocked.handleApproval).toHaveBeenCalledWith({
+      expectedWorkspaceId: "ws-grid",
+      pipelineIssueId: "pi-grid",
+      version: 1,
+    });
+    expect(lookups).toContainEqual({ col: "team_id", value: "E-GRID" });
   });
 
   it("returns 403 when the Slack team is unknown", async () => {

@@ -1,6 +1,8 @@
 import { after, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { fetchLinearIssue } from "@/lib/linear/client";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
 import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
@@ -56,7 +58,11 @@ export async function POST(request: Request) {
 
   // A signed-but-malformed body should NOT throw 500, because Slack would
   // retry up to 3x on non-2xx responses. Ack with ok:true and drop.
-  let payload: { event?: Record<string, unknown>; team_id?: string };
+  let payload: {
+    enterprise_id?: string;
+    event?: Record<string, unknown>;
+    team_id?: string;
+  };
   try {
     payload = JSON.parse(rawBody);
   } catch {
@@ -78,7 +84,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const teamId = payload.team_id as string;
+  // Enterprise Grid fallback: top-level events from a Grid org may omit
+  // team_id and only carry enterprise_id. Without this fallback the
+  // installation lookup would fail and Grid customers would silently lose
+  // their mentions.
+  const teamId = (payload.team_id as string | undefined) ?? payload.enterprise_id;
+  if (!teamId) {
+    return NextResponse.json({ ok: true });
+  }
   const channelId = event.channel as string;
   const messageTs = event.ts as string;
   const threadTs = (event.thread_ts as string) ?? messageTs;
@@ -97,7 +110,6 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (slackInstall.data) {
-      const { decryptSecretValue } = await import("@/lib/secrets/crypto");
       const botToken = decryptSecretValue(slackInstall.data.bot_token_encrypted);
 
       await fetch("https://slack.com/api/chat.postMessage", {
@@ -121,7 +133,7 @@ export async function POST(request: Request) {
   const admin = createSupabaseAdminClient();
   const { data: slackInstall } = await admin
     .from("slack_installations")
-    .select("workspace_id")
+    .select("workspace_id, bot_token_encrypted")
     .eq("team_id", teamId)
     .maybeSingle();
 
@@ -132,16 +144,77 @@ export async function POST(request: Request) {
 
   const workspaceId = slackInstall.workspace_id;
 
-  // Check for existing pipeline_issue with this Linear issue ID (dedup)
+  async function postSlackError(message: string) {
+    if (!slackInstall) return;
+    try {
+      const botToken = decryptSecretValue(slackInstall.bot_token_encrypted);
+      await fetch("https://slack.com/api/chat.postMessage", {
+        body: JSON.stringify({
+          channel: channelId,
+          text: message,
+          thread_ts: threadTs,
+        }),
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+    } catch (postError) {
+      console.error("Failed to post Slack error reply", { error: postError });
+    }
+  }
+
+  // Check for existing pipeline_issue with this Linear issue ID. If we already
+  // accepted this issue and the row is in a non-rejected state, dedup. If the
+  // row is in 'rejected' state, treat the new mention as an explicit retry
+  // request: drop the old pipeline_issue and let the rest of the flow create
+  // a fresh anchor + pipeline_issue. This recovers from the wedged state where
+  // the original mention was rejected and the user @mentions again to retry.
   const { data: existingPipeline } = await admin
     .from("pipeline_issues")
-    .select("id")
+    .select("id, issue_id, phase_status")
     .eq("workspace_id", workspaceId)
     .eq("linear_issue_id", linearInfo.issueId)
     .maybeSingle();
 
   if (existingPipeline) {
-    // Already tracking this issue. Don't create a duplicate.
+    if (existingPipeline.phase_status === "rejected") {
+      // Drop the rejected pipeline_issue (and its anchor issues row, since
+      // pipeline_issues.issue_id has on delete cascade — but the issues row
+      // does not get cleaned up by that cascade, so delete it explicitly).
+      await admin.from("pipeline_issues").delete().eq("id", existingPipeline.id);
+      await admin.from("issues").delete().eq("id", existingPipeline.issue_id);
+    } else {
+      // Already tracking this issue in a non-recoverable state. Don't dup.
+      return NextResponse.json({ ok: true });
+    }
+  }
+
+  // Load Linear API key for the workspace and fetch the real issue.
+  const { data: linearApiKeyRow } = await admin
+    .from("workspace_secrets")
+    .select("encrypted_value")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "LINEAR_API_KEY")
+    .maybeSingle();
+
+  if (!linearApiKeyRow) {
+    await postSlackError(
+      ":warning: Wallie can't read Linear yet — set `LINEAR_API_KEY` in workspace settings.",
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  let linearIssue;
+  try {
+    const linearApiKey = decryptSecretValue(linearApiKeyRow.encrypted_value);
+    linearIssue = await fetchLinearIssue(linearApiKey, linearInfo.issueId);
+  } catch (linearError) {
+    console.error("Linear fetch failed", { error: linearError, issueId: linearInfo.issueId });
+    await postSlackError(
+      `:warning: Couldn't fetch \`${linearInfo.issueId}\` from Linear. Check the Linear API key and that the issue is reachable.`,
+    );
     return NextResponse.json({ ok: true });
   }
 
@@ -154,18 +227,22 @@ export async function POST(request: Request) {
     .eq("username", "wallie")
     .maybeSingle();
 
-  // Create pipeline anchor: thin issues row from Linear data
+  // Create pipeline anchor: issues row populated from real Linear data.
   const { data: issueNumber } = await admin.rpc("next_issue_number", {
     target_workspace_id: workspaceId,
   });
+
+  const anchorDescription = linearIssue.description
+    ? `${linearIssue.description}\n\n---\nImported from Linear: ${linearIssue.url}`
+    : `Imported from Linear: ${linearIssue.url}`;
 
   const { data: anchorIssue, error: issueError } = await admin
     .from("issues")
     .insert({
       creator_member_id: wallieMember?.id ?? null,
-      description_md: `Imported from Linear: ${linearInfo.url}`,
+      description_md: anchorDescription,
       number: issueNumber ?? 1,
-      title: `[Pipeline] ${linearInfo.issueId}`,
+      title: linearIssue.title,
       workspace_id: workspaceId,
     })
     .select("id")

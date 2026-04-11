@@ -15,7 +15,12 @@ import {
 } from "@/components/shared/icons";
 import { Dropdown } from "@/components/shared/dropdown";
 import type { WorkspaceSummary } from "@/lib/auth";
-import { type WorkspaceNavItem, workspaceIssuesPath, workspaceSettingsPath } from "@/lib/routes";
+import {
+  type WorkspaceNavItem,
+  workspaceIssuesPath,
+  workspacePipelinePath,
+  workspaceSettingsPath,
+} from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type ShellSidebarProps = {
@@ -80,6 +85,9 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
   const pathname = usePathname();
   const issuesHref =
     navItems.find((item) => item.label === "Issues")?.href ?? workspaceIssuesPath(workspace.slug);
+  const pipelineHref =
+    navItems.find((item) => item.label === "Pipeline")?.href ??
+    workspacePipelinePath(workspace.slug);
   const settingsHref =
     navItems.find((item) => item.label === "Settings")?.href ??
     workspaceSettingsPath(workspace.slug);
@@ -150,6 +158,12 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
               active={isActive(pathname, issuesHref)}
               icon={<IssueBarsIcon className="h-3.5 w-3.5" />}
               label="Issues"
+            />
+            <SidebarEntry
+              href={pipelineHref}
+              active={isActive(pathname, pipelineHref)}
+              icon={<ViewsIcon className="h-3.5 w-3.5" />}
+              label="Pipeline"
             />
           </div>
         </section>

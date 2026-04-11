@@ -11,6 +11,11 @@ import type {
   GitHubRepositorySyncResponse,
 } from "@/features/github/contracts";
 import type {
+  SlackDisconnectResponse,
+  SlackInstallationSummary,
+  SlackInstallResponse,
+} from "@/features/slack/contracts";
+import type {
   DeleteWorkspaceSecretResponse,
   ListWorkspaceSecretsResponse,
   UpsertWorkspaceSecretResponse,
@@ -23,6 +28,7 @@ type SettingsPageClientProps = {
   initialData: SettingsPageData;
   searchState: {
     githubStatus: string | null;
+    slackStatus: string | null;
   };
 };
 
@@ -130,6 +136,31 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
         text: "GitHub installation state expired or could not be verified. Start the install flow again from settings.",
       } satisfies FlashMessage;
     default:
+      break;
+  }
+
+  switch (searchState.slackStatus) {
+    case "connected":
+      return {
+        kind: "success",
+        text: "Slack workspace connected. Wallie can now respond to mentions on Linear issues.",
+      } satisfies FlashMessage;
+    case "config_missing":
+      return {
+        kind: "error",
+        text: "Slack install completed, but Wallie is missing server config needed to finish the sync.",
+      } satisfies FlashMessage;
+    case "failed":
+      return {
+        kind: "error",
+        text: "Slack OAuth callback failed. Try the install flow again after checking server config.",
+      } satisfies FlashMessage;
+    case "invalid_state":
+      return {
+        kind: "error",
+        text: "Slack installation state expired or could not be verified. Start the install flow again from settings.",
+      } satisfies FlashMessage;
+    default:
       return null;
   }
 }
@@ -153,9 +184,16 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isLoadingSecrets, setIsLoadingSecrets] = useState(false);
   const [isSavingSecret, setIsSavingSecret] = useState(false);
+  const [slackInstallation, setSlackInstallation] = useState<SlackInstallationSummary | null>(
+    initialData.slack.installation,
+  );
+  const [isLaunchingSlackInstall, setIsLaunchingSlackInstall] = useState(false);
+  const [isDisconnectingSlack, setIsDisconnectingSlack] = useState(false);
+  const [isTestingLinear, setIsTestingLinear] = useState(false);
 
   const isManager = initialData.canManage;
   const hasGitHubAppConfig = initialData.github.missingAppKeys.length === 0;
+  const hasSlackAppConfig = initialData.slack.missingAppKeys.length === 0;
 
   useEffect(() => {
     if (!isManager) {
@@ -341,6 +379,91 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
     }
   }
 
+  async function handleSlackInstall() {
+    setIsLaunchingSlackInstall(true);
+
+    try {
+      const response = await fetch(
+        `/api/slack/install?workspaceId=${encodeURIComponent(initialData.workspace.id)}`,
+        {
+          method: "GET",
+        },
+      );
+      const payload = await readResponseJson<SlackInstallResponse>(response);
+
+      window.location.assign(payload.installUrl);
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Slack install preparation failed.",
+      });
+      setIsLaunchingSlackInstall(false);
+    }
+  }
+
+  async function handleSlackDisconnect() {
+    if (!slackInstallation) {
+      return;
+    }
+
+    if (!window.confirm("Disconnect this Slack workspace from Wallie?")) {
+      return;
+    }
+
+    setIsDisconnectingSlack(true);
+
+    try {
+      const response = await fetch(
+        `/api/slack/installations/${encodeURIComponent(
+          slackInstallation.id,
+        )}?workspaceId=${encodeURIComponent(initialData.workspace.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      await readResponseJson<SlackDisconnectResponse>(response);
+
+      setSlackInstallation(null);
+      setFlashMessage({
+        kind: "success",
+        text: "Slack workspace disconnected.",
+      });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Slack disconnect failed.",
+      });
+    } finally {
+      setIsDisconnectingSlack(false);
+    }
+  }
+
+  async function handleTestLinearConnection() {
+    setIsTestingLinear(true);
+
+    try {
+      const response = await fetch(
+        `/api/linear/test-connection?workspaceId=${encodeURIComponent(initialData.workspace.id)}`,
+        {
+          method: "POST",
+        },
+      );
+      await readResponseJson<{ ok: true }>(response);
+
+      setFlashMessage({
+        kind: "success",
+        text: "Linear API key verified. Wallie can read issues from this workspace.",
+      });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Linear API verification failed.",
+      });
+    } finally {
+      setIsTestingLinear(false);
+    }
+  }
+
   async function handleDeleteSecret(key: string) {
     if (!window.confirm(`Delete ${key}?`)) {
       return;
@@ -379,7 +502,8 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             Settings
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
-            Manage workspace identity, GitHub sync, and encrypted secrets from one route.
+            Manage workspace identity, GitHub sync, Slack installation, and encrypted secrets from
+            one route.
           </p>
         </header>
 
@@ -558,6 +682,77 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           </div>
         </Section>
 
+        <Section title="Slack">
+          <div className="space-y-4">
+            <ConfigState
+              missingKeys={initialData.slack.missingAppKeys}
+              title="Slack install flow disabled"
+            />
+
+            {slackInstallation ? (
+              <div className="ui-subpanel space-y-4 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      Connected to{" "}
+                      <span className="font-mono">
+                        {slackInstallation.teamName ?? slackInstallation.teamId}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-sm text-muted">
+                      Installed{" "}
+                      {dateFormatter.format(new Date(slackInstallation.installedAt))} · Team ID{" "}
+                      <span className="font-mono">{slackInstallation.teamId}</span>
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      className="ui-button"
+                      disabled={!isManager || !hasSlackAppConfig || isLaunchingSlackInstall}
+                      onClick={() => void handleSlackInstall()}
+                      type="button"
+                    >
+                      {isLaunchingSlackInstall ? "Preparing…" : "Reinstall"}
+                    </button>
+                    <button
+                      className="ui-button-danger"
+                      disabled={!isManager || isDisconnectingSlack}
+                      onClick={() => void handleSlackDisconnect()}
+                      type="button"
+                    >
+                      {isDisconnectingSlack ? "Disconnecting…" : "Disconnect"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="ui-subpanel space-y-4 p-5">
+                <div className="space-y-2">
+                  <p className="text-sm leading-7 text-foreground">
+                    Connect Slack so the Wallie product agent can pick up @mentions on Linear
+                    issues, draft a spec, and post it back for PM review.
+                  </p>
+                  <p className="text-xs leading-6 text-muted">
+                    Workspace admins only. Wallie requests <span className="font-mono">app_mentions:read</span>,{" "}
+                    <span className="font-mono">chat:write</span>, and{" "}
+                    <span className="font-mono">chat:write.public</span> so it can reply in
+                    threads where it&apos;s mentioned.
+                  </p>
+                </div>
+                <button
+                  className="ui-button-primary"
+                  disabled={!isManager || !hasSlackAppConfig || isLaunchingSlackInstall}
+                  onClick={() => void handleSlackInstall()}
+                  type="button"
+                >
+                  {isLaunchingSlackInstall ? "Preparing Install…" : "Install Slack App"}
+                </button>
+              </div>
+            )}
+          </div>
+        </Section>
+
         <Section title="Secrets">
           <div className="space-y-4">
             <p className="text-sm leading-7 text-muted">
@@ -625,13 +820,25 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                             {secret.valuePreview ?? "preview unavailable"}
                           </p>
                         </div>
-                        <button
-                          className="ui-button-danger"
-                          onClick={() => void handleDeleteSecret(secret.key)}
-                          type="button"
-                        >
-                          Delete
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          {secret.key === "LINEAR_API_KEY" ? (
+                            <button
+                              className="ui-button"
+                              disabled={isTestingLinear}
+                              onClick={() => void handleTestLinearConnection()}
+                              type="button"
+                            >
+                              {isTestingLinear ? "Testing…" : "Test Connection"}
+                            </button>
+                          ) : null}
+                          <button
+                            className="ui-button-danger"
+                            onClick={() => void handleDeleteSecret(secret.key)}
+                            type="button"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}

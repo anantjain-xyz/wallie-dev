@@ -42,6 +42,7 @@ export async function POST(request: Request) {
 
   let payload: {
     actions?: Array<{ action_id: string; value: string }>;
+    enterprise?: { id?: string };
     team?: { id?: string };
     trigger_id?: string;
     type?: string;
@@ -63,7 +64,11 @@ export async function POST(request: Request) {
   // workspace A could approve/reject a pipeline_issue in workspace B simply
   // by knowing its UUID, because the handlers previously only gated on
   // (pipelineIssueId, version, status).
-  const teamId = payload.team?.id;
+  //
+  // Enterprise Grid fallback: payloads from a Grid org may carry only
+  // enterprise.id, with team.id missing. Match the events route by falling
+  // back to enterprise.id so Grid customers can still approve/reject.
+  const teamId = payload.team?.id ?? payload.enterprise?.id;
   if (!teamId) {
     return NextResponse.json({ error: "Missing team id" }, { status: 400 });
   }
