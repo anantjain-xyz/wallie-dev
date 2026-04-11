@@ -17,6 +17,7 @@ export type Database = {
           finished_at: string | null
           id: string
           issue_id: string
+          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -33,6 +34,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           issue_id: string
+          job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -49,6 +51,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           issue_id?: string
+          job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -485,6 +488,157 @@ export type Database = {
           },
         ]
       }
+      pipeline_artifacts: {
+        Row: {
+          artifact_json: Json
+          created_at: string
+          feedback_text: string | null
+          id: string
+          phase: Database["public"]["Enums"]["pipeline_phase"]
+          pipeline_issue_id: string
+          version: number
+        }
+        Insert: {
+          artifact_json: Json
+          created_at?: string
+          feedback_text?: string | null
+          id?: string
+          phase: Database["public"]["Enums"]["pipeline_phase"]
+          pipeline_issue_id: string
+          version: number
+        }
+        Update: {
+          artifact_json?: Json
+          created_at?: string
+          feedback_text?: string | null
+          id?: string
+          phase?: Database["public"]["Enums"]["pipeline_phase"]
+          pipeline_issue_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_artifacts_pipeline_issue_id_fkey"
+            columns: ["pipeline_issue_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_issues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_issues: {
+        Row: {
+          created_at: string
+          current_artifact_version: number
+          design_approved_at: string | null
+          engineering_approved_at: string | null
+          id: string
+          issue_id: string
+          linear_issue_id: string | null
+          linear_issue_url: string | null
+          phase: Database["public"]["Enums"]["pipeline_phase"]
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          product_approved_at: string | null
+          rejection_count: number
+          shipped_at: string | null
+          slack_channel_id: string | null
+          slack_thread_ts: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_artifact_version?: number
+          design_approved_at?: string | null
+          engineering_approved_at?: string | null
+          id?: string
+          issue_id: string
+          linear_issue_id?: string | null
+          linear_issue_url?: string | null
+          phase?: Database["public"]["Enums"]["pipeline_phase"]
+          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          product_approved_at?: string | null
+          rejection_count?: number
+          shipped_at?: string | null
+          slack_channel_id?: string | null
+          slack_thread_ts?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          current_artifact_version?: number
+          design_approved_at?: string | null
+          engineering_approved_at?: string | null
+          id?: string
+          issue_id?: string
+          linear_issue_id?: string | null
+          linear_issue_url?: string | null
+          phase?: Database["public"]["Enums"]["pipeline_phase"]
+          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          product_approved_at?: string | null
+          rejection_count?: number
+          shipped_at?: string | null
+          slack_channel_id?: string | null
+          slack_thread_ts?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_issues_issue_id_fkey"
+            columns: ["issue_id"]
+            isOneToOne: false
+            referencedRelation: "issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_issues_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      slack_installations: {
+        Row: {
+          bot_token_encrypted: string
+          id: string
+          installed_at: string
+          team_id: string
+          team_name: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          bot_token_encrypted: string
+          id?: string
+          installed_at?: string
+          team_id: string
+          team_name?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          bot_token_encrypted?: string
+          id?: string
+          installed_at?: string
+          team_id?: string
+          team_name?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "slack_installations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       issues: {
         Row: {
           assignee_member_id: string | null
@@ -789,6 +943,7 @@ export type Database = {
         | "manual_retry"
         | "assignment"
         | "comment_retry"
+        | "slack_mention"
       issue_link_type: "blocked_by" | "sub_issue" | "related" | "duplicate"
       issue_priority: "none" | "low" | "medium" | "high" | "urgent"
       issue_status:
@@ -798,6 +953,13 @@ export type Database = {
         | "in_review"
         | "done"
         | "canceled"
+      pipeline_phase: "product" | "design" | "engineering" | "shipped"
+      pipeline_phase_status:
+        | "agent_generating"
+        | "awaiting_review"
+        | "approved"
+        | "rejected"
+        | "escalated"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       workspace_tier: "free" | "pro"
@@ -942,6 +1104,7 @@ export const Constants = {
         "manual_retry",
         "assignment",
         "comment_retry",
+        "slack_mention",
       ],
       issue_link_type: ["blocked_by", "sub_issue", "related", "duplicate"],
       issue_priority: ["none", "low", "medium", "high", "urgent"],
@@ -952,6 +1115,14 @@ export const Constants = {
         "in_review",
         "done",
         "canceled",
+      ],
+      pipeline_phase: ["product", "design", "engineering", "shipped"],
+      pipeline_phase_status: [
+        "agent_generating",
+        "awaiting_review",
+        "approved",
+        "rejected",
+        "escalated",
       ],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],

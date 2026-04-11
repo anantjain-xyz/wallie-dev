@@ -5,6 +5,8 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
+import { processPipelineJob } from "@/lib/pipeline/processor";
+import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import {
   buildWallieBillingState,
   buildWallieBlockingReasons,
@@ -74,7 +76,7 @@ const workspaceSelect =
 const repositorySelect =
   "id, workspace_id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
 const jobSelect =
-  "id, workspace_id, issue_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, scheduled_at, started_at, finished_at, created_at, updated_at";
+  "id, workspace_id, issue_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
   "id, workspace_id, issue_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, created_at, updated_at";
 
@@ -956,6 +958,15 @@ async function loadProcessTargetJob(input: {
     }
 
     if (job.status === "running") {
+      // Wallie jobs can resume a running row (long-running codegen pauses and
+      // a later trigger picks up where it left off). Pipeline jobs are one-
+      // shot and not designed to be re-entered concurrently — the processor
+      // would regenerate the spec and double-post to Slack. Refuse to re-
+      // dispatch a running pipeline job. Stuck rows (processor crash mid-
+      // flight) are recovered manually for now.
+      if (job.job_type === PIPELINE_JOB_TYPE) {
+        return null;
+      }
       return job;
     }
 
@@ -981,6 +992,11 @@ async function loadProcessTargetJob(input: {
 }
 
 async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }) {
+  // Dispatch pipeline jobs to the pipeline processor before wallie-specific code
+  if (input.job.job_type === PIPELINE_JOB_TYPE) {
+    return processPipelineJob({ admin: input.admin, job: input.job });
+  }
+
   const run = await loadRunByJobId(input.admin, input.job.id);
 
   if (!run) {

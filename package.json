@@ -1,6 +1,6 @@
 {
   "name": "wallie-cc",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -20,6 +20,7 @@
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.86.1",
     "@octokit/app": "^16.1.2",
     "@octokit/webhooks-methods": "^6.0.0",
     "@supabase/ssr": "^0.10.0",
