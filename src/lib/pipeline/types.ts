@@ -4,7 +4,6 @@ export type PipelinePhase = Enums<"pipeline_phase">;
 export type PipelinePhaseStatus = Enums<"pipeline_phase_status">;
 
 export const PIPELINE_JOB_TYPE = "pipeline" as const;
-export const PIPELINE_MODEL_PROVIDER = "anthropic" as const;
 export const PIPELINE_MODEL_NAME = "claude-sonnet-4-20250514" as const;
 export const PIPELINE_ESCALATION_THRESHOLD = 3;
 
