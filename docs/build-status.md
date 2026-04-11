@@ -122,6 +122,23 @@
 - `POST /api/agent-runs/[runId]/retry` accepts `{ workspaceId }`, validates that the referenced run is terminal, and enqueues a fresh retry run/job pair with `trigger_type = 'manual_retry'`.
 - `POST /api/agent-jobs/process` accepts an optional `{ jobId, workspaceId }` scope, processes at most one queued/running Wallie job per invocation, and supports either a manager-scoped request or an optional bearer `WALLIE_PROCESS_TOKEN`.
 
+## Pipeline Dashboard — Phase 1 Routes (v0.2.0)
+
+- `POST /api/slack/events` handles Slack Events API webhooks. Verifies `x-slack-signature` + 5-minute timestamp window BEFORE any other work (including `url_verification` challenge). On `app_mention` with a Linear issue URL, creates a `pipeline_issues` row + anchor `issues` row + queued `agent_jobs` row (`job_type=pipeline`, `trigger_type=slack_mention`) and dispatches background processing via `after()`. 23505 dedupe on `(workspace_id, linear_issue_id)` is silent; on failure the orphan anchor row is deleted.
+- `POST /api/slack/interactions` handles Slack Interactivity webhooks (Approve / Submit Feedback button clicks, feedback modal submit). Resolves the signed `team.id` to a workspace before any CAS so cross-workspace button replay is blocked at the DB level. `block_actions` are acked synchronously (<3s) and mutation work is deferred via `after()`.
+- Pipeline state machine (`src/lib/pipeline/state-machine.ts`): `product → design → engineering → shipped` with per-phase statuses `agent_generating → awaiting_review → approved|rejected|escalated`. Escalation threshold: 3 rejections on a single phase triggers an EM DM.
+- Processor (`src/lib/pipeline/processor.ts`) runs pre-screen → product agent → artifact persist → Slack post. Spec-save is guarded by a compensating artifact-delete if the version-pointer bump fails, so a mid-flight failure does not wedge the next retry on the unique `(pipeline_issue_id, phase, version)` constraint.
+- LLM trust boundary (`src/lib/pipeline/prompt-safety.ts`) wraps all untrusted content (Linear title/description, previous spec, reviewer feedback) in XML tags, truncates to 8KB, and neutralizes attacker-planted close tags so a hostile Linear ticket cannot escape the data section of the prompt.
+- `agent_jobs.job_type` column discriminates wallie vs pipeline jobs. `loadProcessTargetJob` in `src/lib/wallie/service.ts` refuses to redispatch a `job_type=pipeline` job that is already `running`.
+- Realtime publication now includes `pipeline_issues`. `slack_installations` holds the encrypted bot token and is fully revoked from anon/authenticated (service-role only, matching `workspace_secrets`).
+
+### Pipeline Dashboard — v0.2.1 hardening
+
+- LLM prompt trust-boundary sanitization extracted to `src/lib/pipeline/prompt-safety.ts` and covered by `prompt-safety.test.ts`. Truncates untrusted content to 8KB and neutralizes attacker-planted close tags for `<linear_issue_title>`, `<linear_issue_description>`, `<previous_spec>`, `<reviewer_feedback>`. Used by both `pre-screen.ts` and `product-agent.ts`.
+- Slack Web API helpers (`postSlackMessage`, `updateSlackMessage`, `openSlackDm`, `openSlackView` in `slack-format.ts`) now throw on `ok: false`. Previously callers silently advanced pipeline state even when `invalid_auth` / `channel_not_found` returned HTTP 200 with `ok: false`. Callers in `processor.ts` and `api/slack/interactions/route.ts` now handle the failure explicitly.
+- New unit test coverage: `processor.test.ts` (15 cases — CAS races, cross-workspace guard, escalation, enqueue-before-flip ordering, compensating delete), `pre-screen.test.ts`, `product-agent.test.ts`, `prompt-safety.test.ts`. Total 151 tests.
+- `CREATE INDEX CONCURRENTLY` split into its own migration `20260408210000_pipeline_dashboard_concurrent_index.sql` because `CONCURRENTLY` cannot run inside a transaction block.
+
 ## Blockers
 
 - None yet

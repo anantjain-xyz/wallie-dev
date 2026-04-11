@@ -4,19 +4,27 @@
 
 Deferred from the v0.2.0 ship. Tracked here so they don't fall on the floor.
 
-### Processor direct unit tests
+### ~~Processor direct unit tests~~ — DONE (review pass)
 
-- **What:** `src/lib/pipeline/processor.ts` is a 600-line orchestrator with no direct unit tests. Coverage comes via integration tests in `events/route.test.ts` + `interactions/route.test.ts`, but the CAS claim, escalation-at-max-rejections, 23505 rejection-retry, terminal engineering→shipped transition, and spec-generation failure branches are not directly asserted.
-- **Why:** Regressions here are silent until a PM hits them live. Phase 2 will grow this file further.
-- **Effort:** S (human: ~3h / CC: ~20min)
+- Added `src/lib/pipeline/processor.test.ts` covering handleApproval (CAS success, stale version, cross-workspace guard), handleRejection (cross-workspace, phase-status guard, version mismatch, escalation at rejection_count >= 3, enqueue-before-flip ordering, non-23505 enqueue failure, 23505 silent dedup), and processPipelineJob (terminal CAS, pre-screen fail, happy path, spec-save compensating delete, generic warning on LLM failure).
+
+### ~~Pre-screen and product-agent unit tests~~ — DONE (review pass)
+
+- Added `prompt-safety.test.ts`, `pre-screen.test.ts`, `product-agent.test.ts` covering sanitize/truncate/boundary neutralization, fail-closed JSON parse, missing-required-fields, string-array filter, error-message scrubbing.
+
+### `handleApproval` non-atomic follow-up writes
+
+- **What:** `src/lib/pipeline/processor.ts:270` CAS-updates `phase_status` to `approved`, then issues two separate follow-up UPDATEs (lines 293 and 303/312) for the approval timestamp and the phase advance. The follow-ups ignore errors. A partial failure can strand a row at `phase=product, phase_status=approved` with no timestamp and no next-phase enqueue.
+- **Why:** Found by Codex adversarial review on the v0.2.0 ship. Each write is individually guarded by the CAS-updated row id, but the three writes are not transactional. The fix is a single `approve_pipeline_phase` RPC that does CAS + timestamp + phase advance in one transaction.
+- **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P2
 
-### Pre-screen and product-agent unit tests
+### Dedupe gate blocks recovery from `rejected` state
 
-- **What:** Both `pre-screen.ts` and `product-agent.ts` have zero unit tests. Critical defensive code (fail-closed JSON parse, string-array filter, new tag-boundary neutralization, 8KB truncation) has no assertions. Mock the Anthropic client and add ~5 tests per module.
-- **Why:** These are the LLM trust boundary. Any regression in the defensive filters is a security regression.
+- **What:** `src/app/api/slack/events/route.ts:143` dedupes incoming mentions by looking up `pipeline_issues` on `(workspace_id, linear_issue_id)` and bailing if any row exists. Once an issue has been rejected (pre-screen fail or manual rejection with no retry enqueued), a second @wallie mention on the same Linear URL is silently ignored.
+- **Why:** Found by Codex adversarial review on the v0.2.0 ship. A rejected-then-mentioned-again issue is unrecoverable from Slack — the user has to delete the pipeline_issues row manually in the DB. Either (a) allow re-enqueue on rejected state, or (b) reply with a Slack message saying "this issue was already rejected; update the Linear description and ask again."
 - **Effort:** S (human: ~2h / CC: ~15min)
-- **Priority:** P1
+- **Priority:** P2
 
 ### Enterprise Grid `team.id` fallback
 
@@ -46,11 +54,15 @@ Deferred from the v0.2.0 ship. Tracked here so they don't fall on the floor.
 - **Effort:** XS (CC: ~5min)
 - **Priority:** P3
 
-### `PIPELINE_MODEL_NAME` drift
+### ~~`PIPELINE_MODEL_NAME` drift~~ — DONE (review pass)
 
-- **What:** `types.ts` exports `PIPELINE_MODEL_NAME` and `PIPELINE_MODEL_PROVIDER` but both `pre-screen.ts` and `product-agent.ts` hardcode `"claude-sonnet-4-20250514"`. Three sources of truth for a pinned model.
-- **Why:** Model upgrade will miss one of them.
-- **Effort:** XS (CC: ~5min)
+- Both `pre-screen.ts` and `product-agent.ts` now import `PIPELINE_MODEL_NAME` from `./types`. Dead `PIPELINE_MODEL_PROVIDER` constant removed.
+
+### Harden spec-save with an RPC instead of compensating delete
+
+- **What:** Processor spec-save is now guarded by a compensating artifact-delete on pointer-bump failure, which avoids the wedge but leaves a small window where the compensator itself can fail. A single `save_pipeline_artifact` RPC that inserts the artifact + bumps current_artifact_version + flips phase_status in one transaction would close the window fully.
+- **Why:** Current fix is "good enough" for Phase 1 and was verified by unit tests, but an RPC removes the last remaining compensator-failure mode.
+- **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P3
 
 ## Pipeline Dashboard — Phase 2
