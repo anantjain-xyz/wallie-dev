@@ -6,8 +6,7 @@ import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Tables } from "@/lib/supabase/database.types";
 
-const workspaceSelect =
-  "id, name, slug, avatar_path, tier, stripe_customer_id, current_billing_cycle_start_at, successful_agent_runs_this_cycle, created_at, updated_at";
+const workspaceSelect = "id, name, slug, avatar_path, created_at, updated_at";
 const memberSelect = "id, role, is_active, kind";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -18,16 +17,7 @@ export type WorkspaceAccessContext = {
   user: User;
   workspace: Pick<
     Tables<"workspaces">,
-    | "avatar_path"
-    | "created_at"
-    | "current_billing_cycle_start_at"
-    | "id"
-    | "name"
-    | "slug"
-    | "stripe_customer_id"
-    | "successful_agent_runs_this_cycle"
-    | "tier"
-    | "updated_at"
+    "avatar_path" | "created_at" | "id" | "name" | "slug" | "updated_at"
   >;
 };
 

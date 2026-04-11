@@ -18,34 +18,22 @@ export async function loadWallieIssueData(input: {
   workspaceId: string;
 }) {
   const admin = createSupabaseAdminClient();
-  const [
-    { data: runRows, error: runError },
-    { data: workspace, error: workspaceError },
-    { data: secretRows, error: secretError },
-  ] = await Promise.all([
-    input.supabase
-      .from("agent_runs")
-      .select(runSelect)
-      .eq("issue_id", input.issue.id)
-      .order("created_at", { ascending: false }),
-    input.supabase
-      .from("workspaces")
-      .select("tier, current_billing_cycle_start_at, successful_agent_runs_this_cycle")
-      .eq("id", input.workspaceId)
-      .single(),
-    admin
-      .from("workspace_secrets")
-      .select("key")
-      .eq("workspace_id", input.workspaceId)
-      .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]),
-  ]);
+  const [{ data: runRows, error: runError }, { data: secretRows, error: secretError }] =
+    await Promise.all([
+      input.supabase
+        .from("agent_runs")
+        .select(runSelect)
+        .eq("issue_id", input.issue.id)
+        .order("created_at", { ascending: false }),
+      admin
+        .from("workspace_secrets")
+        .select("key")
+        .eq("workspace_id", input.workspaceId)
+        .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]),
+    ]);
 
   if (runError) {
     throw runError;
-  }
-
-  if (workspaceError) {
-    throw workspaceError;
   }
 
   if (secretError) {
@@ -77,11 +65,6 @@ export async function loadWallieIssueData(input: {
   );
 
   return buildWallieIssueData({
-    billing: {
-      currentBillingCycleStartAt: workspace.current_billing_cycle_start_at,
-      successfulRunsThisCycle: workspace.successful_agent_runs_this_cycle,
-      tier: workspace.tier,
-    },
     issueGithubRepositoryId: input.issue.github_repository_id,
     memberIndex: input.memberIndex,
     messages: messageRows,

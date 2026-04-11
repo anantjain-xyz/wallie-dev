@@ -8,11 +8,9 @@ import type { Enums, Tables, TablesInsert, TablesUpdate } from "@/lib/supabase/d
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import {
-  buildWallieBillingState,
   buildWallieBlockingReasons,
   inferWallieRunMode,
   parseWallieRunMode,
-  shouldResetFreeTierBillingCycle,
 } from "@/lib/wallie/core";
 import {
   buildWallieJobDedupeKey,
@@ -33,15 +31,7 @@ import type {
 } from "@/lib/wallie/types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
-type WorkspaceAccessWorkspace = Pick<
-  Tables<"workspaces">,
-  | "current_billing_cycle_start_at"
-  | "id"
-  | "name"
-  | "slug"
-  | "successful_agent_runs_this_cycle"
-  | "tier"
->;
+type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type IssueForRun = Pick<
   Tables<"issues">,
@@ -71,8 +61,7 @@ type AgentRunRow = Tables<"agent_runs">;
 
 const issueSelect =
   "id, workspace_id, number, title, description_md, plan_md, design_md, github_repository_id, created_at";
-const workspaceSelect =
-  "id, name, slug, tier, current_billing_cycle_start_at, successful_agent_runs_this_cycle";
+const workspaceSelect = "id, name, slug";
 const repositorySelect =
   "id, workspace_id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
 const jobSelect =
@@ -133,7 +122,7 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
     code: blockingReason.code,
     message: reasons.map((reason) => reason.message).join(" "),
     missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
-    statusCode: blockingReason.code === "billing_limit_reached" ? 403 : 422,
+    statusCode: 422,
   });
 }
 
@@ -325,50 +314,6 @@ async function waitForRunByJobId(admin: AdminClient, jobId: string, attempts = 5
   return null;
 }
 
-async function maybeResetFreeTierBillingCycle(
-  admin: AdminClient,
-  workspace: WorkspaceAccessWorkspace,
-) {
-  if (
-    workspace.tier !== "free" ||
-    !shouldResetFreeTierBillingCycle(workspace.current_billing_cycle_start_at)
-  ) {
-    return workspace;
-  }
-
-  const nextCycleStart = new Date().toISOString();
-  const { data, error } = await admin
-    .from("workspaces")
-    .update({
-      current_billing_cycle_start_at: nextCycleStart,
-      successful_agent_runs_this_cycle: 0,
-    })
-    .eq("id", workspace.id)
-    .eq("current_billing_cycle_start_at", workspace.current_billing_cycle_start_at)
-    .select(workspaceSelect)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  if (data) {
-    return data as WorkspaceAccessWorkspace;
-  }
-
-  const { data: latestWorkspace, error: latestWorkspaceError } = await admin
-    .from("workspaces")
-    .select(workspaceSelect)
-    .eq("id", workspace.id)
-    .single();
-
-  if (latestWorkspaceError) {
-    throw latestWorkspaceError;
-  }
-
-  return latestWorkspace as WorkspaceAccessWorkspace;
-}
-
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
   issueId: string;
@@ -386,7 +331,7 @@ async function validateQueuedRunRequest(input: {
     });
   }
 
-  const workspace = await maybeResetFreeTierBillingCycle(input.admin, input.workspace);
+  const workspace = input.workspace;
   const runType = input.requestedRunType ?? inferWallieRunMode(issue.github_repository_id);
   const [repository, missingSecretKeys, activeRun] = await Promise.all([
     loadRepositoryForRun(input.admin, workspace.id, issue.github_repository_id),
@@ -405,11 +350,6 @@ async function validateQueuedRunRequest(input: {
   }
 
   const blockingReasons = buildWallieBlockingReasons({
-    billing: buildWallieBillingState({
-      currentBillingCycleStartAt: workspace.current_billing_cycle_start_at,
-      successfulRunsThisCycle: workspace.successful_agent_runs_this_cycle,
-      tier: workspace.tier,
-    }),
     hasActiveRun: false,
     missingSecretKeys,
     mode: runType,
@@ -749,55 +689,19 @@ async function finalizeRunError(input: {
   });
 }
 
-async function incrementWorkspaceSuccessfulRuns(admin: AdminClient, workspaceId: string) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const { data: workspace, error: workspaceError } = await admin
-      .from("workspaces")
-      .select("successful_agent_runs_this_cycle")
-      .eq("id", workspaceId)
-      .single();
-
-    if (workspaceError) {
-      throw workspaceError;
-    }
-
-    const { data, error } = await admin
-      .from("workspaces")
-      .update({
-        successful_agent_runs_this_cycle: workspace.successful_agent_runs_this_cycle + 1,
-      })
-      .eq("id", workspaceId)
-      .eq("successful_agent_runs_this_cycle", workspace.successful_agent_runs_this_cycle)
-      .select("successful_agent_runs_this_cycle")
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (data) {
-      return data.successful_agent_runs_this_cycle;
-    }
-  }
-
-  throw new Error("Wallie could not increment the workspace run counter.");
-}
-
 async function finalizeRunSuccess(input: {
   admin: AdminClient;
   job: AgentJobRow;
   run: AgentRunRow;
 }) {
-  const { data, error } = await input.admin
+  const { error } = await input.admin
     .from("agent_runs")
     .update({
       finished_at: new Date().toISOString(),
       status: "success",
     })
     .eq("id", input.run.id)
-    .neq("status", "success")
-    .select("id")
-    .maybeSingle();
+    .neq("status", "success");
 
   if (error) {
     throw error;
@@ -808,10 +712,6 @@ async function finalizeRunSuccess(input: {
     job: input.job,
     status: "success",
   });
-
-  if (data) {
-    await incrementWorkspaceSuccessfulRuns(input.admin, input.run.workspace_id);
-  }
 }
 
 async function persistProjectArtifacts(input: {

@@ -66,7 +66,7 @@ export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] 
     {
       label: "Settings",
       href: workspaceSettingsPath(workspaceSlug),
-      description: "Workspace-level settings, billing, and integration entry points.",
+      description: "Workspace-level settings and integration entry points.",
     },
   ];
 }

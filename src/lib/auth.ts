@@ -10,7 +10,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient
 
 export type WorkspaceSummary = Pick<
   Database["public"]["Tables"]["workspaces"]["Row"],
-  "id" | "name" | "slug" | "tier"
+  "id" | "name" | "slug"
 >;
 
 type UserMetadata = {
@@ -71,7 +71,7 @@ export async function ensureProfileForUser(supabase: SupabaseServerClient, user:
 export async function getDefaultWorkspace(supabase: SupabaseServerClient) {
   const { data, error } = await supabase
     .from("workspaces")
-    .select("id, name, slug, tier")
+    .select("id, name, slug")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -89,7 +89,7 @@ export async function getWorkspaceBySlugForUser(
 ) {
   const { data, error } = await supabase
     .from("workspaces")
-    .select("id, name, slug, tier")
+    .select("id, name, slug")
     .eq("slug", workspaceSlug)
     .maybeSingle();
 

@@ -1,11 +1,5 @@
 import type { Enums } from "@/lib/supabase/database.types";
-import { WALLIE_FREE_TIER_RUN_LIMIT } from "@/lib/wallie/constants";
-import type {
-  WallieBillingSnapshot,
-  WallieBillingState,
-  WallieBlockingReason,
-  WallieRunMode,
-} from "@/lib/wallie/types";
+import type { WallieBlockingReason, WallieRunMode } from "@/lib/wallie/types";
 
 export function inferWallieRunMode(githubRepositoryId: string | null | undefined): WallieRunMode {
   return githubRepositoryId ? "code" : "project";
@@ -34,21 +28,7 @@ export function canRetryWallieRun(status: Enums<"agent_run_status">, hasActiveRu
   return isWallieRunTerminalStatus(status) && !hasActiveRun;
 }
 
-export function buildWallieBillingState(input: WallieBillingSnapshot): WallieBillingState {
-  const runLimit = input.tier === "free" ? WALLIE_FREE_TIER_RUN_LIMIT : null;
-  const runsRemaining =
-    runLimit === null ? null : Math.max(runLimit - input.successfulRunsThisCycle, 0);
-
-  return {
-    ...input,
-    limitReached: runLimit !== null && input.successfulRunsThisCycle >= runLimit,
-    runLimit,
-    runsRemaining,
-  };
-}
-
 export function buildWallieBlockingReasons(input: {
-  billing: WallieBillingState;
   hasActiveRun: boolean;
   missingSecretKeys: string[];
   mode: WallieRunMode;
@@ -91,33 +71,9 @@ export function buildWallieBlockingReasons(input: {
     });
   }
 
-  if (input.billing.limitReached) {
-    const limitLabel = input.billing.runLimit ?? WALLIE_FREE_TIER_RUN_LIMIT;
-
-    reasons.push({
-      code: "billing_limit_reached",
-      message: `This workspace has reached its ${limitLabel}-run Wallie limit for the current billing cycle.`,
-    });
-  }
-
   return reasons;
 }
 
 export function formatWallieRunMode(mode: WallieRunMode) {
   return mode === "code" ? "Code mode" : "Project mode";
-}
-
-export function shouldResetFreeTierBillingCycle(
-  currentBillingCycleStartAt: string,
-  now = new Date(),
-) {
-  const cycleStart = new Date(currentBillingCycleStartAt);
-
-  if (Number.isNaN(cycleStart.getTime())) {
-    return false;
-  }
-
-  cycleStart.setMonth(cycleStart.getMonth() + 1);
-
-  return cycleStart <= now;
 }

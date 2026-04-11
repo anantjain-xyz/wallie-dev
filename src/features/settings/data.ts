@@ -3,13 +3,11 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
-import { getStripeConfigStatus } from "@/lib/billing/stripe";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-const workspaceSelect =
-  "id, name, slug, avatar_path, tier, stripe_customer_id, current_billing_cycle_start_at, successful_agent_runs_this_cycle";
+const workspaceSelect = "id, name, slug, avatar_path";
 const currentMemberSelect = "id, role, is_active, kind";
 const installationSelect =
   "id, app_id, installation_id, installation_url, permissions, suspended, target_name, target_type, updated_at";
@@ -17,10 +15,6 @@ const repositorySelect =
   "id, repo_id, name, full_name, html_url, private, description, default_programming_language, default_branch, is_archived";
 
 export type SettingsPageData = {
-  billing: {
-    missingPortalKeys: string[];
-    missingWebhookKeys: string[];
-  };
   canManage: boolean;
   currentMember: {
     id: string;
@@ -56,13 +50,9 @@ export type SettingsPageData = {
   workspace: {
     avatarPath: string | null;
     avatarUrl: string | null;
-    currentBillingCycleStartAt: string;
     id: string;
     name: string;
     slug: string;
-    stripeCustomerId: string | null;
-    successfulAgentRunsThisCycle: number;
-    tier: "free" | "pro";
   };
 };
 
@@ -131,7 +121,6 @@ export async function loadSettingsPageData(workspaceSlug: string) {
   const installation = installationRows?.[0] ?? null;
 
   return {
-    billing: getStripeConfigStatus(),
     canManage: currentMember.role === "owner" || currentMember.role === "admin",
     currentMember: {
       id: currentMember.id,
@@ -168,13 +157,9 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     workspace: {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),
-      currentBillingCycleStartAt: workspace.current_billing_cycle_start_at,
       id: workspace.id,
       name: workspace.name,
       slug: workspace.slug,
-      stripeCustomerId: workspace.stripe_customer_id,
-      successfulAgentRunsThisCycle: workspace.successful_agent_runs_this_cycle,
-      tier: workspace.tier,
     },
   } satisfies SettingsPageData;
 }

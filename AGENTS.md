@@ -6,11 +6,6 @@ This repo is the implementation target for the Wallie cloud rebuild at `wallie.c
 
 The old repo at `/Users/anant/src/wallie` is reference-only.
 
-Use these reference docs first:
-
-- `docs/reference/cloud-rebuild-handoff.md`
-- `docs/reference/cloud-rebuild-execution-graph.md`
-
 ## Reference Repo Rules
 
 - You may read `/Users/anant/src/wallie` to recover product behavior, schema intent, and integration details.
@@ -43,15 +38,14 @@ Use Vercel route handlers for privileged and third-party integrations.
 - You are not alone in the codebase.
 - Stay within your ownership boundary.
 - Do not overwrite unrelated work.
-- Record route/interface/schema assumptions in `docs/build-status.md`.
-- If you need to deviate from the handoff docs, record the deviation before or at the same time as the code change.
+- Coordinate via PR descriptions when making cross-cutting changes.
 
 ## Working Norms
 
 - Prefer small, reviewable commits.
 - Prefer direct and typed data contracts.
 - Keep DB naming stable once feature agents begin.
-- Treat schema, auth, GitHub, billing, secrets, and Wallie orchestration as separate domains.
+- Treat schema, auth, GitHub, Slack, secrets, and Wallie orchestration as separate domains.
 
 ## gstack
 

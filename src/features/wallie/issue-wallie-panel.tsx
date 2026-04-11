@@ -18,7 +18,6 @@ import {
 import type { WallieIssueData, WallieIssueRepository, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import {
-  buildWallieBillingState,
   buildWallieBlockingReasons,
   formatWallieRunMode,
   inferWallieRunMode,
@@ -115,7 +114,6 @@ export function IssueWalliePanel({
   workspaceSlug,
 }: IssueWalliePanelProps) {
   const [runs, setRuns] = useState(initialData.runs);
-  const [billing, setBilling] = useState(initialData.billing);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
@@ -130,11 +128,10 @@ export function IssueWalliePanel({
 
   useEffect(() => {
     setRuns(initialData.runs);
-    setBilling(initialData.billing);
     setFlashMessage(null);
     setPendingActionId(null);
     setExpandedRunIds(buildDefaultExpandedRunIds(initialData.runs));
-  }, [initialData.billing, initialData.runs, issue.id]);
+  }, [initialData.runs, issue.id]);
 
   async function loadRunMessages(runId: string) {
     const { data, error } = await supabase
@@ -166,30 +163,18 @@ export function IssueWalliePanel({
   }
 
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
-    let didTransitionToSuccess = false;
     let isNewRun = false;
 
     setRuns((currentRuns) => {
       const previousRun = currentRuns.find((run) => run.id === row.id);
 
       isNewRun = !previousRun;
-      didTransitionToSuccess = row.status === "success" && previousRun?.status !== "success";
 
       return upsertWallieRun(
         currentRuns,
         mapAgentRunRow(row, memberIndex, previousRun?.messages ?? []),
       );
     });
-
-    if (didTransitionToSuccess) {
-      setBilling((currentBilling) =>
-        buildWallieBillingState({
-          currentBillingCycleStartAt: currentBilling.currentBillingCycleStartAt,
-          successfulRunsThisCycle: currentBilling.successfulRunsThisCycle + 1,
-          tier: currentBilling.tier,
-        }),
-      );
-    }
 
     if (isNewRun) {
       setExpandedRunIds((currentIds) => {
@@ -268,7 +253,6 @@ export function IssueWalliePanel({
   }, [runs, supabase]);
 
   const blockingReasons = buildWallieBlockingReasons({
-    billing,
     hasActiveRun: runs.some((run) => run.isActive),
     missingSecretKeys: initialData.missingSecretKeys,
     mode,
@@ -426,45 +410,16 @@ export function IssueWalliePanel({
         </div>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="ui-subpanel p-4">
-          <p className="ui-label">Secrets</p>
-          <p className="mt-2 text-sm text-foreground">
-            Required: {initialData.requiredSecretKeys.join(", ")}
-          </p>
-          <p className="mt-2 text-sm text-muted">
-            {initialData.missingSecretKeys.length === 0
-              ? "Ready"
-              : `Missing: ${initialData.missingSecretKeys.join(", ")}`}
-          </p>
-        </div>
-
-        <div className="ui-subpanel p-4">
-          <p className="ui-label">Billing</p>
-          <p className="mt-2 text-sm text-foreground">
-            Tier: <span className="font-semibold">{billing.tier}</span>
-          </p>
-          <p className="mt-2 text-sm text-muted">
-            {billing.runLimit === null
-              ? `${billing.successfulRunsThisCycle} successful runs this cycle`
-              : `${billing.successfulRunsThisCycle} / ${billing.runLimit} successful runs this cycle`}
-          </p>
-        </div>
-
-        <div className="ui-subpanel p-4">
-          <p className="ui-label">Cycle</p>
-          <p className="mt-2 text-sm text-foreground">
-            Started{" "}
-            <span className="font-semibold">
-              {dateTimeFormatter.format(new Date(billing.currentBillingCycleStartAt))}
-            </span>
-          </p>
-          <p className="mt-2 text-sm text-muted">
-            {billing.runLimit === null
-              ? "Unlimited runs on this tier."
-              : `${billing.runsRemaining ?? 0} runs remaining before Wallie blocks new work.`}
-          </p>
-        </div>
+      <div className="ui-subpanel p-4">
+        <p className="ui-label">Secrets</p>
+        <p className="mt-2 text-sm text-foreground">
+          Required: {initialData.requiredSecretKeys.join(", ")}
+        </p>
+        <p className="mt-2 text-sm text-muted">
+          {initialData.missingSecretKeys.length === 0
+            ? "Ready"
+            : `Missing: ${initialData.missingSecretKeys.join(", ")}`}
+        </p>
       </div>
 
       {blockingReasons.length > 0 ? (

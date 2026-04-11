@@ -6,7 +6,6 @@ type SettingsPageProps = {
     workspaceSlug: string;
   }>;
   searchParams: Promise<{
-    billing?: string;
     github?: string;
   }>;
 };
@@ -20,7 +19,6 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
     <SettingsPageClient
       initialData={data}
       searchState={{
-        billingStatus: resolvedSearchParams.billing ?? null,
         githubStatus: resolvedSearchParams.github ?? null,
       }}
     />

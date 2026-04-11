@@ -861,39 +861,27 @@ export type Database = {
           avatar_path: string | null
           created_at: string
           created_by: string | null
-          current_billing_cycle_start_at: string
           id: string
           name: string
           slug: string
-          stripe_customer_id: string | null
-          successful_agent_runs_this_cycle: number
-          tier: Database["public"]["Enums"]["workspace_tier"]
           updated_at: string
         }
         Insert: {
           avatar_path?: string | null
           created_at?: string
           created_by?: string | null
-          current_billing_cycle_start_at?: string
           id?: string
           name: string
           slug: string
-          stripe_customer_id?: string | null
-          successful_agent_runs_this_cycle?: number
-          tier?: Database["public"]["Enums"]["workspace_tier"]
           updated_at?: string
         }
         Update: {
           avatar_path?: string | null
           created_at?: string
           created_by?: string | null
-          current_billing_cycle_start_at?: string
           id?: string
           name?: string
           slug?: string
-          stripe_customer_id?: string | null
-          successful_agent_runs_this_cycle?: number
-          tier?: Database["public"]["Enums"]["workspace_tier"]
           updated_at?: string
         }
         Relationships: []
@@ -909,13 +897,9 @@ export type Database = {
           avatar_path: string | null
           created_at: string
           created_by: string | null
-          current_billing_cycle_start_at: string
           id: string
           name: string
           slug: string
-          stripe_customer_id: string | null
-          successful_agent_runs_this_cycle: number
-          tier: Database["public"]["Enums"]["workspace_tier"]
           updated_at: string
         }
       }
@@ -962,7 +946,6 @@ export type Database = {
         | "escalated"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
-      workspace_tier: "free" | "pro"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1126,7 +1109,6 @@ export const Constants = {
       ],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
-      workspace_tier: ["free", "pro"],
     },
   },
 } as const

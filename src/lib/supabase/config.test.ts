@@ -47,7 +47,6 @@ describe("supabase config resolvers", () => {
       resolveSupabaseAdminConfig({
         ...adminEnv,
         GITHUB_APP_ID: "",
-        STRIPE_SECRET_KEY: "",
         WALLIE_PROCESS_TOKEN: "",
       }),
     ).toEqual({

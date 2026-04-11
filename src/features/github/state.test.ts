@@ -12,8 +12,6 @@ const testEnv = {
   NEXT_PUBLIC_APP_URL: "https://wallie.cc",
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "supabase-publishable-key",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
-  STRIPE_SECRET_KEY: "sk_test_123",
-  STRIPE_WEBHOOK_SECRET: "whsec_123",
   SUPABASE_SECRET_KEY: "secret-key",
   WALLIE_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef",
 };

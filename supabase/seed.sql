@@ -144,8 +144,8 @@ BEGIN
   -- -------------------------------------------------------------------------
   -- 3. Workspace
   -- -------------------------------------------------------------------------
-  INSERT INTO public.workspaces (id, slug, name, tier, created_by, created_at)
-  VALUES (ws_id, 'acme-corp', 'Acme Corp', 'pro', user1_id, now() - interval '14 days');
+  INSERT INTO public.workspaces (id, slug, name, created_by, created_at)
+  VALUES (ws_id, 'acme-corp', 'Acme Corp', user1_id, now() - interval '14 days');
 
   -- -------------------------------------------------------------------------
   -- 4. Workspace members

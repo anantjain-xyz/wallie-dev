@@ -1,7 +1,6 @@
 import type { IssueMember } from "@/features/issues/types";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
-  buildWallieBillingState,
   buildWallieBlockingReasons,
   canRetryWallieRun,
   inferWallieRunMode,
@@ -10,7 +9,6 @@ import {
   parseWallieRunMode,
 } from "@/lib/wallie/core";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
-import type { WallieBillingSnapshot } from "@/lib/wallie/types";
 import type {
   WallieIssueData,
   WallieIssueRepository,
@@ -115,7 +113,6 @@ export function upsertWallieRunMessage(
 }
 
 export function buildWallieIssueData(input: {
-  billing: WallieBillingSnapshot;
   issueGithubRepositoryId: string | null;
   memberIndex: ReadonlyMap<string, IssueMember>;
   messages: readonly Pick<
@@ -146,7 +143,6 @@ export function buildWallieIssueData(input: {
     messagesByRunId.set(message.agent_run_id, currentMessages);
   }
 
-  const billing = buildWallieBillingState(input.billing);
   const mode = inferWallieRunMode(input.issueGithubRepositoryId);
   const runs = normalizeWallieRuns(
     input.runs.map((run) =>
@@ -154,7 +150,6 @@ export function buildWallieIssueData(input: {
     ),
   );
   const blockingReasons = buildWallieBlockingReasons({
-    billing,
     hasActiveRun: runs.some((run) => run.isActive),
     missingSecretKeys: input.missingSecretKeys,
     mode,
@@ -162,7 +157,6 @@ export function buildWallieIssueData(input: {
   });
 
   return {
-    billing,
     blockingReasons,
     canEnqueue: blockingReasons.length === 0,
     missingSecretKeys: input.missingSecretKeys,

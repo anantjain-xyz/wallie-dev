@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildWallieBillingState,
   buildWallieBlockingReasons,
   canRetryWallieRun,
   inferWallieRunMode,
-  shouldResetFreeTierBillingCycle,
 } from "@/lib/wallie/core";
 
 describe("wallie core helpers", () => {
@@ -14,32 +12,8 @@ describe("wallie core helpers", () => {
     expect(inferWallieRunMode("repo-id")).toBe("code");
   });
 
-  it("builds free-tier billing state and reset checks", () => {
-    const billing = buildWallieBillingState({
-      currentBillingCycleStartAt: "2026-03-01T00:00:00.000Z",
-      successfulRunsThisCycle: 25,
-      tier: "free",
-    });
-
-    expect(billing.limitReached).toBe(true);
-    expect(billing.runLimit).toBe(25);
-    expect(billing.runsRemaining).toBe(0);
-    expect(
-      shouldResetFreeTierBillingCycle(
-        "2026-01-01T00:00:00.000Z",
-        new Date("2026-03-31T00:00:00.000Z"),
-      ),
-    ).toBe(true);
-  });
-
   it("surfaces blocking reasons and retry eligibility", () => {
-    const billing = buildWallieBillingState({
-      currentBillingCycleStartAt: "2026-03-01T00:00:00.000Z",
-      successfulRunsThisCycle: 3,
-      tier: "free",
-    });
     const reasons = buildWallieBlockingReasons({
-      billing,
       hasActiveRun: true,
       missingSecretKeys: ["ANTHROPIC_API_KEY"],
       mode: "code",
@@ -56,5 +30,27 @@ describe("wallie core helpers", () => {
     expect(canRetryWallieRun("success", false)).toBe(true);
     expect(canRetryWallieRun("success", true)).toBe(false);
     expect(canRetryWallieRun("running", false)).toBe(false);
+  });
+
+  it("requires a linked repository in code mode", () => {
+    const reasons = buildWallieBlockingReasons({
+      hasActiveRun: false,
+      missingSecretKeys: [],
+      mode: "code",
+      repository: null,
+    });
+
+    expect(reasons.map((reason) => reason.code)).toEqual(["repository_unavailable"]);
+  });
+
+  it("returns no blocking reasons when project mode is configured", () => {
+    const reasons = buildWallieBlockingReasons({
+      hasActiveRun: false,
+      missingSecretKeys: [],
+      mode: "project",
+      repository: null,
+    });
+
+    expect(reasons).toEqual([]);
   });
 });

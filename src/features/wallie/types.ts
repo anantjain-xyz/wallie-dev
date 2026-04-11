@@ -1,6 +1,6 @@
 import type { IssueMember } from "@/features/issues/types";
 import type { Enums } from "@/lib/supabase/database.types";
-import type { WallieBillingState, WallieBlockingReason, WallieRunMode } from "@/lib/wallie/types";
+import type { WallieBlockingReason, WallieRunMode } from "@/lib/wallie/types";
 
 export type WallieIssueRepository = {
   defaultBranch: string | null;
@@ -37,7 +37,6 @@ export type WallieRun = {
 };
 
 export type WallieIssueData = {
-  billing: WallieBillingState;
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
   missingSecretKeys: string[];

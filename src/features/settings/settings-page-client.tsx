@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ChangeEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type {
   GitHubInstallationSummary,
@@ -16,14 +16,12 @@ import type {
   UpsertWorkspaceSecretResponse,
   WorkspaceSecretPreview,
 } from "@/lib/secrets/contracts";
-import type { CreateStripePortalSessionResponse } from "@/lib/billing/contracts";
 import type { WorkspaceAvatarUploadResponse } from "@/lib/storage/contracts";
 import type { SettingsPageData } from "@/features/settings/data";
 
 type SettingsPageClientProps = {
   initialData: SettingsPageData;
   searchState: {
-    billingStatus: string | null;
     githubStatus: string | null;
   };
 };
@@ -132,16 +130,6 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
         text: "GitHub installation state expired or could not be verified. Start the install flow again from settings.",
       } satisfies FlashMessage;
     default:
-      break;
-  }
-
-  switch (searchState.billingStatus) {
-    case "returned":
-      return {
-        kind: "info",
-        text: "Returned from the Stripe customer portal.",
-      } satisfies FlashMessage;
-    default:
       return null;
   }
 }
@@ -162,25 +150,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const [secretValue, setSecretValue] = useState("");
   const [isRefreshingRepositories, setIsRefreshingRepositories] = useState(false);
   const [isLaunchingGitHubInstall, setIsLaunchingGitHubInstall] = useState(false);
-  const [isOpeningBillingPortal, setIsOpeningBillingPortal] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isLoadingSecrets, setIsLoadingSecrets] = useState(false);
   const [isSavingSecret, setIsSavingSecret] = useState(false);
 
   const isManager = initialData.canManage;
   const hasGitHubAppConfig = initialData.github.missingAppKeys.length === 0;
-  const hasStripePortalConfig = initialData.billing.missingPortalKeys.length === 0;
-  const truncatedStripeCustomerId = useMemo(() => {
-    if (!initialData.workspace.stripeCustomerId) {
-      return null;
-    }
-
-    const customerId = initialData.workspace.stripeCustomerId;
-
-    return customerId.length > 14
-      ? `${customerId.slice(0, 8)}…${customerId.slice(-4)}`
-      : customerId;
-  }, [initialData.workspace.stripeCustomerId]);
 
   useEffect(() => {
     if (!isManager) {
@@ -275,31 +250,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
       });
     } finally {
       setIsRefreshingRepositories(false);
-    }
-  }
-
-  async function handleOpenBillingPortal() {
-    setIsOpeningBillingPortal(true);
-
-    try {
-      const response = await fetch("/api/stripe/portal", {
-        body: JSON.stringify({
-          workspaceId: initialData.workspace.id,
-        }),
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
-      const payload = await readResponseJson<CreateStripePortalSessionResponse>(response);
-
-      window.location.assign(payload.url);
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Stripe portal launch failed.",
-      });
-      setIsOpeningBillingPortal(false);
     }
   }
 
@@ -429,7 +379,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             Settings
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
-            Manage workspace identity, billing, GitHub sync, and encrypted secrets from one route.
+            Manage workspace identity, GitHub sync, and encrypted secrets from one route.
           </p>
         </header>
 
@@ -466,34 +416,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
                   /w/{initialData.workspace.slug}
                 </p>
-                <p className="text-sm text-muted">
-                  Tier:{" "}
-                  <span className="font-semibold text-foreground">
-                    {initialData.workspace.tier}
-                  </span>
-                </p>
               </div>
-            </div>
-
-            <div className="ui-subpanel grid gap-3 p-4 text-sm text-foreground">
-              <p>
-                Billing cycle started{" "}
-                <span className="font-semibold">
-                  {dateFormatter.format(new Date(initialData.workspace.currentBillingCycleStartAt))}
-                </span>
-              </p>
-              <p>
-                Successful Wallie runs this cycle{" "}
-                <span className="font-semibold">
-                  {initialData.workspace.successfulAgentRunsThisCycle}
-                </span>
-              </p>
-              <p>
-                Stripe customer{" "}
-                <span className="font-mono text-xs">
-                  {truncatedStripeCustomerId ?? "not created yet"}
-                </span>
-              </p>
             </div>
 
             {isManager ? (
@@ -514,35 +437,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 Workspace admins can change the avatar and manage integrations from this page.
               </p>
             )}
-          </div>
-        </Section>
-
-        <Section title="Billing">
-          <div className="space-y-4">
-            <ConfigState
-              missingKeys={initialData.billing.missingPortalKeys}
-              title="Stripe portal disabled"
-            />
-            <ConfigState
-              missingKeys={initialData.billing.missingWebhookKeys.filter(
-                (key) => !initialData.billing.missingPortalKeys.includes(key),
-              )}
-              title="Stripe webhook sync disabled"
-            />
-
-            <div className="ui-subpanel p-5 text-sm leading-7 text-foreground">
-              Customer portal is the Gate E billing surface. Subscription changes sync back into
-              workspace tier and billing-cycle state through Stripe webhooks.
-            </div>
-
-            <button
-              className="ui-button-primary"
-              disabled={!isManager || !hasStripePortalConfig || isOpeningBillingPortal}
-              onClick={() => void handleOpenBillingPortal()}
-              type="button"
-            >
-              {isOpeningBillingPortal ? "Opening Portal…" : "Open Stripe Portal"}
-            </button>
           </div>
         </Section>
 
