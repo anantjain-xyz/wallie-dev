@@ -283,6 +283,38 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  // Shadow write to the new `sessions` table. PR 1 populates this in parallel
+  // with pipeline_issues so PR 2 has real data to flip the read path onto. We
+  // reuse the same per-workspace number the anchor issue got so users see one
+  // stable ref across both shapes, and match phase / slack / linear fields so
+  // the row is self-contained.
+  //
+  // Shadow writes are best-effort: a failure here must NOT regress the legacy
+  // path, so we log and continue instead of rolling back the anchor + pipeline
+  // rows. The unique indexes on (workspace_id, linear_issue_id) and
+  // (workspace_id, number) can fire on concurrent mentions for the same issue,
+  // and 23505 on either is a benign race, not an incident.
+  const { error: sessionError } = await admin.from("sessions").insert({
+    creator_member_id: wallieMember?.id ?? null,
+    linear_issue_id: linearInfo.issueId,
+    linear_issue_url: linearInfo.url,
+    number: issueNumber ?? 1,
+    phase: "product",
+    phase_status: "agent_generating",
+    prompt_md: anchorDescription,
+    slack_channel_id: channelId,
+    slack_thread_ts: threadTs,
+    title: linearIssue.title,
+    workspace_id: workspaceId,
+  });
+
+  if (sessionError) {
+    const isSessionDedupe = "code" in sessionError && sessionError.code === "23505";
+    if (!isSessionDedupe) {
+      console.error("Failed to shadow-write sessions row", { error: sessionError });
+    }
+  }
+
   // Enqueue pipeline job
   const { data: newJob, error: jobError } = await admin
     .from("agent_jobs")

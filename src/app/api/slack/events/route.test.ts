@@ -68,7 +68,10 @@ function makeRequest(body: string, overrides?: { signature?: string; timestamp?:
 // be able to override behavior per table while keeping the rest sane.
 type TableHandler = () => Record<string, unknown>;
 
-function makeAdmin(handlers: Record<string, TableHandler>, rpcResult: { data: unknown; error: unknown } = { data: 1, error: null }) {
+function makeAdmin(
+  handlers: Record<string, TableHandler>,
+  rpcResult: { data: unknown; error: unknown } = { data: 1, error: null },
+) {
   const fromMock = vi.fn().mockImplementation((table: string) => {
     const handler = handlers[table];
     if (handler) return handler();
@@ -350,7 +353,7 @@ describe("POST /api/slack/events", () => {
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
   });
 
-  it("creates an anchor + pipeline_issues row from real Linear data", async () => {
+  it("creates an anchor + pipeline_issues row and shadow-writes sessions", async () => {
     mocked.decryptSecretValue.mockReturnValue("plain-linear-key");
     mocked.fetchLinearIssue.mockResolvedValue({
       description: "fix the auth bug",
@@ -363,6 +366,7 @@ describe("POST /api/slack/events", () => {
 
     const issuesInsert = vi.fn();
     const pipelineInsert = vi.fn();
+    const sessionsInsert = vi.fn();
 
     const { client, fromMock, rpcMock } = makeAdmin(
       {
@@ -396,6 +400,12 @@ describe("POST /api/slack/events", () => {
           chain.single = vi.fn().mockResolvedValue({ data: { id: "pi-1" }, error: null });
           return chain;
         },
+        sessions: () => ({
+          insert: vi.fn().mockImplementation(async (row: unknown) => {
+            sessionsInsert(row);
+            return { error: null };
+          }),
+        }),
         slack_installations: slackInstallHandler(),
         workspace_members: () => {
           const chain: Record<string, unknown> = {};
@@ -454,7 +464,118 @@ describe("POST /api/slack/events", () => {
         phase_status: "agent_generating",
       }),
     );
+    // Shadow-write to sessions carries the same per-workspace number, phase,
+    // Slack thread, and Linear linkage as the legacy pipeline_issue.
+    expect(sessionsInsert).toHaveBeenCalledTimes(1);
+    expect(sessionsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creator_member_id: "wallie-member-id",
+        linear_issue_id: "TEAM-456",
+        linear_issue_url: "https://linear.app/myteam/issue/TEAM-456",
+        number: 42,
+        phase: "product",
+        phase_status: "agent_generating",
+        slack_channel_id: "C1",
+        slack_thread_ts: "1.1",
+        title: "Auth bug",
+        workspace_id: "ws-1",
+      }),
+    );
     expect(fromMock).toHaveBeenCalledWith("agent_jobs");
+  });
+
+  it("logs but does not abort when the sessions shadow write fails", async () => {
+    mocked.decryptSecretValue.mockReturnValue("plain-linear-key");
+    mocked.fetchLinearIssue.mockResolvedValue({
+      description: "shadow failure",
+      id: "linear-uuid",
+      identifier: "TEAM-555",
+      title: "Shadow failure",
+      url: "https://linear.app/team/issue/TEAM-555",
+    });
+    mocked.processQueuedAgentJobs.mockResolvedValue({});
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { client, fromMock } = makeAdmin(
+      {
+        agent_jobs: () => {
+          const chain: Record<string, unknown> = {};
+          chain.insert = vi.fn().mockReturnValue(chain);
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.single = vi.fn().mockResolvedValue({ data: { id: "job-555" }, error: null });
+          return chain;
+        },
+        issues: () => {
+          const chain: Record<string, unknown> = {};
+          chain.insert = vi.fn().mockReturnValue(chain);
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.single = vi.fn().mockResolvedValue({ data: { id: "anchor-555" }, error: null });
+          return chain;
+        },
+        pipeline_issues: () => {
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.eq = vi.fn().mockReturnValue(chain);
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+          chain.insert = vi.fn().mockReturnValue(chain);
+          chain.single = vi.fn().mockResolvedValue({ data: { id: "pi-555" }, error: null });
+          return chain;
+        },
+        sessions: () => ({
+          insert: vi.fn().mockResolvedValue({
+            error: { code: "XX000", message: "shadow insert blew up" },
+          }),
+        }),
+        slack_installations: slackInstallHandler(),
+        workspace_members: () => {
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.eq = vi.fn().mockReturnValue(chain);
+          chain.maybeSingle = vi.fn().mockResolvedValue({
+            data: { id: "wallie-member-id" },
+            error: null,
+          });
+          return chain;
+        },
+        workspace_secrets: () => {
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.eq = vi.fn().mockReturnValue(chain);
+          chain.maybeSingle = vi.fn().mockResolvedValue({
+            data: { encrypted_value: "enc-linear-key" },
+            error: null,
+          });
+          return chain;
+        },
+      },
+      { data: 99, error: null },
+    );
+    mocked.createSupabaseAdminClient.mockReturnValue(client);
+
+    const body = JSON.stringify({
+      event: {
+        channel: "C1",
+        text: "<@U> https://linear.app/team/issue/TEAM-555",
+        ts: "1.1",
+        type: "app_mention",
+      },
+      team_id: "T1",
+    });
+
+    const response = await POST(makeRequest(body));
+    const json = await response.json();
+
+    expect(json.ok).toBe(true);
+    // Legacy path must still have queued a job — shadow-write failure cannot
+    // regress production.
+    expect(fromMock).toHaveBeenCalledWith("agent_jobs");
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "Failed to shadow-write sessions row",
+      expect.objectContaining({ error: expect.objectContaining({ code: "XX000" }) }),
+    );
+
+    consoleErrorSpy.mockRestore();
   });
 
   it("recovers from a previously rejected pipeline_issue when re-mentioned", async () => {
