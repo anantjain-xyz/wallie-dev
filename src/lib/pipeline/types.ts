@@ -79,43 +79,54 @@ export function markdownToSpec(md: string): ProductSpec {
 
   const lines = md.split("\n");
   let currentSection = "";
+  // Track which list-based array we're currently appending to for
+  // multiline continuation support.
+  let activeList: string[] | null = null;
+
+  const listSectionArrays: Record<string, string[]> = {
+    "acceptance criteria": spec.acceptance_criteria,
+    constraints: spec.constraints,
+    "non-goals": spec.non_goals,
+    "open questions": spec.open_questions,
+  };
 
   for (const line of lines) {
     const h1Match = line.match(/^# (.+)$/);
     if (h1Match) {
       spec.title = h1Match[1]!.trim();
       currentSection = "";
+      activeList = null;
       continue;
     }
 
     const h2Match = line.match(/^## (.+)$/);
     if (h2Match) {
       currentSection = h2Match[1]!.trim().toLowerCase();
+      activeList = null;
       continue;
     }
 
     const listMatch = line.match(/^- (.+)$/);
     if (listMatch) {
-      const item = listMatch[1]!.trim();
-      switch (currentSection) {
-        case "acceptance criteria":
-          spec.acceptance_criteria.push(item);
-          break;
-        case "constraints":
-          spec.constraints.push(item);
-          break;
-        case "non-goals":
-          spec.non_goals.push(item);
-          break;
-        case "open questions":
-          spec.open_questions.push(item);
-          break;
+      const arr = listSectionArrays[currentSection];
+      if (arr) {
+        arr.push(listMatch[1]!.trim());
+        activeList = arr;
       }
       continue;
     }
 
     const trimmed = line.trim();
-    if (trimmed === "") continue;
+    if (trimmed === "") {
+      activeList = null;
+      continue;
+    }
+
+    // Multiline continuation of a list item
+    if (activeList && activeList.length > 0) {
+      activeList[activeList.length - 1] += " " + trimmed;
+      continue;
+    }
 
     switch (currentSection) {
       case "problem statement":

@@ -579,7 +579,12 @@ export async function handleRejection(input: {
         if (latestArtifact) {
           const raw = latestArtifact.artifact_json;
           if (typeof raw === "string") {
-            specTitle = markdownToSpec(raw).title || specTitle;
+            const parsed = markdownToSpec(raw);
+            // Only use the parsed title if it looks like a real spec title,
+            // not a phase label from a manual stub (e.g. "Design", "Review").
+            if (parsed.title && parsed.problem_statement) {
+              specTitle = parsed.title;
+            }
           } else {
             specTitle = (raw as unknown as ProductSpec)?.title ?? specTitle;
           }
