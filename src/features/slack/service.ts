@@ -7,8 +7,7 @@ import { encryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
 
-const installationSelect =
-  "id, installed_at, team_id, team_name, updated_at, workspace_id";
+const installationSelect = "id, installed_at, team_id, team_name, updated_at, workspace_id";
 
 type SlackOAuthTokenResponse = {
   access_token?: string;

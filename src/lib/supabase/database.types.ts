@@ -639,6 +639,242 @@ export type Database = {
           },
         ]
       }
+      sessions: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          creator_member_id: string | null
+          current_artifact_version: number
+          id: string
+          linear_issue_id: string | null
+          linear_issue_url: string | null
+          number: number
+          phase: Database["public"]["Enums"]["session_phase"]
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          prompt_md: string
+          rejection_count: number
+          slack_channel_id: string | null
+          slack_thread_ts: string | null
+          title: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          creator_member_id?: string | null
+          current_artifact_version?: number
+          id?: string
+          linear_issue_id?: string | null
+          linear_issue_url?: string | null
+          number: number
+          phase?: Database["public"]["Enums"]["session_phase"]
+          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          prompt_md?: string
+          rejection_count?: number
+          slack_channel_id?: string | null
+          slack_thread_ts?: string | null
+          title: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          creator_member_id?: string | null
+          current_artifact_version?: number
+          id?: string
+          linear_issue_id?: string | null
+          linear_issue_url?: string | null
+          number?: number
+          phase?: Database["public"]["Enums"]["session_phase"]
+          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          prompt_md?: string
+          rejection_count?: number
+          slack_channel_id?: string | null
+          slack_thread_ts?: string | null
+          title?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sessions_creator_member_id_fkey"
+            columns: ["creator_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_artifacts: {
+        Row: {
+          artifact_json: Json
+          created_at: string
+          feedback_text: string | null
+          id: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          session_id: string
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          artifact_json: Json
+          created_at?: string
+          feedback_text?: string | null
+          id?: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          session_id: string
+          version: number
+          workspace_id: string
+        }
+        Update: {
+          artifact_json?: Json
+          created_at?: string
+          feedback_text?: string | null
+          id?: string
+          phase?: Database["public"]["Enums"]["session_phase"]
+          session_id?: string
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_artifacts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_artifacts_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_phase_completions: {
+        Row: {
+          completed_at: string
+          completed_by_member_id: string | null
+          id: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          session_id: string
+          workspace_id: string
+        }
+        Insert: {
+          completed_at?: string
+          completed_by_member_id?: string | null
+          id?: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          session_id: string
+          workspace_id: string
+        }
+        Update: {
+          completed_at?: string
+          completed_by_member_id?: string | null
+          id?: string
+          phase?: Database["public"]["Enums"]["session_phase"]
+          session_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_phase_completions_completed_by_member_id_fkey"
+            columns: ["completed_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_phase_completions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_phase_completions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_pull_requests: {
+        Row: {
+          branch_name: string
+          created_at: string
+          github_repository_id: string | null
+          id: string
+          is_draft: boolean | null
+          pull_request_number: number | null
+          pull_request_state: string | null
+          pull_request_url: string | null
+          session_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          branch_name: string
+          created_at?: string
+          github_repository_id?: string | null
+          id?: string
+          is_draft?: boolean | null
+          pull_request_number?: number | null
+          pull_request_state?: string | null
+          pull_request_url?: string | null
+          session_id: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          branch_name?: string
+          created_at?: string
+          github_repository_id?: string | null
+          id?: string
+          is_draft?: boolean | null
+          pull_request_number?: number | null
+          pull_request_state?: string | null
+          pull_request_url?: string | null
+          session_id?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_pull_requests_github_repository_id_fkey"
+            columns: ["github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pull_requests_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_pull_requests_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       issues: {
         Row: {
           assignee_member_id: string | null
@@ -928,6 +1164,24 @@ export type Database = {
           linear_issue_url: string | null
         }[]
       }
+      approve_session_phase: {
+        Args: {
+          target_session_id: string
+          expected_workspace_id: string
+          expected_version: number
+          approver_member_id?: string | null
+        }
+        Returns: {
+          id: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          workspace_id: string
+          slack_channel_id: string | null
+          slack_thread_ts: string | null
+          linear_issue_url: string | null
+          archived_at: string | null
+        }[]
+      }
     }
     Enums: {
       agent_job_status: "queued" | "running" | "success" | "error" | "canceled"
@@ -960,6 +1214,13 @@ export type Database = {
         | "approved"
         | "rejected"
         | "escalated"
+      session_phase:
+        | "product"
+        | "design"
+        | "engineering"
+        | "review"
+        | "land"
+        | "monitor"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
     }
@@ -1122,6 +1383,14 @@ export const Constants = {
         "approved",
         "rejected",
         "escalated",
+      ],
+      session_phase: [
+        "product",
+        "design",
+        "engineering",
+        "review",
+        "land",
+        "monitor",
       ],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],

@@ -52,9 +52,7 @@ export async function fetchLinearIssue(
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Linear API request failed: ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`Linear API request failed: ${response.status} ${response.statusText}`);
   }
 
   const payload = (await response.json()) as LinearIssueResponse;
@@ -102,7 +100,10 @@ export async function verifyLinearApiKey(apiKey: string): Promise<{ ok: boolean;
       return { error: `Linear API returned ${response.status}.`, ok: false };
     }
 
-    const payload = (await response.json()) as { data?: { viewer?: { id: string } | null }; errors?: Array<{ message: string }> };
+    const payload = (await response.json()) as {
+      data?: { viewer?: { id: string } | null };
+      errors?: Array<{ message: string }>;
+    };
 
     if (payload.errors && payload.errors.length > 0) {
       return { error: payload.errors.map((e) => e.message).join("; "), ok: false };

@@ -46,8 +46,7 @@ export async function DELETE(
   } catch (error) {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Failed to disconnect Slack installation.",
+        error: error instanceof Error ? error.message : "Failed to disconnect Slack installation.",
       },
       { status: 500 },
     );
