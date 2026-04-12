@@ -1,31 +1,13 @@
 import { after, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { fetchLinearIssue } from "@/lib/linear/client";
+import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { verifySlackSignature } from "@/lib/slack/verify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
-import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
 
 const LINEAR_URL_REGEX = /https:\/\/linear\.app\/[a-zA-Z0-9-]+\/issue\/([A-Z]+-\d+)/;
-
-function verifySlackSignature(body: string, timestamp: string, signature: string): boolean {
-  const secret = process.env.SLACK_SIGNING_SECRET;
-  if (!secret) return false;
-
-  // Reject requests older than 5 minutes
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > 300) return false;
-
-  const sigBasestring = `v0:${timestamp}:${body}`;
-  const mySignature = `v0=${createHmac("sha256", secret).update(sigBasestring).digest("hex")}`;
-
-  try {
-    return timingSafeEqual(Buffer.from(mySignature), Buffer.from(signature));
-  } catch {
-    return false;
-  }
-}
 
 function extractLinearUrl(text: string): { issueId: string; url: string } | null {
   const match = text.match(LINEAR_URL_REGEX);

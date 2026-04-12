@@ -1,28 +1,11 @@
 import { after, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
 import { openSlackView } from "@/lib/pipeline/slack-format";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { verifySlackSignature } from "@/lib/slack/verify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
-
-function verifySlackSignature(body: string, timestamp: string, signature: string): boolean {
-  const secret = process.env.SLACK_SIGNING_SECRET;
-  if (!secret) return false;
-
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > 300) return false;
-
-  const sigBasestring = `v0:${timestamp}:${body}`;
-  const mySignature = `v0=${createHmac("sha256", secret).update(sigBasestring).digest("hex")}`;
-
-  try {
-    return timingSafeEqual(Buffer.from(mySignature), Buffer.from(signature));
-  } catch {
-    return false;
-  }
-}
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
