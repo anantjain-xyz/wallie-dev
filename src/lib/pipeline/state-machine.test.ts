@@ -1,33 +1,60 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  approvalTimestampField,
+  PHASE_ORDER,
   canApprove,
   canReject,
+  isSessionPhase,
   isTerminal,
+  isTerminalPhase,
   nextPhase,
   shouldEscalate,
 } from "@/lib/pipeline/state-machine";
 
 describe("pipeline state machine", () => {
-  describe("nextPhase", () => {
-    it("advances through the phase sequence", () => {
-      expect(nextPhase("product")).toBe("design");
-      expect(nextPhase("design")).toBe("engineering");
-      expect(nextPhase("engineering")).toBe("shipped");
-    });
-
-    it("returns null for the final phase", () => {
-      expect(nextPhase("shipped")).toBeNull();
+  describe("PHASE_ORDER", () => {
+    it("contains the six pipeline phases in order", () => {
+      expect(PHASE_ORDER).toEqual([
+        "product",
+        "design",
+        "engineering",
+        "review",
+        "land",
+        "monitor",
+      ]);
     });
   });
 
-  describe("approvalTimestampField", () => {
-    it("maps each phase to its timestamp column", () => {
-      expect(approvalTimestampField("product")).toBe("product_approved_at");
-      expect(approvalTimestampField("design")).toBe("design_approved_at");
-      expect(approvalTimestampField("engineering")).toBe("engineering_approved_at");
-      expect(approvalTimestampField("shipped")).toBe("shipped_at");
+  describe("nextPhase", () => {
+    it("advances through the full sequence", () => {
+      expect(nextPhase("product")).toBe("design");
+      expect(nextPhase("design")).toBe("engineering");
+      expect(nextPhase("engineering")).toBe("review");
+      expect(nextPhase("review")).toBe("land");
+      expect(nextPhase("land")).toBe("monitor");
+    });
+
+    it("returns null for the terminal monitor phase", () => {
+      expect(nextPhase("monitor")).toBeNull();
+    });
+  });
+
+  describe("isTerminalPhase", () => {
+    it("treats monitor as terminal and other phases as non-terminal", () => {
+      expect(isTerminalPhase("monitor")).toBe(true);
+      expect(isTerminalPhase("product")).toBe(false);
+      expect(isTerminalPhase("land")).toBe(false);
+    });
+  });
+
+  describe("isSessionPhase", () => {
+    it("accepts the six valid phase names and rejects others", () => {
+      for (const phase of PHASE_ORDER) {
+        expect(isSessionPhase(phase)).toBe(true);
+      }
+      expect(isSessionPhase("shipped")).toBe(false);
+      expect(isSessionPhase("")).toBe(false);
+      expect(isSessionPhase("Product")).toBe(false);
     });
   });
 
@@ -61,7 +88,7 @@ describe("pipeline state machine", () => {
   });
 
   describe("isTerminal", () => {
-    it("identifies terminal states", () => {
+    it("identifies terminal phase-status values", () => {
       expect(isTerminal("approved")).toBe(true);
       expect(isTerminal("escalated")).toBe(true);
       expect(isTerminal("awaiting_review")).toBe(false);

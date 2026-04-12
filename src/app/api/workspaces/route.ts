@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ensureProfileForUser } from "@/lib/auth";
-import { workspaceIssuesPath } from "@/lib/routes";
+import { workspaceBasePath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createWorkspaceInputSchema, normalizeWorkspaceSlug } from "@/lib/workspaces";
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json(
     {
-      redirectTo: workspaceIssuesPath(data.slug),
+      redirectTo: workspaceBasePath(data.slug),
       workspace: {
         id: data.id,
         name: data.name,

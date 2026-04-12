@@ -17,8 +17,8 @@ import { Dropdown } from "@/components/shared/dropdown";
 import type { WorkspaceSummary } from "@/lib/auth";
 import {
   type WorkspaceNavItem,
-  workspaceIssuesPath,
-  workspacePipelinePath,
+  workspaceBasePath,
+  workspaceSessionsPath,
   workspaceSettingsPath,
 } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -83,16 +83,15 @@ function SidebarEntry({
 
 export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarProps) {
   const pathname = usePathname();
-  const issuesHref =
-    navItems.find((item) => item.label === "Issues")?.href ?? workspaceIssuesPath(workspace.slug);
   const pipelineHref =
-    navItems.find((item) => item.label === "Pipeline")?.href ??
-    workspacePipelinePath(workspace.slug);
+    navItems.find((item) => item.label === "Pipeline")?.href ?? workspaceBasePath(workspace.slug);
+  const sessionsHref =
+    navItems.find((item) => item.label === "Sessions")?.href ??
+    workspaceSessionsPath(workspace.slug);
   const settingsHref =
     navItems.find((item) => item.label === "Settings")?.href ??
     workspaceSettingsPath(workspace.slug);
-  const issuesControlsHref = `${issuesHref}?controls=1`;
-  const issuesCreateHref = `${issuesHref}?create=1`;
+  const sessionsCreateHref = `${sessionsHref}?create=1`;
 
   return (
     <aside className="hidden h-screen w-[216px] shrink-0 overflow-hidden border-r border-border bg-background md:sticky md:top-0 md:flex md:flex-col">
@@ -124,14 +123,14 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
         </Dropdown>
 
         <div className="flex items-center gap-1.5">
-          <Link
-            href={issuesControlsHref}
-            className="ui-icon-button"
-            aria-label="Open Issue Filters"
-          >
+          <Link href={sessionsHref} className="ui-icon-button" aria-label="Search sessions">
             <SearchIcon className="h-3.5 w-3.5" />
           </Link>
-          <Link href={issuesCreateHref} className="ui-icon-button" aria-label="Create Issue">
+          <Link
+            href={sessionsCreateHref}
+            className="ui-icon-button"
+            aria-label="Create session"
+          >
             <PlusIcon className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -154,16 +153,16 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
 
           <div className="space-y-1 pl-4">
             <SidebarEntry
-              href={issuesHref}
-              active={isActive(pathname, issuesHref)}
-              icon={<IssueBarsIcon className="h-3.5 w-3.5" />}
-              label="Issues"
-            />
-            <SidebarEntry
               href={pipelineHref}
-              active={isActive(pathname, pipelineHref)}
+              active={pathname === pipelineHref}
               icon={<ViewsIcon className="h-3.5 w-3.5" />}
               label="Pipeline"
+            />
+            <SidebarEntry
+              href={sessionsHref}
+              active={isActive(pathname, sessionsHref)}
+              icon={<IssueBarsIcon className="h-3.5 w-3.5" />}
+              label="Sessions"
             />
           </div>
         </section>

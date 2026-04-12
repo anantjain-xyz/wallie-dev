@@ -1,16 +1,15 @@
-import { IssueDetailPageClient } from "@/features/issues/detail/issue-detail-page-client";
-import { loadIssueDetailPageData } from "@/features/issues/detail/data";
+import { redirect } from "next/navigation";
 
-type IssueDetailPageProps = {
+import { workspaceSessionDetailPath } from "@/lib/routes";
+
+type IssueDetailLegacyPageProps = {
   params: Promise<{
     issueNumber: string;
     workspaceSlug: string;
   }>;
 };
 
-export default async function IssueDetailPage({ params }: IssueDetailPageProps) {
+export default async function IssueDetailLegacyPage({ params }: IssueDetailLegacyPageProps) {
   const { issueNumber, workspaceSlug } = await params;
-  const data = await loadIssueDetailPageData(workspaceSlug, issueNumber);
-
-  return <IssueDetailPageClient initialData={data} />;
+  redirect(workspaceSessionDetailPath(workspaceSlug, issueNumber));
 }
