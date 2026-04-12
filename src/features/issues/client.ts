@@ -12,7 +12,7 @@ export async function createIssueWithAllocatedNumber(
   supabase: SupabaseClient<Database>,
   input: IssueCreateInput,
 ) {
-  const { data: number, error: numberError } = await supabase.rpc("next_issue_number", {
+  const { data: number, error: numberError } = await supabase.rpc("next_session_number", {
     target_workspace_id: input.workspaceId,
   });
 

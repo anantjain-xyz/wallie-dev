@@ -213,7 +213,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   // Create pipeline anchor: issues row populated from real Linear data.
-  const { data: issueNumber } = await admin.rpc("next_issue_number", {
+  const { data: issueNumber } = await admin.rpc("next_session_number", {
     target_workspace_id: workspaceId,
   });
 

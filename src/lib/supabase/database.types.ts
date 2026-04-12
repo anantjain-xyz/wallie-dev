@@ -913,6 +913,10 @@ export type Database = {
         Args: { target_workspace_id: string }
         Returns: number
       }
+      next_session_number: {
+        Args: { target_workspace_id: string }
+        Returns: number
+      }
       approve_session_phase: {
         Args: {
           target_session_id: string

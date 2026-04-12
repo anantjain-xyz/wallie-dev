@@ -439,7 +439,7 @@ describe("POST /api/slack/events", () => {
     const json = await response.json();
 
     expect(json.ok).toBe(true);
-    expect(rpcMock).toHaveBeenCalledWith("next_issue_number", { target_workspace_id: "ws-1" });
+    expect(rpcMock).toHaveBeenCalledWith("next_session_number", { target_workspace_id: "ws-1" });
     // Anchor was populated from Linear data
     expect(issuesInsert).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Auth bug", workspace_id: "ws-1" }),
