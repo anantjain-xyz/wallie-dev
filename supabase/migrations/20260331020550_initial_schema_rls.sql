@@ -290,10 +290,10 @@ create index issues_search_document_idx
   );
 
 create index issues_title_trgm_idx
-  on public.issues using gin (title gin_trgm_ops);
+  on public.issues using gin (title extensions.gin_trgm_ops);
 
 create index issues_description_md_trgm_idx
-  on public.issues using gin (description_md gin_trgm_ops);
+  on public.issues using gin (description_md extensions.gin_trgm_ops);
 
 create index issue_comments_issue_created_at_idx
   on public.issue_comments (issue_id, created_at);
