@@ -71,10 +71,6 @@ DECLARE
   msg4_id  uuid := '23b2c3d4-0004-4000-8000-000000000004';
   msg5_id  uuid := '23b2c3d4-0005-4000-8000-000000000005';
 
-  -- Reusable product-spec JSON builder. Keeps each session's artifact under
-  -- the ProductSpec shape the product-agent emits.
-  product_spec_template jsonb;
-
 BEGIN
 
   -- -------------------------------------------------------------------------
@@ -275,16 +271,6 @@ BEGIN
   -- 10. Sessions (one per phase for a realistic tour of the pipeline)
   -- -------------------------------------------------------------------------
 
-  product_spec_template := jsonb_build_object(
-    'title', 'placeholder',
-    'problem_statement', 'placeholder',
-    'user_story', 'placeholder',
-    'acceptance_criteria', jsonb_build_array('A', 'B'),
-    'constraints', jsonb_build_array(),
-    'non_goals', jsonb_build_array(),
-    'open_questions', jsonb_build_array()
-  );
-
   -- Session 1: product / awaiting_review — agent just finished the spec
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
@@ -303,26 +289,7 @@ BEGIN
     (session_id, workspace_id, phase, version, artifact_json, created_at)
   VALUES
     (sess1_id, ws_id, 'product', 1,
-     product_spec_template
-       || jsonb_build_object(
-         'title', 'Add SSO login via Google Workspace',
-         'problem_statement', 'Business customers cannot enforce login policies or reclaim seats when employees leave because Wallie only supports email/password.',
-         'user_story', 'As an IT admin on the Business plan, I want to require Google Workspace SSO for my workspace so that only employees with active corporate accounts can log in.',
-         'acceptance_criteria', jsonb_build_array(
-           'Owners can enable Google SSO from the workspace settings page.',
-           'Members with matching email domains sign in via Google and are auto-added to the workspace.',
-           'Non-matching domains are rejected with a clear error.',
-           'Email/password login is disabled for the workspace once SSO is required.'
-         ),
-         'constraints', jsonb_build_array(
-           'Must use Supabase Auth Google provider.',
-           'Must not break existing email/password sessions mid-request.'
-         ),
-         'non_goals', jsonb_build_array('Okta, Microsoft Entra, or other IdPs (follow-up).'),
-         'open_questions', jsonb_build_array(
-           'Should we require MFA enforcement client-side or trust Google?'
-         )
-       ),
+     to_jsonb(E'# Add SSO login via Google Workspace\n\n## Problem Statement\n\nBusiness customers cannot enforce login policies or reclaim seats when employees leave because Wallie only supports email/password.\n\n## User Story\n\nAs an IT admin on the Business plan, I want to require Google Workspace SSO for my workspace so that only employees with active corporate accounts can log in.\n\n## Acceptance Criteria\n\n- Owners can enable Google SSO from the workspace settings page.\n- Members with matching email domains sign in via Google and are auto-added to the workspace.\n- Non-matching domains are rejected with a clear error.\n- Email/password login is disabled for the workspace once SSO is required.\n\n## Constraints\n\n- Must use Supabase Auth Google provider.\n- Must not break existing email/password sessions mid-request.\n\n## Non-Goals\n\n- Okta, Microsoft Entra, or other IdPs (follow-up).\n\n## Open Questions\n\n- Should we require MFA enforcement client-side or trust Google?\n'::text),
      now() - interval '90 minutes');
 
   -- Session 2: design / agent_generating — product approved, design agent running
@@ -343,17 +310,7 @@ BEGIN
     (session_id, workspace_id, phase, version, artifact_json, created_at)
   VALUES
     (sess2_id, ws_id, 'product', 1,
-     product_spec_template
-       || jsonb_build_object(
-         'title', 'Self-serve workspace creation flow',
-         'problem_statement', 'New users land on an empty dashboard after signup with no indication of how to create a workspace.',
-         'user_story', 'As a newly-signed-up user, I want a guided flow that collects a name and slug so that I land inside a working workspace immediately.',
-         'acceptance_criteria', jsonb_build_array(
-           'Post-signup users are redirected to /new-workspace.',
-           'Slug is auto-derived from the name with a live preview.',
-           'Successful creation redirects to /w/{slug}.'
-         )
-       ),
+     to_jsonb(E'# Self-serve workspace creation flow\n\n## Problem Statement\n\nNew users land on an empty dashboard after signup with no indication of how to create a workspace.\n\n## User Story\n\nAs a newly-signed-up user, I want a guided flow that collects a name and slug so that I land inside a working workspace immediately.\n\n## Acceptance Criteria\n\n- Post-signup users are redirected to /new-workspace.\n- Slug is auto-derived from the name with a live preview.\n- Successful creation redirects to /w/{slug}.\n'::text),
      now() - interval '20 hours');
 
   INSERT INTO public.session_phase_completions
@@ -379,23 +336,13 @@ BEGIN
     (session_id, workspace_id, phase, version, artifact_json, created_at)
   VALUES
     (sess3_id, ws_id, 'product', 1,
-     product_spec_template
-       || jsonb_build_object(
-         'title', 'Real-time issue updates via Supabase Realtime',
-         'problem_statement', 'Board state goes stale during collaborative triage, causing duplicate edits and conflicting updates.',
-         'user_story', 'As a triager, I want issue changes from my teammates to appear without refreshing so we do not step on each other.',
-         'acceptance_criteria', jsonb_build_array(
-           'Changes broadcast via Supabase Realtime within one second.',
-           'Local cache merges remote INSERT/UPDATE/DELETE events.',
-           'Connection status is visible in the UI.'
-         )
-       ),
+     to_jsonb(E'# Real-time issue updates via Supabase Realtime\n\n## Problem Statement\n\nBoard state goes stale during collaborative triage, causing duplicate edits and conflicting updates.\n\n## User Story\n\nAs a triager, I want issue changes from my teammates to appear without refreshing so we do not step on each other.\n\n## Acceptance Criteria\n\n- Changes broadcast via Supabase Realtime within one second.\n- Local cache merges remote INSERT/UPDATE/DELETE events.\n- Connection status is visible in the UI.\n'::text),
      now() - interval '2 days 18 hours'),
     (sess3_id, ws_id, 'design', 1,
-     jsonb_build_object('manual', true, 'notes', 'Use supabase.channel() with workspace_id filter; last-write-wins conflict resolution for v1.'),
+     to_jsonb(E'# Design\n\nUse supabase.channel() with workspace_id filter; last-write-wins conflict resolution for v1.\n'::text),
      now() - interval '2 days'),
     (sess3_id, ws_id, 'engineering', 1,
-     jsonb_build_object('manual', true, 'notes', 'Implemented useRealtimeIssues hook; connection indicator added to shell header.'),
+     to_jsonb(E'# Engineering\n\nImplemented useRealtimeIssues hook; connection indicator added to shell header.\n'::text),
      now() - interval '5 hours');
 
   INSERT INTO public.session_phase_completions
@@ -422,23 +369,13 @@ BEGIN
     (session_id, workspace_id, phase, version, artifact_json, created_at)
   VALUES
     (sess4_id, ws_id, 'product', 1,
-     product_spec_template
-       || jsonb_build_object(
-         'title', 'Rich-text editor for issue descriptions',
-         'problem_statement', 'The plain textarea does not support formatting, code blocks, or image paste, which is a hard blocker for teams documenting bugs.',
-         'user_story', 'As an issue author, I want a rich-text editor with code blocks and image paste so that I can communicate context clearly.',
-         'acceptance_criteria', jsonb_build_array(
-           'Bold, italic, strikethrough, code formatting via Cmd+B/I/shift+X/E.',
-           'Code blocks with syntax highlighting.',
-           'Image paste uploads to Supabase Storage.'
-         )
-       ),
+     to_jsonb(E'# Rich-text editor for issue descriptions\n\n## Problem Statement\n\nThe plain textarea does not support formatting, code blocks, or image paste, which is a hard blocker for teams documenting bugs.\n\n## User Story\n\nAs an issue author, I want a rich-text editor with code blocks and image paste so that I can communicate context clearly.\n\n## Acceptance Criteria\n\n- Bold, italic, strikethrough, code formatting via Cmd+B/I/shift+X/E.\n- Code blocks with syntax highlighting.\n- Image paste uploads to Supabase Storage.\n'::text),
      now() - interval '5 days 20 hours'),
     (sess4_id, ws_id, 'design', 1,
-     jsonb_build_object('manual', true, 'notes', 'Tiptap chosen over CodeMirror for block-level editing; image uploads reuse workspace-avatars bucket.'),
+     to_jsonb(E'# Design\n\nTiptap chosen over CodeMirror for block-level editing; image uploads reuse workspace-avatars bucket.\n'::text),
      now() - interval '5 days'),
     (sess4_id, ws_id, 'engineering', 1,
-     jsonb_build_object('manual', true, 'notes', 'MarkdownEditor component wired up; basic formatting, code blocks, and image paste implemented.'),
+     to_jsonb(E'# Engineering\n\nMarkdownEditor component wired up; basic formatting, code blocks, and image paste implemented.\n'::text),
      now() - interval '1 day');
 
   INSERT INTO public.session_phase_completions
@@ -466,29 +403,19 @@ BEGIN
     (session_id, workspace_id, phase, version, artifact_json, created_at)
   VALUES
     (sess5_id, ws_id, 'product', 1,
-     product_spec_template
-       || jsonb_build_object(
-         'title', 'Keyboard shortcuts for issue triage',
-         'problem_statement', 'Triaging large backlogs is mouse-heavy and slow for power users.',
-         'user_story', 'As a power user, I want j/k navigation and hotkeys for common actions so that I can triage issues without leaving the keyboard.',
-         'acceptance_criteria', jsonb_build_array(
-           'j/k moves the focused issue up/down.',
-           's/p/a open status/priority/assignee menus.',
-           'Shortcuts are documented in a ? overlay.'
-         )
-       ),
+     to_jsonb(E'# Keyboard shortcuts for issue triage\n\n## Problem Statement\n\nTriaging large backlogs is mouse-heavy and slow for power users.\n\n## User Story\n\nAs a power user, I want j/k navigation and hotkeys for common actions so that I can triage issues without leaving the keyboard.\n\n## Acceptance Criteria\n\n- j/k moves the focused issue up/down.\n- s/p/a open status/priority/assignee menus.\n- Shortcuts are documented in a ? overlay.\n'::text),
      now() - interval '7 days'),
     (sess5_id, ws_id, 'design', 1,
-     jsonb_build_object('manual', true, 'notes', 'Use tinykeys for global shortcut provider; show ? overlay with all bindings.'),
+     to_jsonb(E'# Design\n\nUse tinykeys for global shortcut provider; show ? overlay with all bindings.\n'::text),
      now() - interval '6 days'),
     (sess5_id, ws_id, 'engineering', 1,
-     jsonb_build_object('manual', true, 'notes', 'All shortcuts wired; overlay uses same Dialog primitive as command palette.'),
+     to_jsonb(E'# Engineering\n\nAll shortcuts wired; overlay uses same Dialog primitive as command palette.\n'::text),
      now() - interval '3 days'),
     (sess5_id, ws_id, 'review', 1,
-     jsonb_build_object('manual', true, 'notes', 'PR #12 reviewed; two small nits fixed (focus-ring contrast, Escape closes menus).'),
+     to_jsonb(E'# Review\n\nPR #12 reviewed; two small nits fixed (focus-ring contrast, Escape closes menus).\n'::text),
      now() - interval '3 hours'),
     (sess5_id, ws_id, 'land', 1,
-     jsonb_build_object('manual', true, 'notes', 'Awaiting land approval — PR is green and ready to merge.'),
+     to_jsonb(E'# Land\n\nAwaiting land approval \u2014 PR is green and ready to merge.\n'::text),
      now() - interval '2 hours');
 
   INSERT INTO public.session_phase_completions
@@ -518,32 +445,22 @@ BEGIN
     (session_id, workspace_id, phase, version, artifact_json, created_at)
   VALUES
     (sess6_id, ws_id, 'product', 1,
-     product_spec_template
-       || jsonb_build_object(
-         'title', 'CI/CD pipeline with GitHub Actions',
-         'problem_statement', 'Tests and linters are only run locally, so broken commits land on main and bottleneck the deploy story.',
-         'user_story', 'As a developer, I want CI to catch broken commits and auto-deploy green merges to staging so that we can ship without manual toil.',
-         'acceptance_criteria', jsonb_build_array(
-           'PR checks run tests and lint.',
-           'Merge to main deploys to staging automatically.',
-           'Production deploy requires manual approval.'
-         )
-       ),
+     to_jsonb(E'# CI/CD pipeline with GitHub Actions\n\n## Problem Statement\n\nTests and linters are only run locally, so broken commits land on main and bottleneck the deploy story.\n\n## User Story\n\nAs a developer, I want CI to catch broken commits and auto-deploy green merges to staging so that we can ship without manual toil.\n\n## Acceptance Criteria\n\n- PR checks run tests and lint.\n- Merge to main deploys to staging automatically.\n- Production deploy requires manual approval.\n'::text),
      now() - interval '12 days 20 hours'),
     (sess6_id, ws_id, 'design', 1,
-     jsonb_build_object('manual', true, 'notes', 'Use GitHub Actions with environment protection rules for production approvals.'),
+     to_jsonb(E'# Design\n\nUse GitHub Actions with environment protection rules for production approvals.\n'::text),
      now() - interval '12 days'),
     (sess6_id, ws_id, 'engineering', 1,
-     jsonb_build_object('manual', true, 'notes', '.github/workflows/ci.yml contains test, lint, and deploy jobs.'),
+     to_jsonb(E'# Engineering\n\n.github/workflows/ci.yml contains test, lint, and deploy jobs.\n'::text),
      now() - interval '11 days 12 hours'),
     (sess6_id, ws_id, 'review', 1,
-     jsonb_build_object('manual', true, 'notes', 'PR #1 reviewed and approved.'),
+     to_jsonb(E'# Review\n\nPR #1 reviewed and approved.\n'::text),
      now() - interval '11 days'),
     (sess6_id, ws_id, 'land', 1,
-     jsonb_build_object('manual', true, 'notes', 'Merged to main; staging deployed automatically.'),
+     to_jsonb(E'# Land\n\nMerged to main; staging deployed automatically.\n'::text),
      now() - interval '10 days 12 hours'),
     (sess6_id, ws_id, 'monitor', 1,
-     jsonb_build_object('manual', true, 'notes', 'Pipeline has been green for a week; closing out.'),
+     to_jsonb(E'# Monitor\n\nPipeline has been green for a week; closing out.\n'::text),
      now() - interval '10 days');
 
   INSERT INTO public.session_phase_completions

@@ -431,12 +431,17 @@ function ArtifactView({
   compact?: boolean;
 }) {
   const formatted = useMemo(() => {
+    if (typeof artifact.payload === "string") {
+      return artifact.payload;
+    }
     try {
       return JSON.stringify(artifact.payload, null, 2);
     } catch {
       return String(artifact.payload);
     }
   }, [artifact.payload]);
+
+  const isMarkdown = typeof artifact.payload === "string";
 
   return (
     <div>
@@ -445,7 +450,9 @@ function ArtifactView({
           v{artifact.version} · {dateTimeFormatter.format(new Date(artifact.createdAt))}
         </p>
       ) : null}
-      <pre className="max-h-[480px] overflow-auto rounded-[4px] bg-background p-3 text-[12px] leading-5 text-foreground">
+      <pre
+        className={`max-h-[480px] overflow-auto rounded-[4px] p-3 text-[12px] leading-5 text-foreground ${isMarkdown ? "whitespace-pre-wrap" : "bg-background"}`}
+      >
         {formatted}
       </pre>
     </div>
