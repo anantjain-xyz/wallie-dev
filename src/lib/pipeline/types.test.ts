@@ -16,7 +16,7 @@ describe("pipeline types", () => {
 
   describe("constants", () => {
     it("has the expected job type", () => {
-      expect(PIPELINE_JOB_TYPE).toBe("pipeline");
+      expect(PIPELINE_JOB_TYPE).toBe("session");
     });
 
     it("has an escalation threshold of 3", () => {

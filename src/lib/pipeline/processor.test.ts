@@ -63,7 +63,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     id: "job-1",
     workspace_id: "ws-1",
     issue_id: "issue-1",
-    job_type: "pipeline",
+    job_type: "session",
     status: "queued",
     created_at: new Date().toISOString(),
     dedupe_key: "pipeline:TEAM-1:active",
@@ -358,7 +358,7 @@ describe("handleRejection", () => {
         typeof p === "object" &&
         p !== null &&
         "job_type" in p &&
-        (p as { job_type: string }).job_type === "pipeline",
+        (p as { job_type: string }).job_type === "session",
     );
     expect(enqueues).toEqual([]);
 
@@ -398,7 +398,7 @@ describe("handleRejection", () => {
     // A retry agent_job MUST have been enqueued.
     const retryEnqueue = insertPayloads.find(
       (p): p is { job_type: string } =>
-        typeof p === "object" && p !== null && (p as { job_type?: string }).job_type === "pipeline",
+        typeof p === "object" && p !== null && (p as { job_type?: string }).job_type === "session",
     );
     expect(retryEnqueue).toBeDefined();
 

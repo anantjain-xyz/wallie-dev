@@ -17,7 +17,7 @@ import {
   postSlackMessage,
 } from "./slack-format";
 import { nextPhase, shouldEscalate } from "./state-machine";
-import { type ProductSpec, markdownToSpec, specToMarkdown } from "./types";
+import { PIPELINE_JOB_TYPE, type ProductSpec, markdownToSpec, specToMarkdown } from "./types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type SessionRow = Tables<"sessions">;
@@ -625,7 +625,7 @@ export async function handleRejection(input: {
       ? `pipeline:${session.linear_issue_id}:active`
       : `pipeline:session:${session.id}:active`,
     issue_id: session.issue_id!,
-    job_type: "pipeline",
+    job_type: PIPELINE_JOB_TYPE,
     requested_by_member_id: wallieMember?.id ?? null,
     trigger_type: "slack_mention",
     workspace_id: session.workspace_id,
