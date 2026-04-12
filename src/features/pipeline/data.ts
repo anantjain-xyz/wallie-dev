@@ -3,24 +3,24 @@ import "server-only";
 import { notFound, redirect } from "next/navigation";
 
 import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/auth";
-import type { PipelinePhase, PipelinePhaseStatus } from "@/lib/pipeline/types";
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { SessionPhase, SessionPhaseStatus } from "@/features/sessions/types";
 
 export type PipelineDashboardCard = {
   createdAt: string;
   id: string;
-  issueId: string;
-  issueNumber: number | null;
-  issueTitle: string;
+  issueId: string | null;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
-  phase: PipelinePhase;
-  phaseStatus: PipelinePhaseStatus;
+  number: number;
+  phase: SessionPhase;
+  phaseStatus: SessionPhaseStatus;
   rejectionCount: number;
   slackChannelId: string | null;
   slackThreadTs: string | null;
+  title: string;
   updatedAt: string;
   workspaceId: string;
 };
@@ -45,10 +45,10 @@ export async function loadPipelineDashboardData(
     notFound();
   }
 
-  // RLS scopes pipeline_issues to workspace membership, so the workspace_id
-  // filter here is defense-in-depth rather than a primary access gate.
+  // RLS scopes sessions to workspace membership, so the workspace_id filter
+  // here is defense-in-depth rather than a primary access gate.
   const { data, error } = await supabase
-    .from("pipeline_issues")
+    .from("sessions")
     .select(
       `
         id,
@@ -57,39 +57,38 @@ export async function loadPipelineDashboardData(
         issue_id,
         linear_issue_id,
         linear_issue_url,
+        number,
         phase,
         phase_status,
         rejection_count,
         slack_channel_id,
         slack_thread_ts,
+        title,
         workspace_id,
-        issues:issue_id ( title, number )
+        archived_at
       `,
     )
     .eq("workspace_id", workspace.id)
+    .is("archived_at", null)
     .order("updated_at", { ascending: false });
 
   if (error) {
     throw error;
   }
 
-  type Row = (typeof data)[number] & {
-    issues: { number: number | null; title: string | null } | null;
-  };
-
-  const cards = ((data ?? []) as Row[]).map<PipelineDashboardCard>((row) => ({
+  const cards = (data ?? []).map<PipelineDashboardCard>((row) => ({
     createdAt: row.created_at,
     id: row.id,
     issueId: row.issue_id,
-    issueNumber: row.issues?.number ?? null,
-    issueTitle: row.issues?.title ?? "Untitled issue",
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
-    phase: row.phase,
-    phaseStatus: row.phase_status,
+    number: row.number,
+    phase: row.phase as SessionPhase,
+    phaseStatus: row.phase_status as SessionPhaseStatus,
     rejectionCount: row.rejection_count,
     slackChannelId: row.slack_channel_id,
     slackThreadTs: row.slack_thread_ts,
+    title: row.title,
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,
   }));

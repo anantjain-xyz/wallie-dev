@@ -1,14 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { Database, Tables, TablesInsert } from "@/lib/supabase/database.types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createIssueWithAllocatedNumber } from "@/features/issues/client";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
 
-// Flow B "New session" creator. Writes a legacy `issues + pipeline_issues`
-// pair (which is what the pipeline processor, Slack interactions, and the
-// session read paths all consume today) and mirrors the row into `sessions`
-// to stay consistent with PR 1's Slack shadow-write. Backend cutover will
-// collapse these writes into sessions-only.
+// Flow B "New session" creator. Writes an anchor `issues` row (needed for
+// agent_jobs.issue_id + wallie panel) and a `sessions` row linked via
+// sessions.issue_id. Sessions is the source of truth for phase / status /
+// artifacts; the anchor issue stays until PR 4 cleanup migrates the job
+// queue + wallie panel onto sessions directly.
 export type CreateSessionInput = {
   linearIssueUrl?: string | null;
   promptMd: string;
@@ -40,40 +40,11 @@ export async function createSessionFromClient(
   const linearUrl = input.linearIssueUrl?.trim() || null;
   const linearIssueId = linearUrl ? extractLinearIssueId(linearUrl) : null;
 
-  const pipelinePayload: TablesInsert<"pipeline_issues"> = {
-    issue_id: issue.id,
-    linear_issue_id: linearIssueId,
-    linear_issue_url: linearUrl,
-    phase: "product",
-    phase_status: "agent_generating",
-    workspace_id: input.workspaceId,
-  };
-
-  const { error: pipelineError } = await supabase.from("pipeline_issues").insert(pipelinePayload);
-
-  if (pipelineError) {
-    // Compensating cleanup: the `issues` row was created with an allocated
-    // number, but the pipeline row failed. Without this, a partial create
-    // leaves an orphan row the sessions UI cannot load (reads go through
-    // pipeline_issues). Best-effort — if the delete itself fails, log and
-    // still throw the original error so the caller sees the real failure.
-    const { error: cleanupError } = await supabase.from("issues").delete().eq("id", issue.id);
-    if (cleanupError) {
-      console.error("Failed to clean up orphan issues row after pipeline insert failed", {
-        cleanupError,
-        issueId: issue.id,
-      });
-    }
-    throw pipelineError;
-  }
-
-  // Shadow-write to `sessions` so Flow B rows appear in the new table
-  // alongside the Slack path's shadow-writes (PR 1). Best-effort: failures
-  // log and continue, matching the Slack handler. When the backend cutover
-  // flips reads to `sessions`, these rows already exist.
   const issueRow = issue as Tables<"issues">;
+
   const { error: sessionError } = await supabase.from("sessions").insert({
     creator_member_id: issueRow.creator_member_id,
+    issue_id: issueRow.id,
     linear_issue_id: linearIssueId,
     linear_issue_url: linearUrl,
     number: issueRow.number,
@@ -85,16 +56,10 @@ export async function createSessionFromClient(
   });
 
   if (sessionError) {
-    const isDedupe =
-      typeof sessionError === "object" &&
-      sessionError !== null &&
-      "code" in sessionError &&
-      (sessionError as { code?: string }).code === "23505";
-    if (!isDedupe) {
-      console.error("Failed to shadow-write sessions row from createSession", {
-        error: sessionError,
-      });
-    }
+    // Roll back the anchor issue so a retry can run cleanly instead of
+    // leaving a ghost issue without a session.
+    await supabase.from("issues").delete().eq("id", issueRow.id);
+    throw sessionError;
   }
 
   return { number: issueRow.number };

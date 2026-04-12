@@ -165,26 +165,29 @@ export async function POST(request: Request) {
     }
   }
 
-  // Check for existing pipeline_issue with this Linear issue ID. If we already
+  // Check for existing session with this Linear issue ID. If we already
   // accepted this issue and the row is in a non-rejected state, dedup. If the
   // row is in 'rejected' state, treat the new mention as an explicit retry
-  // request: drop the old pipeline_issue and let the rest of the flow create
-  // a fresh anchor + pipeline_issue. This recovers from the wedged state where
-  // the original mention was rejected and the user @mentions again to retry.
-  const { data: existingPipeline } = await admin
-    .from("pipeline_issues")
+  // request: drop the old session (and its anchor issue) and let the rest of
+  // the flow create a fresh anchor + session. Recovers from the wedged state
+  // where the original mention was rejected and the user @mentions again.
+  const { data: existingSession } = await admin
+    .from("sessions")
     .select("id, issue_id, phase_status")
     .eq("workspace_id", workspaceId)
     .eq("linear_issue_id", linearInfo.issueId)
     .maybeSingle();
 
-  if (existingPipeline) {
-    if (existingPipeline.phase_status === "rejected") {
-      // Drop the rejected pipeline_issue (and its anchor issues row, since
-      // pipeline_issues.issue_id has on delete cascade — but the issues row
-      // does not get cleaned up by that cascade, so delete it explicitly).
-      await admin.from("pipeline_issues").delete().eq("id", existingPipeline.id);
-      await admin.from("issues").delete().eq("id", existingPipeline.issue_id);
+  if (existingSession) {
+    if (existingSession.phase_status === "rejected") {
+      // Delete the session first (cascades to session_artifacts +
+      // session_phase_completions). Then delete the anchor issue — the FK
+      // from sessions.issue_id is on delete cascade, but the issues row
+      // isn't cleaned up by that cascade so we delete it explicitly.
+      await admin.from("sessions").delete().eq("id", existingSession.id);
+      if (existingSession.issue_id) {
+        await admin.from("issues").delete().eq("id", existingSession.issue_id);
+      }
     } else {
       // Already tracking this issue in a non-recoverable state. Don't dup.
       return NextResponse.json({ ok: true });
@@ -253,69 +256,42 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Create pipeline_issues row
-  const { data: pipelineIssue, error: pipelineError } = await admin
-    .from("pipeline_issues")
+  // Create the session row linked to the anchor issue. Sessions is the
+  // source of truth for phase / phase_status / artifacts from this point on.
+  const { data: sessionRow, error: sessionError } = await admin
+    .from("sessions")
     .insert({
+      creator_member_id: wallieMember?.id ?? null,
       issue_id: anchorIssue.id,
       linear_issue_id: linearInfo.issueId,
       linear_issue_url: linearInfo.url,
+      number: issueNumber ?? 1,
       phase: "product",
       phase_status: "agent_generating",
+      prompt_md: anchorDescription,
       slack_channel_id: channelId,
       slack_thread_ts: threadTs,
+      title: linearIssue.title,
       workspace_id: workspaceId,
     })
     .select("id")
     .single();
 
-  if (pipelineError || !pipelineIssue) {
+  if (sessionError || !sessionRow) {
     // Either we lost a unique-violation race on (workspace_id, linear_issue_id)
     // or the insert failed outright. In both cases the anchor `issues` row we
-    // just created is now orphaned — the winning request created its own, and
-    // this one will never be wired to a pipeline_issue. Delete it so we don't
-    // leave a ghost row on the issues table on every concurrent race.
-    const isDedupe = pipelineError && "code" in pipelineError && pipelineError.code === "23505";
+    // just created is now orphaned — delete it so we don't leave a ghost
+    // row on the issues table on every concurrent race.
+    const isDedupe = sessionError && "code" in sessionError && sessionError.code === "23505";
     if (!isDedupe) {
-      console.error("Failed to create pipeline_issue", { error: pipelineError });
+      console.error("Failed to create session", { error: sessionError });
     }
     await admin.from("issues").delete().eq("id", anchorIssue.id);
     return NextResponse.json({ ok: true });
   }
 
-  // Shadow write to the new `sessions` table. PR 1 populates this in parallel
-  // with pipeline_issues so PR 2 has real data to flip the read path onto. We
-  // reuse the same per-workspace number the anchor issue got so users see one
-  // stable ref across both shapes, and match phase / slack / linear fields so
-  // the row is self-contained.
-  //
-  // Shadow writes are best-effort: a failure here must NOT regress the legacy
-  // path, so we log and continue instead of rolling back the anchor + pipeline
-  // rows. The unique indexes on (workspace_id, linear_issue_id) and
-  // (workspace_id, number) can fire on concurrent mentions for the same issue,
-  // and 23505 on either is a benign race, not an incident.
-  const { error: sessionError } = await admin.from("sessions").insert({
-    creator_member_id: wallieMember?.id ?? null,
-    linear_issue_id: linearInfo.issueId,
-    linear_issue_url: linearInfo.url,
-    number: issueNumber ?? 1,
-    phase: "product",
-    phase_status: "agent_generating",
-    prompt_md: anchorDescription,
-    slack_channel_id: channelId,
-    slack_thread_ts: threadTs,
-    title: linearIssue.title,
-    workspace_id: workspaceId,
-  });
-
-  if (sessionError) {
-    const isSessionDedupe = "code" in sessionError && sessionError.code === "23505";
-    if (!isSessionDedupe) {
-      console.error("Failed to shadow-write sessions row", { error: sessionError });
-    }
-  }
-
-  // Enqueue pipeline job
+  // Enqueue pipeline job keyed on the anchor issue — processor.ts will
+  // resolve the session via sessions.issue_id.
   const { data: newJob, error: jobError } = await admin
     .from("agent_jobs")
     .insert({
@@ -330,14 +306,11 @@ export async function POST(request: Request) {
     .single();
 
   if (jobError || !newJob) {
-    // The pipeline_issues row already exists in `agent_generating` state but no
+    // The sessions row already exists in `agent_generating` state but no
     // worker will ever pick it up. Roll the status back so a future mention
     // can retry cleanly instead of silently wedging.
     console.error("Failed to enqueue pipeline agent_job", { error: jobError });
-    await admin
-      .from("pipeline_issues")
-      .update({ phase_status: "rejected" })
-      .eq("id", pipelineIssue.id);
+    await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", sessionRow.id);
     return NextResponse.json({ ok: true });
   }
 

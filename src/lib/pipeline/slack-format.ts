@@ -15,7 +15,7 @@ export function escapeMrkdwn(value: string): string {
 
 export function formatSpecBlocks(input: {
   linearUrl: string | null;
-  pipelineIssueId: string;
+  sessionId: string;
   spec: ProductSpec;
   version: number;
 }): Record<string, unknown>[] {
@@ -98,7 +98,7 @@ export function formatSpecBlocks(input: {
 
   // Action buttons
   blocks.push({
-    block_id: `pipeline_actions:${input.pipelineIssueId}:${input.version}`,
+    block_id: `pipeline_actions:${input.sessionId}:${input.version}`,
     elements: [
       {
         action_id: "pipeline_approve",
@@ -106,7 +106,7 @@ export function formatSpecBlocks(input: {
         text: { text: "Approve", type: "plain_text" },
         type: "button",
         value: JSON.stringify({
-          pipeline_issue_id: input.pipelineIssueId,
+          session_id: input.sessionId,
           version: input.version,
         }),
       },
@@ -115,7 +115,7 @@ export function formatSpecBlocks(input: {
         text: { text: "Request Changes", type: "plain_text" },
         type: "button",
         value: JSON.stringify({
-          pipeline_issue_id: input.pipelineIssueId,
+          session_id: input.sessionId,
           version: input.version,
         }),
       },

@@ -27,7 +27,7 @@ describe("slack block kit formatting", () => {
     it("includes header, sections, and action buttons", () => {
       const blocks = formatSpecBlocks({
         linearUrl: "https://linear.app/team/issue/TEAM-1",
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: baseSpec,
         version: 1,
       });
@@ -39,10 +39,10 @@ describe("slack block kit formatting", () => {
       expect(types).toContain("context");
     });
 
-    it("embeds pipeline_issue_id and version in action button values", () => {
+    it("embeds session_id and version in action button values", () => {
       const blocks = formatSpecBlocks({
         linearUrl: null,
-        pipelineIssueId: "pi-42",
+        sessionId: "pi-42",
         spec: baseSpec,
         version: 3,
       });
@@ -51,14 +51,14 @@ describe("slack block kit formatting", () => {
       const elements = actionsBlock.elements as Array<{ value: string }>;
       const approveValue = JSON.parse(elements[0]!.value);
 
-      expect(approveValue.pipeline_issue_id).toBe("pi-42");
+      expect(approveValue.session_id).toBe("pi-42");
       expect(approveValue.version).toBe(3);
     });
 
     it("includes approve and request changes buttons", () => {
       const blocks = formatSpecBlocks({
         linearUrl: null,
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: baseSpec,
         version: 1,
       });
@@ -74,7 +74,7 @@ describe("slack block kit formatting", () => {
     it("omits context block when no Linear URL", () => {
       const blocks = formatSpecBlocks({
         linearUrl: null,
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: baseSpec,
         version: 1,
       });
@@ -86,7 +86,7 @@ describe("slack block kit formatting", () => {
     it("includes Linear URL in context when provided", () => {
       const blocks = formatSpecBlocks({
         linearUrl: "https://linear.app/team/issue/TEAM-1",
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: baseSpec,
         version: 1,
       });
@@ -105,7 +105,7 @@ describe("slack block kit formatting", () => {
 
       const blocks = formatSpecBlocks({
         linearUrl: null,
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: minimalSpec,
         version: 1,
       });
@@ -125,7 +125,7 @@ describe("slack block kit formatting", () => {
     it("shows version number in header", () => {
       const blocks = formatSpecBlocks({
         linearUrl: null,
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: baseSpec,
         version: 5,
       });
@@ -149,7 +149,7 @@ describe("slack block kit formatting", () => {
 
       const blocks = formatSpecBlocks({
         linearUrl: null,
-        pipelineIssueId: "pi-1",
+        sessionId: "pi-1",
         spec: hostileSpec,
         version: 1,
       });

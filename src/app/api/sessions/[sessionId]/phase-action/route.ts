@@ -32,30 +32,40 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "version must be a number" }, { status: 400 });
   }
 
-  // Membership check via RLS: the server client can only read pipeline_issues
-  // the current user can see through workspace_members. If the caller is not a
+  // Membership check via RLS: the server client can only read sessions the
+  // current user can see through workspace_members. If the caller is not a
   // member, this returns null and we 404.
-  const { data: pipelineRow, error: pipelineError } = await supabase
-    .from("pipeline_issues")
+  const { data: sessionRow, error: sessionError } = await supabase
+    .from("sessions")
     .select("id, workspace_id, phase_status")
     .eq("id", sessionId)
     .maybeSingle();
 
-  if (pipelineError) {
-    return NextResponse.json({ error: pipelineError.message }, { status: 500 });
+  if (sessionError) {
+    return NextResponse.json({ error: sessionError.message }, { status: 500 });
   }
-  if (!pipelineRow) {
+  if (!sessionRow) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  if (pipelineRow.phase_status !== "awaiting_review") {
+  if (sessionRow.phase_status !== "awaiting_review") {
     return NextResponse.json({ error: "Session is not awaiting review." }, { status: 409 });
   }
 
+  // Resolve the approving workspace member so approve_session_phase can
+  // record it in session_phase_completions.completed_by_member_id.
+  const { data: memberRow } = await supabase
+    .from("workspace_members")
+    .select("id")
+    .eq("workspace_id", sessionRow.workspace_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   if (body.action === "approve") {
     const result = await handleApproval({
-      expectedWorkspaceId: pipelineRow.workspace_id,
-      pipelineIssueId: pipelineRow.id,
+      approverMemberId: memberRow?.id ?? null,
+      expectedWorkspaceId: sessionRow.workspace_id,
+      sessionId: sessionRow.id,
       version: body.version,
     });
     if (!result.success) {
@@ -70,9 +80,9 @@ export async function POST(request: Request, { params }: Params) {
       return NextResponse.json({ error: "Feedback is required" }, { status: 400 });
     }
     const result = await handleRejection({
-      expectedWorkspaceId: pipelineRow.workspace_id,
+      expectedWorkspaceId: sessionRow.workspace_id,
       feedbackText,
-      pipelineIssueId: pipelineRow.id,
+      sessionId: sessionRow.id,
       version: body.version,
     });
     if (!result.success) {

@@ -157,7 +157,7 @@ describe("POST /api/slack/interactions", () => {
       actions: [
         {
           action_id: "pipeline_approve",
-          value: JSON.stringify({ pipeline_issue_id: "pi-grid", version: 1 }),
+          value: JSON.stringify({ session_id: "pi-grid", version: 1 }),
         },
       ],
       enterprise: { id: "E-GRID" },
@@ -168,7 +168,7 @@ describe("POST /api/slack/interactions", () => {
     expect(response.status).toBe(200);
     expect(mocked.handleApproval).toHaveBeenCalledWith({
       expectedWorkspaceId: "ws-grid",
-      pipelineIssueId: "pi-grid",
+      sessionId: "pi-grid",
       version: 1,
     });
     expect(lookups).toContainEqual({ col: "team_id", value: "E-GRID" });
@@ -202,7 +202,7 @@ describe("POST /api/slack/interactions", () => {
       actions: [
         {
           action_id: "pipeline_approve",
-          value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 2 }),
+          value: JSON.stringify({ session_id: "pi-1", version: 2 }),
         },
       ],
       team: { id: "T1" },
@@ -213,7 +213,7 @@ describe("POST /api/slack/interactions", () => {
 
     expect(mocked.handleApproval).toHaveBeenCalledWith({
       expectedWorkspaceId: "ws-1",
-      pipelineIssueId: "pi-1",
+      sessionId: "pi-1",
       version: 2,
     });
     expect(json.replace_original).toBe(true);
@@ -231,7 +231,7 @@ describe("POST /api/slack/interactions", () => {
       actions: [
         {
           action_id: "pipeline_approve",
-          value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
+          value: JSON.stringify({ session_id: "pi-1", version: 1 }),
         },
       ],
       team: { id: "T1" },
@@ -255,7 +255,7 @@ describe("POST /api/slack/interactions", () => {
       actions: [
         {
           action_id: "pipeline_approve",
-          value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
+          value: JSON.stringify({ session_id: "pi-1", version: 1 }),
         },
       ],
       team: { id: "T1" },
@@ -278,7 +278,7 @@ describe("POST /api/slack/interactions", () => {
       actions: [
         {
           action_id: "pipeline_request_changes",
-          value: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
+          value: JSON.stringify({ session_id: "pi-1", version: 1 }),
         },
       ],
       team: { id: "T1" },
@@ -294,12 +294,12 @@ describe("POST /api/slack/interactions", () => {
       expect.objectContaining({ method: "POST" }),
     );
 
-    // Verify the modal's private_metadata carries the pipeline_issue_id + version
+    // Verify the modal's private_metadata carries the session_id + version
     // so the downstream view_submission handler has what it needs.
     const fetchCall = mockFetch.mock.calls[0]!;
     const requestBody = JSON.parse(fetchCall[1].body as string);
     const metadata = JSON.parse(requestBody.view.private_metadata);
-    expect(metadata).toEqual({ pipeline_issue_id: "pi-1", version: 1 });
+    expect(metadata).toEqual({ session_id: "pi-1", version: 1 });
 
     vi.unstubAllGlobals();
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
@@ -315,7 +315,7 @@ describe("POST /api/slack/interactions", () => {
       type: "view_submission",
       view: {
         callback_id: "pipeline_feedback",
-        private_metadata: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
+        private_metadata: JSON.stringify({ session_id: "pi-1", version: 1 }),
         state: {
           values: {
             feedback_block: {
@@ -334,7 +334,7 @@ describe("POST /api/slack/interactions", () => {
     expect(mocked.handleRejection).toHaveBeenCalledWith({
       expectedWorkspaceId: "ws-1",
       feedbackText: "Add error handling section",
-      pipelineIssueId: "pi-1",
+      sessionId: "pi-1",
       version: 1,
     });
     expect(json.response_action).toBe("clear");
@@ -347,7 +347,7 @@ describe("POST /api/slack/interactions", () => {
       type: "view_submission",
       view: {
         callback_id: "pipeline_feedback",
-        private_metadata: JSON.stringify({ pipeline_issue_id: "pi-1", version: 1 }),
+        private_metadata: JSON.stringify({ session_id: "pi-1", version: 1 }),
         state: {
           values: {
             feedback_block: {
@@ -376,7 +376,7 @@ describe("POST /api/slack/interactions", () => {
       type: "view_submission",
       view: {
         callback_id: "pipeline_feedback",
-        private_metadata: JSON.stringify({ pipeline_issue_id: "pi-1", version: 3 }),
+        private_metadata: JSON.stringify({ session_id: "pi-1", version: 3 }),
         state: {
           values: {
             feedback_block: {

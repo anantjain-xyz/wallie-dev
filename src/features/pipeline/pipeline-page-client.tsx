@@ -8,7 +8,6 @@ import { PlusIcon } from "@/components/shared/icons";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
-import { normalizeLegacyPhase } from "@/features/sessions/model";
 import {
   SESSION_PHASE_DESCRIPTIONS,
   SESSION_PHASE_LABELS,
@@ -16,6 +15,7 @@ import {
   formatSessionPhaseStatus,
   sessionPhaseStatusTone,
   type SessionPhase,
+  type SessionPhaseStatus,
 } from "@/features/sessions/types";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -46,14 +46,14 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
   useEffect(() => {
     const channel = supabase
-      .channel(`pipeline-issues:${initialData.workspace.id}`)
+      .channel(`sessions:${initialData.workspace.id}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           filter: `workspace_id=eq.${initialData.workspace.id}`,
           schema: "public",
-          table: "pipeline_issues",
+          table: "sessions",
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
@@ -63,22 +63,30 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
             return;
           }
 
-          const row = payload.new as Tables<"pipeline_issues">;
+          const row = payload.new as Tables<"sessions">;
+
+          // Archived rows fall off the dashboard when realtime advances them
+          // past the terminal monitor approval.
+          if (row.archived_at) {
+            setCards((prev) => prev.filter((card) => card.id !== row.id));
+            return;
+          }
+
           setCards((prev) => {
             const idx = prev.findIndex((card) => card.id === row.id);
             const next: PipelineDashboardCard = {
               createdAt: row.created_at,
               id: row.id,
               issueId: row.issue_id,
-              issueNumber: idx >= 0 ? prev[idx]!.issueNumber : null,
-              issueTitle: idx >= 0 ? prev[idx]!.issueTitle : "Loading…",
               linearIssueId: row.linear_issue_id,
               linearIssueUrl: row.linear_issue_url,
-              phase: row.phase,
-              phaseStatus: row.phase_status,
+              number: row.number,
+              phase: row.phase as SessionPhase,
+              phaseStatus: row.phase_status as SessionPhaseStatus,
               rejectionCount: row.rejection_count,
               slackChannelId: row.slack_channel_id,
               slackThreadTs: row.slack_thread_ts,
+              title: row.title,
               updatedAt: row.updated_at,
               workspaceId: row.workspace_id,
             };
@@ -102,10 +110,12 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
       buckets.set(phase, []);
     }
     for (const card of cards) {
-      const phase = normalizeLegacyPhase(card.phase);
+      const phase = card.phase as SessionPhase;
       const list = buckets.get(phase);
       if (list) {
         list.push(card);
+      } else {
+        buckets.set(phase, [card]);
       }
     }
     for (const list of buckets.values()) {
@@ -178,19 +188,15 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <h3 className="text-[13px] font-medium leading-5 text-foreground">
-                          {card.issueNumber !== null ? (
-                            <Link
-                              href={workspaceSessionDetailPath(
-                                initialData.workspace.slug,
-                                card.issueNumber,
-                              )}
-                              className="hover:underline"
-                            >
-                              {card.issueTitle}
-                            </Link>
-                          ) : (
-                            card.issueTitle
-                          )}
+                          <Link
+                            href={workspaceSessionDetailPath(
+                              initialData.workspace.slug,
+                              card.number,
+                            )}
+                            className="hover:underline"
+                          >
+                            {card.title}
+                          </Link>
                         </h3>
                         <StatusChip tone={sessionPhaseStatusTone(card.phaseStatus)}>
                           {formatSessionPhaseStatus(card.phaseStatus)}
