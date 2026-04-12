@@ -1,10 +1,29 @@
 import type { Tables } from "@/lib/supabase/database.types";
 
-import type { SessionPhase, SessionPhaseStatus, SessionSummary } from "@/features/sessions/types";
+import {
+  SESSION_PHASE_ORDER,
+  type SessionPhase,
+  type SessionPhaseStatus,
+  type SessionSummary,
+} from "@/features/sessions/types";
 
 // Adapter between the current schema (pipeline_issues + issues) and the new
 // session-shaped domain types. PR 2 replaces the row source with the real
 // `sessions` table; this adapter either goes away or becomes a no-op mapper.
+
+// The DB enum is still the legacy 4-phase set ("product" | "design" |
+// "engineering" | "shipped"), but the UI targets the 6-phase model. Map the
+// one divergent value ("shipped" → "monitor") so downstream consumers never
+// see an out-of-range phase. Unknown values fall through to "product" so
+// cards at least render somewhere rather than silently disappearing from a
+// Map bucket that is never iterated.
+export function normalizeLegacyPhase(raw: string): SessionPhase {
+  if (raw === "shipped") return "monitor";
+  if ((SESSION_PHASE_ORDER as readonly string[]).includes(raw)) {
+    return raw as SessionPhase;
+  }
+  return "product";
+}
 
 type PipelineRow = Pick<
   Tables<"pipeline_issues">,
@@ -40,7 +59,7 @@ export function mapPipelineRowToSession(
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: row.issues?.number ?? 0,
-    phase: row.phase as SessionPhase,
+    phase: normalizeLegacyPhase(row.phase),
     phaseStatus: row.phase_status as SessionPhaseStatus,
     promptMd: row.issues?.description_md ?? "",
     pullRequestCount,
@@ -68,7 +87,7 @@ export function mapPipelineRealtimeRow(
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: fallback.number,
-    phase: row.phase as SessionPhase,
+    phase: normalizeLegacyPhase(row.phase),
     phaseStatus: row.phase_status as SessionPhaseStatus,
     promptMd: "",
     pullRequestCount: fallback.pullRequestCount,

@@ -8,6 +8,7 @@ import { PlusIcon } from "@/components/shared/icons";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
+import { normalizeLegacyPhase } from "@/features/sessions/model";
 import {
   SESSION_PHASE_DESCRIPTIONS,
   SESSION_PHASE_LABELS,
@@ -101,12 +102,10 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
       buckets.set(phase, []);
     }
     for (const card of cards) {
-      const phase = card.phase as SessionPhase;
+      const phase = normalizeLegacyPhase(card.phase);
       const list = buckets.get(phase);
       if (list) {
         list.push(card);
-      } else {
-        buckets.set(phase, [card]);
       }
     }
     for (const list of buckets.values()) {
