@@ -1,28 +1,11 @@
 import { after, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
 import { openSlackView } from "@/lib/pipeline/slack-format";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { verifySlackSignature } from "@/lib/slack/verify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
-
-function verifySlackSignature(body: string, timestamp: string, signature: string): boolean {
-  const secret = process.env.SLACK_SIGNING_SECRET;
-  if (!secret) return false;
-
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > 300) return false;
-
-  const sigBasestring = `v0:${timestamp}:${body}`;
-  const mySignature = `v0=${createHmac("sha256", secret).update(sigBasestring).digest("hex")}`;
-
-  try {
-    return timingSafeEqual(Buffer.from(mySignature), Buffer.from(signature));
-  } catch {
-    return false;
-  }
-}
 
 export async function POST(request: Request) {
   const rawBody = await request.text();
@@ -149,7 +132,21 @@ export async function POST(request: Request) {
   let actionValue: { session_id: string; version: number };
 
   try {
-    actionValue = JSON.parse(action.value);
+    const parsed = JSON.parse(action.value);
+    if (parsed.session_id) {
+      actionValue = parsed;
+    } else if (parsed.pipeline_issue_id) {
+      // Pre-cutover Slack buttons encoded { pipeline_issue_id, version } where
+      // pipeline_issue_id was the now-dropped pipeline_issues table's PK. We
+      // cannot resolve these to sessions since that table no longer exists.
+      // Return a friendly message so the user knows to re-mention.
+      return NextResponse.json({
+        replace_original: true,
+        text: ":warning: This button is from an older version of Wallie and no longer works. Please re-mention the Linear issue to start a new session.",
+      });
+    } else {
+      return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
+    }
   } catch {
     return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
   }
@@ -162,7 +159,19 @@ export async function POST(request: Request) {
     });
 
     if (!result.success) {
-      // Respond with ephemeral message about the error
+      // Version mismatch / stale buttons: replace the original message
+      // so the dead buttons are removed and the user sees why.
+      const isStale =
+        result.error?.includes("stale") ||
+        result.error?.includes("version") ||
+        result.error?.includes("already reviewed");
+      if (isStale) {
+        return NextResponse.json({
+          replace_original: true,
+          text: `:warning: This spec version is outdated — a newer version has been posted above.`,
+        });
+      }
+
       return NextResponse.json({
         replace_original: false,
         response_type: "ephemeral",

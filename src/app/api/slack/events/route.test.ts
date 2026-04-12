@@ -35,16 +35,24 @@ vi.mock("@/lib/linear/client", () => ({
   fetchLinearIssue: mocked.fetchLinearIssue,
 }));
 
-// Mock next/server's after() to execute immediately
+// Mock next/server's after() to capture deferred callbacks so tests can
+// await them after the response is returned (mirrors Vercel's behaviour
+// of running after() callbacks once the response is sent).
+const afterCallbacks: Array<Promise<void>> = [];
+
 vi.mock("next/server", async () => {
   const actual = await vi.importActual<typeof import("next/server")>("next/server");
   return {
     ...actual,
     after: (fn: () => Promise<void>) => {
-      fn().catch(() => {});
+      afterCallbacks.push(fn().catch(() => {}));
     },
   };
 });
+
+async function flushAfterCallbacks() {
+  await Promise.all(afterCallbacks.splice(0));
+}
 
 import { POST } from "./route";
 
@@ -121,7 +129,8 @@ describe("POST /api/slack/events", () => {
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushAfterCallbacks();
     vi.clearAllMocks();
   });
 
@@ -214,6 +223,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -241,6 +251,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -282,6 +293,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -334,6 +346,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -436,10 +449,11 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
-    expect(rpcMock).toHaveBeenCalledWith("next_issue_number", { target_workspace_id: "ws-1" });
+    expect(rpcMock).toHaveBeenCalledWith("next_session_number", { target_workspace_id: "ws-1" });
     // Anchor was populated from Linear data
     expect(issuesInsert).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Auth bug", workspace_id: "ws-1" }),
@@ -538,6 +552,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -629,6 +644,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -666,6 +682,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -747,6 +764,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);
@@ -779,6 +797,7 @@ describe("POST /api/slack/events", () => {
     });
 
     const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
     const json = await response.json();
 
     expect(json.ok).toBe(true);

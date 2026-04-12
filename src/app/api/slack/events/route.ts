@@ -1,31 +1,13 @@
 import { after, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { fetchLinearIssue } from "@/lib/linear/client";
+import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { verifySlackSignature } from "@/lib/slack/verify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
-import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
 
 const LINEAR_URL_REGEX = /https:\/\/linear\.app\/[a-zA-Z0-9-]+\/issue\/([A-Z]+-\d+)/;
-
-function verifySlackSignature(body: string, timestamp: string, signature: string): boolean {
-  const secret = process.env.SLACK_SIGNING_SECRET;
-  if (!secret) return false;
-
-  // Reject requests older than 5 minutes
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > 300) return false;
-
-  const sigBasestring = `v0:${timestamp}:${body}`;
-  const mySignature = `v0=${createHmac("sha256", secret).update(sigBasestring).digest("hex")}`;
-
-  try {
-    return timingSafeEqual(Buffer.from(mySignature), Buffer.from(signature));
-  } catch {
-    return false;
-  }
-}
 
 function extractLinearUrl(text: string): { issueId: string; url: string } | null {
   const match = text.match(LINEAR_URL_REGEX);
@@ -100,37 +82,32 @@ export async function POST(request: Request) {
   // Extract Linear URL from mention text
   const linearInfo = extractLinearUrl(text);
 
-  if (!linearInfo) {
-    // No Linear URL found, respond with help text
-    const admin = createSupabaseAdminClient();
-    const slackInstall = await admin
-      .from("slack_installations")
-      .select("bot_token_encrypted, workspace_id")
-      .eq("team_id", teamId)
-      .maybeSingle();
-
-    if (slackInstall.data) {
-      const botToken = decryptSecretValue(slackInstall.data.bot_token_encrypted);
-
-      await fetch("https://slack.com/api/chat.postMessage", {
-        body: JSON.stringify({
-          channel: channelId,
-          text: "Mention me with a Linear issue URL and I'll generate a product spec for it. Example: `@wallie https://linear.app/team/issue/TEAM-123`",
-          thread_ts: threadTs,
-        }),
-        headers: {
-          Authorization: `Bearer ${botToken}`,
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
+  // Ack Slack immediately — all remaining work (DB queries, Linear API,
+  // session creation, job processing) runs in after() so we never risk
+  // blowing Slack's 3-second response budget on a cold start.
+  after(async () => {
+    try {
+      await handleAppMention({ teamId, channelId, threadTs, text, linearInfo });
+    } catch (error) {
+      console.error("Slack app_mention background handler failed", { error });
     }
+  });
 
-    return NextResponse.json({ ok: true });
-  }
+  return NextResponse.json({ ok: true });
+}
 
-  // Look up workspace from Slack team_id
+// --- Background handler ---
+
+async function handleAppMention(ctx: {
+  teamId: string;
+  channelId: string;
+  threadTs: string;
+  text: string;
+  linearInfo: { issueId: string; url: string } | null;
+}) {
+  const { teamId, channelId, threadTs, linearInfo } = ctx;
   const admin = createSupabaseAdminClient();
+
   const { data: slackInstall } = await admin
     .from("slack_installations")
     .select("workspace_id, bot_token_encrypted")
@@ -139,15 +116,14 @@ export async function POST(request: Request) {
 
   if (!slackInstall) {
     console.error("Slack event from unknown team", { teamId });
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   const workspaceId = slackInstall.workspace_id;
 
-  async function postSlackError(message: string) {
-    if (!slackInstall) return;
+  async function postSlackReply(message: string) {
     try {
-      const botToken = decryptSecretValue(slackInstall.bot_token_encrypted);
+      const botToken = decryptSecretValue(slackInstall!.bot_token_encrypted);
       await fetch("https://slack.com/api/chat.postMessage", {
         body: JSON.stringify({
           channel: channelId,
@@ -161,8 +137,15 @@ export async function POST(request: Request) {
         method: "POST",
       });
     } catch (postError) {
-      console.error("Failed to post Slack error reply", { error: postError });
+      console.error("Failed to post Slack reply", { error: postError });
     }
+  }
+
+  if (!linearInfo) {
+    await postSlackReply(
+      "Mention me with a Linear issue URL and I'll generate a product spec for it. Example: `@wallie https://linear.app/team/issue/TEAM-123`",
+    );
+    return;
   }
 
   // Check for existing session with this Linear issue ID. If we already
@@ -190,7 +173,7 @@ export async function POST(request: Request) {
       }
     } else {
       // Already tracking this issue in a non-recoverable state. Don't dup.
-      return NextResponse.json({ ok: true });
+      return;
     }
   }
 
@@ -203,10 +186,10 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (!linearApiKeyRow) {
-    await postSlackError(
+    await postSlackReply(
       ":warning: Wallie can't read Linear yet — set `LINEAR_API_KEY` in workspace settings.",
     );
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   let linearIssue;
@@ -215,10 +198,10 @@ export async function POST(request: Request) {
     linearIssue = await fetchLinearIssue(linearApiKey, linearInfo.issueId);
   } catch (linearError) {
     console.error("Linear fetch failed", { error: linearError, issueId: linearInfo.issueId });
-    await postSlackError(
+    await postSlackReply(
       `:warning: Couldn't fetch \`${linearInfo.issueId}\` from Linear. Check the Linear API key and that the issue is reachable.`,
     );
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // Load wallie system member for this workspace
@@ -231,7 +214,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   // Create pipeline anchor: issues row populated from real Linear data.
-  const { data: issueNumber } = await admin.rpc("next_issue_number", {
+  const { data: issueNumber } = await admin.rpc("next_session_number", {
     target_workspace_id: workspaceId,
   });
 
@@ -253,7 +236,7 @@ export async function POST(request: Request) {
 
   if (issueError || !anchorIssue) {
     console.error("Failed to create pipeline anchor issue", { error: issueError });
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // Create the session row linked to the anchor issue. Sessions is the
@@ -287,7 +270,7 @@ export async function POST(request: Request) {
       console.error("Failed to create session", { error: sessionError });
     }
     await admin.from("issues").delete().eq("id", anchorIssue.id);
-    return NextResponse.json({ ok: true });
+    return;
   }
 
   // Enqueue pipeline job keyed on the anchor issue — processor.ts will
@@ -311,17 +294,13 @@ export async function POST(request: Request) {
     // can retry cleanly instead of silently wedging.
     console.error("Failed to enqueue pipeline agent_job", { error: jobError });
     await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", sessionRow.id);
-    return NextResponse.json({ ok: true });
+    return;
   }
 
-  // Trigger background processing
-  after(async () => {
-    try {
-      await processQueuedAgentJobs({ requestedJobId: newJob.id });
-    } catch (error) {
-      console.error("Pipeline job processing failed", { error, jobId: newJob.id });
-    }
-  });
-
-  return NextResponse.json({ ok: true });
+  // Process the queued job immediately.
+  try {
+    await processQueuedAgentJobs({ requestedJobId: newJob.id });
+  } catch (error) {
+    console.error("Pipeline job processing failed", { error, jobId: newJob.id });
+  }
 }

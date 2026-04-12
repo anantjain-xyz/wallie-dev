@@ -220,10 +220,10 @@ describe("POST /api/slack/interactions", () => {
     expect(json.text).toContain("v2 approved");
   });
 
-  it("returns ephemeral error on stale version approval", async () => {
+  it("replaces original message on stale version approval", async () => {
     installSlackLookup();
     mocked.handleApproval.mockResolvedValue({
-      error: "Approval failed: spec version is stale or already reviewed.",
+      error: "Approval failed: session version is stale or already reviewed.",
       success: false,
     });
 
@@ -240,8 +240,8 @@ describe("POST /api/slack/interactions", () => {
     const response = await POST(makeInteractionRequest(payload));
     const json = await response.json();
 
-    expect(json.response_type).toBe("ephemeral");
-    expect(json.text).toContain("stale");
+    expect(json.replace_original).toBe(true);
+    expect(json.text).toContain("outdated");
   });
 
   it("handles double-click approval idempotently", async () => {
