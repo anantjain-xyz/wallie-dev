@@ -165,7 +165,19 @@ export async function POST(request: Request) {
     });
 
     if (!result.success) {
-      // Respond with ephemeral message about the error
+      // Version mismatch / stale buttons: replace the original message
+      // so the dead buttons are removed and the user sees why.
+      const isStale =
+        result.error?.includes("stale") ||
+        result.error?.includes("version") ||
+        result.error?.includes("already reviewed");
+      if (isStale) {
+        return NextResponse.json({
+          replace_original: true,
+          text: `:warning: This spec version is outdated — a newer version has been posted above.`,
+        });
+      }
+
       return NextResponse.json({
         replace_original: false,
         response_type: "ephemeral",
