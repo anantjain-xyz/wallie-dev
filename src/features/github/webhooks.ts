@@ -5,7 +5,6 @@ import { verify } from "@octokit/webhooks-methods";
 import { resolveGitHubWebhookSecret } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { syncGitHubRepositoriesForWorkspace } from "@/features/github/service";
-import type { Enums } from "@/lib/supabase/database.types";
 
 type PullRequestEventPayload = {
   installation?: {
@@ -32,20 +31,6 @@ type InstallationEventPayload = {
     id: number;
   };
 };
-
-function resolveIssueStatusFromPullRequest(
-  payload: PullRequestEventPayload["pull_request"],
-): Enums<"issue_status"> {
-  if (payload.merged) {
-    return "done";
-  }
-
-  if (payload.state === "open") {
-    return payload.draft ? "in_progress" : "in_review";
-  }
-
-  return "in_progress";
-}
 
 export async function verifyGitHubWebhookRequest(
   payload: string,
@@ -186,16 +171,5 @@ export async function handleGitHubPullRequestEvent(
 
   if (branchUpdateError) {
     throw branchUpdateError;
-  }
-
-  const { error: issueUpdateError } = await admin
-    .from("issues")
-    .update({
-      status: resolveIssueStatusFromPullRequest(payload.pull_request),
-    })
-    .eq("id", branchRow.issue_id);
-
-  if (issueUpdateError) {
-    throw issueUpdateError;
   }
 }
