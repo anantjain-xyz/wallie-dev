@@ -102,8 +102,10 @@ create unique index sessions_workspace_linear_issue_idx
   on public.sessions (workspace_id, linear_issue_id)
   where linear_issue_id is not null;
 
-create unique index sessions_slack_thread_idx
-  on public.sessions (slack_channel_id, slack_thread_ts)
+-- Slack channel IDs are tenant-scoped, so two workspaces can legitimately
+-- share the same (channel, thread) pair. Scope uniqueness by workspace.
+create unique index sessions_workspace_slack_thread_idx
+  on public.sessions (workspace_id, slack_channel_id, slack_thread_ts)
   where slack_channel_id is not null and slack_thread_ts is not null;
 
 create index session_artifacts_session_id_idx
