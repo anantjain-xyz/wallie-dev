@@ -76,9 +76,12 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
 
-    // Load workspace secrets: ANTHROPIC_API_KEY and EM_SLACK_USER_ID.
+    // Load workspace secrets: ANTHROPIC_API_KEY (product-phase only) and
+    // EM_SLACK_USER_ID. The key is only required for the product phase —
+    // the other 5 phases use runManualPhaseStub, which doesn't hit the
+    // model, so a missing key there must not block the job.
     const secrets = await loadPipelineSecrets(admin, job.workspace_id);
-    if (!secrets.anthropicApiKey) {
+    if (session.phase === "product" && !secrets.anthropicApiKey) {
       await markPipelineJobError(admin, job, "Missing ANTHROPIC_API_KEY in workspace secrets.");
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
@@ -118,9 +121,11 @@ export async function processPipelineJob(input: {
     // a human-approve stub until we build them. Adding a real agent for
     // any phase later is a one-line swap here.
     if (session.phase === "product") {
+      // Non-null assertion: the phase-gated check above already rejected
+      // product-phase jobs with a missing key.
       return await runProductPhase({
         admin,
-        anthropicApiKey: secrets.anthropicApiKey,
+        anthropicApiKey: secrets.anthropicApiKey!,
         botToken,
         emSlackUserId: secrets.emSlackUserId,
         issue,

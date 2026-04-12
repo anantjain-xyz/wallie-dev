@@ -488,6 +488,7 @@ describe("processPipelineJob", () => {
     claimedRow?: { id: string } | null;
     insertArtifactError?: unknown;
     pointerUpdateError?: unknown;
+    workspaceSecrets?: Array<{ key: string; encrypted_value: string }>;
   }) {
     const calls: {
       artifactInserted: number;
@@ -550,7 +551,9 @@ describe("processPipelineJob", () => {
         } else if (table === "workspace_secrets") {
           (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
             resolve({
-              data: [{ key: "ANTHROPIC_API_KEY", encrypted_value: "encrypted-key" }],
+              data: opts.workspaceSecrets ?? [
+                { key: "ANTHROPIC_API_KEY", encrypted_value: "encrypted-key" },
+              ],
               error: null,
             });
         } else if (table === "slack_installations") {
@@ -738,5 +741,51 @@ describe("processPipelineJob", () => {
     ).toBe(true);
     // A Slack "please approve" prompt should have been posted.
     expect(mocked.postSlackMessage).toHaveBeenCalled();
+  });
+
+  it("does not require ANTHROPIC_API_KEY for non-product phases", async () => {
+    // Non-product phases go through runManualPhaseStub, which never hits
+    // the model — missing ANTHROPIC_API_KEY must not block them.
+    const { admin, calls } = buildProcessorAdmin({
+      session: baseSession({ phase: "design", current_artifact_version: 0 }),
+      workspaceSecrets: [],
+    });
+
+    const result = await processPipelineJob({
+      admin: admin as never,
+      job: baseJob(),
+    });
+
+    expect(result.result).toBe("success");
+    expect(calls.artifactInserted).toBe(1);
+    // The error marker should not have fired for a missing Anthropic key.
+    expect(
+      calls.jobUpdates.some(
+        (u) =>
+          typeof u.last_error === "string" &&
+          (u.last_error as string).includes("ANTHROPIC_API_KEY"),
+      ),
+    ).toBe(false);
+  });
+
+  it("errors for product phase when ANTHROPIC_API_KEY is missing", async () => {
+    const { admin, calls } = buildProcessorAdmin({
+      session: baseSession({ phase: "product", current_artifact_version: 0 }),
+      workspaceSecrets: [],
+    });
+
+    const result = await processPipelineJob({
+      admin: admin as never,
+      job: baseJob(),
+    });
+
+    expect(result.result).toBe("error");
+    expect(
+      calls.jobUpdates.some(
+        (u) =>
+          typeof u.last_error === "string" &&
+          (u.last_error as string).includes("ANTHROPIC_API_KEY"),
+      ),
+    ).toBe(true);
   });
 });
