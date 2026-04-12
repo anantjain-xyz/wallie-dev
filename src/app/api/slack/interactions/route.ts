@@ -136,20 +136,14 @@ export async function POST(request: Request) {
     if (parsed.session_id) {
       actionValue = parsed;
     } else if (parsed.pipeline_issue_id) {
-      // Backward compat: pre-cutover Slack buttons encode { pipeline_issue_id, version }.
-      // Resolve to the session via the anchor issue_id link.
-      const { data: legacySession } = await admin
-        .from("sessions")
-        .select("id")
-        .eq("issue_id", parsed.pipeline_issue_id)
-        .maybeSingle();
-      if (!legacySession) {
-        return NextResponse.json(
-          { error: "Session not found for legacy action — please re-mention the issue." },
-          { status: 404 },
-        );
-      }
-      actionValue = { session_id: legacySession.id, version: parsed.version };
+      // Pre-cutover Slack buttons encoded { pipeline_issue_id, version } where
+      // pipeline_issue_id was the now-dropped pipeline_issues table's PK. We
+      // cannot resolve these to sessions since that table no longer exists.
+      // Return a friendly message so the user knows to re-mention.
+      return NextResponse.json({
+        replace_original: true,
+        text: ":warning: This button is from an older version of Wallie and no longer works. Please re-mention the Linear issue to start a new session.",
+      });
     } else {
       return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
     }
