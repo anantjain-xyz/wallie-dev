@@ -149,14 +149,14 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto px-6 py-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div className="flex-1 overflow-x-auto px-6 py-6">
+        <div className="flex gap-4">
           {SESSION_PHASE_ORDER.map((phase) => {
             const items = grouped.get(phase) ?? [];
             return (
               <section
                 key={phase}
-                className="flex min-h-[200px] flex-col rounded-[8px] border border-border bg-surface"
+                className="flex min-h-[200px] min-w-[220px] flex-1 flex-col rounded-[8px] border border-border bg-surface"
               >
                 <header className="flex items-baseline justify-between border-b border-border px-3 py-2.5">
                   <div>
