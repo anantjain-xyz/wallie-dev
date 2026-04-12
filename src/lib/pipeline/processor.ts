@@ -17,7 +17,7 @@ import {
   postSlackMessage,
 } from "./slack-format";
 import { nextPhase, shouldEscalate } from "./state-machine";
-import { type ProductSpec } from "./types";
+import { type ProductSpec, markdownToSpec, specToMarkdown } from "./types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type SessionRow = Tables<"sessions">;
@@ -28,14 +28,6 @@ interface ProcessPipelineJobResult {
   result: "error" | "idle" | "success";
   runId: string | null;
 }
-
-// Manual stub artifact written for the 5 non-product phases until real
-// agents exist for them. Shape is deliberately small so `isManualStub`
-// below can cheaply detect it.
-type ManualStubArtifact = {
-  manual: true;
-  notes: string | null;
-};
 
 export async function processPipelineJob(input: {
   admin?: AdminClient;
@@ -206,7 +198,13 @@ async function runProductPhase(input: {
   if (session.current_artifact_version > 0) {
     const lastArtifact = await loadLatestArtifact(admin, session.id, session.phase);
     if (lastArtifact) {
-      previousSpec = lastArtifact.artifact_json as unknown as ProductSpec;
+      // Support both legacy JSON artifacts and new markdown artifacts
+      const raw = lastArtifact.artifact_json;
+      if (typeof raw === "string") {
+        previousSpec = markdownToSpec(raw);
+      } else {
+        previousSpec = raw as unknown as ProductSpec;
+      }
       feedbackText = lastArtifact.feedback_text;
     }
   }
@@ -230,8 +228,10 @@ async function runProductPhase(input: {
       previousSpec,
     });
 
+    const specMarkdown = specToMarkdown(spec);
+
     await insertArtifact(admin, {
-      artifactJson: spec as unknown as Record<string, unknown>,
+      artifactJson: specMarkdown,
       feedbackText: null,
       phase: session.phase,
       sessionId: session.id,
@@ -346,12 +346,13 @@ async function runManualPhaseStub(input: {
   const { admin, botToken, job, session } = input;
 
   const newVersion = session.current_artifact_version + 1;
-  const stub: ManualStubArtifact = { manual: true, notes: null };
+  const phaseLabel = SESSION_PHASE_LABELS[session.phase as SessionPhase] ?? session.phase;
+  const stubMarkdown = `# ${phaseLabel}\n\n_Awaiting manual completion._\n`;
 
   let artifactInserted = false;
   try {
     await insertArtifact(admin, {
-      artifactJson: stub,
+      artifactJson: stubMarkdown,
       feedbackText: null,
       phase: session.phase,
       sessionId: session.id,
@@ -574,8 +575,20 @@ export async function handleRejection(input: {
           userId: secrets.emSlackUserId,
         });
         const latestArtifact = await loadLatestArtifact(admin, session.id, session.phase);
-        const specTitle =
-          (latestArtifact?.artifact_json as unknown as ProductSpec)?.title ?? session.title;
+        let specTitle = session.title;
+        if (latestArtifact) {
+          const raw = latestArtifact.artifact_json;
+          if (typeof raw === "string") {
+            const parsed = markdownToSpec(raw);
+            // Only use the parsed title if it looks like a real spec title,
+            // not a phase label from a manual stub (e.g. "Design", "Review").
+            if (parsed.title && parsed.problem_statement) {
+              specTitle = parsed.title;
+            }
+          } else {
+            specTitle = (raw as unknown as ProductSpec)?.title ?? specTitle;
+          }
+        }
 
         await postSlackMessage({
           blocks: formatEscalationDmBlocks({
@@ -757,7 +770,7 @@ async function updateSessionStatus(
 async function insertArtifact(
   admin: AdminClient,
   input: {
-    artifactJson: Record<string, unknown> | ProductSpec;
+    artifactJson: Record<string, unknown> | string;
     feedbackText: string | null;
     phase: SessionRow["phase"];
     sessionId: string;
@@ -766,7 +779,10 @@ async function insertArtifact(
   },
 ): Promise<void> {
   const { error } = await admin.from("session_artifacts").insert({
-    artifact_json: JSON.parse(JSON.stringify(input.artifactJson)),
+    artifact_json:
+      typeof input.artifactJson === "string"
+        ? input.artifactJson
+        : JSON.parse(JSON.stringify(input.artifactJson)),
     feedback_text: input.feedbackText,
     phase: input.phase,
     session_id: input.sessionId,
