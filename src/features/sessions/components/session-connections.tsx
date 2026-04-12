@@ -61,10 +61,7 @@ export function SessionConnections({
 
   return (
     <div
-      className={cn(
-        "flex flex-wrap items-center gap-1.5",
-        compact ? "text-[11px]" : "text-[12px]",
-      )}
+      className={cn("flex flex-wrap items-center gap-1.5", compact ? "text-[11px]" : "text-[12px]")}
     >
       {linearState === "linked" && linearIssueUrl ? (
         <ConnectionBadge
@@ -90,12 +87,7 @@ export function SessionConnections({
           tone="empty"
         />
       ) : (
-        <ConnectionBadge
-          compact={compact}
-          icon={<LinearGlyph />}
-          label="Linear"
-          tone="empty"
-        />
+        <ConnectionBadge compact={compact} icon={<LinearGlyph />} label="Linear" tone="empty" />
       )}
 
       <ConnectionBadge
@@ -114,12 +106,7 @@ export function SessionConnections({
           tone="linked"
         />
       ) : (
-        <ConnectionBadge
-          compact={compact}
-          icon={<SlackGlyph />}
-          label="Not linked"
-          tone="empty"
-        />
+        <ConnectionBadge compact={compact} icon={<SlackGlyph />} label="Not linked" tone="empty" />
       )}
     </div>
   );

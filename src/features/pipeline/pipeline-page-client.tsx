@@ -109,9 +109,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
       }
     }
     for (const list of buckets.values()) {
-      list.sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      );
+      list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     }
     return buckets;
   }, [cards]);

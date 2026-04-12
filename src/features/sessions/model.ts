@@ -41,16 +41,10 @@ type PipelineRow = Pick<
   | "updated_at"
   | "workspace_id"
 > & {
-  issues: Pick<
-    Tables<"issues">,
-    "description_md" | "number" | "status" | "title"
-  > | null;
+  issues: Pick<Tables<"issues">, "description_md" | "number" | "status" | "title"> | null;
 };
 
-export function mapPipelineRowToSession(
-  row: PipelineRow,
-  pullRequestCount = 0,
-): SessionSummary {
+export function mapPipelineRowToSession(row: PipelineRow, pullRequestCount = 0): SessionSummary {
   return {
     archivedAt: row.issues?.status === "canceled" ? row.updated_at : null,
     createdAt: row.created_at,

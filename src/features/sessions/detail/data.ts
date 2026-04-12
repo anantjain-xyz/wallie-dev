@@ -146,9 +146,11 @@ export async function loadSessionDetailPageData(
   if (prError) throw prError;
   if (runError) throw runError;
 
-  const artifacts: SessionArtifactSummary[] = ((artifactRows ?? []) as Array<
-    Pick<Tables<"pipeline_artifacts">, "artifact_json" | "created_at" | "phase" | "version">
-  >).map((row) => ({
+  const artifacts: SessionArtifactSummary[] = (
+    (artifactRows ?? []) as Array<
+      Pick<Tables<"pipeline_artifacts">, "artifact_json" | "created_at" | "phase" | "version">
+    >
+  ).map((row) => ({
     createdAt: row.created_at,
     phase: row.phase as SessionPhase,
     payload: row.artifact_json,
@@ -163,10 +165,7 @@ export async function loadSessionDetailPageData(
     ),
   );
 
-  let repositoryIndex = new Map<
-    string,
-    { fullName: string; htmlUrl: string }
-  >();
+  let repositoryIndex = new Map<string, { fullName: string; htmlUrl: string }>();
   if (repoIds.length > 0) {
     const { data: repoRows, error: repoError } = await context.supabase
       .from("github_repositories")
@@ -182,19 +181,21 @@ export async function loadSessionDetailPageData(
     );
   }
 
-  const pullRequests: SessionPullRequest[] = ((prRows ?? []) as Array<
-    Pick<
-      Tables<"github_issue_branches">,
-      | "branch_name"
-      | "github_repository_id"
-      | "id"
-      | "is_draft"
-      | "pull_request_number"
-      | "pull_request_state"
-      | "pull_request_url"
-      | "updated_at"
+  const pullRequests: SessionPullRequest[] = (
+    (prRows ?? []) as Array<
+      Pick<
+        Tables<"github_issue_branches">,
+        | "branch_name"
+        | "github_repository_id"
+        | "id"
+        | "is_draft"
+        | "pull_request_number"
+        | "pull_request_state"
+        | "pull_request_url"
+        | "updated_at"
+      >
     >
-  >).map((row) => {
+  ).map((row) => {
     const repo = row.github_repository_id ? repositoryIndex.get(row.github_repository_id) : null;
     return {
       branchName: row.branch_name,
@@ -209,12 +210,14 @@ export async function loadSessionDetailPageData(
     };
   });
 
-  const runHistory: SessionRun[] = ((runRows ?? []) as Array<
-    Pick<
-      Tables<"agent_runs">,
-      "created_at" | "finished_at" | "id" | "model_name" | "run_type" | "started_at" | "status"
+  const runHistory: SessionRun[] = (
+    (runRows ?? []) as Array<
+      Pick<
+        Tables<"agent_runs">,
+        "created_at" | "finished_at" | "id" | "model_name" | "run_type" | "started_at" | "status"
+      >
     >
-  >).map((row) => ({
+  ).map((row) => ({
     createdAt: row.created_at,
     finishedAt: row.finished_at,
     id: row.id,

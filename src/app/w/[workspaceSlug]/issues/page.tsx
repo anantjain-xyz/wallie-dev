@@ -9,10 +9,7 @@ type IssuesLegacyPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function IssuesLegacyPage({
-  params,
-  searchParams,
-}: IssuesLegacyPageProps) {
+export default async function IssuesLegacyPage({ params, searchParams }: IssuesLegacyPageProps) {
   const { workspaceSlug } = await params;
   const resolved = await searchParams;
   const query: Record<string, string> = {};

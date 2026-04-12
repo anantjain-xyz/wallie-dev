@@ -49,9 +49,7 @@ export async function createSessionFromClient(
     workspace_id: input.workspaceId,
   };
 
-  const { error: pipelineError } = await supabase
-    .from("pipeline_issues")
-    .insert(pipelinePayload);
+  const { error: pipelineError } = await supabase.from("pipeline_issues").insert(pipelinePayload);
 
   if (pipelineError) {
     // Compensating cleanup: the `issues` row was created with an allocated
@@ -59,10 +57,7 @@ export async function createSessionFromClient(
     // leaves an orphan row the sessions UI cannot load (reads go through
     // pipeline_issues). Best-effort — if the delete itself fails, log and
     // still throw the original error so the caller sees the real failure.
-    const { error: cleanupError } = await supabase
-      .from("issues")
-      .delete()
-      .eq("id", issue.id);
+    const { error: cleanupError } = await supabase.from("issues").delete().eq("id", issue.id);
     if (cleanupError) {
       console.error("Failed to clean up orphan issues row after pipeline insert failed", {
         cleanupError,

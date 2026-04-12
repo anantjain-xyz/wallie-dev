@@ -47,9 +47,7 @@ type PhaseRailState = {
 };
 
 function buildPhaseRail(session: SessionDetail): PhaseRailState[] {
-  const completionIndex = new Map(
-    session.phaseCompletions.map((c) => [c.phase, c.completedAt]),
-  );
+  const completionIndex = new Map(session.phaseCompletions.map((c) => [c.phase, c.completedAt]));
   const currentIdx = sessionPhaseIndex(session.phase);
   return SESSION_PHASE_ORDER.map((phase, idx) => {
     const completedAt = completionIndex.get(phase) ?? null;
@@ -159,9 +157,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
               <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">
                 {session.title}
               </h1>
-              {session.archivedAt ? (
-                <StatusChip tone="planned">Archived</StatusChip>
-              ) : null}
+              {session.archivedAt ? <StatusChip tone="planned">Archived</StatusChip> : null}
             </div>
             <div className="mt-3">
               <SessionConnections
@@ -207,8 +203,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             <div className="p-4">
               {latestArtifact ? (
                 <ArtifactView artifact={latestArtifact} />
-              ) : selectedPhase === session.phase &&
-                session.phaseStatus === "agent_generating" ? (
+              ) : selectedPhase === session.phase && session.phaseStatus === "agent_generating" ? (
                 <EmptyHint text="Wallie is drafting the artifact for this phase. Refresh in a moment." />
               ) : (
                 <EmptyHint
@@ -233,7 +228,8 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                         className="rounded-[4px] border border-border bg-background p-3"
                       >
                         <p className="text-[11px] uppercase text-muted">
-                          v{artifact.version} · {dateTimeFormatter.format(new Date(artifact.createdAt))}
+                          v{artifact.version} ·{" "}
+                          {dateTimeFormatter.format(new Date(artifact.createdAt))}
                         </p>
                         <ArtifactView artifact={artifact} compact />
                       </li>
@@ -339,9 +335,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
         <aside className="flex w-full flex-col gap-4 md:w-[320px]">
           <section className="rounded-[8px] border border-border bg-surface p-4">
-            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-muted">
-              Prompt
-            </h3>
+            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-muted">Prompt</h3>
             <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground">
               {session.promptMd || "No prompt recorded."}
             </pre>
@@ -471,9 +465,7 @@ function RunRow({ run }: { run: SessionRun }) {
     <li className="flex items-center justify-between rounded-[4px] border border-border bg-background px-2.5 py-1.5 text-[11px]">
       <div className="flex min-w-0 flex-col">
         <span className="font-mono text-foreground">{run.runType}</span>
-        <span className="text-muted">
-          {dateTimeFormatter.format(new Date(run.createdAt))}
-        </span>
+        <span className="text-muted">{dateTimeFormatter.format(new Date(run.createdAt))}</span>
       </div>
       <span className="text-muted">{run.status}</span>
     </li>

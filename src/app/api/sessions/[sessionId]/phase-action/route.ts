@@ -49,10 +49,7 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   if (pipelineRow.phase_status !== "awaiting_review") {
-    return NextResponse.json(
-      { error: "Session is not awaiting review." },
-      { status: 409 },
-    );
+    return NextResponse.json({ error: "Session is not awaiting review." }, { status: 409 });
   }
 
   if (body.action === "approve") {

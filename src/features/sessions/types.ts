@@ -4,13 +4,7 @@ import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 // match; the UI hard-codes this order because it's the load-bearing product
 // surface and we want the phase rail to render all six even before the DB
 // catches up.
-export type SessionPhase =
-  | "product"
-  | "design"
-  | "engineering"
-  | "review"
-  | "land"
-  | "monitor";
+export type SessionPhase = "product" | "design" | "engineering" | "review" | "land" | "monitor";
 
 export const SESSION_PHASE_ORDER = [
   "product",

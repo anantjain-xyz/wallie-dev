@@ -126,11 +126,7 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
           <Link href={sessionsHref} className="ui-icon-button" aria-label="Search sessions">
             <SearchIcon className="h-3.5 w-3.5" />
           </Link>
-          <Link
-            href={sessionsCreateHref}
-            className="ui-icon-button"
-            aria-label="Create session"
-          >
+          <Link href={sessionsCreateHref} className="ui-icon-button" aria-label="Create session">
             <PlusIcon className="h-3.5 w-3.5" />
           </Link>
         </div>

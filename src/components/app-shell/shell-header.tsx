@@ -12,10 +12,7 @@ type ShellHeaderProps = {
 export function ShellHeader({ viewerEmail, workspace }: ShellHeaderProps) {
   return (
     <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-border bg-surface px-5">
-      <Link
-        href={workspaceBasePath(workspace.slug)}
-        className="flex min-w-0 items-center gap-2.5"
-      >
+      <Link href={workspaceBasePath(workspace.slug)} className="flex min-w-0 items-center gap-2.5">
         <span className="inline-flex h-5 w-5 items-center justify-center rounded-[5px] bg-[#dff3dc] text-[#4d9b57]">
           <WorkspaceGlyph className="h-3.5 w-3.5" />
         </span>
