@@ -646,6 +646,7 @@ export type Database = {
           creator_member_id: string | null
           current_artifact_version: number
           id: string
+          issue_id: string | null
           linear_issue_id: string | null
           linear_issue_url: string | null
           number: number
@@ -665,6 +666,7 @@ export type Database = {
           creator_member_id?: string | null
           current_artifact_version?: number
           id?: string
+          issue_id?: string | null
           linear_issue_id?: string | null
           linear_issue_url?: string | null
           number: number
@@ -684,6 +686,7 @@ export type Database = {
           creator_member_id?: string | null
           current_artifact_version?: number
           id?: string
+          issue_id?: string | null
           linear_issue_id?: string | null
           linear_issue_url?: string | null
           number?: number
@@ -703,6 +706,13 @@ export type Database = {
             columns: ["creator_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_issue_id_fkey"
+            columns: ["issue_id"]
+            isOneToOne: true
+            referencedRelation: "issues"
             referencedColumns: ["id"]
           },
           {

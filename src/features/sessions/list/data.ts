@@ -1,9 +1,8 @@
 import "server-only";
 
 import type { WorkspaceSummary } from "@/lib/auth";
-import type { Tables } from "@/lib/supabase/database.types";
 import { loadSessionWorkspaceContext } from "@/features/sessions/server";
-import { mapPipelineRowToSession } from "@/features/sessions/model";
+import { mapSessionRow } from "@/features/sessions/model";
 import {
   SESSION_PHASE_ORDER,
   type SessionFilterKey,
@@ -81,23 +80,26 @@ export async function loadSessionListPageData(
   const queryState = parseSessionListQueryState(searchParams);
 
   const { data, error } = await context.supabase
-    .from("pipeline_issues")
+    .from("sessions")
     .select(
       `
         id,
+        archived_at,
         created_at,
         updated_at,
         issue_id,
         linear_issue_id,
         linear_issue_url,
+        number,
         phase,
         phase_status,
         current_artifact_version,
+        prompt_md,
         rejection_count,
         slack_channel_id,
         slack_thread_ts,
-        workspace_id,
-        issues:issue_id ( description_md, number, status, title )
+        title,
+        workspace_id
       `,
     )
     .eq("workspace_id", context.workspace.id)
@@ -107,18 +109,13 @@ export async function loadSessionListPageData(
     throw error;
   }
 
-  type Row = (typeof data)[number] & {
-    issues: {
-      description_md: string;
-      number: number;
-      status: Tables<"issues">["status"];
-      title: string;
-    } | null;
-  };
+  const rows = data ?? [];
 
-  const issueIds = ((data ?? []) as Row[])
-    .map((row) => row.issue_id)
-    .filter((id): id is string => Boolean(id));
+  // Pull-request counts are still tracked on the legacy
+  // github_issue_branches table keyed by issues.id. Until PR 4 migrates the
+  // GitHub webhook onto session_pull_requests we continue joining through
+  // the anchor issue_id on each session row.
+  const issueIds = rows.map((row) => row.issue_id).filter((id): id is string => Boolean(id));
 
   let prCountByIssue = new Map<string, number>();
   if (issueIds.length > 0) {
@@ -138,8 +135,11 @@ export async function loadSessionListPageData(
     prCountByIssue = counts;
   }
 
-  const sessions = ((data ?? []) as Row[])
-    .map((row) => mapPipelineRowToSession(row, prCountByIssue.get(row.issue_id) ?? 0))
+  const sessions = rows
+    .map((row) => {
+      const prCount = row.issue_id ? (prCountByIssue.get(row.issue_id) ?? 0) : 0;
+      return mapSessionRow(row, prCount);
+    })
     .filter((session) => session.number > 0);
 
   const filtered = sessions.filter((session) => matchesQueryState(session, queryState));

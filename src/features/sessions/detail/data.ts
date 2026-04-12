@@ -29,48 +29,6 @@ export type SessionDetailPageData = {
   workspace: WorkspaceSummary;
 };
 
-type PipelineIssueRow = Pick<
-  Tables<"pipeline_issues">,
-  | "created_at"
-  | "current_artifact_version"
-  | "design_approved_at"
-  | "engineering_approved_at"
-  | "id"
-  | "issue_id"
-  | "linear_issue_id"
-  | "linear_issue_url"
-  | "phase"
-  | "phase_status"
-  | "product_approved_at"
-  | "rejection_count"
-  | "shipped_at"
-  | "slack_channel_id"
-  | "slack_thread_ts"
-  | "updated_at"
-  | "workspace_id"
->;
-
-const legacyPhaseCompletionFields: Array<{
-  field: keyof PipelineIssueRow;
-  phase: SessionPhase;
-}> = [
-  { field: "product_approved_at", phase: "product" },
-  { field: "design_approved_at", phase: "design" },
-  { field: "engineering_approved_at", phase: "engineering" },
-  { field: "shipped_at", phase: "review" },
-];
-
-function buildPhaseCompletions(row: PipelineIssueRow): SessionPhaseCompletion[] {
-  const completions: SessionPhaseCompletion[] = [];
-  for (const entry of legacyPhaseCompletionFields) {
-    const value = row[entry.field];
-    if (typeof value === "string" && value) {
-      completions.push({ completedAt: value, phase: entry.phase });
-    }
-  }
-  return completions;
-}
-
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
   sessionNumberValue: string,
@@ -82,11 +40,53 @@ export async function loadSessionDetailPageData(
 
   const context = await loadSessionWorkspaceContext(workspaceSlug);
 
+  const { data: sessionRow, error: sessionError } = await context.supabase
+    .from("sessions")
+    .select(
+      `
+        id,
+        archived_at,
+        created_at,
+        updated_at,
+        issue_id,
+        linear_issue_id,
+        linear_issue_url,
+        number,
+        phase,
+        phase_status,
+        current_artifact_version,
+        prompt_md,
+        rejection_count,
+        slack_channel_id,
+        slack_thread_ts,
+        title,
+        workspace_id
+      `,
+    )
+    .eq("workspace_id", context.workspace.id)
+    .eq("number", sessionNumber)
+    .maybeSingle();
+
+  if (sessionError) {
+    throw sessionError;
+  }
+  if (!sessionRow) {
+    notFound();
+  }
+
+  // The wallie panel + legacy features/issues helpers still read from the
+  // issues table. Load the anchor issue via the session's FK — every session
+  // shipped by the backend cutover has one. PR 4 migrates those consumers
+  // onto sessions and the anchor issue can go.
+  if (!sessionRow.issue_id) {
+    notFound();
+  }
+
   const { data: issueData, error: issueError } = await context.supabase
     .from("issues")
     .select("*")
     .eq("workspace_id", context.workspace.id)
-    .eq("number", sessionNumber)
+    .eq("id", sessionRow.issue_id)
     .maybeSingle();
 
   if (issueError) {
@@ -98,63 +98,60 @@ export async function loadSessionDetailPageData(
 
   const issue = mapIssueDetailRow(issueData as Tables<"issues">, context.memberIndex);
 
-  const { data: pipelineRow, error: pipelineError } = await context.supabase
-    .from("pipeline_issues")
-    .select(
-      "id, created_at, updated_at, issue_id, linear_issue_id, linear_issue_url, phase, phase_status, current_artifact_version, rejection_count, slack_channel_id, slack_thread_ts, workspace_id, product_approved_at, design_approved_at, engineering_approved_at, shipped_at",
-    )
-    .eq("workspace_id", context.workspace.id)
-    .eq("issue_id", issue.id)
-    .maybeSingle();
-
-  if (pipelineError) {
-    throw pipelineError;
-  }
-  if (!pipelineRow) {
-    notFound();
-  }
-
-  const pipeline = pipelineRow as PipelineIssueRow;
-
   const [
     { data: artifactRows, error: artifactError },
+    { data: completionRows, error: completionError },
     { data: prRows, error: prError },
     { data: runRows, error: runError },
   ] = await Promise.all([
     context.supabase
-      .from("pipeline_artifacts")
+      .from("session_artifacts")
       .select("artifact_json, created_at, phase, version")
-      .eq("pipeline_issue_id", pipeline.id)
+      .eq("session_id", sessionRow.id)
       .order("version", { ascending: false }),
+    context.supabase
+      .from("session_phase_completions")
+      .select("completed_at, phase")
+      .eq("session_id", sessionRow.id),
     context.supabase
       .from("github_issue_branches")
       .select(
         "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at",
       )
       .eq("workspace_id", context.workspace.id)
-      .eq("issue_id", issue.id)
+      .eq("issue_id", sessionRow.issue_id)
       .order("created_at", { ascending: false }),
     context.supabase
       .from("agent_runs")
       .select("id, created_at, finished_at, model_name, run_type, started_at, status")
-      .eq("issue_id", issue.id)
+      .eq("issue_id", sessionRow.issue_id)
       .order("created_at", { ascending: false })
       .limit(10),
   ]);
 
   if (artifactError) throw artifactError;
+  if (completionError) throw completionError;
   if (prError) throw prError;
   if (runError) throw runError;
 
   const artifacts: SessionArtifactSummary[] = (
     (artifactRows ?? []) as Array<
-      Pick<Tables<"pipeline_artifacts">, "artifact_json" | "created_at" | "phase" | "version">
+      Pick<Tables<"session_artifacts">, "artifact_json" | "created_at" | "phase" | "version">
     >
   ).map((row) => ({
     createdAt: row.created_at,
     phase: row.phase as SessionPhase,
     payload: row.artifact_json,
     version: row.version,
+  }));
+
+  const phaseCompletions: SessionPhaseCompletion[] = (
+    (completionRows ?? []) as Array<
+      Pick<Tables<"session_phase_completions">, "completed_at" | "phase">
+    >
+  ).map((row) => ({
+    completedAt: row.completed_at,
+    phase: row.phase as SessionPhase,
   }));
 
   const repoIds = Array.from(
@@ -228,27 +225,27 @@ export async function loadSessionDetailPageData(
   }));
 
   const session: SessionDetail = {
-    archivedAt: issue.status === "canceled" ? issue.updatedAt : null,
+    archivedAt: sessionRow.archived_at,
     artifacts,
-    createdAt: pipeline.created_at,
-    currentArtifactVersion: pipeline.current_artifact_version,
-    id: pipeline.id,
-    linearIssueId: pipeline.linear_issue_id,
-    linearIssueUrl: pipeline.linear_issue_url,
-    number: issue.number,
-    phase: pipeline.phase as SessionPhase,
-    phaseStatus: pipeline.phase_status as SessionPhaseStatus,
-    phaseCompletions: buildPhaseCompletions(pipeline),
-    promptMd: issue.descriptionMd,
+    createdAt: sessionRow.created_at,
+    currentArtifactVersion: sessionRow.current_artifact_version,
+    id: sessionRow.id,
+    linearIssueId: sessionRow.linear_issue_id,
+    linearIssueUrl: sessionRow.linear_issue_url,
+    number: sessionRow.number,
+    phase: sessionRow.phase as SessionPhase,
+    phaseStatus: sessionRow.phase_status as SessionPhaseStatus,
+    phaseCompletions,
+    promptMd: sessionRow.prompt_md,
     pullRequestCount: pullRequests.length,
     pullRequests,
-    rejectionCount: pipeline.rejection_count,
+    rejectionCount: sessionRow.rejection_count,
     runHistory,
-    slackChannelId: pipeline.slack_channel_id,
-    slackThreadTs: pipeline.slack_thread_ts,
-    title: issue.title,
-    updatedAt: pipeline.updated_at,
-    workspaceId: pipeline.workspace_id,
+    slackChannelId: sessionRow.slack_channel_id,
+    slackThreadTs: sessionRow.slack_thread_ts,
+    title: sessionRow.title,
+    updatedAt: sessionRow.updated_at,
+    workspaceId: sessionRow.workspace_id,
   };
 
   const { data: repoForIssueData, error: repoForIssueError } = issue.githubRepositoryId

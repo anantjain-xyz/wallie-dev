@@ -76,13 +76,14 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
   } as Tables<"agent_jobs">;
 }
 
-function basePipelineIssue(
-  overrides: Partial<Tables<"pipeline_issues">> = {},
-): Tables<"pipeline_issues"> {
+function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessions"> {
   return {
-    id: "pi-1",
+    id: "sess-1",
     workspace_id: "ws-1",
     issue_id: "issue-1",
+    number: 1,
+    title: "SSO login",
+    prompt_md: "Imported from Linear: TEAM-1",
     linear_issue_id: "TEAM-1",
     linear_issue_url: "https://linear.app/team/issue/TEAM-1",
     phase: "product",
@@ -91,14 +92,12 @@ function basePipelineIssue(
     current_artifact_version: 0,
     slack_channel_id: "C1",
     slack_thread_ts: "1.1",
+    creator_member_id: null,
+    archived_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    design_approved_at: null,
-    engineering_approved_at: null,
-    product_approved_at: null,
-    shipped_at: null,
     ...overrides,
-  } as Tables<"pipeline_issues">;
+  } as Tables<"sessions">;
 }
 
 // ---- handleApproval tests ------------------------------------------------
@@ -112,7 +111,8 @@ describe("handleApproval", () => {
     const rpc = vi.fn().mockResolvedValue({
       data: [
         {
-          id: "pi-1",
+          archived_at: null,
+          id: "sess-1",
           linear_issue_url: "u",
           phase: "product",
           phase_status: "approved",
@@ -127,15 +127,16 @@ describe("handleApproval", () => {
     const result = await handleApproval({
       admin: { rpc } as never,
       expectedWorkspaceId: "ws-1",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
     expect(result).toEqual({ success: true });
-    expect(rpc).toHaveBeenCalledWith("approve_pipeline_phase", {
+    expect(rpc).toHaveBeenCalledWith("approve_session_phase", {
+      approver_member_id: null,
       expected_version: 1,
       expected_workspace_id: "ws-1",
-      pipeline_issue_id: "pi-1",
+      target_session_id: "sess-1",
     });
   });
 
@@ -145,7 +146,7 @@ describe("handleApproval", () => {
     const result = await handleApproval({
       admin: { rpc } as never,
       expectedWorkspaceId: "ws-1",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 99,
     });
 
@@ -159,15 +160,15 @@ describe("handleApproval", () => {
     const result = await handleApproval({
       admin: { rpc } as never,
       expectedWorkspaceId: "attacker-ws",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
     expect(result.success).toBe(false);
-    // The route still passes the workspace_id into the RPC; the database
-    // function applies it as a CAS filter so the wrong workspace gets nothing.
+    // The route still passes workspace_id into the RPC; the database function
+    // applies it as a CAS filter so the wrong workspace gets nothing.
     expect(rpc).toHaveBeenCalledWith(
-      "approve_pipeline_phase",
+      "approve_session_phase",
       expect.objectContaining({ expected_workspace_id: "attacker-ws" }),
     );
   });
@@ -181,7 +182,7 @@ describe("handleApproval", () => {
     const result = await handleApproval({
       admin: { rpc } as never,
       expectedWorkspaceId: "ws-1",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -196,8 +197,8 @@ describe("handleRejection", () => {
     vi.clearAllMocks();
   });
 
-  function adminWithPipelineIssue(
-    pi: Tables<"pipeline_issues">,
+  function adminWithSession(
+    session: Tables<"sessions">,
     opts: {
       rejectionCasData?: unknown;
       enqueueError?: { code?: string; message: string } | null;
@@ -234,21 +235,21 @@ describe("handleRejection", () => {
         });
         chain.delete = vi.fn(() => chain);
 
-        if (table === "pipeline_issues") {
-          // First call is loadPipelineIssueById, subsequent call is the
-          // rejection CAS. We simulate by alternating.
+        if (table === "sessions") {
+          // First call is loadSessionById, subsequent call is the rejection
+          // CAS. Simulate by alternating.
           const callIdx = tableCalls[table]!;
           chain.maybeSingle = vi.fn().mockImplementation(() => {
             if (callIdx === 1) {
-              return Promise.resolve({ data: pi, error: null });
+              return Promise.resolve({ data: session, error: null });
             }
             // CAS
             return Promise.resolve({
-              data: opts.rejectionCasData ?? { id: pi.id },
+              data: opts.rejectionCasData ?? { id: session.id },
               error: null,
             });
           });
-        } else if (table === "pipeline_artifacts") {
+        } else if (table === "session_artifacts") {
           chain.maybeSingle = vi.fn().mockResolvedValue({
             data: { artifact_json: validSpec },
             error: null,
@@ -265,8 +266,8 @@ describe("handleRejection", () => {
           });
         } else if (table === "workspace_secrets") {
           // workspace_secrets uses a direct await (no .single/.maybeSingle).
-          // Override the chain with a thenable so `await admin.from(...).select().eq().in()`
-          // resolves directly.
+          // Override the chain with a thenable so
+          // `await admin.from(...).select().eq().in()` resolves directly.
           (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
             resolve({
               data: [{ key: "EM_SLACK_USER_ID", encrypted_value: "U-em-id" }],
@@ -285,13 +286,13 @@ describe("handleRejection", () => {
   }
 
   it("rejects with cross-workspace guard when workspace_id does not match", async () => {
-    const { admin } = adminWithPipelineIssue(basePipelineIssue());
+    const { admin } = adminWithSession(baseSession());
 
     const result = await handleRejection({
       admin: admin as never,
       expectedWorkspaceId: "attacker-ws",
       feedbackText: "nope",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -300,15 +301,13 @@ describe("handleRejection", () => {
   });
 
   it("rejects when phase_status is not awaiting_review", async () => {
-    const { admin } = adminWithPipelineIssue(
-      basePipelineIssue({ phase_status: "agent_generating" }),
-    );
+    const { admin } = adminWithSession(baseSession({ phase_status: "agent_generating" }));
 
     const result = await handleRejection({
       admin: admin as never,
       expectedWorkspaceId: "ws-1",
       feedbackText: "nope",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -317,15 +316,15 @@ describe("handleRejection", () => {
   });
 
   it("rejects on version mismatch", async () => {
-    const { admin } = adminWithPipelineIssue(
-      basePipelineIssue({ phase_status: "awaiting_review", current_artifact_version: 2 }),
+    const { admin } = adminWithSession(
+      baseSession({ phase_status: "awaiting_review", current_artifact_version: 2 }),
     );
 
     const result = await handleRejection({
       admin: admin as never,
       expectedWorkspaceId: "ws-1",
       feedbackText: "nope",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -334,8 +333,8 @@ describe("handleRejection", () => {
   });
 
   it("escalates at rejection_count >= 3 and does NOT enqueue a retry", async () => {
-    const { admin, insertPayloads, updatePayloads } = adminWithPipelineIssue(
-      basePipelineIssue({
+    const { admin, insertPayloads, updatePayloads } = adminWithSession(
+      baseSession({
         phase_status: "awaiting_review",
         current_artifact_version: 1,
         rejection_count: 2,
@@ -346,7 +345,7 @@ describe("handleRejection", () => {
       admin: admin as never,
       expectedWorkspaceId: "ws-1",
       feedbackText: "final nope",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -366,7 +365,7 @@ describe("handleRejection", () => {
     // Phase status should flip to "escalated".
     const escalatedUpdate = updatePayloads.find(
       (u) =>
-        u.table === "pipeline_issues" &&
+        u.table === "sessions" &&
         (u.payload as { phase_status?: string }).phase_status === "escalated",
     );
     expect(escalatedUpdate).toBeDefined();
@@ -377,8 +376,8 @@ describe("handleRejection", () => {
   });
 
   it("non-escalated path enqueues retry BEFORE flipping phase_status to rejected", async () => {
-    const { admin, insertPayloads, updatePayloads } = adminWithPipelineIssue(
-      basePipelineIssue({
+    const { admin, insertPayloads, updatePayloads } = adminWithSession(
+      baseSession({
         phase_status: "awaiting_review",
         current_artifact_version: 1,
         rejection_count: 0,
@@ -389,7 +388,7 @@ describe("handleRejection", () => {
       admin: admin as never,
       expectedWorkspaceId: "ws-1",
       feedbackText: "please add more",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -406,15 +405,15 @@ describe("handleRejection", () => {
     // phase_status should flip to "rejected".
     const rejectedUpdate = updatePayloads.find(
       (u) =>
-        u.table === "pipeline_issues" &&
+        u.table === "sessions" &&
         (u.payload as { phase_status?: string }).phase_status === "rejected",
     );
     expect(rejectedUpdate).toBeDefined();
   });
 
   it("non-escalated path: non-23505 enqueue failure leaves phase_status at awaiting_review", async () => {
-    const { admin, updatePayloads } = adminWithPipelineIssue(
-      basePipelineIssue({
+    const { admin, updatePayloads } = adminWithSession(
+      baseSession({
         phase_status: "awaiting_review",
         current_artifact_version: 1,
         rejection_count: 0,
@@ -426,7 +425,7 @@ describe("handleRejection", () => {
       admin: admin as never,
       expectedWorkspaceId: "ws-1",
       feedbackText: "nope",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -438,15 +437,15 @@ describe("handleRejection", () => {
     // reviewer can click Submit Feedback again.
     const rejectedFlip = updatePayloads.find(
       (u) =>
-        u.table === "pipeline_issues" &&
+        u.table === "sessions" &&
         (u.payload as { phase_status?: string }).phase_status === "rejected",
     );
     expect(rejectedFlip).toBeUndefined();
   });
 
   it("non-escalated path: 23505 (dedupe) is silently treated as success", async () => {
-    const { admin, updatePayloads } = adminWithPipelineIssue(
-      basePipelineIssue({
+    const { admin, updatePayloads } = adminWithSession(
+      baseSession({
         phase_status: "awaiting_review",
         current_artifact_version: 1,
         rejection_count: 0,
@@ -458,7 +457,7 @@ describe("handleRejection", () => {
       admin: admin as never,
       expectedWorkspaceId: "ws-1",
       feedbackText: "nope",
-      pipelineIssueId: "pi-1",
+      sessionId: "sess-1",
       version: 1,
     });
 
@@ -469,7 +468,7 @@ describe("handleRejection", () => {
     // concurrent worker is already queued to pick up the feedback.
     const rejectedFlip = updatePayloads.find(
       (u) =>
-        u.table === "pipeline_issues" &&
+        u.table === "sessions" &&
         (u.payload as { phase_status?: string }).phase_status === "rejected",
     );
     expect(rejectedFlip).toBeDefined();
@@ -484,7 +483,7 @@ describe("processPipelineJob", () => {
   });
 
   function buildProcessorAdmin(opts: {
-    pipelineIssue: Tables<"pipeline_issues"> | null;
+    session: Tables<"sessions"> | null;
     issue?: { id: string; title: string; description_md: string } | null;
     claimedRow?: { id: string } | null;
     insertArtifactError?: unknown;
@@ -493,18 +492,18 @@ describe("processPipelineJob", () => {
     const calls: {
       artifactInserted: number;
       artifactDeleted: number;
-      pipelineUpdates: Array<Record<string, unknown>>;
+      sessionUpdates: Array<Record<string, unknown>>;
       jobUpdates: Array<Record<string, unknown>>;
     } = {
       artifactInserted: 0,
       artifactDeleted: 0,
-      pipelineUpdates: [],
+      sessionUpdates: [],
       jobUpdates: [],
     };
 
-    // Per-call counters so the pipeline_issues "update" chain can return the
+    // Per-call counters so the sessions "update" chain can return the
     // CAS-claim result on its first call and a plain update on subsequent calls.
-    let pipelineIssueUpdateCall = 0;
+    let sessionUpdateCall = 0;
 
     const admin = {
       from: vi.fn((table: string) => {
@@ -515,25 +514,25 @@ describe("processPipelineJob", () => {
         chain.order = vi.fn(() => chain);
         chain.limit = vi.fn(() => chain);
 
-        if (table === "pipeline_issues") {
+        if (table === "sessions") {
           chain.update = vi.fn((payload: unknown) => {
-            pipelineIssueUpdateCall += 1;
-            calls.pipelineUpdates.push(payload as Record<string, unknown>);
+            sessionUpdateCall += 1;
+            calls.sessionUpdates.push(payload as Record<string, unknown>);
             // First UPDATE is the CAS claim (followed by select().maybeSingle())
-            if (pipelineIssueUpdateCall === 1) {
+            if (sessionUpdateCall === 1) {
               (chain as { maybeSingle: unknown }).maybeSingle = vi.fn().mockResolvedValue({
-                data: opts.claimedRow !== undefined ? opts.claimedRow : { id: "pi-1" },
+                data: opts.claimedRow !== undefined ? opts.claimedRow : { id: "sess-1" },
                 error: null,
               });
             } else {
-              // Subsequent UPDATEs are direct awaits with pointer update errors injected
+              // Subsequent UPDATEs are direct awaits with pointer-update errors injected
               (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
                 resolve({ data: null, error: opts.pointerUpdateError ?? null });
             }
             return chain;
           });
           chain.insert = vi.fn(() => chain);
-          chain.maybeSingle = vi.fn().mockResolvedValue({ data: opts.pipelineIssue, error: null });
+          chain.maybeSingle = vi.fn().mockResolvedValue({ data: opts.session, error: null });
         } else if (table === "issues") {
           chain.update = vi.fn(() => {
             (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
@@ -559,7 +558,7 @@ describe("processPipelineJob", () => {
             data: { bot_token_encrypted: "enc-token" },
             error: null,
           });
-        } else if (table === "pipeline_artifacts") {
+        } else if (table === "session_artifacts") {
           chain.insert = vi.fn(() => {
             calls.artifactInserted += 1;
             return Promise.resolve({ data: null, error: opts.insertArtifactError ?? null });
@@ -592,8 +591,8 @@ describe("processPipelineJob", () => {
     return { admin, calls };
   }
 
-  it("returns error when no pipeline_issue row exists for the job", async () => {
-    const { admin, calls } = buildProcessorAdmin({ pipelineIssue: null });
+  it("returns error when no session row exists for the job", async () => {
+    const { admin, calls } = buildProcessorAdmin({ session: null });
 
     const result = await processPipelineJob({
       admin: admin as never,
@@ -606,7 +605,7 @@ describe("processPipelineJob", () => {
 
   it("returns success without running pre-screen when CAS claim finds terminal state", async () => {
     const { admin } = buildProcessorAdmin({
-      pipelineIssue: basePipelineIssue({ phase_status: "approved" }),
+      session: baseSession({ phase_status: "approved" }),
       claimedRow: null, // CAS returns no row → terminal
     });
 
@@ -624,7 +623,7 @@ describe("processPipelineJob", () => {
     mocked.preScreenIssue.mockResolvedValueOnce({ pass: false, reason: "too vague" });
 
     const { admin, calls } = buildProcessorAdmin({
-      pipelineIssue: basePipelineIssue(),
+      session: baseSession(),
     });
 
     const result = await processPipelineJob({
@@ -635,16 +634,16 @@ describe("processPipelineJob", () => {
     expect(result.result).toBe("success");
     expect(mocked.postSlackMessage).toHaveBeenCalled();
     expect(mocked.generateProductSpec).not.toHaveBeenCalled();
-    // phase_status should have been updated to "rejected" via updatePipelineIssueStatus.
-    expect(calls.pipelineUpdates.some((u) => u.phase_status === "rejected")).toBe(true);
+    // phase_status should have been updated to "rejected".
+    expect(calls.sessionUpdates.some((u) => u.phase_status === "rejected")).toBe(true);
   });
 
-  it("generates spec, inserts artifact, bumps pointer, mirrors plan_md on happy path", async () => {
+  it("generates spec, inserts artifact, and bumps pointer on happy path", async () => {
     mocked.preScreenIssue.mockResolvedValueOnce({ pass: true, reason: "ok" });
     mocked.generateProductSpec.mockResolvedValueOnce(validSpec);
 
     const { admin, calls } = buildProcessorAdmin({
-      pipelineIssue: basePipelineIssue(),
+      session: baseSession(),
     });
 
     const result = await processPipelineJob({
@@ -656,7 +655,7 @@ describe("processPipelineJob", () => {
     expect(calls.artifactInserted).toBe(1);
     // pointer update to v1 + awaiting_review should have been attempted.
     expect(
-      calls.pipelineUpdates.some(
+      calls.sessionUpdates.some(
         (u) => u.current_artifact_version === 1 && u.phase_status === "awaiting_review",
       ),
     ).toBe(true);
@@ -669,7 +668,7 @@ describe("processPipelineJob", () => {
     mocked.generateProductSpec.mockResolvedValueOnce(validSpec);
 
     const { admin, calls } = buildProcessorAdmin({
-      pipelineIssue: basePipelineIssue(),
+      session: baseSession(),
       pointerUpdateError: { code: "08000", message: "connection reset" },
     });
 
@@ -681,11 +680,11 @@ describe("processPipelineJob", () => {
     expect(result.result).toBe("error");
     expect(calls.artifactInserted).toBe(1);
     // Critical: the compensating delete must have fired to avoid wedging
-    // the next retry on the unique (pipeline_issue_id, phase, version) index.
+    // the next retry on the unique (session_id, phase, version) index.
     expect(calls.artifactDeleted).toBe(1);
-    // Job should be marked error, pipeline_issue flipped to rejected.
+    // Job should be marked error, session flipped to rejected.
     expect(calls.jobUpdates.some((u) => u.status === "error")).toBe(true);
-    expect(calls.pipelineUpdates.some((u) => u.phase_status === "rejected")).toBe(true);
+    expect(calls.sessionUpdates.some((u) => u.phase_status === "rejected")).toBe(true);
   });
 
   it("posts a generic warning (not the raw LLM error) when spec generation fails", async () => {
@@ -695,7 +694,7 @@ describe("processPipelineJob", () => {
     );
 
     const { admin } = buildProcessorAdmin({
-      pipelineIssue: basePipelineIssue(),
+      session: baseSession(),
     });
 
     const result = await processPipelineJob({
@@ -713,5 +712,31 @@ describe("processPipelineJob", () => {
     expect(slackCall.text).toBe("Spec generation failed");
     const firstBlockText = slackCall.blocks[0]?.text?.text ?? "";
     expect(firstBlockText).not.toContain("evil.example");
+  });
+
+  it("writes a manual stub artifact and flips to awaiting_review for non-product phases", async () => {
+    const { admin, calls } = buildProcessorAdmin({
+      session: baseSession({ phase: "design", current_artifact_version: 0 }),
+    });
+
+    const result = await processPipelineJob({
+      admin: admin as never,
+      job: baseJob(),
+    });
+
+    expect(result.result).toBe("success");
+    // Product agent should NOT run for a non-product phase.
+    expect(mocked.generateProductSpec).not.toHaveBeenCalled();
+    expect(mocked.preScreenIssue).not.toHaveBeenCalled();
+    // A stub artifact should be inserted.
+    expect(calls.artifactInserted).toBe(1);
+    // Pointer should bump to v1 and flip to awaiting_review.
+    expect(
+      calls.sessionUpdates.some(
+        (u) => u.current_artifact_version === 1 && u.phase_status === "awaiting_review",
+      ),
+    ).toBe(true);
+    // A Slack "please approve" prompt should have been posted.
+    expect(mocked.postSlackMessage).toHaveBeenCalled();
   });
 });

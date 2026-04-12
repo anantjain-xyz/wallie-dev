@@ -88,10 +88,10 @@ export async function POST(request: Request) {
 
   // Handle modal submission (view_submission) before action dispatch
   if (payload.type === "view_submission" && payload.view?.callback_id === "pipeline_feedback") {
-    let metadata: { pipeline_issue_id: string; version: number };
+    let metadata: { session_id: string; version: number };
     try {
       metadata = JSON.parse(payload.view.private_metadata ?? "") as {
-        pipeline_issue_id: string;
+        session_id: string;
         version: number;
       };
     } catch {
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
     const result = await handleRejection({
       expectedWorkspaceId,
       feedbackText: feedbackText.trim(),
-      pipelineIssueId: metadata.pipeline_issue_id,
+      sessionId: metadata.session_id,
       version: metadata.version,
     });
 
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
   }
 
   const action = actions[0]!;
-  let actionValue: { pipeline_issue_id: string; version: number };
+  let actionValue: { session_id: string; version: number };
 
   try {
     actionValue = JSON.parse(action.value);
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
   if (action.action_id === "pipeline_approve") {
     const result = await handleApproval({
       expectedWorkspaceId,
-      pipelineIssueId: actionValue.pipeline_issue_id,
+      sessionId: actionValue.session_id,
       version: actionValue.version,
     });
 
