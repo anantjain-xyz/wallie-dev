@@ -23,14 +23,18 @@ Each phase produces a versioned artifact. Humans approve or reject artifacts via
 ### Pipeline Flow
 
 ```
-Slack mention / in-app create
+Slack mention
   -> session created (phase: product, status: agent_generating)
-  -> agent job enqueued
+  -> agent job enqueued automatically
   -> POST /api/agent-jobs/process picks up the job
   -> Claude generates product spec (with pre-screen quality gate)
   -> spec posted to Slack with [Approve] / [Reject] buttons
   -> approval advances to next phase; rejection re-generates with feedback
   -> repeat until monitor phase completes -> session archived
+
+In-app create
+  -> session created (phase: product)
+  -> agent job must be triggered separately (not auto-enqueued)
 ```
 
 ## Tech Stack
