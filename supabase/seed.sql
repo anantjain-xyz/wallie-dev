@@ -1,6 +1,18 @@
 -- =============================================================================
 -- Seed data for local development
 -- Runs automatically on `supabase db reset`
+--
+-- Shape after PR 4 cleanup:
+--   - `issues` is a thin anchor row (title, description_md, repo link). The
+--     legacy classical-tracker columns (status, priority, plan_md, design_md,
+--     assignee_member_id, ...) have been dropped.
+--   - `sessions` is the pipeline source of truth. Every pipeline row has an
+--     anchor issue via `sessions.issue_id`.
+--   - `issue_comments` and `issue_links` tables no longer exist — discussion
+--     lives in Slack threads and links are tracked through Linear.
+--
+-- We seed six sessions, one per pipeline phase, so the session list + detail
+-- views have realistic data to render for every state.
 -- =============================================================================
 
 -- Disable triggers during seeding (enforcement triggers check auth context
@@ -21,37 +33,21 @@ DECLARE
   mem2_id   uuid := 'c1b2c3d4-0002-4000-8000-000000000002';
   memw_id   uuid := 'c1b2c3d4-0003-4000-8000-000000000003';
 
-  -- Issues
+  -- Issues (anchor rows, one per session)
   iss1_id   uuid := 'd1b2c3d4-0001-4000-8000-000000000001';
   iss2_id   uuid := 'd1b2c3d4-0002-4000-8000-000000000002';
   iss3_id   uuid := 'd1b2c3d4-0003-4000-8000-000000000003';
   iss4_id   uuid := 'd1b2c3d4-0004-4000-8000-000000000004';
   iss5_id   uuid := 'd1b2c3d4-0005-4000-8000-000000000005';
   iss6_id   uuid := 'd1b2c3d4-0006-4000-8000-000000000006';
-  iss7_id   uuid := 'd1b2c3d4-0007-4000-8000-000000000007';
-  iss8_id   uuid := 'd1b2c3d4-0008-4000-8000-000000000008';
-  iss9_id   uuid := 'd1b2c3d4-0009-4000-8000-000000000009';
-  iss10_id  uuid := 'd1b2c3d4-0010-4000-8000-000000000010';
 
-  -- Comments
-  com1_id   uuid := 'e1b2c3d4-0001-4000-8000-000000000001';
-  com2_id   uuid := 'e1b2c3d4-0002-4000-8000-000000000002';
-  com3_id   uuid := 'e1b2c3d4-0003-4000-8000-000000000003';
-  com4_id   uuid := 'e1b2c3d4-0004-4000-8000-000000000004';
-  com5_id   uuid := 'e1b2c3d4-0005-4000-8000-000000000005';
-  com6_id   uuid := 'e1b2c3d4-0006-4000-8000-000000000006';
-  com7_id   uuid := 'e1b2c3d4-0007-4000-8000-000000000007';
-  com8_id   uuid := 'e1b2c3d4-0008-4000-8000-000000000008';
-  com9_id   uuid := 'e1b2c3d4-0009-4000-8000-000000000009';
-  com10_id  uuid := 'e1b2c3d4-0010-4000-8000-000000000010';
-  com11_id  uuid := 'e1b2c3d4-0011-4000-8000-000000000011';
-  com12_id  uuid := 'e1b2c3d4-0012-4000-8000-000000000012';
-
-  -- Issue links
-  link1_id  uuid := 'f1b2c3d4-0001-4000-8000-000000000001';
-  link2_id  uuid := 'f1b2c3d4-0002-4000-8000-000000000002';
-  link3_id  uuid := 'f1b2c3d4-0003-4000-8000-000000000003';
-  link4_id  uuid := 'f1b2c3d4-0004-4000-8000-000000000004';
+  -- Sessions
+  sess1_id  uuid := 'a2b2c3d4-0001-4000-8000-000000000001';
+  sess2_id  uuid := 'a2b2c3d4-0002-4000-8000-000000000002';
+  sess3_id  uuid := 'a2b2c3d4-0003-4000-8000-000000000003';
+  sess4_id  uuid := 'a2b2c3d4-0004-4000-8000-000000000004';
+  sess5_id  uuid := 'a2b2c3d4-0005-4000-8000-000000000005';
+  sess6_id  uuid := 'a2b2c3d4-0006-4000-8000-000000000006';
 
   -- GitHub integration
   gh_inst_id  uuid := '11b2c3d4-0001-4000-8000-000000000001';
@@ -61,7 +57,10 @@ DECLARE
   gh_br2_id   uuid := '13b2c3d4-0002-4000-8000-000000000002';
   gh_br3_id   uuid := '13b2c3d4-0003-4000-8000-000000000003';
 
-  -- Agent jobs & runs
+  -- Slack installation (fake bot token — no real decryption happens in dev)
+  slack_inst_id uuid := '14b2c3d4-0001-4000-8000-000000000001';
+
+  -- Agent jobs & runs (pipeline work on session #2)
   job1_id  uuid := '21b2c3d4-0001-4000-8000-000000000001';
   job2_id  uuid := '21b2c3d4-0002-4000-8000-000000000002';
   run1_id  uuid := '22b2c3d4-0001-4000-8000-000000000001';
@@ -71,6 +70,10 @@ DECLARE
   msg3_id  uuid := '23b2c3d4-0003-4000-8000-000000000003';
   msg4_id  uuid := '23b2c3d4-0004-4000-8000-000000000004';
   msg5_id  uuid := '23b2c3d4-0005-4000-8000-000000000005';
+
+  -- Reusable product-spec JSON builder. Keeps each session's artifact under
+  -- the ProductSpec shape the product-agent emits.
+  product_spec_template jsonb;
 
 BEGIN
 
@@ -162,169 +165,13 @@ BEGIN
     (memw_id, ws_id, 'system', 'agent', 'wallie', 'Wallie', now() - interval '14 days');
 
   -- -------------------------------------------------------------------------
-  -- 5. Issue counter
+  -- 5. Issue counter (Slack handler reuses this for session numbers)
   -- -------------------------------------------------------------------------
   INSERT INTO internal.workspace_issue_counters (workspace_id, last_issue_number)
-  VALUES (ws_id, 10);
+  VALUES (ws_id, 6);
 
   -- -------------------------------------------------------------------------
-  -- 6. Issues (10 realistic software-project issues)
-  -- -------------------------------------------------------------------------
-  INSERT INTO public.issues
-    (id, workspace_id, number, title, description_md, plan_md, design_md,
-     status, priority, estimate_points, creator_member_id, assignee_member_id,
-     created_at, updated_at)
-  VALUES
-    -- #1 — Done
-    (iss1_id, ws_id, 1,
-     'Set up CI/CD pipeline with GitHub Actions',
-     E'We need automated tests, linting, and deploy-on-merge for the `main` branch.\n\n### Acceptance criteria\n- PR checks run tests + lint\n- Merge to main triggers deploy to staging\n- Deploy to production is manual approval',
-     E'## Plan\n1. Create `.github/workflows/ci.yml`\n2. Add test + lint jobs\n3. Add staging deploy job triggered on main push\n4. Add production deploy job with environment protection rules',
-     null,
-     'done', 'high', 5, mem1_id, mem2_id,
-     now() - interval '13 days', now() - interval '8 days'),
-
-    -- #2 — Done
-    (iss2_id, ws_id, 2,
-     'Implement workspace creation onboarding flow',
-     E'New users need a guided flow to create their first workspace after signing up.\n\n- Name input with slug preview\n- Auto-redirect to the new workspace after creation\n- Confetti animation on success (stretch goal)',
-     null, null,
-     'done', 'high', 8, mem1_id, mem1_id,
-     now() - interval '12 days', now() - interval '7 days'),
-
-    -- #3 — In Review
-    (iss3_id, ws_id, 3,
-     'Add real-time issue status updates via Supabase Realtime',
-     E'When a teammate changes an issue''s status, everyone viewing the board should see it update instantly without refreshing.\n\n### Technical notes\n- Subscribe to `issues` table changes filtered by `workspace_id`\n- Optimistic UI update on the client side\n- Handle reconnection gracefully',
-     E'## Plan\n1. Create `useRealtimeIssues` hook\n2. Subscribe to postgres changes on `issues` table\n3. Merge remote changes into local React Query cache\n4. Add connection status indicator',
-     E'## Design\n- Use `supabase.channel()` API\n- Filter: `workspace_id=eq.{id}`\n- Events: INSERT, UPDATE, DELETE\n- Reconnect with exponential backoff',
-     'in_review', 'medium', 5, mem2_id, mem2_id,
-     now() - interval '10 days', now() - interval '1 day'),
-
-    -- #4 — In Progress (assigned to Wallie)
-    (iss4_id, ws_id, 4,
-     'Implement markdown editor for issue descriptions',
-     E'Replace the plain textarea with a proper markdown editor that supports:\n\n- Live preview (split pane or toggle)\n- Syntax highlighting for code blocks\n- Image paste/upload\n- Keyboard shortcuts (Cmd+B for bold, etc.)\n\nConsider using CodeMirror 6 or Tiptap.',
-     E'## Plan\n1. Evaluate CodeMirror 6 vs Tiptap — go with Tiptap for richer block editing\n2. Create `<MarkdownEditor>` component\n3. Wire up image upload to Supabase Storage\n4. Add toolbar with formatting buttons\n5. Write tests for serialization round-trip',
-     null,
-     'in_progress', 'high', 8, mem1_id, memw_id,
-     now() - interval '8 days', now() - interval '4 hours'),
-
-    -- #5 — In Progress
-    (iss5_id, ws_id, 5,
-     'Build workspace settings page',
-     E'Settings page needs sections for:\n\n1. **General** — name, slug, avatar\n2. **Members** — invite, remove, change roles\n3. **Billing** — current plan, usage, upgrade CTA\n4. **Danger zone** — delete workspace\n\nEach section should be a tab or accordion.',
-     null, null,
-     'in_progress', 'medium', 5, mem1_id, mem1_id,
-     now() - interval '6 days', now() - interval '2 days'),
-
-    -- #6 — Todo
-    (iss6_id, ws_id, 6,
-     'Add keyboard shortcuts for issue triage',
-     E'Power users should be able to triage issues without touching the mouse:\n\n| Key | Action |\n|-----|--------|\n| `j` / `k` | Navigate up/down |\n| `s` | Change status |\n| `p` | Change priority |\n| `a` | Assign |\n| `e` | Edit title inline |\n| `Enter` | Open issue detail |\n\nUse a global shortcut provider (something like `tinykeys`).',
-     null, null,
-     'todo', 'low', 3, mem2_id, null,
-     now() - interval '5 days', now() - interval '5 days'),
-
-    -- #7 — Todo
-    (iss7_id, ws_id, 7,
-     'Implement issue filtering and search',
-     E'The issues list needs filtering capabilities:\n\n- Full-text search across title and description\n- Filter by status (multi-select)\n- Filter by priority\n- Filter by assignee\n- Combine filters with AND logic\n- Persist filter state in URL query params',
-     null, null,
-     'todo', 'medium', 5, mem1_id, mem2_id,
-     now() - interval '4 days', now() - interval '4 days'),
-
-    -- #8 — Backlog
-    (iss8_id, ws_id, 8,
-     'Add email notifications for issue assignments',
-     E'When a user is assigned to an issue, send them an email notification.\n\n- Use Supabase Edge Functions + Resend\n- Include issue title, description preview, and deep link\n- Respect user notification preferences (to be built)\n- Rate limit to avoid spam on bulk assignment changes',
-     null, null,
-     'backlog', 'low', 3, mem2_id, null,
-     now() - interval '3 days', now() - interval '3 days'),
-
-    -- #9 — Backlog
-    (iss9_id, ws_id, 9,
-     'Dark mode support',
-     E'Implement a system-aware dark mode with manual override.\n\n- Detect `prefers-color-scheme` media query\n- Toggle in user settings (system / light / dark)\n- Store preference in workspace_members.preferences JSONB\n- Ensure all components look good in both themes\n- Pay special attention to code blocks and markdown preview',
-     null, null,
-     'backlog', 'none', null, mem1_id, null,
-     now() - interval '2 days', now() - interval '2 days'),
-
-    -- #10 — Canceled
-    (iss10_id, ws_id, 10,
-     'Integrate Slack notifications',
-     E'~~Send issue updates to a Slack channel.~~\n\nDecided to deprioritize this in favor of email notifications (#8) and in-app notifications. Slack integration can come later once we have a proper webhook system.',
-     null, null,
-     'canceled', 'none', null, mem2_id, null,
-     now() - interval '11 days', now() - interval '3 days');
-
-  -- -------------------------------------------------------------------------
-  -- 7. Issue comments
-  -- -------------------------------------------------------------------------
-  INSERT INTO public.issue_comments
-    (id, workspace_id, issue_id, author_member_id, body_md, created_at)
-  VALUES
-    -- Comments on #1 (CI/CD)
-    (com1_id, ws_id, iss1_id, mem2_id,
-     E'I''ve set up the basic workflow. Tests and lint pass on every PR now. Still need to wire up the staging deploy.',
-     now() - interval '11 days'),
-    (com2_id, ws_id, iss1_id, mem1_id,
-     E'Nice! For the staging deploy, let''s use the `environment` protection rules so we get a confirmation step.',
-     now() - interval '10 days 18 hours'),
-    (com3_id, ws_id, iss1_id, mem2_id,
-     E'Done — staging deploys on merge to main, production requires manual approval. Closing this out.',
-     now() - interval '8 days'),
-
-    -- Comments on #3 (Realtime)
-    (com4_id, ws_id, iss3_id, mem2_id,
-     E'The `useRealtimeIssues` hook is working. One thing I noticed: if two people edit the same issue simultaneously, we get a flash of stale data. Need to figure out conflict resolution.',
-     now() - interval '3 days'),
-    (com5_id, ws_id, iss3_id, mem1_id,
-     E'For now, last-write-wins is fine. We can add optimistic locking with `updated_at` checks later. Let''s not block the PR on that.',
-     now() - interval '2 days 12 hours'),
-
-    -- Comments on #4 (Markdown editor — Wallie working on it)
-    (com6_id, ws_id, iss4_id, mem1_id,
-     E'@wallie Can you start on this? I''m thinking Tiptap would be the best fit since we want block-level editing, not just plain markdown.',
-     now() - interval '7 days'),
-    (com7_id, ws_id, iss4_id, memw_id,
-     E'I''ve analyzed the options and agree that Tiptap is the better choice here. It has first-class support for collaborative editing which we might want later.\n\nI''ll start with a basic editor component and add features incrementally:\n1. Basic formatting (bold, italic, code)\n2. Code blocks with syntax highlighting\n3. Image upload integration\n4. Keyboard shortcuts',
-     now() - interval '6 days 20 hours'),
-    (com8_id, ws_id, iss4_id, memw_id,
-     E'Progress update: basic formatting and code blocks are working. Starting on the image upload integration with Supabase Storage now.',
-     now() - interval '4 hours'),
-
-    -- Comments on #5 (Settings page)
-    (com9_id, ws_id, iss5_id, mem1_id,
-     E'Started on the General tab. Using the same form pattern as the onboarding flow. Avatar upload reuses the `workspace-avatars` storage bucket.',
-     now() - interval '4 days'),
-
-    -- Comments on #7 (Filtering)
-    (com10_id, ws_id, iss7_id, mem2_id,
-     E'I think we should use `nuqs` for URL query state management — it handles Next.js App Router search params really well.',
-     now() - interval '3 days 12 hours'),
-    (com11_id, ws_id, iss7_id, mem1_id,
-     E'Good call. The full-text search can use the GIN index we already have on `issues`. Let''s make sure we debounce the search input.',
-     now() - interval '3 days'),
-
-    -- Comment on #10 (Canceled Slack integration)
-    (com12_id, ws_id, iss10_id, mem1_id,
-     E'Canceling this for now. Email notifications (#8) cover the most critical use case, and we can build a proper webhook system later that supports Slack, Discord, and other integrations.',
-     now() - interval '3 days');
-
-  -- -------------------------------------------------------------------------
-  -- 8. Issue links
-  -- -------------------------------------------------------------------------
-  INSERT INTO public.issue_links
-    (id, workspace_id, source_issue_id, target_issue_id, link_type, created_at)
-  VALUES
-    (link1_id, ws_id, iss4_id, iss2_id, 'blocked_by', now() - interval '8 days'),
-    (link2_id, ws_id, iss6_id, iss7_id, 'sub_issue',  now() - interval '5 days'),
-    (link3_id, ws_id, iss10_id, iss8_id, 'related',   now() - interval '3 days'),
-    (link4_id, ws_id, iss3_id, iss5_id, 'related',    now() - interval '6 days');
-
-  -- -------------------------------------------------------------------------
-  -- 9. GitHub integration
+  -- 6. GitHub integration
   -- -------------------------------------------------------------------------
   INSERT INTO public.github_installations
     (id, workspace_id, installation_id, installation_url, app_id,
@@ -350,43 +197,377 @@ BEGIN
      'Background jobs and API microservice',
      'Go', 'main', false, now() - interval '13 days');
 
-  -- Link some issues to repos
-  UPDATE public.issues SET github_repository_id = gh_repo1_id
-  WHERE id IN (iss1_id, iss3_id, iss4_id, iss5_id, iss7_id);
+  -- -------------------------------------------------------------------------
+  -- 7. Slack installation (placeholder bot token; real Slack calls are gated
+  --    by env/config and won't be made against dev seed data).
+  -- -------------------------------------------------------------------------
+  INSERT INTO public.slack_installations
+    (id, workspace_id, team_id, team_name, bot_token_encrypted, installed_at)
+  VALUES
+    (slack_inst_id, ws_id, 'T0ACMECORP', 'Acme Corp',
+     'seed-placeholder-not-a-real-token',
+     now() - interval '13 days');
 
-  UPDATE public.issues SET github_repository_id = gh_repo2_id
-  WHERE id = iss8_id;
+  -- -------------------------------------------------------------------------
+  -- 8. Issues (anchor rows — pipeline state lives on `sessions`)
+  -- -------------------------------------------------------------------------
+  INSERT INTO public.issues
+    (id, workspace_id, number, title, description_md,
+     creator_member_id, github_repository_id, created_at, updated_at)
+  VALUES
+    (iss1_id, ws_id, 1,
+     'Add SSO login via Google Workspace',
+     E'Teams on the Business plan need SSO so IT can enforce login policies and reclaim seats when people leave. Google Workspace first, then Okta later.',
+     mem1_id, gh_repo1_id,
+     now() - interval '2 hours', now() - interval '2 hours'),
 
-  -- Branches & PRs
+    (iss2_id, ws_id, 2,
+     'Self-serve workspace creation flow',
+     E'New users need a guided flow to create their first workspace after signing up. Name input with slug preview, auto-redirect to the new workspace on success.',
+     mem1_id, gh_repo1_id,
+     now() - interval '1 day', now() - interval '6 hours'),
+
+    (iss3_id, ws_id, 3,
+     'Real-time issue updates via Supabase Realtime',
+     E'When a teammate changes an issue, everyone viewing the board should see it update instantly. Subscribe to `issues` changes filtered by `workspace_id` and merge into local cache.',
+     mem2_id, gh_repo1_id,
+     now() - interval '3 days', now() - interval '12 hours'),
+
+    (iss4_id, ws_id, 4,
+     'Rich-text editor for issue descriptions',
+     E'Replace the plain textarea with Tiptap. Live preview, syntax highlighting in code blocks, image paste, and Cmd+B/I keyboard shortcuts.',
+     mem1_id, gh_repo1_id,
+     now() - interval '6 days', now() - interval '4 hours'),
+
+    (iss5_id, ws_id, 5,
+     'Keyboard shortcuts for issue triage',
+     E'Power users should be able to triage issues without touching the mouse. j/k navigation, s for status, p for priority, a to assign.',
+     mem2_id, gh_repo1_id,
+     now() - interval '8 days', now() - interval '1 day'),
+
+    (iss6_id, ws_id, 6,
+     'CI/CD pipeline with GitHub Actions',
+     E'Automated tests, linting, and deploy-on-merge for `main`. PR checks run tests + lint; merge triggers staging deploy; production is manual approval.',
+     mem1_id, gh_repo1_id,
+     now() - interval '13 days', now() - interval '10 days');
+
+  -- -------------------------------------------------------------------------
+  -- 9. GitHub branches / PRs
+  -- -------------------------------------------------------------------------
   INSERT INTO public.github_issue_branches
     (id, workspace_id, issue_id, github_repository_id, branch_name,
      pull_request_number, pull_request_url, pull_request_state, is_draft, created_at)
   VALUES
-    (gh_br1_id, ws_id, iss1_id, gh_repo1_id,
+    (gh_br1_id, ws_id, iss6_id, gh_repo1_id,
      'feat/ci-cd-pipeline', 1,
      'https://github.com/acme-corp/webapp/pull/1', 'merged', false,
      now() - interval '11 days'),
-    (gh_br2_id, ws_id, iss3_id, gh_repo1_id,
-     'feat/realtime-issues', 5,
-     'https://github.com/acme-corp/webapp/pull/5', 'open', false,
-     now() - interval '5 days'),
-    (gh_br3_id, ws_id, iss4_id, gh_repo1_id,
+    (gh_br2_id, ws_id, iss4_id, gh_repo1_id,
      'feat/markdown-editor', 7,
      'https://github.com/acme-corp/webapp/pull/7', 'open', true,
-     now() - interval '3 days');
+     now() - interval '3 days'),
+    (gh_br3_id, ws_id, iss5_id, gh_repo1_id,
+     'feat/triage-shortcuts', 12,
+     'https://github.com/acme-corp/webapp/pull/12', 'open', false,
+     now() - interval '1 day');
 
   -- -------------------------------------------------------------------------
-  -- 10. Agent jobs & runs (Wallie working on #4)
+  -- 10. Sessions (one per phase for a realistic tour of the pipeline)
   -- -------------------------------------------------------------------------
 
-  -- Job 1: successful run on issue #4
+  product_spec_template := jsonb_build_object(
+    'title', 'placeholder',
+    'problem_statement', 'placeholder',
+    'user_story', 'placeholder',
+    'acceptance_criteria', jsonb_build_array('A', 'B'),
+    'constraints', jsonb_build_array(),
+    'non_goals', jsonb_build_array(),
+    'open_questions', jsonb_build_array()
+  );
+
+  -- Session 1: product / awaiting_review — agent just finished the spec
+  INSERT INTO public.sessions
+    (id, workspace_id, number, title, prompt_md, creator_member_id,
+     slack_channel_id, slack_thread_ts,
+     phase, phase_status, current_artifact_version,
+     issue_id, created_at, updated_at)
+  VALUES
+    (sess1_id, ws_id, 1,
+     'Add SSO login via Google Workspace',
+     E'@wallie we need SSO for the Business plan — Google Workspace first, Okta later. IT asked for this on the call Monday.',
+     mem1_id, 'C0ACME001', '1712822400.000100',
+     'product', 'awaiting_review', 1,
+     iss1_id, now() - interval '2 hours', now() - interval '90 minutes');
+
+  INSERT INTO public.session_artifacts
+    (session_id, workspace_id, phase, version, artifact_json, created_at)
+  VALUES
+    (sess1_id, ws_id, 'product', 1,
+     product_spec_template
+       || jsonb_build_object(
+         'title', 'Add SSO login via Google Workspace',
+         'problem_statement', 'Business customers cannot enforce login policies or reclaim seats when employees leave because Wallie only supports email/password.',
+         'user_story', 'As an IT admin on the Business plan, I want to require Google Workspace SSO for my workspace so that only employees with active corporate accounts can log in.',
+         'acceptance_criteria', jsonb_build_array(
+           'Owners can enable Google SSO from the workspace settings page.',
+           'Members with matching email domains sign in via Google and are auto-added to the workspace.',
+           'Non-matching domains are rejected with a clear error.',
+           'Email/password login is disabled for the workspace once SSO is required.'
+         ),
+         'constraints', jsonb_build_array(
+           'Must use Supabase Auth Google provider.',
+           'Must not break existing email/password sessions mid-request.'
+         ),
+         'non_goals', jsonb_build_array('Okta, Microsoft Entra, or other IdPs (follow-up).'),
+         'open_questions', jsonb_build_array(
+           'Should we require MFA enforcement client-side or trust Google?'
+         )
+       ),
+     now() - interval '90 minutes');
+
+  -- Session 2: design / agent_generating — product approved, design agent running
+  INSERT INTO public.sessions
+    (id, workspace_id, number, title, prompt_md, creator_member_id,
+     slack_channel_id, slack_thread_ts,
+     phase, phase_status, current_artifact_version,
+     issue_id, created_at, updated_at)
+  VALUES
+    (sess2_id, ws_id, 2,
+     'Self-serve workspace creation flow',
+     E'@wallie onboarding is dropping off at workspace creation. Let''s build a proper guided flow.',
+     mem1_id, 'C0ACME001', '1712822400.000200',
+     'design', 'agent_generating', 0,
+     iss2_id, now() - interval '1 day', now() - interval '30 minutes');
+
+  INSERT INTO public.session_artifacts
+    (session_id, workspace_id, phase, version, artifact_json, created_at)
+  VALUES
+    (sess2_id, ws_id, 'product', 1,
+     product_spec_template
+       || jsonb_build_object(
+         'title', 'Self-serve workspace creation flow',
+         'problem_statement', 'New users land on an empty dashboard after signup with no indication of how to create a workspace.',
+         'user_story', 'As a newly-signed-up user, I want a guided flow that collects a name and slug so that I land inside a working workspace immediately.',
+         'acceptance_criteria', jsonb_build_array(
+           'Post-signup users are redirected to /new-workspace.',
+           'Slug is auto-derived from the name with a live preview.',
+           'Successful creation redirects to /w/{slug}.'
+         )
+       ),
+     now() - interval '20 hours');
+
+  INSERT INTO public.session_phase_completions
+    (session_id, workspace_id, phase, completed_at, completed_by_member_id)
+  VALUES
+    (sess2_id, ws_id, 'product', now() - interval '18 hours', mem1_id);
+
+  -- Session 3: engineering / awaiting_review — product + design approved
+  INSERT INTO public.sessions
+    (id, workspace_id, number, title, prompt_md, creator_member_id,
+     slack_channel_id, slack_thread_ts,
+     phase, phase_status, current_artifact_version,
+     issue_id, created_at, updated_at)
+  VALUES
+    (sess3_id, ws_id, 3,
+     'Real-time issue updates via Supabase Realtime',
+     E'@wallie the board feels stale when two people are triaging at once. Can we wire up realtime?',
+     mem2_id, 'C0ACME001', '1712822400.000300',
+     'engineering', 'awaiting_review', 1,
+     iss3_id, now() - interval '3 days', now() - interval '5 hours');
+
+  INSERT INTO public.session_artifacts
+    (session_id, workspace_id, phase, version, artifact_json, created_at)
+  VALUES
+    (sess3_id, ws_id, 'product', 1,
+     product_spec_template
+       || jsonb_build_object(
+         'title', 'Real-time issue updates via Supabase Realtime',
+         'problem_statement', 'Board state goes stale during collaborative triage, causing duplicate edits and conflicting updates.',
+         'user_story', 'As a triager, I want issue changes from my teammates to appear without refreshing so we do not step on each other.',
+         'acceptance_criteria', jsonb_build_array(
+           'Changes broadcast via Supabase Realtime within one second.',
+           'Local cache merges remote INSERT/UPDATE/DELETE events.',
+           'Connection status is visible in the UI.'
+         )
+       ),
+     now() - interval '2 days 18 hours'),
+    (sess3_id, ws_id, 'design', 1,
+     jsonb_build_object('manual', true, 'notes', 'Use supabase.channel() with workspace_id filter; last-write-wins conflict resolution for v1.'),
+     now() - interval '2 days'),
+    (sess3_id, ws_id, 'engineering', 1,
+     jsonb_build_object('manual', true, 'notes', 'Implemented useRealtimeIssues hook; connection indicator added to shell header.'),
+     now() - interval '5 hours');
+
+  INSERT INTO public.session_phase_completions
+    (session_id, workspace_id, phase, completed_at, completed_by_member_id)
+  VALUES
+    (sess3_id, ws_id, 'product', now() - interval '2 days 12 hours', mem2_id),
+    (sess3_id, ws_id, 'design',  now() - interval '1 day',           mem2_id);
+
+  -- Session 4: review / agent_generating — code written, reviewing PR
+  INSERT INTO public.sessions
+    (id, workspace_id, number, title, prompt_md, creator_member_id,
+     slack_channel_id, slack_thread_ts,
+     phase, phase_status, current_artifact_version,
+     issue_id, created_at, updated_at)
+  VALUES
+    (sess4_id, ws_id, 4,
+     'Rich-text editor for issue descriptions',
+     E'@wallie the plain textarea is rough. Let''s replace it with Tiptap and support image paste.',
+     mem1_id, 'C0ACME001', '1712822400.000400',
+     'review', 'agent_generating', 0,
+     iss4_id, now() - interval '6 days', now() - interval '4 hours');
+
+  INSERT INTO public.session_artifacts
+    (session_id, workspace_id, phase, version, artifact_json, created_at)
+  VALUES
+    (sess4_id, ws_id, 'product', 1,
+     product_spec_template
+       || jsonb_build_object(
+         'title', 'Rich-text editor for issue descriptions',
+         'problem_statement', 'The plain textarea does not support formatting, code blocks, or image paste, which is a hard blocker for teams documenting bugs.',
+         'user_story', 'As an issue author, I want a rich-text editor with code blocks and image paste so that I can communicate context clearly.',
+         'acceptance_criteria', jsonb_build_array(
+           'Bold, italic, strikethrough, code formatting via Cmd+B/I/shift+X/E.',
+           'Code blocks with syntax highlighting.',
+           'Image paste uploads to Supabase Storage.'
+         )
+       ),
+     now() - interval '5 days 20 hours'),
+    (sess4_id, ws_id, 'design', 1,
+     jsonb_build_object('manual', true, 'notes', 'Tiptap chosen over CodeMirror for block-level editing; image uploads reuse workspace-avatars bucket.'),
+     now() - interval '5 days'),
+    (sess4_id, ws_id, 'engineering', 1,
+     jsonb_build_object('manual', true, 'notes', 'MarkdownEditor component wired up; basic formatting, code blocks, and image paste implemented.'),
+     now() - interval '1 day');
+
+  INSERT INTO public.session_phase_completions
+    (session_id, workspace_id, phase, completed_at, completed_by_member_id)
+  VALUES
+    (sess4_id, ws_id, 'product',     now() - interval '5 days 12 hours', mem1_id),
+    (sess4_id, ws_id, 'design',      now() - interval '4 days',          mem1_id),
+    (sess4_id, ws_id, 'engineering', now() - interval '20 hours',        mem1_id);
+
+  -- Session 5: land / awaiting_review — approved, ready to merge
+  INSERT INTO public.sessions
+    (id, workspace_id, number, title, prompt_md, creator_member_id,
+     slack_channel_id, slack_thread_ts,
+     phase, phase_status, current_artifact_version,
+     issue_id, created_at, updated_at)
+  VALUES
+    (sess5_id, ws_id, 5,
+     'Keyboard shortcuts for issue triage',
+     E'@wallie power users are asking for j/k navigation and hotkeys for status/priority.',
+     mem2_id, 'C0ACME001', '1712822400.000500',
+     'land', 'awaiting_review', 1,
+     iss5_id, now() - interval '8 days', now() - interval '3 hours');
+
+  INSERT INTO public.session_artifacts
+    (session_id, workspace_id, phase, version, artifact_json, created_at)
+  VALUES
+    (sess5_id, ws_id, 'product', 1,
+     product_spec_template
+       || jsonb_build_object(
+         'title', 'Keyboard shortcuts for issue triage',
+         'problem_statement', 'Triaging large backlogs is mouse-heavy and slow for power users.',
+         'user_story', 'As a power user, I want j/k navigation and hotkeys for common actions so that I can triage issues without leaving the keyboard.',
+         'acceptance_criteria', jsonb_build_array(
+           'j/k moves the focused issue up/down.',
+           's/p/a open status/priority/assignee menus.',
+           'Shortcuts are documented in a ? overlay.'
+         )
+       ),
+     now() - interval '7 days'),
+    (sess5_id, ws_id, 'design', 1,
+     jsonb_build_object('manual', true, 'notes', 'Use tinykeys for global shortcut provider; show ? overlay with all bindings.'),
+     now() - interval '6 days'),
+    (sess5_id, ws_id, 'engineering', 1,
+     jsonb_build_object('manual', true, 'notes', 'All shortcuts wired; overlay uses same Dialog primitive as command palette.'),
+     now() - interval '3 days'),
+    (sess5_id, ws_id, 'review', 1,
+     jsonb_build_object('manual', true, 'notes', 'PR #12 reviewed; two small nits fixed (focus-ring contrast, Escape closes menus).'),
+     now() - interval '3 hours'),
+    (sess5_id, ws_id, 'land', 1,
+     jsonb_build_object('manual', true, 'notes', 'Awaiting land approval — PR is green and ready to merge.'),
+     now() - interval '2 hours');
+
+  INSERT INTO public.session_phase_completions
+    (session_id, workspace_id, phase, completed_at, completed_by_member_id)
+  VALUES
+    (sess5_id, ws_id, 'product',     now() - interval '6 days 20 hours', mem2_id),
+    (sess5_id, ws_id, 'design',      now() - interval '5 days',          mem2_id),
+    (sess5_id, ws_id, 'engineering', now() - interval '4 hours',         mem2_id),
+    (sess5_id, ws_id, 'review',      now() - interval '3 hours',         mem1_id);
+
+  -- Session 6: monitor / approved, archived — shipped & watching metrics
+  INSERT INTO public.sessions
+    (id, workspace_id, number, title, prompt_md, creator_member_id,
+     slack_channel_id, slack_thread_ts,
+     phase, phase_status, current_artifact_version,
+     archived_at, issue_id, created_at, updated_at)
+  VALUES
+    (sess6_id, ws_id, 6,
+     'CI/CD pipeline with GitHub Actions',
+     E'@wallie we need CI — tests + lint on PRs, staging deploy on merge, production gated.',
+     mem1_id, 'C0ACME001', '1712822400.000600',
+     'monitor', 'approved', 1,
+     now() - interval '10 days',
+     iss6_id, now() - interval '13 days', now() - interval '10 days');
+
+  INSERT INTO public.session_artifacts
+    (session_id, workspace_id, phase, version, artifact_json, created_at)
+  VALUES
+    (sess6_id, ws_id, 'product', 1,
+     product_spec_template
+       || jsonb_build_object(
+         'title', 'CI/CD pipeline with GitHub Actions',
+         'problem_statement', 'Tests and linters are only run locally, so broken commits land on main and bottleneck the deploy story.',
+         'user_story', 'As a developer, I want CI to catch broken commits and auto-deploy green merges to staging so that we can ship without manual toil.',
+         'acceptance_criteria', jsonb_build_array(
+           'PR checks run tests and lint.',
+           'Merge to main deploys to staging automatically.',
+           'Production deploy requires manual approval.'
+         )
+       ),
+     now() - interval '12 days 20 hours'),
+    (sess6_id, ws_id, 'design', 1,
+     jsonb_build_object('manual', true, 'notes', 'Use GitHub Actions with environment protection rules for production approvals.'),
+     now() - interval '12 days'),
+    (sess6_id, ws_id, 'engineering', 1,
+     jsonb_build_object('manual', true, 'notes', '.github/workflows/ci.yml contains test, lint, and deploy jobs.'),
+     now() - interval '11 days 12 hours'),
+    (sess6_id, ws_id, 'review', 1,
+     jsonb_build_object('manual', true, 'notes', 'PR #1 reviewed and approved.'),
+     now() - interval '11 days'),
+    (sess6_id, ws_id, 'land', 1,
+     jsonb_build_object('manual', true, 'notes', 'Merged to main; staging deployed automatically.'),
+     now() - interval '10 days 12 hours'),
+    (sess6_id, ws_id, 'monitor', 1,
+     jsonb_build_object('manual', true, 'notes', 'Pipeline has been green for a week; closing out.'),
+     now() - interval '10 days');
+
+  INSERT INTO public.session_phase_completions
+    (session_id, workspace_id, phase, completed_at, completed_by_member_id)
+  VALUES
+    (sess6_id, ws_id, 'product',     now() - interval '12 days 12 hours', mem1_id),
+    (sess6_id, ws_id, 'design',      now() - interval '11 days 18 hours', mem1_id),
+    (sess6_id, ws_id, 'engineering', now() - interval '11 days 6 hours',  mem1_id),
+    (sess6_id, ws_id, 'review',      now() - interval '10 days 18 hours', mem1_id),
+    (sess6_id, ws_id, 'land',        now() - interval '10 days 12 hours', mem1_id),
+    (sess6_id, ws_id, 'monitor',     now() - interval '10 days',          mem1_id);
+
+  -- -------------------------------------------------------------------------
+  -- 11. Agent jobs + runs (pipeline work on session #4's rich-text editor)
+  -- -------------------------------------------------------------------------
+
+  -- Job 1: successful run on session #4's anchor issue
   INSERT INTO public.agent_jobs
-    (id, workspace_id, issue_id, requested_by_member_id, trigger_type,
+    (id, workspace_id, issue_id, requested_by_member_id, trigger_type, job_type,
      status, attempt_count, started_at, finished_at, created_at)
   VALUES
-    (job1_id, ws_id, iss4_id, mem1_id, 'assignment',
-     'success', 1, now() - interval '6 days 20 hours', now() - interval '6 days 19 hours',
-     now() - interval '6 days 20 hours');
+    (job1_id, ws_id, iss4_id, mem1_id, 'slack_mention', 'pipeline',
+     'success', 1, now() - interval '6 days', now() - interval '5 days 23 hours',
+     now() - interval '6 days');
 
   INSERT INTO public.agent_runs
     (id, workspace_id, issue_id, agent_job_id, triggered_by_member_id,
@@ -394,29 +575,29 @@ BEGIN
      started_at, finished_at, created_at)
   VALUES
     (run1_id, ws_id, iss4_id, job1_id, mem1_id,
-     'code', 'anthropic', 'claude-sonnet-4-6', 'success',
-     now() - interval '6 days 20 hours', now() - interval '6 days 19 hours',
-     now() - interval '6 days 20 hours');
+     'code', 'anthropic', 'claude-sonnet-4-20250514', 'success',
+     now() - interval '6 days', now() - interval '5 days 23 hours',
+     now() - interval '6 days');
 
   INSERT INTO public.agent_run_messages
     (id, workspace_id, agent_run_id, kind, message_md, created_at)
   VALUES
     (msg1_id, ws_id, run1_id, 'user',
-     E'Implement a markdown editor for issue descriptions using Tiptap. See the issue description for requirements.',
-     now() - interval '6 days 20 hours'),
+     E'Generate a product spec for the rich-text editor request. See the session prompt.',
+     now() - interval '6 days'),
     (msg2_id, ws_id, run1_id, 'assistant',
-     E'I''ll implement the markdown editor using Tiptap. Let me start by analyzing the codebase to understand the existing component patterns and then set up the editor.\n\n**Steps:**\n1. Install Tiptap dependencies\n2. Create the `MarkdownEditor` component\n3. Add basic formatting extensions\n4. Wire up code block syntax highlighting\n5. Write tests',
-     now() - interval '6 days 19 hours 55 minutes'),
+     E'Analyzing the request. Going with Tiptap over CodeMirror 6 for block-level editing and image paste support.',
+     now() - interval '5 days 23 hours 55 minutes'),
     (msg3_id, ws_id, run1_id, 'assistant',
-     E'Done! I''ve created the `MarkdownEditor` component with the following features:\n- Bold, italic, strikethrough, and code formatting\n- Headings (H1-H3)\n- Bullet and ordered lists\n- Code blocks with language detection\n- Toolbar with keyboard shortcut hints\n\nThe component is at `src/components/markdown-editor.tsx`. Tests are passing.',
-     now() - interval '6 days 19 hours');
+     E'Done — product spec written to the session. Key points: Tiptap for formatting, Supabase Storage for image paste, Cmd+B/I/code shortcuts, code blocks with syntax highlighting.',
+     now() - interval '5 days 23 hours');
 
-  -- Job 2: currently running (image upload feature)
+  -- Job 2: currently running (session #2 design agent)
   INSERT INTO public.agent_jobs
-    (id, workspace_id, issue_id, requested_by_member_id, trigger_type,
+    (id, workspace_id, issue_id, requested_by_member_id, trigger_type, job_type,
      status, attempt_count, started_at, created_at)
   VALUES
-    (job2_id, ws_id, iss4_id, mem1_id, 'comment_retry',
+    (job2_id, ws_id, iss2_id, mem1_id, 'slack_mention', 'pipeline',
      'running', 1, now() - interval '30 minutes',
      now() - interval '30 minutes');
 
@@ -425,8 +606,8 @@ BEGIN
      run_type, model_provider, model_name, status,
      started_at, created_at)
   VALUES
-    (run2_id, ws_id, iss4_id, job2_id, mem1_id,
-     'code', 'anthropic', 'claude-sonnet-4-6', 'running',
+    (run2_id, ws_id, iss2_id, job2_id, mem1_id,
+     'code', 'anthropic', 'claude-sonnet-4-20250514', 'running',
      now() - interval '30 minutes',
      now() - interval '30 minutes');
 
@@ -434,10 +615,10 @@ BEGIN
     (id, workspace_id, agent_run_id, kind, message_md, created_at)
   VALUES
     (msg4_id, ws_id, run2_id, 'user',
-     E'Add image paste and upload support to the markdown editor. Images should be uploaded to Supabase Storage.',
+     E'Product spec is approved — generate the design artifact for the workspace creation flow.',
      now() - interval '30 minutes'),
     (msg5_id, ws_id, run2_id, 'assistant',
-     E'I''m working on adding image upload support to the markdown editor. I''ll integrate it with Supabase Storage using the existing bucket configuration.\n\n**In progress:**\n- Adding paste handler for clipboard images\n- Creating upload utility that stores to `workspace-avatars` bucket\n- Adding drag-and-drop support',
+     E'Drafting the design. Slug derivation + live preview, post-signup redirect, and a success-state confetti (stretch) for the new workspace landing.',
      now() - interval '25 minutes');
 
 END;
