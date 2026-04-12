@@ -188,10 +188,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                   ) : null}
 
                   {items.map((card) => {
-                    const slackHref = buildSlackThreadHref(
-                      card.slackChannelId,
-                      card.slackThreadTs,
-                    );
+                    const slackHref = buildSlackThreadHref(card.slackChannelId, card.slackThreadTs);
                     return (
                       <article
                         key={card.id}

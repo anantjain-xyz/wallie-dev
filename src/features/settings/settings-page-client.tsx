@@ -700,9 +700,8 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                       </span>
                     </p>
                     <p className="mt-1 text-sm text-muted">
-                      Installed{" "}
-                      {dateFormatter.format(new Date(slackInstallation.installedAt))} · Team ID{" "}
-                      <span className="font-mono">{slackInstallation.teamId}</span>
+                      Installed {dateFormatter.format(new Date(slackInstallation.installedAt))} ·
+                      Team ID <span className="font-mono">{slackInstallation.teamId}</span>
                     </p>
                   </div>
 
@@ -734,10 +733,11 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                     issues, draft a spec, and post it back for PM review.
                   </p>
                   <p className="text-xs leading-6 text-muted">
-                    Workspace admins only. Wallie requests <span className="font-mono">app_mentions:read</span>,{" "}
+                    Workspace admins only. Wallie requests{" "}
+                    <span className="font-mono">app_mentions:read</span>,{" "}
                     <span className="font-mono">chat:write</span>, and{" "}
-                    <span className="font-mono">chat:write.public</span> so it can reply in
-                    threads where it&apos;s mentioned.
+                    <span className="font-mono">chat:write.public</span> so it can reply in threads
+                    where it&apos;s mentioned.
                   </p>
                 </div>
                 <button
