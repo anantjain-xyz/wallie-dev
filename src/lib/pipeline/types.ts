@@ -1,6 +1,5 @@
 import type { Enums } from "@/lib/supabase/database.types";
 
-export type PipelinePhase = Enums<"pipeline_phase">;
 export type PipelinePhaseStatus = Enums<"pipeline_phase_status">;
 
 export const PIPELINE_JOB_TYPE = "pipeline" as const;

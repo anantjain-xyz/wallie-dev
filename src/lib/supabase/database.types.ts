@@ -384,223 +384,6 @@ export type Database = {
           },
         ]
       }
-      issue_comments: {
-        Row: {
-          author_member_id: string | null
-          body_md: string
-          created_at: string
-          id: string
-          issue_id: string
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          author_member_id?: string | null
-          body_md: string
-          created_at?: string
-          id?: string
-          issue_id: string
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          author_member_id?: string | null
-          body_md?: string
-          created_at?: string
-          id?: string
-          issue_id?: string
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "issue_comments_author_member_id_fkey"
-            columns: ["author_member_id"]
-            isOneToOne: false
-            referencedRelation: "workspace_members"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issue_comments_issue_id_fkey"
-            columns: ["issue_id"]
-            isOneToOne: false
-            referencedRelation: "issues"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issue_comments_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      issue_links: {
-        Row: {
-          created_at: string
-          id: string
-          link_type: Database["public"]["Enums"]["issue_link_type"]
-          source_issue_id: string
-          target_issue_id: string
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          link_type: Database["public"]["Enums"]["issue_link_type"]
-          source_issue_id: string
-          target_issue_id: string
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          link_type?: Database["public"]["Enums"]["issue_link_type"]
-          source_issue_id?: string
-          target_issue_id?: string
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "issue_links_source_issue_id_fkey"
-            columns: ["source_issue_id"]
-            isOneToOne: false
-            referencedRelation: "issues"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issue_links_target_issue_id_fkey"
-            columns: ["target_issue_id"]
-            isOneToOne: false
-            referencedRelation: "issues"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issue_links_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      pipeline_artifacts: {
-        Row: {
-          artifact_json: Json
-          created_at: string
-          feedback_text: string | null
-          id: string
-          phase: Database["public"]["Enums"]["pipeline_phase"]
-          pipeline_issue_id: string
-          version: number
-        }
-        Insert: {
-          artifact_json: Json
-          created_at?: string
-          feedback_text?: string | null
-          id?: string
-          phase: Database["public"]["Enums"]["pipeline_phase"]
-          pipeline_issue_id: string
-          version: number
-        }
-        Update: {
-          artifact_json?: Json
-          created_at?: string
-          feedback_text?: string | null
-          id?: string
-          phase?: Database["public"]["Enums"]["pipeline_phase"]
-          pipeline_issue_id?: string
-          version?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "pipeline_artifacts_pipeline_issue_id_fkey"
-            columns: ["pipeline_issue_id"]
-            isOneToOne: false
-            referencedRelation: "pipeline_issues"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      pipeline_issues: {
-        Row: {
-          created_at: string
-          current_artifact_version: number
-          design_approved_at: string | null
-          engineering_approved_at: string | null
-          id: string
-          issue_id: string
-          linear_issue_id: string | null
-          linear_issue_url: string | null
-          phase: Database["public"]["Enums"]["pipeline_phase"]
-          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
-          product_approved_at: string | null
-          rejection_count: number
-          shipped_at: string | null
-          slack_channel_id: string | null
-          slack_thread_ts: string | null
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          current_artifact_version?: number
-          design_approved_at?: string | null
-          engineering_approved_at?: string | null
-          id?: string
-          issue_id: string
-          linear_issue_id?: string | null
-          linear_issue_url?: string | null
-          phase?: Database["public"]["Enums"]["pipeline_phase"]
-          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
-          product_approved_at?: string | null
-          rejection_count?: number
-          shipped_at?: string | null
-          slack_channel_id?: string | null
-          slack_thread_ts?: string | null
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          current_artifact_version?: number
-          design_approved_at?: string | null
-          engineering_approved_at?: string | null
-          id?: string
-          issue_id?: string
-          linear_issue_id?: string | null
-          linear_issue_url?: string | null
-          phase?: Database["public"]["Enums"]["pipeline_phase"]
-          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
-          product_approved_at?: string | null
-          rejection_count?: number
-          shipped_at?: string | null
-          slack_channel_id?: string | null
-          slack_thread_ts?: string | null
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "pipeline_issues_issue_id_fkey"
-            columns: ["issue_id"]
-            isOneToOne: false
-            referencedRelation: "issues"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "pipeline_issues_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       slack_installations: {
         Row: {
           bot_token_encrypted: string
@@ -887,67 +670,39 @@ export type Database = {
       }
       issues: {
         Row: {
-          assignee_member_id: string | null
           created_at: string
           creator_member_id: string | null
           description_md: string
-          design_md: string | null
-          estimate_points: number | null
           github_repository_id: string | null
           id: string
           number: number
-          plan_md: string | null
-          priority: Database["public"]["Enums"]["issue_priority"]
-          priority_rank: number | null
-          status: Database["public"]["Enums"]["issue_status"]
           title: string
           updated_at: string
           workspace_id: string
         }
         Insert: {
-          assignee_member_id?: string | null
           created_at?: string
           creator_member_id?: string | null
           description_md?: string
-          design_md?: string | null
-          estimate_points?: number | null
           github_repository_id?: string | null
           id?: string
           number: number
-          plan_md?: string | null
-          priority?: Database["public"]["Enums"]["issue_priority"]
-          priority_rank?: number | null
-          status?: Database["public"]["Enums"]["issue_status"]
           title: string
           updated_at?: string
           workspace_id: string
         }
         Update: {
-          assignee_member_id?: string | null
           created_at?: string
           creator_member_id?: string | null
           description_md?: string
-          design_md?: string | null
-          estimate_points?: number | null
           github_repository_id?: string | null
           id?: string
           number?: number
-          plan_md?: string | null
-          priority?: Database["public"]["Enums"]["issue_priority"]
-          priority_rank?: number | null
-          status?: Database["public"]["Enums"]["issue_status"]
           title?: string
           updated_at?: string
           workspace_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "issues_assignee_member_id_fkey"
-            columns: ["assignee_member_id"]
-            isOneToOne: false
-            referencedRelation: "workspace_members"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "issues_creator_member_id_fkey"
             columns: ["creator_member_id"]
@@ -1158,22 +913,6 @@ export type Database = {
         Args: { target_workspace_id: string }
         Returns: number
       }
-      approve_pipeline_phase: {
-        Args: {
-          pipeline_issue_id: string
-          expected_workspace_id: string
-          expected_version: number
-        }
-        Returns: {
-          id: string
-          phase: Database["public"]["Enums"]["pipeline_phase"]
-          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
-          workspace_id: string
-          slack_channel_id: string | null
-          slack_thread_ts: string | null
-          linear_issue_url: string | null
-        }[]
-      }
       approve_session_phase: {
         Args: {
           target_session_id: string
@@ -1208,16 +947,6 @@ export type Database = {
         | "assignment"
         | "comment_retry"
         | "slack_mention"
-      issue_link_type: "blocked_by" | "sub_issue" | "related" | "duplicate"
-      issue_priority: "none" | "low" | "medium" | "high" | "urgent"
-      issue_status:
-        | "backlog"
-        | "todo"
-        | "in_progress"
-        | "in_review"
-        | "done"
-        | "canceled"
-      pipeline_phase: "product" | "design" | "engineering" | "shipped"
       pipeline_phase_status:
         | "agent_generating"
         | "awaiting_review"
@@ -1376,17 +1105,6 @@ export const Constants = {
         "comment_retry",
         "slack_mention",
       ],
-      issue_link_type: ["blocked_by", "sub_issue", "related", "duplicate"],
-      issue_priority: ["none", "low", "medium", "high", "urgent"],
-      issue_status: [
-        "backlog",
-        "todo",
-        "in_progress",
-        "in_review",
-        "done",
-        "canceled",
-      ],
-      pipeline_phase: ["product", "design", "engineering", "shipped"],
       pipeline_phase_status: [
         "agent_generating",
         "awaiting_review",

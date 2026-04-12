@@ -40,8 +40,6 @@ type IssueForRun = Pick<
   | "github_repository_id"
   | "id"
   | "number"
-  | "plan_md"
-  | "design_md"
   | "title"
   | "workspace_id"
 >;
@@ -60,7 +58,7 @@ type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 
 const issueSelect =
-  "id, workspace_id, number, title, description_md, plan_md, design_md, github_repository_id, created_at";
+  "id, workspace_id, number, title, description_md, github_repository_id, created_at";
 const workspaceSelect = "id, name, slug";
 const repositorySelect =
   "id, workspace_id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
@@ -714,22 +712,21 @@ async function finalizeRunSuccess(input: {
   });
 }
 
-async function persistProjectArtifacts(input: {
+// The classical tracker persisted stub wallie project artifacts into
+// issues.design_md / issues.plan_md. Those columns were dropped in PR 4 —
+// the stub executor still produces the strings (the runner log references
+// them), but we no longer have a place to store them on the anchor issue.
+// The wallie stub mode is scheduled for a full rewrite onto sessions in a
+// follow-up; until then, this is a no-op so the runner contract still
+// holds. The prefix underscore tells ESLint the destructured members are
+// intentional-unused.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function persistProjectArtifacts(_: {
   admin: AdminClient;
   artifacts: StubProjectArtifacts;
   issueId: string;
 }) {
-  const { error } = await input.admin
-    .from("issues")
-    .update({
-      design_md: input.artifacts.designMd,
-      plan_md: input.artifacts.planMd,
-    })
-    .eq("id", input.issueId);
-
-  if (error) {
-    throw error;
-  }
+  return;
 }
 
 async function persistCodeArtifacts(input: {

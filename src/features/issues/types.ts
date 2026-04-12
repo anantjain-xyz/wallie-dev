@@ -1,26 +1,13 @@
-import { Constants, type Enums, type Json, type Tables } from "@/lib/supabase/database.types";
+import type { Enums, Json, Tables } from "@/lib/supabase/database.types";
 
-export type IssueStatus = Enums<"issue_status">;
-export type IssuePriority = Enums<"issue_priority">;
-export type IssueLinkType = Enums<"issue_link_type">;
+// Minimal "issues" types kept for the wallie panel + session detail code
+// paths that still consume the anchor issue row. The classical tracker
+// (status / priority / estimate / assignee / plan / design / comments /
+// links) was removed in PR 4; what's left is a thin envelope around the
+// workspace-scoped issue row plus the workspace member type.
+
 export type MemberKind = Enums<"member_kind">;
 export type MemberRole = Enums<"member_role">;
-
-export type IssueSortField = "priority" | "status" | "created" | "updated";
-export type SortDirection = "asc" | "desc";
-
-export const ISSUE_STATUS_VALUES = Constants.public.Enums.issue_status;
-export const ISSUE_PRIORITY_VALUES = Constants.public.Enums.issue_priority;
-export const ISSUE_LINK_TYPE_VALUES = Constants.public.Enums.issue_link_type;
-export const ISSUE_SORT_FIELDS = [
-  "priority",
-  "status",
-  "created",
-  "updated",
-] as const satisfies readonly IssueSortField[];
-export const ISSUE_ESTIMATE_VALUES = [null, 0, 1, 2, 3, 5, 8, 13] as const;
-
-export type IssueEstimateValue = (typeof ISSUE_ESTIMATE_VALUES)[number];
 
 export type IssueMember = {
   avatarUrl: string | null;
@@ -37,43 +24,17 @@ export type IssueViewerMember = IssueMember & {
   preferences: Json;
 };
 
-export type IssueSummary = {
-  assignee: IssueMember | null;
-  assigneeMemberId: string | null;
+export type IssueDetail = {
   createdAt: string;
   creator: IssueMember | null;
   creatorMemberId: string | null;
   descriptionMd: string;
-  estimatePoints: number | null;
   githubRepositoryId: string | null;
   id: string;
   number: number;
-  priority: IssuePriority;
-  status: IssueStatus;
   title: string;
   updatedAt: string;
   workspaceId: string;
-};
-
-export type IssueDetail = IssueSummary & {
-  designMd: string | null;
-  planMd: string | null;
-};
-
-export type IssueComment = {
-  author: IssueMember | null;
-  authorMemberId: string | null;
-  bodyMd: string;
-  createdAt: string;
-  id: string;
-  issueId: string;
-  updatedAt: string;
-  workspaceId: string;
-};
-
-export type IssueListPreferences = {
-  direction?: SortDirection;
-  sort?: IssueSortField;
 };
 
 export type WorkspaceMemberRow = Pick<
@@ -84,41 +45,6 @@ export type WorkspaceMemberRow = Pick<
 export type WorkspaceViewerMemberRow = WorkspaceMemberRow & {
   preferences: Json;
 };
-
-export const ISSUE_PRIORITY_WEIGHTS: Record<IssuePriority, number> = {
-  urgent: 5,
-  high: 4,
-  medium: 3,
-  low: 2,
-  none: 1,
-};
-
-export const ISSUE_STATUS_WEIGHTS: Record<IssueStatus, number> = {
-  backlog: 1,
-  todo: 2,
-  in_progress: 3,
-  in_review: 4,
-  done: 5,
-  canceled: 6,
-};
-
-export function formatIssueStatus(status: IssueStatus) {
-  return status.replaceAll("_", " ");
-}
-
-export function formatIssuePriority(priority: IssuePriority) {
-  return priority === "none" ? "no priority" : priority;
-}
-
-export function formatIssueEstimate(estimatePoints: number | null) {
-  if (estimatePoints === null) {
-    return "No estimate";
-  }
-
-  const pointLabel = estimatePoints === 1 ? "point" : "points";
-
-  return `${estimatePoints} ${pointLabel}`;
-}
 
 export function getIssueMemberDisplayName(member: IssueMember | null) {
   if (!member) {
