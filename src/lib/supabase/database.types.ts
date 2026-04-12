@@ -16,11 +16,12 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          issue_id: string
+          issue_id: string | null
           job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
+          session_id: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -33,11 +34,12 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          issue_id: string
+          issue_id?: string | null
           job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
+          session_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -50,11 +52,12 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          issue_id?: string
+          issue_id?: string | null
           job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
+          session_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_job_status"]
           trigger_type?: Database["public"]["Enums"]["agent_trigger_type"]
@@ -74,6 +77,13 @@ export type Database = {
             columns: ["requested_by_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_jobs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
             referencedColumns: ["id"]
           },
           {
@@ -802,6 +812,41 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "workspace_members_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_agent_config: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          updated_at: string
+          value_json: Json
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          updated_at?: string
+          value_json?: Json
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          updated_at?: string
+          value_json?: Json
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_agent_config_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"

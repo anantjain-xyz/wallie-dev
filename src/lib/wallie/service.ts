@@ -4,31 +4,25 @@ import type { PostgrestError } from "@supabase/supabase-js";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { Enums, Tables, TablesInsert, TablesUpdate } from "@/lib/supabase/database.types";
+import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
   parseWallieRunMode,
-} from "@/lib/wallie/core";
+} from "@/features/wallie/utils";
+import type {
+  WallieActionErrorCode,
+  WallieBlockingReason,
+  WallieRunMode,
+} from "@/features/wallie/types";
 import {
   buildWallieJobDedupeKey,
   WALLIE_MODEL_NAME,
   WALLIE_MODEL_PROVIDER,
   WALLIE_REQUIRED_SECRET_KEYS,
 } from "@/lib/wallie/constants";
-import {
-  buildStubBranchName,
-  executeStubWallieRun,
-  type StubCodeArtifacts,
-  type StubProjectArtifacts,
-} from "@/lib/wallie/executor";
-import type {
-  WallieActionErrorCode,
-  WallieBlockingReason,
-  WallieRunMode,
-} from "@/lib/wallie/types";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -59,11 +53,10 @@ type AgentRunRow = Tables<"agent_runs">;
 
 const issueSelect =
   "id, workspace_id, number, title, description_md, github_repository_id, created_at";
-const workspaceSelect = "id, name, slug";
 const repositorySelect =
   "id, workspace_id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
 const jobSelect =
-  "id, workspace_id, issue_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
+  "id, workspace_id, issue_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
   "id, workspace_id, issue_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, created_at, updated_at";
 
@@ -539,105 +532,6 @@ export async function retryWallieRun(input: {
   });
 }
 
-async function appendRunMessageIfMissing(input: {
-  admin: AdminClient;
-  kind: string;
-  message: string;
-  runId: string;
-  workspaceId: string;
-}) {
-  const { data: existingMessage, error: existingMessageError } = await input.admin
-    .from("agent_run_messages")
-    .select("id")
-    .eq("agent_run_id", input.runId)
-    .eq("kind", input.kind)
-    .eq("message_md", input.message)
-    .maybeSingle();
-
-  if (existingMessageError) {
-    throw existingMessageError;
-  }
-
-  if (existingMessage) {
-    return existingMessage.id;
-  }
-
-  const { data, error } = await input.admin
-    .from("agent_run_messages")
-    .insert({
-      agent_run_id: input.runId,
-      kind: input.kind,
-      message_md: input.message,
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data.id;
-}
-
-async function updateRunStatusIfNeeded(
-  admin: AdminClient,
-  run: AgentRunRow,
-  patch: TablesUpdate<"agent_runs">,
-  expectedStatuses: Enums<"agent_run_status">[],
-) {
-  const query = admin
-    .from("agent_runs")
-    .update(patch)
-    .eq("id", run.id)
-    .in("status", expectedStatuses)
-    .select(runSelect)
-    .maybeSingle();
-  const { data, error } = await query;
-
-  if (error) {
-    throw error;
-  }
-
-  return (data as AgentRunRow | null) ?? run;
-}
-
-async function ensureRunStarted(admin: AdminClient, run: AgentRunRow) {
-  if (run.status !== "queued") {
-    return run;
-  }
-
-  return updateRunStatusIfNeeded(
-    admin,
-    run,
-    {
-      started_at: run.started_at ?? new Date().toISOString(),
-      status: "started",
-    },
-    ["queued"],
-  );
-}
-
-async function ensureRunRunning(admin: AdminClient, run: AgentRunRow) {
-  if (run.status === "running") {
-    return run;
-  }
-
-  if (run.status === "success" || run.status === "error" || run.status === "canceled") {
-    return run;
-  }
-
-  return updateRunStatusIfNeeded(
-    admin,
-    run,
-    {
-      started_at: run.started_at ?? new Date().toISOString(),
-      status: "running",
-    },
-    ["queued", "started"],
-  );
-}
-
 async function markJobTerminal(input: {
   admin: AdminClient;
   errorMessage?: string | null;
@@ -657,145 +551,6 @@ async function markJobTerminal(input: {
   if (error) {
     throw error;
   }
-}
-
-async function finalizeRunError(input: {
-  admin: AdminClient;
-  errorMessage: string;
-  job: AgentJobRow;
-  run: AgentRunRow;
-}) {
-  const finishedAt = new Date().toISOString();
-  const { error } = await input.admin
-    .from("agent_runs")
-    .update({
-      finished_at: finishedAt,
-      status: "error",
-    })
-    .eq("id", input.run.id)
-    .in("status", ["queued", "started", "running"]);
-
-  if (error) {
-    throw error;
-  }
-
-  await markJobTerminal({
-    admin: input.admin,
-    errorMessage: input.errorMessage,
-    job: input.job,
-    status: "error",
-  });
-}
-
-async function finalizeRunSuccess(input: {
-  admin: AdminClient;
-  job: AgentJobRow;
-  run: AgentRunRow;
-}) {
-  const { error } = await input.admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "success",
-    })
-    .eq("id", input.run.id)
-    .neq("status", "success");
-
-  if (error) {
-    throw error;
-  }
-
-  await markJobTerminal({
-    admin: input.admin,
-    job: input.job,
-    status: "success",
-  });
-}
-
-// The classical tracker persisted stub wallie project artifacts into
-// issues.design_md / issues.plan_md. Those columns were dropped in PR 4 —
-// the stub executor still produces the strings (the runner log references
-// them), but we no longer have a place to store them on the anchor issue.
-// The wallie stub mode is scheduled for a full rewrite onto sessions in a
-// follow-up; until then, this is a no-op so the runner contract still
-// holds. The prefix underscore tells ESLint the destructured members are
-// intentional-unused.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function persistProjectArtifacts(_: {
-  admin: AdminClient;
-  artifacts: StubProjectArtifacts;
-  issueId: string;
-}) {
-  return;
-}
-
-async function persistCodeArtifacts(input: {
-  admin: AdminClient;
-  artifacts: StubCodeArtifacts;
-  issueId: string;
-  workspaceId: string;
-}) {
-  const { data: existingBranch, error: existingBranchError } = await input.admin
-    .from("github_issue_branches")
-    .select("id")
-    .eq("workspace_id", input.workspaceId)
-    .eq("issue_id", input.issueId)
-    .eq("github_repository_id", input.artifacts.githubRepositoryId)
-    .eq("branch_name", input.artifacts.branchName)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (existingBranchError) {
-    throw existingBranchError;
-  }
-
-  if (existingBranch) {
-    return existingBranch.id;
-  }
-
-  const { data, error } = await input.admin
-    .from("github_issue_branches")
-    .insert({
-      branch_name: input.artifacts.branchName,
-      github_repository_id: input.artifacts.githubRepositoryId,
-      is_draft: true,
-      issue_id: input.issueId,
-      pull_request_state: "stubbed",
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data.id;
-}
-
-async function loadWorkspaceForJob(admin: AdminClient, workspaceId: string) {
-  const { data, error } = await admin
-    .from("workspaces")
-    .select(workspaceSelect)
-    .eq("id", workspaceId)
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as WorkspaceAccessWorkspace;
-}
-
-async function loadIssueById(admin: AdminClient, issueId: string) {
-  const { data, error } = await admin.from("issues").select(issueSelect).eq("id", issueId).single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as IssueForRun;
 }
 
 async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
@@ -889,160 +644,27 @@ async function loadProcessTargetJob(input: {
 }
 
 async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }) {
-  // Dispatch pipeline jobs to the pipeline processor before wallie-specific code
+  // Dispatch pipeline jobs to the pipeline processor.
   if (input.job.job_type === PIPELINE_JOB_TYPE) {
     return processPipelineJob({ admin: input.admin, job: input.job });
   }
 
-  const run = await loadRunByJobId(input.admin, input.job.id);
+  // Legacy wallie stub executor was removed in Phase 0. Non-pipeline jobs
+  // are not supported until a real agent runner is wired up in Phase 2.
+  await markJobTerminal({
+    admin: input.admin,
+    errorMessage:
+      "Legacy wallie executor removed. Non-pipeline jobs will be supported after the agent runner is wired up.",
+    job: input.job,
+    status: "error",
+  });
 
-  if (!run) {
-    await markJobTerminal({
-      admin: input.admin,
-      errorMessage: "Wallie could not find the run row for the queued job.",
-      job: input.job,
-      status: "error",
-    });
-
-    return {
-      jobId: input.job.id,
-      processed: true,
-      result: "error",
-      runId: null,
-    } satisfies ProcessQueuedJobsResult;
-  }
-
-  if (run.status === "success") {
-    await markJobTerminal({
-      admin: input.admin,
-      job: input.job,
-      status: "success",
-    });
-
-    return {
-      jobId: input.job.id,
-      processed: true,
-      result: "success",
-      runId: run.id,
-    } satisfies ProcessQueuedJobsResult;
-  }
-
-  if (run.status === "error" || run.status === "canceled") {
-    await markJobTerminal({
-      admin: input.admin,
-      errorMessage: run.status === "error" ? input.job.last_error : null,
-      job: input.job,
-      status: run.status === "error" ? "error" : "canceled",
-    });
-
-    return {
-      jobId: input.job.id,
-      processed: true,
-      result: run.status === "error" ? "error" : "success",
-      runId: run.id,
-    } satisfies ProcessQueuedJobsResult;
-  }
-
-  const [workspace, issue] = await Promise.all([
-    loadWorkspaceForJob(input.admin, input.job.workspace_id),
-    loadIssueById(input.admin, input.job.issue_id),
-  ]);
-  const repository = await loadRepositoryForRun(
-    input.admin,
-    workspace.id,
-    issue.github_repository_id,
-  );
-
-  let currentRun = await ensureRunStarted(input.admin, run);
-
-  const appendMessage = async (kind: "error" | "output" | "status", message: string) => {
-    await appendRunMessageIfMissing({
-      admin: input.admin,
-      kind,
-      message,
-      runId: currentRun.id,
-      workspaceId: currentRun.workspace_id,
-    });
-  };
-
-  await appendMessage("status", "Wallie control plane claimed this queued run.");
-
-  try {
-    currentRun = await ensureRunRunning(input.admin, currentRun);
-    await appendMessage("status", "Wallie validated the issue context and entered executor mode.");
-    await executeStubWallieRun({
-      appendMessage,
-      issue: {
-        createdAt: issue.created_at,
-        descriptionMd: issue.description_md,
-        number: issue.number,
-        title: issue.title,
-      },
-      persistCodeArtifacts: async (artifacts) => {
-        await persistCodeArtifacts({
-          admin: input.admin,
-          artifacts,
-          issueId: issue.id,
-          workspaceId: workspace.id,
-        });
-      },
-      persistProjectArtifacts: async (artifacts) => {
-        await persistProjectArtifacts({
-          admin: input.admin,
-          artifacts,
-          issueId: issue.id,
-        });
-      },
-      repository: repository
-        ? {
-            fullName: repository.full_name,
-            id: repository.id,
-          }
-        : null,
-      run: {
-        createdAt: currentRun.created_at,
-        runType: parseWallieRunMode(
-          currentRun.run_type,
-          inferWallieRunMode(issue.github_repository_id),
-        ),
-      },
-    });
-    await appendMessage(
-      "status",
-      repository
-        ? `Wallie finished successfully. Branch \`${buildStubBranchName(issue.number)}\` is now visible on the issue timeline.`
-        : "Wallie finished successfully and updated the issue plan/design fields.",
-    );
-    await finalizeRunSuccess({
-      admin: input.admin,
-      job: input.job,
-      run: currentRun,
-    });
-
-    return {
-      jobId: input.job.id,
-      processed: true,
-      result: "success",
-      runId: currentRun.id,
-    } satisfies ProcessQueuedJobsResult;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Wallie run failed.";
-
-    await appendMessage("error", message);
-    await finalizeRunError({
-      admin: input.admin,
-      errorMessage: message,
-      job: input.job,
-      run: currentRun,
-    });
-
-    return {
-      jobId: input.job.id,
-      processed: true,
-      result: "error",
-      runId: currentRun.id,
-    } satisfies ProcessQueuedJobsResult;
-  }
+  return {
+    jobId: input.job.id,
+    processed: true,
+    result: "error",
+    runId: null,
+  } satisfies ProcessQueuedJobsResult;
 }
 
 export async function processQueuedAgentJobs(input?: {

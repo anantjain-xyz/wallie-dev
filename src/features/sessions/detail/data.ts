@@ -29,6 +29,41 @@ export type SessionDetailPageData = {
   workspace: WorkspaceSummary;
 };
 
+/**
+ * Synthesize a minimal IssueDetail from a session row when no anchor issue
+ * exists. This lets existing UI components that accept IssueDetail render
+ * without changes.
+ */
+function synthesizeIssueFromSession(
+  sessionRow: Pick<
+    Tables<"sessions">,
+    | "created_at"
+    | "creator_member_id"
+    | "id"
+    | "number"
+    | "prompt_md"
+    | "title"
+    | "updated_at"
+    | "workspace_id"
+  >,
+  memberIndex: ReadonlyMap<string, IssueMember>,
+): IssueDetail {
+  return {
+    createdAt: sessionRow.created_at,
+    creator: sessionRow.creator_member_id
+      ? (memberIndex.get(sessionRow.creator_member_id) ?? null)
+      : null,
+    creatorMemberId: sessionRow.creator_member_id,
+    descriptionMd: sessionRow.prompt_md,
+    githubRepositoryId: null,
+    id: sessionRow.id,
+    number: sessionRow.number,
+    title: sessionRow.title,
+    updatedAt: sessionRow.updated_at,
+    workspaceId: sessionRow.workspace_id,
+  };
+}
+
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
   sessionNumberValue: string,
@@ -47,6 +82,7 @@ export async function loadSessionDetailPageData(
         id,
         archived_at,
         created_at,
+        creator_member_id,
         updated_at,
         issue_id,
         linear_issue_id,
@@ -74,29 +110,56 @@ export async function loadSessionDetailPageData(
     notFound();
   }
 
-  // The wallie panel + legacy features/issues helpers still read from the
-  // issues table. Load the anchor issue via the session's FK — every session
-  // shipped by the backend cutover has one. PR 4 migrates those consumers
-  // onto sessions and the anchor issue can go.
-  if (!sessionRow.issue_id) {
-    notFound();
+  // Load the anchor issue if one exists (legacy sessions have one). New
+  // sessions created after the Phase 0 migration may omit the anchor issue
+  // entirely. We synthesize a minimal IssueDetail from the session row so
+  // existing UI components that expect an issue object still render.
+  let issue: IssueDetail;
+  let issueData: Tables<"issues"> | null = null;
+
+  if (sessionRow.issue_id) {
+    const { data, error: issueError } = await context.supabase
+      .from("issues")
+      .select("*")
+      .eq("workspace_id", context.workspace.id)
+      .eq("id", sessionRow.issue_id)
+      .maybeSingle();
+
+    if (issueError) {
+      throw issueError;
+    }
+
+    if (data) {
+      issueData = data as Tables<"issues">;
+      issue = mapIssueDetailRow(issueData, context.memberIndex);
+    } else {
+      issue = synthesizeIssueFromSession(sessionRow, context.memberIndex);
+    }
+  } else {
+    issue = synthesizeIssueFromSession(sessionRow, context.memberIndex);
   }
 
-  const { data: issueData, error: issueError } = await context.supabase
-    .from("issues")
-    .select("*")
-    .eq("workspace_id", context.workspace.id)
-    .eq("id", sessionRow.issue_id)
-    .maybeSingle();
+  // Build parallel queries. github_issue_branches and agent_runs are keyed
+  // on issue_id — when there's no anchor issue we return empty arrays.
+  const prQuery = sessionRow.issue_id
+    ? context.supabase
+        .from("github_issue_branches")
+        .select(
+          "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at",
+        )
+        .eq("workspace_id", context.workspace.id)
+        .eq("issue_id", sessionRow.issue_id)
+        .order("created_at", { ascending: false })
+    : Promise.resolve({ data: [] as never[], error: null });
 
-  if (issueError) {
-    throw issueError;
-  }
-  if (!issueData) {
-    notFound();
-  }
-
-  const issue = mapIssueDetailRow(issueData as Tables<"issues">, context.memberIndex);
+  const runQuery = sessionRow.issue_id
+    ? context.supabase
+        .from("agent_runs")
+        .select("id, created_at, finished_at, model_name, run_type, started_at, status")
+        .eq("issue_id", sessionRow.issue_id)
+        .order("created_at", { ascending: false })
+        .limit(10)
+    : Promise.resolve({ data: [] as never[], error: null });
 
   const [
     { data: artifactRows, error: artifactError },
@@ -113,20 +176,8 @@ export async function loadSessionDetailPageData(
       .from("session_phase_completions")
       .select("completed_at, phase")
       .eq("session_id", sessionRow.id),
-    context.supabase
-      .from("github_issue_branches")
-      .select(
-        "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at",
-      )
-      .eq("workspace_id", context.workspace.id)
-      .eq("issue_id", sessionRow.issue_id)
-      .order("created_at", { ascending: false }),
-    context.supabase
-      .from("agent_runs")
-      .select("id, created_at, finished_at, model_name, run_type, started_at, status")
-      .eq("issue_id", sessionRow.issue_id)
-      .order("created_at", { ascending: false })
-      .limit(10),
+    prQuery,
+    runQuery,
   ]);
 
   if (artifactError) throw artifactError;
@@ -248,13 +299,17 @@ export async function loadSessionDetailPageData(
     workspaceId: sessionRow.workspace_id,
   };
 
-  const { data: repoForIssueData, error: repoForIssueError } = issue.githubRepositoryId
+  const issueForWallie: Pick<Tables<"issues">, "github_repository_id" | "id"> = issueData
+    ? { github_repository_id: issueData.github_repository_id, id: issueData.id }
+    : { github_repository_id: null, id: sessionRow.id };
+
+  const { data: repoForIssueData, error: repoForIssueError } = issueForWallie.github_repository_id
     ? await context.supabase
         .from("github_repositories")
         .select(
           "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
         )
-        .eq("id", issue.githubRepositoryId)
+        .eq("id", issueForWallie.github_repository_id)
         .maybeSingle()
     : { data: null, error: null };
 
@@ -263,7 +318,7 @@ export async function loadSessionDetailPageData(
   }
 
   const wallie = await loadWallieIssueData({
-    issue: issueData as Pick<Tables<"issues">, "github_repository_id" | "id">,
+    issue: issueForWallie,
     memberIndex: context.memberIndex,
     repository: repoForIssueData
       ? {

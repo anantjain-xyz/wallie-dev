@@ -7,7 +7,7 @@ import {
   isWallieRunActiveStatus,
   isWallieRunTerminalStatus,
   parseWallieRunMode,
-} from "@/lib/wallie/core";
+} from "@/features/wallie/utils";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import type {
   WallieIssueData,

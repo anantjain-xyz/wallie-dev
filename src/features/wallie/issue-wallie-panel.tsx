@@ -21,7 +21,7 @@ import {
   buildWallieBlockingReasons,
   formatWallieRunMode,
   inferWallieRunMode,
-} from "@/lib/wallie/core";
+} from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 

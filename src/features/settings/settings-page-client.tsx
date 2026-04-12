@@ -22,7 +22,8 @@ import type {
   WorkspaceSecretPreview,
 } from "@/lib/secrets/contracts";
 import type { WorkspaceAvatarUploadResponse } from "@/lib/storage/contracts";
-import type { SettingsPageData } from "@/features/settings/data";
+import type { AgentConfigMap, SettingsPageData } from "@/features/settings/data";
+import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 
 type SettingsPageClientProps = {
   initialData: SettingsPageData;
@@ -165,6 +166,82 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
   }
 }
 
+function AgentConfigField({
+  configKey,
+  description,
+  disabled,
+  label,
+  onSave,
+  options,
+  placeholder,
+  type,
+  value,
+}: {
+  configKey: string;
+  description: string;
+  disabled: boolean;
+  label: string;
+  onSave: (key: string, value: unknown) => Promise<void>;
+  options?: string[];
+  placeholder?: string;
+  type: "number" | "select" | "text";
+  value: unknown;
+}) {
+  const currentValue = typeof value === "string" || typeof value === "number" ? String(value) : "";
+  const [draft, setDraft] = useState(currentValue);
+  const isDirty = draft !== currentValue;
+
+  function handleSave() {
+    const parsed = type === "number" ? Number(draft) : draft;
+    if (type === "number" && Number.isNaN(parsed)) return;
+    void onSave(configKey, parsed);
+  }
+
+  return (
+    <div className="ui-subpanel space-y-2 p-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <label className="flex-1 space-y-1 text-sm font-semibold text-foreground">
+          <span>{label}</span>
+          {type === "select" && options ? (
+            <select
+              className="ui-input"
+              disabled={disabled}
+              onChange={(event) => setDraft(event.target.value)}
+              value={draft}
+            >
+              <option value="">Not configured</option>
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              autoComplete="off"
+              className="ui-input"
+              disabled={disabled}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={placeholder}
+              type={type === "number" ? "number" : "text"}
+              value={draft}
+            />
+          )}
+        </label>
+        <button
+          className="ui-button-primary"
+          disabled={disabled || !isDirty}
+          onClick={handleSave}
+          type="button"
+        >
+          Save
+        </button>
+      </div>
+      <p className="text-xs leading-5 text-muted">{description}</p>
+    </div>
+  );
+}
+
 export function SettingsPageClient({ initialData, searchState }: SettingsPageClientProps) {
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(
     initialFlashMessage(searchState),
@@ -190,6 +267,8 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const [isLaunchingSlackInstall, setIsLaunchingSlackInstall] = useState(false);
   const [isDisconnectingSlack, setIsDisconnectingSlack] = useState(false);
   const [isTestingLinear, setIsTestingLinear] = useState(false);
+  const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialData.agentConfig);
+  const [isSavingAgentConfig, setIsSavingAgentConfig] = useState(false);
 
   const isManager = initialData.canManage;
   const hasGitHubAppConfig = initialData.github.missingAppKeys.length === 0;
@@ -490,6 +569,33 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         kind: "error",
         text: error instanceof Error ? error.message : "Workspace secret deletion failed.",
       });
+    }
+  }
+
+  async function handleSaveAgentConfig(key: string, value: unknown) {
+    setIsSavingAgentConfig(true);
+
+    try {
+      const response = await fetch("/api/agent-config", {
+        body: JSON.stringify({
+          key,
+          value,
+          workspaceId: initialData.workspace.id,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      await readResponseJson<UpsertAgentConfigResponse>(response);
+
+      setAgentConfig((current) => ({ ...current, [key]: value }));
+      setFlashMessage({ kind: "success", text: `Saved ${key}.` });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Agent config save failed.",
+      });
+    } finally {
+      setIsSavingAgentConfig(false);
     }
   }
 
@@ -847,6 +953,74 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             ) : (
               <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
                 Workspace admins can manage encrypted secret previews from this surface.
+              </div>
+            )}
+          </div>
+        </Section>
+
+        <Section title="Coding Agent">
+          <div className="space-y-4">
+            <p className="text-sm leading-7 text-muted">
+              Configure how Wallie runs coding agents in this workspace. These settings apply to all
+              sessions that trigger agent execution.
+            </p>
+
+            {isManager ? (
+              <div className="space-y-4">
+                <AgentConfigField
+                  configKey="agent_provider"
+                  description="Which agent CLI or API to use for coding tasks."
+                  disabled={isSavingAgentConfig}
+                  label="Agent Provider"
+                  onSave={handleSaveAgentConfig}
+                  options={["claude_code", "codex"]}
+                  type="select"
+                  value={agentConfig.agent_provider}
+                />
+                <AgentConfigField
+                  configKey="agent_model"
+                  description="Model identifier passed to the agent provider."
+                  disabled={isSavingAgentConfig}
+                  label="Agent Model"
+                  onSave={handleSaveAgentConfig}
+                  placeholder="claude-sonnet-4-20250514"
+                  type="text"
+                  value={agentConfig.agent_model}
+                />
+                <AgentConfigField
+                  configKey="concurrency_limit"
+                  description="Max number of agent jobs that can run simultaneously."
+                  disabled={isSavingAgentConfig}
+                  label="Concurrency Limit"
+                  onSave={handleSaveAgentConfig}
+                  placeholder="1"
+                  type="number"
+                  value={agentConfig.concurrency_limit}
+                />
+                <AgentConfigField
+                  configKey="stall_timeout_ms"
+                  description="Time in milliseconds before a run with no activity is considered stalled."
+                  disabled={isSavingAgentConfig}
+                  label="Stall Timeout (ms)"
+                  onSave={handleSaveAgentConfig}
+                  placeholder="300000"
+                  type="number"
+                  value={agentConfig.stall_timeout_ms}
+                />
+                <AgentConfigField
+                  configKey="max_retries"
+                  description="Maximum automatic retries for failed agent runs."
+                  disabled={isSavingAgentConfig}
+                  label="Max Retries"
+                  onSave={handleSaveAgentConfig}
+                  placeholder="3"
+                  type="number"
+                  value={agentConfig.max_retries}
+                />
+              </div>
+            ) : (
+              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
+                Workspace admins can configure coding agent settings from this page.
               </div>
             )}
           </div>
