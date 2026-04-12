@@ -1,15 +1,15 @@
-import { redirect } from "next/navigation";
+import { loadPipelineDashboardData } from "@/features/pipeline/data";
+import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
 
-import { workspaceIssuesPath } from "@/lib/routes";
-
-type WorkspaceIndexPageProps = {
+type WorkspaceHomePageProps = {
   params: Promise<{
     workspaceSlug: string;
   }>;
 };
 
-export default async function WorkspaceIndexPage({ params }: WorkspaceIndexPageProps) {
+export default async function WorkspaceHomePage({ params }: WorkspaceHomePageProps) {
   const { workspaceSlug } = await params;
+  const data = await loadPipelineDashboardData(workspaceSlug);
 
-  redirect(workspaceIssuesPath(workspaceSlug));
+  return <PipelinePageClient initialData={data} />;
 }

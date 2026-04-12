@@ -4,24 +4,31 @@ import {
   loginPath,
   onboardingWorkspacePath,
   signupPath,
-  workspaceIssueDetailPath,
-  workspaceIssuesPath,
+  workspaceBasePath,
   workspaceLabel,
+  workspaceSessionDetailPath,
+  workspaceSessionsPath,
   workspaceSettingsPath,
 } from "@/lib/routes";
 
 describe("workspace route helpers", () => {
-  it("builds an issue list path with query params", () => {
+  it("builds the workspace home path (pipeline board)", () => {
+    expect(workspaceBasePath("northwind-labs")).toBe("/w/northwind-labs");
+  });
+
+  it("builds a sessions list path with query params", () => {
     expect(
-      workspaceIssuesPath("northwind-labs", {
-        query: "realtime",
-        sort: "updated",
+      workspaceSessionsPath("northwind-labs", {
+        phase: "product",
+        q: "realtime",
       }),
-    ).toBe("/w/northwind-labs/issues?query=realtime&sort=updated");
+    ).toBe("/w/northwind-labs/sessions?phase=product&q=realtime");
   });
 
   it("builds detail and settings paths", () => {
-    expect(workspaceIssueDetailPath("northwind-labs", 101)).toBe("/w/northwind-labs/issues/101");
+    expect(workspaceSessionDetailPath("northwind-labs", 101)).toBe(
+      "/w/northwind-labs/sessions/101",
+    );
     expect(workspaceSettingsPath("northwind-labs")).toBe("/w/northwind-labs/settings");
     expect(
       workspaceSettingsPath("northwind-labs", {

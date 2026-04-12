@@ -44,33 +44,33 @@ export function onboardingWorkspacePath() {
   return "/onboarding/workspace";
 }
 
-export function workspaceIssuesPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
-  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/issues`, query);
+export function workspaceSessionsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/sessions`, query);
 }
 
-export function workspaceIssueDetailPath(workspaceSlug: string, issueNumber: number | string) {
-  return `${workspaceIssuesPath(workspaceSlug)}/${issueNumber}`;
+export function workspaceSessionDetailPath(
+  workspaceSlug: string,
+  sessionNumber: number | string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(`${workspaceSessionsPath(workspaceSlug)}/${sessionNumber}`, query);
 }
 
 export function workspaceSettingsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
-export function workspacePipelinePath(workspaceSlug: string, query?: Record<string, QueryValue>) {
-  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/pipeline`, query);
-}
-
 export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] {
   return [
     {
-      label: "Issues",
-      href: workspaceIssuesPath(workspaceSlug),
-      description: "List, filter, and triage workspace issues.",
+      label: "Pipeline",
+      href: workspaceBasePath(workspaceSlug),
+      description: "The active six-phase pipeline across every session.",
     },
     {
-      label: "Pipeline",
-      href: workspacePipelinePath(workspaceSlug),
-      description: "Slack/Linear pipeline review board across product, design, and engineering.",
+      label: "Sessions",
+      href: workspaceSessionsPath(workspaceSlug),
+      description: "All sessions regardless of phase. Search and filter by phase or PRs.",
     },
     {
       label: "Settings",

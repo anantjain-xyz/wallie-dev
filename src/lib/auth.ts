@@ -1,6 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 
-import { onboardingWorkspacePath, workspaceBasePath, workspaceIssuesPath } from "@/lib/routes";
+import { onboardingWorkspacePath, workspaceBasePath } from "@/lib/routes";
 import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -107,5 +107,5 @@ export async function hasAnyWorkspaceForUser(supabase: SupabaseServerClient) {
 export async function resolveAuthenticatedHomePath(supabase: SupabaseServerClient) {
   const workspace = await getDefaultWorkspace(supabase);
 
-  return workspace ? workspaceIssuesPath(workspace.slug) : onboardingWorkspacePath();
+  return workspace ? workspaceBasePath(workspace.slug) : onboardingWorkspacePath();
 }
