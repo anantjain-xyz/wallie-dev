@@ -132,7 +132,27 @@ export async function POST(request: Request) {
   let actionValue: { session_id: string; version: number };
 
   try {
-    actionValue = JSON.parse(action.value);
+    const parsed = JSON.parse(action.value);
+    if (parsed.session_id) {
+      actionValue = parsed;
+    } else if (parsed.pipeline_issue_id) {
+      // Backward compat: pre-cutover Slack buttons encode { pipeline_issue_id, version }.
+      // Resolve to the session via the anchor issue_id link.
+      const { data: legacySession } = await admin
+        .from("sessions")
+        .select("id")
+        .eq("issue_id", parsed.pipeline_issue_id)
+        .maybeSingle();
+      if (!legacySession) {
+        return NextResponse.json(
+          { error: "Session not found for legacy action — please re-mention the issue." },
+          { status: 404 },
+        );
+      }
+      actionValue = { session_id: legacySession.id, version: parsed.version };
+    } else {
+      return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
+    }
   } catch {
     return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
   }
