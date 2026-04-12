@@ -122,12 +122,14 @@ type ConnectionBadgeProps = {
 };
 
 function ConnectionBadge({ compact, href, icon, label, onClick, tone }: ConnectionBadgeProps) {
+  const isInteractive = !!(href || onClick);
   const classes = cn(
     "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-medium transition-colors",
     compact ? "h-5 text-[11px]" : "h-6 text-[12px]",
     tone === "linked"
       ? "border-border bg-surface text-foreground hover:bg-surface-muted"
       : "border-dashed border-border bg-transparent text-muted hover:text-foreground",
+    isInteractive && "cursor-pointer",
   );
 
   if (href) {
