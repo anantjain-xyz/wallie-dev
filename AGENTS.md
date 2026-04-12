@@ -47,6 +47,13 @@ Use Vercel route handlers for privileged and third-party integrations.
 - Keep DB naming stable once feature agents begin.
 - Treat schema, auth, GitHub, Slack, secrets, and Wallie orchestration as separate domains.
 
+## Glossary
+
+- **Session** — top-level entity representing one end-to-end Wallie workflow. Replaces the legacy "issue" framing.
+- **Phase** — a stage within a session: `product`, `design`, `engineering`, `review`, `land`, `monitor`.
+- **Artifact** — versioned JSON output per phase (e.g. the product spec). Stored in `session_artifacts`, keyed on `(session_id, phase, version)`.
+- **Run** — one agent execution within a phase. A rejected artifact triggers a new run of the same phase.
+
 ## gstack
 
 Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
