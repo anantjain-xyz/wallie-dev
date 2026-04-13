@@ -15,6 +15,11 @@ const mocked = vi.hoisted(() => ({
   formatPreScreenFailBlocks: vi.fn(() => [{ type: "section" }]),
   formatEscalationDmBlocks: vi.fn(() => [{ type: "section" }]),
   escapeMrkdwn: vi.fn((s: string) => s),
+  runDesignPhase: vi.fn(),
+  runEngineeringPhase: vi.fn(),
+  runReviewPhase: vi.fn(),
+  runLandPhase: vi.fn(),
+  runMonitorPhase: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -41,6 +46,26 @@ vi.mock("./slack-format", () => ({
   formatSpecDiffBlocks: mocked.formatSpecDiffBlocks,
   openSlackDm: mocked.openSlackDm,
   postSlackMessage: mocked.postSlackMessage,
+}));
+
+vi.mock("./design-phase", () => ({
+  runDesignPhase: mocked.runDesignPhase,
+}));
+
+vi.mock("./engineering-phase", () => ({
+  runEngineeringPhase: mocked.runEngineeringPhase,
+}));
+
+vi.mock("./review-phase", () => ({
+  runReviewPhase: mocked.runReviewPhase,
+}));
+
+vi.mock("./land-phase", () => ({
+  runLandPhase: mocked.runLandPhase,
+}));
+
+vi.mock("./monitor-phase", () => ({
+  runMonitorPhase: mocked.runMonitorPhase,
 }));
 
 import { handleApproval, handleRejection, processPipelineJob } from "./processor";
@@ -717,8 +742,15 @@ describe("processPipelineJob", () => {
     expect(firstBlockText).not.toContain("evil.example");
   });
 
-  it("writes a manual stub artifact and flips to awaiting_review for non-product phases", async () => {
-    const { admin, calls } = buildProcessorAdmin({
+  it("routes design phase to runDesignPhase and does not run product agent", async () => {
+    mocked.runDesignPhase.mockResolvedValueOnce({
+      jobId: "job-1",
+      processed: true,
+      result: "success",
+      runId: "run-1",
+    });
+
+    const { admin } = buildProcessorAdmin({
       session: baseSession({ phase: "design", current_artifact_version: 0 }),
     });
 
@@ -731,21 +763,20 @@ describe("processPipelineJob", () => {
     // Product agent should NOT run for a non-product phase.
     expect(mocked.generateProductSpec).not.toHaveBeenCalled();
     expect(mocked.preScreenIssue).not.toHaveBeenCalled();
-    // A stub artifact should be inserted.
-    expect(calls.artifactInserted).toBe(1);
-    // Pointer should bump to v1 and flip to awaiting_review.
-    expect(
-      calls.sessionUpdates.some(
-        (u) => u.current_artifact_version === 1 && u.phase_status === "awaiting_review",
-      ),
-    ).toBe(true);
-    // A Slack "please approve" prompt should have been posted.
-    expect(mocked.postSlackMessage).toHaveBeenCalled();
+    // Design phase runner should have been called.
+    expect(mocked.runDesignPhase).toHaveBeenCalled();
   });
 
   it("does not require ANTHROPIC_API_KEY for non-product phases", async () => {
-    // Non-product phases go through runManualPhaseStub, which never hits
-    // the model — missing ANTHROPIC_API_KEY must not block them.
+    // Non-product phases use their own runners which don't need the
+    // Anthropic API key — missing ANTHROPIC_API_KEY must not block them.
+    mocked.runDesignPhase.mockResolvedValueOnce({
+      jobId: "job-1",
+      processed: true,
+      result: "success",
+      runId: "run-1",
+    });
+
     const { admin, calls } = buildProcessorAdmin({
       session: baseSession({ phase: "design", current_artifact_version: 0 }),
       workspaceSecrets: [],
@@ -757,7 +788,6 @@ describe("processPipelineJob", () => {
     });
 
     expect(result.result).toBe("success");
-    expect(calls.artifactInserted).toBe(1);
     // The error marker should not have fired for a missing Anthropic key.
     expect(
       calls.jobUpdates.some(

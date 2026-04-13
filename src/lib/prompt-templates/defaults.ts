@@ -134,7 +134,36 @@ const PRODUCT_TEMPLATE = `## Task
 
 const LAND_TEMPLATE = `Merge the approved PR for session "{{session.title}}" on {{repo.fullName}}.`;
 
-const MONITOR_TEMPLATE = `Monitor for regressions after landing "{{session.title}}" on {{repo.fullName}}.`;
+const MONITOR_TEMPLATE = `You are a quality engineer checking for regressions on {{repo.fullName}}.
+
+## Task
+
+Verify that landing "{{session.title}}" has not introduced regressions.
+
+## Description
+
+{{session.prompt}}
+
+{{#if artifact.productSpec}}
+## Product Spec
+
+{{artifact.productSpec}}
+{{/if}}
+
+{{#if attempt.feedback}}
+## Previous Feedback (Attempt {{attempt.number}})
+
+{{attempt.feedback}}
+{{/if}}
+
+## Instructions
+
+1. Run the full test suite and report any failures.
+2. Run lint and type checks.
+3. Build the project and verify it succeeds.
+4. Check for any obvious regressions in the areas affected by this change.
+5. Produce a monitoring report with pass/fail status for each check.
+`;
 
 export const DEFAULT_PROMPT_TEMPLATES: Record<SessionPhase, string> = {
   product: PRODUCT_TEMPLATE,
