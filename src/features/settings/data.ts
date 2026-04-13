@@ -191,26 +191,32 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     totalRuns,
   };
 
-  // Load API keys (visible to managers).
-  const { data: apiKeyRows } = await supabase
-    .from("workspace_api_keys")
-    .select("id, name, key_prefix, last_used_at, created_at, revoked_at")
-    .eq("workspace_id", workspace.id)
-    .order("created_at", { ascending: false });
+  // Load API keys — managers only. Non-managers get an empty list so key
+  // metadata (names, prefixes, last-used timestamps) is not leaked.
+  const canManage = currentMember.role === "owner" || currentMember.role === "admin";
+  let apiKeys: ApiKeyPreview[] = [];
 
-  const apiKeys: ApiKeyPreview[] = (apiKeyRows ?? []).map((row) => ({
-    createdAt: row.created_at,
-    id: row.id,
-    keyPrefix: row.key_prefix,
-    lastUsedAt: row.last_used_at,
-    name: row.name,
-    revokedAt: row.revoked_at,
-  }));
+  if (canManage) {
+    const { data: apiKeyRows } = await supabase
+      .from("workspace_api_keys")
+      .select("id, name, key_prefix, last_used_at, created_at, revoked_at")
+      .eq("workspace_id", workspace.id)
+      .order("created_at", { ascending: false });
+
+    apiKeys = (apiKeyRows ?? []).map((row) => ({
+      createdAt: row.created_at,
+      id: row.id,
+      keyPrefix: row.key_prefix,
+      lastUsedAt: row.last_used_at,
+      name: row.name,
+      revokedAt: row.revoked_at,
+    }));
+  }
 
   return {
     agentConfig,
     apiKeys,
-    canManage: currentMember.role === "owner" || currentMember.role === "admin",
+    canManage,
     usage,
     currentMember: {
       id: currentMember.id,

@@ -42,7 +42,16 @@ export async function GET(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  // Load related data in parallel.
+  // Load related data. First fetch job IDs for this session so we can
+  // query agent_runs with a valid PostgREST `.in()` filter.
+  const { data: jobRows } = await admin
+    .from("agent_jobs")
+    .select("id")
+    .eq("session_id", id)
+    .eq("workspace_id", auth.workspaceId);
+
+  const jobIds = (jobRows ?? []).map((j) => j.id);
+
   const [{ data: artifacts }, { data: completions }, { data: pullRequests }, { data: runs }] =
     await Promise.all([
       admin
@@ -58,15 +67,17 @@ export async function GET(request: NextRequest, { params }: Params) {
         )
         .eq("session_id", id)
         .order("created_at", { ascending: false }),
-      admin
-        .from("agent_runs")
-        .select(
-          "id, run_type, model_name, status, input_tokens, output_tokens, total_cost_usd, started_at, finished_at, created_at",
-        )
-        .eq("workspace_id", auth.workspaceId)
-        .or(`agent_job_id.in.(select id from agent_jobs where session_id = '${id}')`)
-        .order("created_at", { ascending: false })
-        .limit(20),
+      jobIds.length > 0
+        ? admin
+            .from("agent_runs")
+            .select(
+              "id, run_type, model_name, status, input_tokens, output_tokens, total_cost_usd, started_at, finished_at, created_at",
+            )
+            .eq("workspace_id", auth.workspaceId)
+            .in("agent_job_id", jobIds)
+            .order("created_at", { ascending: false })
+            .limit(20)
+        : Promise.resolve({ data: [] as never[], error: null }),
     ]);
 
   return NextResponse.json({

@@ -59,6 +59,10 @@ begin
 end;
 $$;
 
+-- Lock down: only service_role (worker process) may call schedule_job_retry.
+revoke all on function public.schedule_job_retry(uuid, int, int) from public;
+grant execute on function public.schedule_job_retry(uuid, int, int) to service_role;
+
 -- -----------------------------------------------------------------------
 -- 4.1 — Update claim_agent_job to skip jobs scheduled in the future
 -- -----------------------------------------------------------------------
