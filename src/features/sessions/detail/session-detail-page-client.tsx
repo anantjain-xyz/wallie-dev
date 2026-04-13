@@ -467,14 +467,31 @@ function EmptyHint({ text }: { text: string }) {
   );
 }
 
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
+  return String(count);
+}
+
 function RunRow({ run }: { run: SessionRun }) {
+  const hasTokens = run.inputTokens !== null || run.outputTokens !== null;
+
   return (
-    <li className="flex items-center justify-between rounded-[4px] border border-border bg-background px-2.5 py-1.5 text-[11px]">
-      <div className="flex min-w-0 flex-col">
-        <span className="font-mono text-foreground">{run.runType}</span>
-        <span className="text-muted">{dateTimeFormatter.format(new Date(run.createdAt))}</span>
+    <li className="rounded-[4px] border border-border bg-background px-2.5 py-1.5 text-[11px]">
+      <div className="flex items-center justify-between">
+        <div className="flex min-w-0 flex-col">
+          <span className="font-mono text-foreground">{run.runType}</span>
+          <span className="text-muted">{dateTimeFormatter.format(new Date(run.createdAt))}</span>
+        </div>
+        <span className="text-muted">{run.status}</span>
       </div>
-      <span className="text-muted">{run.status}</span>
+      {hasTokens ? (
+        <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
+          {run.inputTokens !== null ? <span>{formatTokenCount(run.inputTokens)} in</span> : null}
+          {run.outputTokens !== null ? <span>{formatTokenCount(run.outputTokens)} out</span> : null}
+          {run.totalCostUsd !== null ? <span>${run.totalCostUsd.toFixed(4)}</span> : null}
+        </div>
+      ) : null}
     </li>
   );
 }

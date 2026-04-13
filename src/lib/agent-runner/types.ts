@@ -24,6 +24,11 @@ export interface AgentEventCompletion {
   /** Whether the agent signalled it finished its task (vs. hitting turn limit). */
   taskComplete: boolean;
   summary: string;
+  /** Token usage reported by the agent, if available. */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
 }
 
 export interface AgentEventError {

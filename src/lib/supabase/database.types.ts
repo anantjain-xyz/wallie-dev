@@ -143,13 +143,16 @@ export type Database = {
           created_at: string
           finished_at: string | null
           id: string
+          input_tokens: number | null
           issue_id: string | null
           last_activity_at: string | null
           model_name: string
           model_provider: string
+          output_tokens: number | null
           run_type: string
           started_at: string | null
           status: Database["public"]["Enums"]["agent_run_status"]
+          total_cost_usd: number | null
           triggered_by_member_id: string | null
           updated_at: string
           workspace_id: string
@@ -159,13 +162,16 @@ export type Database = {
           created_at?: string
           finished_at?: string | null
           id?: string
+          input_tokens?: number | null
           issue_id?: string | null
           last_activity_at?: string | null
           model_name: string
           model_provider: string
+          output_tokens?: number | null
           run_type: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
+          total_cost_usd?: number | null
           triggered_by_member_id?: string | null
           updated_at?: string
           workspace_id: string
@@ -175,13 +181,16 @@ export type Database = {
           created_at?: string
           finished_at?: string | null
           id?: string
+          input_tokens?: number | null
           issue_id?: string | null
           last_activity_at?: string | null
           model_name?: string
           model_provider?: string
+          output_tokens?: number | null
           run_type?: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
+          total_cost_usd?: number | null
           triggered_by_member_id?: string | null
           updated_at?: string
           workspace_id?: string
@@ -857,6 +866,57 @@ export type Database = {
           },
         ]
       }
+      workspace_api_keys: {
+        Row: {
+          created_at: string
+          created_by_member_id: string | null
+          id: string
+          key_hash: string
+          key_prefix: string
+          last_used_at: string | null
+          name: string
+          revoked_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_member_id?: string | null
+          id?: string
+          key_hash: string
+          key_prefix: string
+          last_used_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_member_id?: string | null
+          id?: string
+          key_hash?: string
+          key_prefix?: string
+          last_used_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_api_keys_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_api_keys_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_agent_config: {
         Row: {
           created_at: string
@@ -1034,6 +1094,31 @@ export type Database = {
       next_session_number: {
         Args: { target_workspace_id: string }
         Returns: number
+      }
+      schedule_job_retry: {
+        Args: {
+          target_job_id: string
+          base_delay_ms?: number
+          max_backoff_ms?: number
+        }
+        Returns: {
+          id: string
+          workspace_id: string
+          issue_id: string | null
+          session_id: string | null
+          requested_by_member_id: string | null
+          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+          status: Database["public"]["Enums"]["agent_job_status"]
+          attempt_count: number
+          last_error: string | null
+          dedupe_key: string | null
+          job_type: string
+          scheduled_at: string | null
+          started_at: string | null
+          finished_at: string | null
+          created_at: string
+          updated_at: string
+        }[]
       }
       claim_agent_job: {
         Args: {
