@@ -144,6 +144,7 @@ export type Database = {
           finished_at: string | null
           id: string
           issue_id: string
+          last_activity_at: string | null
           model_name: string
           model_provider: string
           run_type: string
@@ -159,6 +160,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           issue_id: string
+          last_activity_at?: string | null
           model_name: string
           model_provider: string
           run_type: string
@@ -174,6 +176,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           issue_id?: string
+          last_activity_at?: string | null
           model_name?: string
           model_provider?: string
           run_type?: string
@@ -902,6 +905,41 @@ export type Database = {
           },
         ]
       }
+      worker_heartbeats: {
+        Row: {
+          active_job_id: string | null
+          id: string
+          last_heartbeat_at: string
+          metadata: Json
+          started_at: string
+          worker_id: string
+        }
+        Insert: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id: string
+        }
+        Update: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
+            columns: ["active_job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspaces: {
         Row: {
           avatar_path: string | null
@@ -961,6 +999,30 @@ export type Database = {
       next_session_number: {
         Args: { target_workspace_id: string }
         Returns: number
+      }
+      claim_agent_job: {
+        Args: {
+          target_job_id: string
+          default_concurrency_limit?: number
+        }
+        Returns: {
+          id: string
+          workspace_id: string
+          issue_id: string | null
+          session_id: string | null
+          requested_by_member_id: string | null
+          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+          status: Database["public"]["Enums"]["agent_job_status"]
+          attempt_count: number
+          last_error: string | null
+          dedupe_key: string | null
+          job_type: string
+          scheduled_at: string | null
+          started_at: string | null
+          finished_at: string | null
+          created_at: string
+          updated_at: string
+        }[]
       }
       approve_session_phase: {
         Args: {
