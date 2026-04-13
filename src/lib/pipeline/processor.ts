@@ -4,6 +4,7 @@ import type { Tables } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { SESSION_PHASE_LABELS, type SessionPhase } from "@/features/sessions/types";
+import { runEngineeringPhase } from "./engineering-phase";
 
 import { preScreenIssue } from "./pre-screen";
 import { generateProductSpec } from "./product-agent";
@@ -91,9 +92,9 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
 
-    // Route by phase: product has a real agent, the other 5 phases insert
-    // a human-approve stub until we build them. Adding a real agent for
-    // any phase later is a one-line swap here.
+    // Route by phase: product and engineering have real agents, the other
+    // 4 phases insert a human-approve stub until we build them. Adding a
+    // real agent for any phase later is a one-line swap here.
     if (session.phase === "product") {
       // Non-null assertion: the phase-gated check above already rejected
       // product-phase jobs with a missing key.
@@ -102,6 +103,15 @@ export async function processPipelineJob(input: {
         anthropicApiKey: secrets.anthropicApiKey!,
         botToken,
         emSlackUserId: secrets.emSlackUserId,
+        job,
+        session,
+      });
+    }
+
+    if (session.phase === "engineering") {
+      return await runEngineeringPhase({
+        admin,
+        botToken,
         job,
         session,
       });
