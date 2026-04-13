@@ -143,7 +143,7 @@ export type Database = {
           created_at: string
           finished_at: string | null
           id: string
-          issue_id: string
+          issue_id: string | null
           last_activity_at: string | null
           model_name: string
           model_provider: string
@@ -159,7 +159,7 @@ export type Database = {
           created_at?: string
           finished_at?: string | null
           id?: string
-          issue_id: string
+          issue_id?: string | null
           last_activity_at?: string | null
           model_name: string
           model_provider: string
@@ -175,7 +175,7 @@ export type Database = {
           created_at?: string
           finished_at?: string | null
           id?: string
-          issue_id?: string
+          issue_id?: string | null
           last_activity_at?: string | null
           model_name?: string
           model_provider?: string
@@ -815,6 +815,41 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "workspace_members_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_prompt_templates: {
+        Row: {
+          created_at: string
+          id: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          template_md: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          template_md: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          phase?: Database["public"]["Enums"]["session_phase"]
+          template_md?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_prompt_templates_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"

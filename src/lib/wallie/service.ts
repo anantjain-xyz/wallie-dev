@@ -152,9 +152,11 @@ function createJobInsert(input: {
 
 async function loadIssueForRun(
   supabase: SupabaseServerClient,
-  issueId: string,
+  issueId: string | null,
   workspaceId: string,
 ) {
+  if (!issueId) return null;
+
   const { data, error } = await supabase
     .from("issues")
     .select(issueSelect)
@@ -307,7 +309,7 @@ async function waitForRunByJobId(admin: AdminClient, jobId: string, attempts = 5
 
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
-  issueId: string;
+  issueId: string | null;
   requestedRunType?: WallieRunMode;
   supabase: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
