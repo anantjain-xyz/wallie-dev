@@ -104,11 +104,12 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<PhaseResu
       branch: pr.branch_name,
     });
 
-    // Fetch the PR branch from remote and check it out so the agent
-    // reviews the actual PR diff, not a fresh empty branch.
+    // Fetch the PR branch from remote and reset to it so the agent
+    // reviews the actual PR diff. The shallow clone (--depth 1) does not
+    // create remote tracking refs, so we reset to FETCH_HEAD rather than
+    // origin/<branch> which wouldn't exist.
     await gitExec(["fetch", "origin", pr.branch_name], workspace.path);
-    await gitExec(["checkout", pr.branch_name], workspace.path);
-    await gitExec(["reset", "--hard", `origin/${pr.branch_name}`], workspace.path);
+    await gitExec(["reset", "--hard", "FETCH_HEAD"], workspace.path);
   } catch (err) {
     return errorResult(
       admin,

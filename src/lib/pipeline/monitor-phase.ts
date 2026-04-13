@@ -82,15 +82,19 @@ export async function runMonitorPhase(input: MonitorPhaseInput): Promise<PhaseRe
   });
 
   // --- Provision workspace on default branch (post-merge) ---
+  // Use a unique branch name because createWorkspace always runs
+  // `git checkout -b`, and the default branch already exists after
+  // clone — passing it directly would cause a "branch already exists"
+  // fatal error. The unique branch starts from the same HEAD as the
+  // default branch, so regression checks run against post-merge code.
   const repoUrl = buildCloneUrl(github.installationId, github.repo.full_name);
-  const defaultBranch = github.repo.default_branch ?? "main";
   let workspace: { branch: string; path: string } | null = null;
 
   try {
     workspace = await createWorkspace({
       repoUrl,
       sessionId: session.id,
-      branch: defaultBranch,
+      branch: `wallie/monitor-${session.id}`,
     });
   } catch (err) {
     return errorResult(
