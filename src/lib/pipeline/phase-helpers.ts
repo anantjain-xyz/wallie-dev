@@ -141,10 +141,7 @@ export async function loadSessionPullRequest(
   return data;
 }
 
-export async function isLinearIssueActive(
-  admin: AdminClient,
-  sessionId: string,
-): Promise<boolean> {
+export async function isLinearIssueActive(admin: AdminClient, sessionId: string): Promise<boolean> {
   const { data } = await admin
     .from("sessions")
     .select("phase_status")

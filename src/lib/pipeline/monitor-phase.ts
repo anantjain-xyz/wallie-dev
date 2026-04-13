@@ -57,7 +57,6 @@ export async function runMonitorPhase(input: MonitorPhaseInput): Promise<PhaseRe
 
   // --- Load context from previous phases ---
   const productSpec = await loadPhaseArtifactText(admin, session.id, "product");
-  const landArtifact = await loadPhaseArtifactText(admin, session.id, "land");
   const pr = await loadSessionPullRequest(admin, session.id);
 
   // --- Load feedback from previous rejection (if any) ---
@@ -174,7 +173,7 @@ export async function runMonitorPhase(input: MonitorPhaseInput): Promise<PhaseRe
     }
 
     // --- Collect the monitoring artifact ---
-    const monitorReport = await collectMonitorArtifact(admin, runId, pr, landArtifact);
+    const monitorReport = await collectMonitorArtifact(admin, runId, pr);
 
     // --- Store monitor artifact ---
     const newVersion = session.current_artifact_version + 1;
@@ -218,7 +217,6 @@ async function collectMonitorArtifact(
   admin: AdminClient,
   runId: string,
   pr: Tables<"session_pull_requests"> | null,
-  _landArtifact: string | null,
 ): Promise<string> {
   const { data: messages } = await admin
     .from("agent_run_messages")
