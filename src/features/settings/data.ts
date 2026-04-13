@@ -18,8 +18,26 @@ const repositorySelect =
 
 export type AgentConfigMap = Record<string, unknown>;
 
+export type WorkspaceUsageData = {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+  totalRuns: number;
+};
+
+export type ApiKeyPreview = {
+  createdAt: string;
+  id: string;
+  keyPrefix: string;
+  lastUsedAt: string | null;
+  name: string;
+  revokedAt: string | null;
+};
+
 export type SettingsPageData = {
   agentConfig: AgentConfigMap;
+  apiKeys: ApiKeyPreview[];
+  usage: WorkspaceUsageData;
   canManage: boolean;
   currentMember: {
     id: string;
@@ -148,9 +166,52 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     agentConfig[row.key] = row.value_json;
   }
 
+  // Load aggregate token usage for the workspace.
+  const { data: usageRows } = await supabase
+    .from("agent_runs")
+    .select("input_tokens, output_tokens, total_cost_usd")
+    .eq("workspace_id", workspace.id)
+    .eq("status", "success");
+
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCostUsd = 0;
+  const totalRuns = (usageRows ?? []).length;
+
+  for (const row of usageRows ?? []) {
+    totalInputTokens += row.input_tokens ?? 0;
+    totalOutputTokens += row.output_tokens ?? 0;
+    totalCostUsd += row.total_cost_usd ?? 0;
+  }
+
+  const usage: WorkspaceUsageData = {
+    totalInputTokens,
+    totalOutputTokens,
+    totalCostUsd,
+    totalRuns,
+  };
+
+  // Load API keys (visible to managers).
+  const { data: apiKeyRows } = await supabase
+    .from("workspace_api_keys")
+    .select("id, name, key_prefix, last_used_at, created_at, revoked_at")
+    .eq("workspace_id", workspace.id)
+    .order("created_at", { ascending: false });
+
+  const apiKeys: ApiKeyPreview[] = (apiKeyRows ?? []).map((row) => ({
+    createdAt: row.created_at,
+    id: row.id,
+    keyPrefix: row.key_prefix,
+    lastUsedAt: row.last_used_at,
+    name: row.name,
+    revokedAt: row.revoked_at,
+  }));
+
   return {
     agentConfig,
+    apiKeys,
     canManage: currentMember.role === "owner" || currentMember.role === "admin",
+    usage,
     currentMember: {
       id: currentMember.id,
       role: currentMember.role,

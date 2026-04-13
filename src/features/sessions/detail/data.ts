@@ -155,7 +155,9 @@ export async function loadSessionDetailPageData(
   const runQuery = sessionRow.issue_id
     ? context.supabase
         .from("agent_runs")
-        .select("id, created_at, finished_at, model_name, run_type, started_at, status")
+        .select(
+          "id, created_at, finished_at, input_tokens, model_name, output_tokens, run_type, started_at, status, total_cost_usd",
+        )
         .eq("issue_id", sessionRow.issue_id)
         .order("created_at", { ascending: false })
         .limit(10)
@@ -262,17 +264,29 @@ export async function loadSessionDetailPageData(
     (runRows ?? []) as Array<
       Pick<
         Tables<"agent_runs">,
-        "created_at" | "finished_at" | "id" | "model_name" | "run_type" | "started_at" | "status"
+        | "created_at"
+        | "finished_at"
+        | "id"
+        | "input_tokens"
+        | "model_name"
+        | "output_tokens"
+        | "run_type"
+        | "started_at"
+        | "status"
+        | "total_cost_usd"
       >
     >
   ).map((row) => ({
     createdAt: row.created_at,
     finishedAt: row.finished_at,
     id: row.id,
+    inputTokens: row.input_tokens,
     modelName: row.model_name,
+    outputTokens: row.output_tokens,
     runType: row.run_type,
     startedAt: row.started_at,
     status: row.status,
+    totalCostUsd: row.total_cost_usd,
   }));
 
   const session: SessionDetail = {

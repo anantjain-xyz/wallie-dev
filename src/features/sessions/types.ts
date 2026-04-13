@@ -98,10 +98,13 @@ export type SessionRun = {
   createdAt: string;
   finishedAt: string | null;
   id: string;
+  inputTokens: number | null;
   modelName: string;
+  outputTokens: number | null;
   runType: string;
   startedAt: string | null;
   status: string;
+  totalCostUsd: number | null;
 };
 
 export type SessionFilterKey = "all" | "active" | "archived" | "has-pr";

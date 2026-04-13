@@ -830,11 +830,46 @@ async function markPipelineJobSuccess(
     .eq("id", job.id);
 }
 
+async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<number> {
+  const { data } = await admin
+    .from("workspace_agent_config")
+    .select("value_json")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "max_retries")
+    .maybeSingle();
+
+  if (data && typeof data.value_json === "number") {
+    return data.value_json;
+  }
+  return 3; // default max retries
+}
+
 async function markPipelineJobError(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
 ): Promise<void> {
+  // Check if we should schedule a retry with exponential backoff.
+  const maxRetries = await loadMaxRetries(admin, job.workspace_id);
+
+  if (job.attempt_count < maxRetries) {
+    // Schedule retry via the schedule_job_retry RPC. This sets
+    // scheduled_at to now() + min(5s * 2^attempt, 5min) and
+    // transitions the job back to 'queued'.
+    const { error: retryError } = await admin.rpc("schedule_job_retry", {
+      target_job_id: job.id,
+      base_delay_ms: 5000,
+      max_backoff_ms: 300000,
+    });
+
+    if (!retryError) {
+      // Update last_error so the dashboard can show why it's retrying.
+      await admin.from("agent_jobs").update({ last_error: errorMessage }).eq("id", job.id);
+      return;
+    }
+    // If scheduling fails, fall through to terminal error.
+  }
+
   await admin
     .from("agent_jobs")
     .update({

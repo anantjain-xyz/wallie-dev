@@ -58,7 +58,7 @@ const repositorySelect =
 const jobSelect =
   "id, workspace_id, issue_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, issue_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, created_at, updated_at";
+  "id, workspace_id, issue_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, created_at, updated_at";
 
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
@@ -627,10 +627,15 @@ async function loadProcessTargetJob(input: {
     return claimJobIfQueued(input.admin, job);
   }
 
+  // Only claim jobs that are either not scheduled or whose scheduled_at is
+  // in the past (exponential backoff — jobs re-queued with a future
+  // scheduled_at must wait until that time elapses).
+  const now = new Date().toISOString();
   const query = input.admin
     .from("agent_jobs")
     .select(jobSelect)
     .eq("status", "queued")
+    .or(`scheduled_at.is.null,scheduled_at.lte.${now}`)
     .order("created_at", { ascending: true })
     .limit(10);
   const scopedQuery = input.workspaceId ? query.eq("workspace_id", input.workspaceId) : query;

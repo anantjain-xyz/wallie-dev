@@ -186,12 +186,23 @@ export async function createAgentRun(
   return data.id;
 }
 
-export async function markRunSuccess(admin: AdminClient, runId: string): Promise<void> {
+export async function markRunSuccess(
+  admin: AdminClient,
+  runId: string,
+  tokenUsage?: { inputTokens: number; outputTokens: number; totalCostUsd?: number },
+): Promise<void> {
   await admin
     .from("agent_runs")
     .update({
       finished_at: new Date().toISOString(),
       status: "success" as const,
+      ...(tokenUsage
+        ? {
+            input_tokens: tokenUsage.inputTokens,
+            output_tokens: tokenUsage.outputTokens,
+            total_cost_usd: tokenUsage.totalCostUsd ?? null,
+          }
+        : {}),
     })
     .eq("id", runId);
 }
