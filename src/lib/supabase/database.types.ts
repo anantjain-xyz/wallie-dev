@@ -144,6 +144,7 @@ export type Database = {
           finished_at: string | null
           id: string
           issue_id: string
+          last_activity_at: string | null
           model_name: string
           model_provider: string
           run_type: string
@@ -159,6 +160,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           issue_id: string
+          last_activity_at?: string | null
           model_name: string
           model_provider: string
           run_type: string
@@ -174,6 +176,7 @@ export type Database = {
           finished_at?: string | null
           id?: string
           issue_id?: string
+          last_activity_at?: string | null
           model_name?: string
           model_provider?: string
           run_type?: string
@@ -898,6 +901,41 @@ export type Database = {
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_heartbeats: {
+        Row: {
+          active_job_id: string | null
+          id: string
+          last_heartbeat_at: string
+          metadata: Json
+          started_at: string
+          worker_id: string
+        }
+        Insert: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id: string
+        }
+        Update: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
+            columns: ["active_job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
           },
         ]
