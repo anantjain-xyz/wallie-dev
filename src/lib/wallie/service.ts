@@ -651,10 +651,24 @@ async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }
 
   // Legacy wallie stub executor was removed in Phase 0. Non-pipeline jobs
   // are not supported until a real agent runner is wired up in Phase 2.
+  // Transition the linked agent_run to error so it doesn't block future
+  // run/retry requests for this issue (loadActiveRunForIssue checks for
+  // queued/started/running rows).
+  const errorMessage =
+    "Legacy wallie executor removed. Non-pipeline jobs will be supported after the agent runner is wired up.";
+
+  await input.admin
+    .from("agent_runs")
+    .update({
+      finished_at: new Date().toISOString(),
+      status: "error" as const,
+    })
+    .eq("agent_job_id", input.job.id)
+    .in("status", ["queued", "started", "running"]);
+
   await markJobTerminal({
     admin: input.admin,
-    errorMessage:
-      "Legacy wallie executor removed. Non-pipeline jobs will be supported after the agent runner is wired up.",
+    errorMessage,
     job: input.job,
     status: "error",
   });

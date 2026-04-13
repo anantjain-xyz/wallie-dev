@@ -299,41 +299,57 @@ export async function loadSessionDetailPageData(
     workspaceId: sessionRow.workspace_id,
   };
 
-  const issueForWallie: Pick<Tables<"issues">, "github_repository_id" | "id"> = issueData
-    ? { github_repository_id: issueData.github_repository_id, id: issueData.id }
-    : { github_repository_id: null, id: sessionRow.id };
+  // Load wallie panel data only when an anchor issue exists. The wallie
+  // panel queries agent_runs by issue_id and the "Run with Wallie" action
+  // validates against the issues table, so passing a non-issue UUID would
+  // cause query misses and "Issue not found" errors.
+  let wallie: WallieIssueData;
 
-  const { data: repoForIssueData, error: repoForIssueError } = issueForWallie.github_repository_id
-    ? await context.supabase
-        .from("github_repositories")
-        .select(
-          "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
-        )
-        .eq("id", issueForWallie.github_repository_id)
-        .maybeSingle()
-    : { data: null, error: null };
+  if (issueData) {
+    const { data: repoForIssueData, error: repoForIssueError } = issueData.github_repository_id
+      ? await context.supabase
+          .from("github_repositories")
+          .select(
+            "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
+          )
+          .eq("id", issueData.github_repository_id)
+          .maybeSingle()
+      : { data: null, error: null };
 
-  if (repoForIssueError) {
-    throw repoForIssueError;
+    if (repoForIssueError) {
+      throw repoForIssueError;
+    }
+
+    wallie = await loadWallieIssueData({
+      issue: { github_repository_id: issueData.github_repository_id, id: issueData.id },
+      memberIndex: context.memberIndex,
+      repository: repoForIssueData
+        ? {
+            defaultBranch: repoForIssueData.default_branch,
+            defaultProgrammingLanguage: repoForIssueData.default_programming_language,
+            fullName: repoForIssueData.full_name,
+            htmlUrl: repoForIssueData.html_url,
+            id: repoForIssueData.id,
+            isArchived: repoForIssueData.is_archived,
+            isPrivate: repoForIssueData.private,
+          }
+        : null,
+      supabase: context.supabase,
+      workspaceId: context.workspace.id,
+    });
+  } else {
+    // No anchor issue — return an inert wallie state. The panel renders
+    // but enqueue/retry are disabled and no runs are shown.
+    wallie = {
+      blockingReasons: [],
+      canEnqueue: false,
+      missingSecretKeys: [],
+      mode: "project",
+      repository: null,
+      requiredSecretKeys: [],
+      runs: [],
+    };
   }
-
-  const wallie = await loadWallieIssueData({
-    issue: issueForWallie,
-    memberIndex: context.memberIndex,
-    repository: repoForIssueData
-      ? {
-          defaultBranch: repoForIssueData.default_branch,
-          defaultProgrammingLanguage: repoForIssueData.default_programming_language,
-          fullName: repoForIssueData.full_name,
-          htmlUrl: repoForIssueData.html_url,
-          id: repoForIssueData.id,
-          isArchived: repoForIssueData.is_archived,
-          isPrivate: repoForIssueData.private,
-        }
-      : null,
-    supabase: context.supabase,
-    workspaceId: context.workspace.id,
-  });
 
   return {
     currentMember: context.currentMember,
