@@ -17,13 +17,15 @@ import { ClaudeCodeRunner } from "./claude-code";
 
 /**
  * Factory: create an AgentRunner for the given provider name.
- * Currently supports "claude-code". Extend here for future providers.
+ * Normalizes common aliases (e.g. "claude_code" -> "claude-code") so the
+ * value persisted by the workspace settings UI works without transformation.
  */
 export function createAgentRunner(provider: string): AgentRunner {
-  switch (provider) {
+  const normalized = provider.replace(/_/g, "-");
+  switch (normalized) {
     case "claude-code":
       return new ClaudeCodeRunner();
     default:
-      throw new Error(`Unknown agent provider: "${provider}". Supported: claude-code`);
+      throw new Error(`Unknown agent provider: "${provider}". Supported: claude-code, claude_code`);
   }
 }

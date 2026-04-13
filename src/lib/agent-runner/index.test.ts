@@ -9,6 +9,12 @@ describe("createAgentRunner", () => {
     expect(runner.provider).toBe("claude-code");
   });
 
+  it("creates a ClaudeCodeRunner for 'claude_code' (settings alias)", () => {
+    const runner = createAgentRunner("claude_code");
+    expect(runner).toBeInstanceOf(ClaudeCodeRunner);
+    expect(runner.provider).toBe("claude-code");
+  });
+
   it("throws for unknown provider", () => {
     expect(() => createAgentRunner("unknown-provider")).toThrow(
       'Unknown agent provider: "unknown-provider"',

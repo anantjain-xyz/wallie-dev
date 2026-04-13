@@ -152,7 +152,6 @@ export async function runEngineeringPhase(
       });
 
       // Stream events and persist to agent_run_messages.
-      let turnHasCompletion = false;
       for await (const event of events) {
         await persistEvent(admin, runId, session.workspace_id, event);
 
@@ -163,7 +162,6 @@ export async function runEngineeringPhase(
           .eq("id", runId);
 
         if (event.type === "completion") {
-          turnHasCompletion = true;
           taskComplete = event.taskComplete;
           // Extract session ID for continuation.
           const sessionIdMatch = event.summary.match(/session:\s*(\S+)/i);
@@ -191,8 +189,11 @@ export async function runEngineeringPhase(
         await gitPush(workspace.path, branch);
       }
 
-      // Check if the agent considers the task complete.
-      if (taskComplete || turnHasCompletion) {
+      // Only stop the multi-turn loop when the agent explicitly signals the
+      // task is done. Each single-turn invocation emits a completion event
+      // (turnHasCompletion), but that just means the turn finished — not that
+      // the overall task is complete.
+      if (taskComplete) {
         break;
       }
 
@@ -290,7 +291,7 @@ export async function runEngineeringPhase(
       })
       .eq("id", session.id);
 
-    // --- Mark run as success ---
+    // --- Mark run and job as success ---
     await admin
       .from("agent_runs")
       .update({
@@ -298,6 +299,14 @@ export async function runEngineeringPhase(
         status: "success" as const,
       })
       .eq("id", runId);
+
+    await admin
+      .from("agent_jobs")
+      .update({
+        finished_at: new Date().toISOString(),
+        status: "success",
+      })
+      .eq("id", job.id);
 
     return { jobId: job.id, processed: true, result: "success", runId };
   } catch (err) {
