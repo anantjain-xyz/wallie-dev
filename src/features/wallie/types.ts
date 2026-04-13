@@ -1,6 +1,26 @@
 import type { IssueMember } from "@/features/issues/types";
 import type { Enums } from "@/lib/supabase/database.types";
-import type { WallieBlockingReason, WallieRunMode } from "@/lib/wallie/types";
+
+// --- Types migrated from lib/wallie/types.ts (Phase 0.2) ---
+
+export type WallieRunMode = "code" | "project";
+
+export type WallieBlockingCode =
+  | "active_run"
+  | "missing_secret"
+  | "repository_archived"
+  | "repository_unavailable";
+
+export type WallieActionErrorCode =
+  | WallieBlockingCode
+  | "issue_not_found"
+  | "run_not_found"
+  | "run_not_retryable";
+
+export type WallieBlockingReason = {
+  code: WallieBlockingCode;
+  message: string;
+};
 
 export type WallieIssueRepository = {
   defaultBranch: string | null;

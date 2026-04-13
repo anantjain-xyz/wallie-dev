@@ -12,25 +12,25 @@ Wallie is a web-based AI product development platform (Next.js + Supabase) with 
 
 ## 1. Feature-by-Feature Comparison
 
-| Symphony Concept | Wallie Equivalent | Gap |
-|---|---|---|
-| **WORKFLOW.md** (YAML config + Liquid prompt template, hot-reload) | Phase order hard-coded in `src/features/sessions/types.ts`. Agent prompt hard-coded in `src/lib/pipeline/product-agent.ts`. No template system. | **Critical** -- No user-configurable workflow or prompt templates |
-| **Config Layer** (typed defaults, `$VAR` indirection) | Zod env validation (`src/env/server.ts`), encrypted workspace secrets (`src/lib/secrets/crypto.ts`), hard-coded constants in `src/lib/wallie/constants.ts` | **Moderate** -- Has secrets infra, but no UI for agent tunables (concurrency, timeouts, model) |
-| **Issue Tracker Polling** (polls Linear for candidates, pagination, state mapping) | Single-issue Linear fetch (`src/lib/linear/client.ts`). No polling. Triggered by Slack @mention or UI. | **Deferred** -- Wallie's trigger-based model (Slack + UI) works well for now. Autonomous polling is a future enhancement. |
-| **Orchestrator** (in-memory state machine, polling loop, bounded concurrency, reconciliation) | Session state machine (`src/lib/pipeline/state-machine.ts`), `approve_session_phase` RPC. Jobs processed on-demand via HTTP. No concurrency limits. No polling loop. No reconciliation. | **Critical** -- No autonomous scheduling |
-| **Workspace Manager** (per-issue filesystem dirs, lifecycle hooks, path containment) | No filesystem concept. Artifacts stored as JSONB in `session_artifacts`. Stub executor records branch names only. | **Critical** -- Biggest single gap. No place for agents to run code. |
-| **Agent Runner** (Codex subprocess, JSON-RPC over stdio, multi-turn, approval handling) | Product agent: single-shot Claude API call for structured JSON (`src/lib/pipeline/product-agent.ts`). Stub executor: deterministic strings (`src/lib/wallie/executor.ts`). | **Critical** -- No real coding agent integration |
-| **Multi-turn Continuation** (turns on same thread, re-checks tracker state between turns) | Not implemented. All agent calls are single-shot. | **Major** -- Required for non-trivial coding tasks |
-| **Retry & Backoff** (exponential backoff, continuation retries, configurable max) | `agent_jobs.attempt_count` exists. Retry is manual (user clicks reject/retry). No automatic retry. | **Moderate** -- Infrastructure exists, logic missing |
-| **Stall Detection** (kills inactive sessions past timeout) | Not implemented. Stuck `agent_generating` stays stuck. | **Moderate** |
-| **Reconciliation** (every tick checks tracker state for running issues) | Not implemented. | **Moderate** |
-| **Observability** (structured logs, optional HTTP dashboard, JSON REST API, token accounting) | Web UI dashboard at `/w/[slug]/pipeline`. Session detail with run history. `agent_run_messages` table. No token accounting. No REST API. | **Minor** -- UI is better than Symphony's; missing programmatic API |
-| **Security** (workspace filesystem isolation, path validation, harness hardening) | Multi-tenant RLS, encrypted secrets, prompt injection protection (`src/lib/pipeline/prompt-safety.ts`). No filesystem isolation (no filesystem yet). | Wallie stronger on tenant isolation; weaker on sandbox (N/A currently) |
-| **Approval Flow** | Not in Symphony (agents do ticket writing via tools) | **Wallie far ahead** -- atomic `approve_session_phase` RPC, rejection feedback, escalation threshold |
-| **Web UI** | Symphony non-goal | **Wallie far ahead** -- full Next.js UI with real-time updates |
-| **Multi-Tenancy** | Symphony is single-tenant daemon | **Wallie far ahead** -- workspaces, RLS, roles, encrypted per-workspace secrets |
-| **Slack Integration** | Not in Symphony | **Wallie far ahead** -- full Slack App (triggers, approve/reject buttons, feedback modals, escalation DMs) |
-| **GitHub Integration** | Not direct (agents use git tools) | **Wallie has infra** -- GitHub App, webhook handling, PR tracking. Needs to use it for actual code push. |
+| Symphony Concept                                                                              | Wallie Equivalent                                                                                                                                                                       | Gap                                                                                                                       |
+| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **WORKFLOW.md** (YAML config + Liquid prompt template, hot-reload)                            | Phase order hard-coded in `src/features/sessions/types.ts`. Agent prompt hard-coded in `src/lib/pipeline/product-agent.ts`. No template system.                                         | **Critical** -- No user-configurable workflow or prompt templates                                                         |
+| **Config Layer** (typed defaults, `$VAR` indirection)                                         | Zod env validation (`src/env/server.ts`), encrypted workspace secrets (`src/lib/secrets/crypto.ts`), hard-coded constants in `src/lib/wallie/constants.ts`                              | **Moderate** -- Has secrets infra, but no UI for agent tunables (concurrency, timeouts, model)                            |
+| **Issue Tracker Polling** (polls Linear for candidates, pagination, state mapping)            | Single-issue Linear fetch (`src/lib/linear/client.ts`). No polling. Triggered by Slack @mention or UI.                                                                                  | **Deferred** -- Wallie's trigger-based model (Slack + UI) works well for now. Autonomous polling is a future enhancement. |
+| **Orchestrator** (in-memory state machine, polling loop, bounded concurrency, reconciliation) | Session state machine (`src/lib/pipeline/state-machine.ts`), `approve_session_phase` RPC. Jobs processed on-demand via HTTP. No concurrency limits. No polling loop. No reconciliation. | **Critical** -- No autonomous scheduling                                                                                  |
+| **Workspace Manager** (per-issue filesystem dirs, lifecycle hooks, path containment)          | No filesystem concept. Artifacts stored as JSONB in `session_artifacts`. Stub executor records branch names only.                                                                       | **Critical** -- Biggest single gap. No place for agents to run code.                                                      |
+| **Agent Runner** (Codex subprocess, JSON-RPC over stdio, multi-turn, approval handling)       | Product agent: single-shot Claude API call for structured JSON (`src/lib/pipeline/product-agent.ts`). Stub executor: deterministic strings (`src/lib/wallie/executor.ts`).              | **Critical** -- No real coding agent integration                                                                          |
+| **Multi-turn Continuation** (turns on same thread, re-checks tracker state between turns)     | Not implemented. All agent calls are single-shot.                                                                                                                                       | **Major** -- Required for non-trivial coding tasks                                                                        |
+| **Retry & Backoff** (exponential backoff, continuation retries, configurable max)             | `agent_jobs.attempt_count` exists. Retry is manual (user clicks reject/retry). No automatic retry.                                                                                      | **Moderate** -- Infrastructure exists, logic missing                                                                      |
+| **Stall Detection** (kills inactive sessions past timeout)                                    | Not implemented. Stuck `agent_generating` stays stuck.                                                                                                                                  | **Moderate**                                                                                                              |
+| **Reconciliation** (every tick checks tracker state for running issues)                       | Not implemented.                                                                                                                                                                        | **Moderate**                                                                                                              |
+| **Observability** (structured logs, optional HTTP dashboard, JSON REST API, token accounting) | Web UI dashboard at `/w/[slug]/pipeline`. Session detail with run history. `agent_run_messages` table. No token accounting. No REST API.                                                | **Minor** -- UI is better than Symphony's; missing programmatic API                                                       |
+| **Security** (workspace filesystem isolation, path validation, harness hardening)             | Multi-tenant RLS, encrypted secrets, prompt injection protection (`src/lib/pipeline/prompt-safety.ts`). No filesystem isolation (no filesystem yet).                                    | Wallie stronger on tenant isolation; weaker on sandbox (N/A currently)                                                    |
+| **Approval Flow**                                                                             | Not in Symphony (agents do ticket writing via tools)                                                                                                                                    | **Wallie far ahead** -- atomic `approve_session_phase` RPC, rejection feedback, escalation threshold                      |
+| **Web UI**                                                                                    | Symphony non-goal                                                                                                                                                                       | **Wallie far ahead** -- full Next.js UI with real-time updates                                                            |
+| **Multi-Tenancy**                                                                             | Symphony is single-tenant daemon                                                                                                                                                        | **Wallie far ahead** -- workspaces, RLS, roles, encrypted per-workspace secrets                                           |
+| **Slack Integration**                                                                         | Not in Symphony                                                                                                                                                                         | **Wallie far ahead** -- full Slack App (triggers, approve/reject buttons, feedback modals, escalation DMs)                |
+| **GitHub Integration**                                                                        | Not direct (agents use git tools)                                                                                                                                                       | **Wallie has infra** -- GitHub App, webhook handling, PR tracking. Needs to use it for actual code push.                  |
 
 ---
 
@@ -56,14 +56,15 @@ Wallie is a web-based AI product development platform (Next.js + Supabase) with 
 4. **No per-workspace agent configuration UI** -- All tunables are compile-time constants.
 5. **No multi-turn agent sessions** -- Single-shot API calls only.
 
-*Deferred: Autonomous Linear polling. Wallie's trigger-based model (Slack @mention + UI) works well for now.*
+_Deferred: Autonomous Linear polling. Wallie's trigger-based model (Slack @mention + UI) works well for now._
 
 ---
 
 ## 4. Roadmap
 
 ### Phase 0: Foundation Cleanup
-*Unblock the new architecture by cleaning up legacy shims.*
+
+_Unblock the new architecture by cleaning up legacy shims._
 
 - **0.1** Drop the anchor `issues` table shim. Add `agent_jobs.session_id` FK. Migrate data loaders to reference sessions directly.
 - **0.2** Delete stub wallie executor (`src/lib/wallie/executor.ts`, `src/lib/wallie/core.ts`, `src/lib/wallie/types.ts`).
@@ -71,7 +72,8 @@ Wallie is a web-based AI product development platform (Next.js + Supabase) with 
 - **0.4** Build "Coding Agent" settings section on workspace settings page (`src/features/settings/settings-page-client.tsx`).
 
 ### Phase 1: Worker Infrastructure
-*Build the execution backbone that replaces Symphony's daemon loop.*
+
+_Build the execution backbone that replaces Symphony's daemon loop._
 
 - **1.1** **Worker Process** -- Standalone Node.js process (not Vercel serverless) that:
   - Connects to same Supabase database
@@ -88,7 +90,8 @@ Wallie is a web-based AI product development platform (Next.js + Supabase) with 
 - **1.4** **Reconciliation** -- Worker periodically checks Linear issue state for running sessions, stops agents for terminal/non-active states
 
 ### Phase 2: Agent Runner Integration
-*Wire up a real coding agent for the engineering phase.*
+
+_Wire up a real coding agent for the engineering phase._
 
 - **2.1** **Agent Runner** (`src/lib/agent-runner/`):
   - Abstract interface: `AgentRunner.start(sessionId, workspacePath, prompt) -> AsyncIterable<AgentEvent>`
@@ -121,7 +124,8 @@ Wallie is a web-based AI product development platform (Next.js + Supabase) with 
 
 ### Future: Autonomous Polling (Deferred)
 
-*When the trigger-based model is no longer sufficient:*
+_When the trigger-based model is no longer sufficient:_
+
 - Extend Linear client with paginated candidate queries
 - Add Linear Poller to worker process (per-workspace polling config)
 - Polling configuration UI (enable/disable, project picker, status filters, interval)
@@ -130,19 +134,20 @@ Wallie is a web-based AI product development platform (Next.js + Supabase) with 
 
 ## 5. Key Architectural Decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| **Where agents run** | Standalone worker process (not Vercel serverless) | Vercel functions timeout at 60-300s. Coding tasks take minutes to hours. Worker connects to same Supabase DB. |
-| **Agent provider** | Abstracted interface supporting Claude Code CLI, Codex, future providers | "Easy to use" = users pick provider in settings UI, not edit WORKFLOW.md |
-| **Workspace isolation** | Per-session directories on worker filesystem initially; Docker containers later | Start simple like Symphony, upgrade for multi-tenant safety |
-| **Communication** | Database as job queue (Postgres via Supabase) | Web app enqueues, worker drains. No extra message broker. Preserves existing `agent_jobs` infra. |
-| **Incremental delivery** | Each phase independently valuable | Teams can use Wallie after Phase 2. Approval pipeline provides safety Symphony lacks. |
+| Decision                 | Choice                                                                          | Rationale                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Where agents run**     | Standalone worker process (not Vercel serverless)                               | Vercel functions timeout at 60-300s. Coding tasks take minutes to hours. Worker connects to same Supabase DB. |
+| **Agent provider**       | Abstracted interface supporting Claude Code CLI, Codex, future providers        | "Easy to use" = users pick provider in settings UI, not edit WORKFLOW.md                                      |
+| **Workspace isolation**  | Per-session directories on worker filesystem initially; Docker containers later | Start simple like Symphony, upgrade for multi-tenant safety                                                   |
+| **Communication**        | Database as job queue (Postgres via Supabase)                                   | Web app enqueues, worker drains. No extra message broker. Preserves existing `agent_jobs` infra.              |
+| **Incremental delivery** | Each phase independently valuable                                               | Teams can use Wallie after Phase 2. Approval pipeline provides safety Symphony lacks.                         |
 
 ---
 
 ## 6. Verification Plan
 
 After each phase:
+
 - **Phase 0:** `pnpm check` passes. Settings page renders new config section. Legacy executor code removed.
 - **Phase 1:** Worker process starts, claims a queued job, provisions a workspace directory, clones a repo, and cleans up. Stall detection kills a simulated stuck run.
 - **Phase 2:** End-to-end: create session via Slack mention -> product spec generated -> approve -> engineering phase launches real agent in workspace -> agent makes code changes -> PR created -> appears in session detail UI.

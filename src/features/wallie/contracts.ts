@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-import type { WallieRun } from "@/features/wallie/types";
-import type { WallieActionErrorCode } from "@/lib/wallie/types";
+import type { WallieActionErrorCode, WallieRun } from "@/features/wallie/types";
 
 const workspaceIdSchema = z.string().uuid("Workspace id is invalid.");
 const issueIdSchema = z.string().uuid("Issue id is invalid.");

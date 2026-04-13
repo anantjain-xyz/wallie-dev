@@ -273,8 +273,8 @@ async function handleAppMention(ctx: {
     return;
   }
 
-  // Enqueue pipeline job keyed on the anchor issue — processor.ts will
-  // resolve the session via sessions.issue_id.
+  // Enqueue pipeline job keyed on the session — processor.ts resolves
+  // the session directly via agent_jobs.session_id.
   const { data: newJob, error: jobError } = await admin
     .from("agent_jobs")
     .insert({
@@ -282,6 +282,7 @@ async function handleAppMention(ctx: {
       issue_id: anchorIssue.id,
       job_type: PIPELINE_JOB_TYPE,
       requested_by_member_id: wallieMember?.id ?? null,
+      session_id: sessionRow.id,
       trigger_type: "slack_mention",
       workspace_id: workspaceId,
     })

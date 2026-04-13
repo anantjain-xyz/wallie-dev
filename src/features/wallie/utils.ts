@@ -1,5 +1,8 @@
+// Utility functions migrated from lib/wallie/core.ts (Phase 0.2).
+// These are used by the wallie panel UI and the service layer.
+
 import type { Enums } from "@/lib/supabase/database.types";
-import type { WallieBlockingReason, WallieRunMode } from "@/lib/wallie/types";
+import type { WallieBlockingReason, WallieRunMode } from "@/features/wallie/types";
 
 export function inferWallieRunMode(githubRepositoryId: string | null | undefined): WallieRunMode {
   return githubRepositoryId ? "code" : "project";

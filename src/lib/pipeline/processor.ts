@@ -37,34 +37,16 @@ export async function processPipelineJob(input: {
   const job = input.job;
 
   try {
-    // Load the session row that corresponds to this job's anchor issue.
-    // The cutover added sessions.issue_id so the processor can locate a
-    // session from an agent_job without having to grow a session_id column
-    // on agent_jobs itself.
-    const session = await loadSessionByIssueId(admin, job.issue_id);
+    // Load the session row. Prefer the direct session_id FK (Phase 0
+    // addition); fall back to the legacy anchor-issue lookup for jobs
+    // created before the backfill.
+    const session = job.session_id
+      ? await loadSessionById(admin, job.session_id)
+      : job.issue_id
+        ? await loadSessionByIssueId(admin, job.issue_id)
+        : null;
     if (!session) {
       await markPipelineJobError(admin, job, "No session row found for this job.");
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-
-    if (session.issue_id === null) {
-      // Defensive: every session produced by Slack events or the in-app
-      // create dialog has an anchor issue. A null issue_id here means
-      // something created a session row directly (e.g., future Flow B
-      // without an anchor) and enqueued a job against the wrong column.
-      await markPipelineJobError(
-        admin,
-        job,
-        "Session has no anchor issue; cannot resolve agent_job.issue_id.",
-      );
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-
-    // Load the anchor issue for its title/description — product-agent
-    // needs the original prompt, not the generated spec.
-    const issue = await loadIssue(admin, session.issue_id);
-    if (!issue) {
-      await markPipelineJobError(admin, job, "Anchor issue row not found.");
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
 
@@ -120,7 +102,6 @@ export async function processPipelineJob(input: {
         anthropicApiKey: secrets.anthropicApiKey!,
         botToken,
         emSlackUserId: secrets.emSlackUserId,
-        issue,
         job,
         session,
       });
@@ -146,17 +127,20 @@ async function runProductPhase(input: {
   anthropicApiKey: string;
   botToken: string;
   emSlackUserId: string | null;
-  issue: Pick<Tables<"issues">, "description_md" | "id" | "title">;
   job: Tables<"agent_jobs">;
   session: SessionRow;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, anthropicApiKey, botToken, issue, job, session } = input;
+  const { admin, anthropicApiKey, botToken, job, session } = input;
+
+  // Use session title and prompt directly — no anchor issue lookup needed.
+  const issueTitle = session.title;
+  const issueDescription = session.prompt_md;
 
   // Run pre-screen
   const preScreenResult = await preScreenIssue({
     anthropicApiKey,
-    issueDescription: issue.description_md,
-    issueTitle: issue.title,
+    issueDescription,
+    issueTitle,
   });
 
   if (!preScreenResult.pass) {
@@ -223,8 +207,8 @@ async function runProductPhase(input: {
     spec = await generateProductSpec({
       anthropicApiKey,
       feedback: feedbackText,
-      issueDescription: issue.description_md,
-      issueTitle: issue.title,
+      issueDescription,
+      issueTitle,
       previousSpec,
     });
 
@@ -624,9 +608,10 @@ export async function handleRejection(input: {
     dedupe_key: session.linear_issue_id
       ? `pipeline:${session.linear_issue_id}:active`
       : `pipeline:session:${session.id}:active`,
-    issue_id: session.issue_id!,
+    issue_id: session.issue_id ?? undefined,
     job_type: PIPELINE_JOB_TYPE,
     requested_by_member_id: wallieMember?.id ?? null,
+    session_id: session.id,
     trigger_type: "slack_mention",
     workspace_id: session.workspace_id,
   });
@@ -661,20 +646,6 @@ async function loadSessionByIssueId(
 
 async function loadSessionById(admin: AdminClient, id: string): Promise<SessionRow | null> {
   const { data, error } = await admin.from("sessions").select("*").eq("id", id).maybeSingle();
-
-  if (error) throw error;
-  return data;
-}
-
-async function loadIssue(
-  admin: AdminClient,
-  issueId: string,
-): Promise<Pick<Tables<"issues">, "description_md" | "id" | "title"> | null> {
-  const { data, error } = await admin
-    .from("issues")
-    .select("id, title, description_md")
-    .eq("id", issueId)
-    .maybeSingle();
 
   if (error) throw error;
   return data;

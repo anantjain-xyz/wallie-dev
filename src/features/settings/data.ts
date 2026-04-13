@@ -16,7 +16,10 @@ const installationSelect =
 const repositorySelect =
   "id, repo_id, name, full_name, html_url, private, description, default_programming_language, default_branch, is_archived";
 
+export type AgentConfigMap = Record<string, unknown>;
+
 export type SettingsPageData = {
+  agentConfig: AgentConfigMap;
   canManage: boolean;
   currentMember: {
     id: string;
@@ -133,7 +136,20 @@ export async function loadSettingsPageData(workspaceSlug: string) {
   const installation = installationRows?.[0] ?? null;
   const slackInstallation = await getSlackInstallationForWorkspace(workspace.id);
 
+  // Load agent config (visible to managers only, but load for everyone to
+  // populate read-only display if needed).
+  const { data: agentConfigRows } = await supabase
+    .from("workspace_agent_config")
+    .select("key, value_json")
+    .eq("workspace_id", workspace.id);
+
+  const agentConfig: AgentConfigMap = {};
+  for (const row of agentConfigRows ?? []) {
+    agentConfig[row.key] = row.value_json;
+  }
+
   return {
+    agentConfig,
     canManage: currentMember.role === "owner" || currentMember.role === "admin",
     currentMember: {
       id: currentMember.id,
