@@ -21,13 +21,15 @@ export async function sweepStalledRuns(
 ): Promise<StallSweepResult> {
   const result: StallSweepResult = { stalledRunIds: [], stalledJobIds: [] };
 
-  // Find all active runs with a last_activity_at value.
+  // Find all active runs. Include runs with NULL last_activity_at — those
+  // are pre-existing rows from before the column default was added, or edge
+  // cases where the default didn't fire. We use created_at as a fallback
+  // timestamp so no run can escape stall detection.
   const { data: activeRuns, error } = await admin
     .from("agent_runs")
-    .select("id, workspace_id, agent_job_id, last_activity_at, status")
+    .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status")
     .in("status", ["queued", "started", "running"])
-    .not("last_activity_at", "is", null)
-    .order("last_activity_at", { ascending: true })
+    .order("created_at", { ascending: true })
     .limit(100);
 
   if (error) {
@@ -47,7 +49,10 @@ export async function sweepStalledRuns(
 
   for (const run of activeRuns) {
     const timeoutMs = stallTimeouts.get(run.workspace_id) ?? defaultStallTimeoutMs;
-    const lastActivity = new Date(run.last_activity_at!).getTime();
+    // Use last_activity_at if set, otherwise fall back to created_at so
+    // runs that never received an activity event are still swept.
+    const activityTimestamp = run.last_activity_at ?? run.created_at;
+    const lastActivity = new Date(activityTimestamp).getTime();
     const elapsed = now - lastActivity;
 
     if (elapsed < timeoutMs) {

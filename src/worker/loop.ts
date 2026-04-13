@@ -5,7 +5,6 @@ import { processPipelineJob } from "@/lib/pipeline/processor";
 import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 
 import type { WorkerConfig } from "./config";
-import { canAcceptJob } from "./concurrency";
 import { sendHeartbeat } from "./heartbeat";
 
 type AdminClient = SupabaseClient<Database>;
@@ -41,27 +40,27 @@ export async function pollOnce(admin: AdminClient, config: WorkerConfig): Promis
     return { jobId: null, outcome: "idle" };
   }
 
-  // Try each candidate, respecting per-workspace concurrency.
+  // Try each candidate with an atomic concurrency-aware claim.
+  // The RPC checks the workspace's concurrency limit and CAS-claims the job
+  // in a single transaction, preventing two workers from both observing
+  // capacity and then each claiming a different job.
   for (const candidate of candidates as AgentJobRow[]) {
-    const allowed = await canAcceptJob(
-      admin,
-      candidate.workspace_id,
-      config.defaultConcurrencyLimit,
-    );
-
-    if (!allowed) {
-      continue;
-    }
-
-    // Attempt CAS claim: queued -> running.
-    const claimed = await claimJob(admin, candidate);
+    const claimed = await claimJobAtomic(admin, candidate.id, config.defaultConcurrencyLimit);
     if (!claimed) {
-      // Another worker claimed it first — try next candidate.
+      // Either at capacity or another worker claimed it — try next.
       continue;
     }
 
     // Report heartbeat with active job.
     await sendHeartbeat(admin, config.workerId, claimed.id);
+
+    // Touch last_activity_at on any linked agent_runs so the stall detector
+    // has a fresh baseline even if the processor crashes immediately.
+    await admin
+      .from("agent_runs")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("agent_job_id", claimed.id)
+      .in("status", ["queued", "started", "running"]);
 
     // Process the job.
     try {
@@ -83,29 +82,28 @@ export async function pollOnce(admin: AdminClient, config: WorkerConfig): Promis
 }
 
 /**
- * CAS claim: update status from queued to running, increment attempt_count.
- * Returns the updated row if successful, null if another worker won the race.
+ * Atomic concurrency-aware claim via Postgres RPC.
+ * The function checks the workspace's concurrency limit and CAS-claims the
+ * job in a single transaction, so two workers cannot both observe capacity
+ * and then each claim a different job.
  */
-async function claimJob(admin: AdminClient, job: AgentJobRow): Promise<AgentJobRow | null> {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .update({
-      attempt_count: job.attempt_count + 1,
-      last_error: null,
-      started_at: job.started_at ?? new Date().toISOString(),
-      status: "running",
-    })
-    .eq("id", job.id)
-    .eq("status", "queued")
-    .select(jobSelect)
-    .maybeSingle();
+async function claimJobAtomic(
+  admin: AdminClient,
+  jobId: string,
+  defaultConcurrencyLimit: number,
+): Promise<AgentJobRow | null> {
+  const { data, error } = await admin.rpc("claim_agent_job", {
+    target_job_id: jobId,
+    default_concurrency_limit: defaultConcurrencyLimit,
+  });
 
   if (error) {
-    console.error("[worker] claim failed", { error: error.message, jobId: job.id });
+    console.error("[worker] atomic claim failed", { error: error.message, jobId });
     return null;
   }
 
-  return (data as AgentJobRow | null) ?? null;
+  const row = Array.isArray(data) ? data[0] : null;
+  return (row as AgentJobRow | null) ?? null;
 }
 
 /**

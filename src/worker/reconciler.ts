@@ -22,95 +22,119 @@ export interface ReconcileResult {
  * marking the running job as canceled and transitioning the session to
  * rejected.
  */
+/** Page size for the reconciliation cursor. */
+const RECONCILE_PAGE_SIZE = 50;
+
 export async function reconcileLinearState(admin: AdminClient): Promise<ReconcileResult> {
   const result: ReconcileResult = { checked: 0, canceled: 0 };
 
-  // Find running sessions that have a linear_issue_id.
-  const { data: sessions, error: sessionsError } = await admin
-    .from("sessions")
-    .select("id, workspace_id, linear_issue_id, phase_status")
-    .not("linear_issue_id", "is", null)
-    .eq("phase_status", "agent_generating")
-    .limit(50);
+  // Paginate through all agent_generating sessions with a Linear issue.
+  // Use created_at cursor to ensure every session is eventually checked,
+  // even if there are more than one page.
+  let cursor: string | null = null;
 
-  if (sessionsError) {
-    console.error("[reconciler] failed to fetch sessions", { error: sessionsError.message });
-    return result;
-  }
+  for (;;) {
+    let query = admin
+      .from("sessions")
+      .select("id, workspace_id, linear_issue_id, phase_status, created_at")
+      .not("linear_issue_id", "is", null)
+      .eq("phase_status", "agent_generating")
+      .order("created_at", { ascending: true })
+      .limit(RECONCILE_PAGE_SIZE);
 
-  if (!sessions || sessions.length === 0) {
-    return result;
-  }
+    if (cursor) {
+      query = query.gt("created_at", cursor);
+    }
 
-  // Load Linear API keys per workspace.
-  const workspaceIds = [...new Set(sessions.map((s) => s.workspace_id))];
-  const apiKeys = await loadLinearApiKeys(admin, workspaceIds);
+    const { data: sessions, error: sessionsError } = await query;
 
-  for (const session of sessions) {
-    const apiKey = apiKeys.get(session.workspace_id);
-    if (!apiKey || !session.linear_issue_id) continue;
+    if (sessionsError) {
+      console.error("[reconciler] failed to fetch sessions", { error: sessionsError.message });
+      break;
+    }
 
-    result.checked++;
+    if (!sessions || sessions.length === 0) {
+      break;
+    }
 
-    try {
-      const state = await fetchLinearIssueState(apiKey, session.linear_issue_id);
-      if (!state) continue;
+    // Load Linear API keys per workspace for this page.
+    const workspaceIds = [...new Set(sessions.map((s) => s.workspace_id))];
+    const apiKeys = await loadLinearApiKeys(admin, workspaceIds);
 
-      const stateLower = state.toLowerCase();
-      if (!TERMINAL_LINEAR_STATES.has(stateLower)) continue;
+    for (const session of sessions) {
+      const apiKey = apiKeys.get(session.workspace_id);
+      if (!apiKey || !session.linear_issue_id) continue;
 
-      // Issue is terminal in Linear — cancel the Wallie session.
-      console.log("[reconciler] Linear issue is terminal, canceling session", {
-        linearIssueId: session.linear_issue_id,
-        linearState: state,
-        sessionId: session.id,
-      });
+      result.checked++;
 
-      // Cancel any running jobs for this session.
-      await admin
-        .from("agent_jobs")
-        .update({
-          finished_at: new Date().toISOString(),
-          last_error: `Linear issue moved to "${state}" — session canceled by reconciler.`,
-          status: "canceled",
-        })
-        .eq("session_id", session.id)
-        .eq("status", "running");
+      try {
+        const state = await fetchLinearIssueState(apiKey, session.linear_issue_id);
+        if (!state) continue;
 
-      // Cancel any active agent runs for this session's jobs.
-      const { data: jobIds } = await admin
-        .from("agent_jobs")
-        .select("id")
-        .eq("session_id", session.id);
+        const stateLower = state.toLowerCase();
+        if (!TERMINAL_LINEAR_STATES.has(stateLower)) continue;
 
-      if (jobIds && jobIds.length > 0) {
+        // Issue is terminal in Linear — cancel the Wallie session.
+        console.log("[reconciler] Linear issue is terminal, canceling session", {
+          linearIssueId: session.linear_issue_id,
+          linearState: state,
+          sessionId: session.id,
+        });
+
+        // Cancel any running jobs for this session.
         await admin
-          .from("agent_runs")
+          .from("agent_jobs")
           .update({
             finished_at: new Date().toISOString(),
-            status: "canceled" as const,
+            last_error: `Linear issue moved to "${state}" — session canceled by reconciler.`,
+            status: "canceled",
           })
-          .in(
-            "agent_job_id",
-            jobIds.map((j) => j.id),
-          )
-          .in("status", ["queued", "started", "running"]);
+          .eq("session_id", session.id)
+          .eq("status", "running");
+
+        // Cancel any active agent runs for this session's jobs.
+        const { data: jobIds } = await admin
+          .from("agent_jobs")
+          .select("id")
+          .eq("session_id", session.id);
+
+        if (jobIds && jobIds.length > 0) {
+          await admin
+            .from("agent_runs")
+            .update({
+              finished_at: new Date().toISOString(),
+              status: "canceled" as const,
+            })
+            .in(
+              "agent_job_id",
+              jobIds.map((j) => j.id),
+            )
+            .in("status", ["queued", "started", "running"]);
+        }
+
+        // Move session out of agent_generating.
+        await admin
+          .from("sessions")
+          .update({ phase_status: "rejected" })
+          .eq("id", session.id)
+          .eq("phase_status", "agent_generating");
+
+        result.canceled++;
+      } catch (error) {
+        console.error("[reconciler] failed to check Linear issue", {
+          error: error instanceof Error ? error.message : String(error),
+          linearIssueId: session.linear_issue_id,
+          sessionId: session.id,
+        });
       }
+    }
 
-      // Move session out of agent_generating.
-      await admin
-        .from("sessions")
-        .update({ phase_status: "rejected" })
-        .eq("id", session.id)
-        .eq("phase_status", "agent_generating");
+    // Advance cursor to last row's created_at for next page.
+    cursor = sessions[sessions.length - 1]!.created_at;
 
-      result.canceled++;
-    } catch (error) {
-      console.error("[reconciler] failed to check Linear issue", {
-        error: error instanceof Error ? error.message : String(error),
-        linearIssueId: session.linear_issue_id,
-        sessionId: session.id,
-      });
+    // If we got fewer rows than the page size, we've reached the end.
+    if (sessions.length < RECONCILE_PAGE_SIZE) {
+      break;
     }
   }
 
