@@ -501,7 +501,7 @@ export async function handleApproval(input: {
   // transaction. The RPC also enforces the workspace match, so a Slack
   // interaction from workspace A still cannot approve a session in B.
   const { data, error } = await admin.rpc("approve_session_phase", {
-    approver_member_id: input.approverMemberId ?? null,
+    approver_member_id: input.approverMemberId ?? undefined,
     expected_version: input.version,
     expected_workspace_id: input.expectedWorkspaceId,
     target_session_id: input.sessionId,

@@ -44,9 +44,9 @@ export async function POST(request: Request) {
   // Resolve the Slack team that sent this interaction to its workspace_id.
   // Every downstream action (approve, reject, open feedback modal, submit
   // feedback) is scoped to this workspace. Without this check a user in
-  // workspace A could approve/reject a pipeline_issue in workspace B simply
-  // by knowing its UUID, because the handlers previously only gated on
-  // (pipelineIssueId, version, status).
+  // workspace A could approve/reject a session in workspace B simply by
+  // knowing its UUID, because the handlers only gate on
+  // (sessionId, version, status).
   //
   // Enterprise Grid fallback: payloads from a Grid org may carry only
   // enterprise.id, with team.id missing. Match the events route by falling
@@ -133,20 +133,10 @@ export async function POST(request: Request) {
 
   try {
     const parsed = JSON.parse(action.value);
-    if (parsed.session_id) {
-      actionValue = parsed;
-    } else if (parsed.pipeline_issue_id) {
-      // Pre-cutover Slack buttons encoded { pipeline_issue_id, version } where
-      // pipeline_issue_id was the now-dropped pipeline_issues table's PK. We
-      // cannot resolve these to sessions since that table no longer exists.
-      // Return a friendly message so the user knows to re-mention.
-      return NextResponse.json({
-        replace_original: true,
-        text: ":warning: This button is from an older version of Wallie and no longer works. Please re-mention the Linear issue to start a new session.",
-      });
-    } else {
+    if (!parsed.session_id) {
       return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
     }
+    actionValue = parsed;
   } catch {
     return NextResponse.json({ error: "Invalid action value" }, { status: 400 });
   }
@@ -193,8 +183,8 @@ export async function POST(request: Request) {
 
     if (triggerId) {
       // Use the bot token from the Slack team that sent the click — NOT a
-      // lookup keyed by pipeline_issue.workspace_id, which is user-supplied
-      // and would leak another workspace's token if spoofed.
+      // lookup keyed by session.workspace_id, which is user-supplied and
+      // would leak another workspace's token if spoofed.
       const botToken = decryptSecretValue(slackInstall.bot_token_encrypted);
 
       try {

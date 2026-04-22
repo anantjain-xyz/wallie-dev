@@ -158,7 +158,7 @@ describe("handleApproval", () => {
 
     expect(result).toEqual({ success: true });
     expect(rpc).toHaveBeenCalledWith("approve_session_phase", {
-      approver_member_id: null,
+      approver_member_id: undefined,
       expected_version: 1,
       expected_workspace_id: "ws-1",
       target_session_id: "sess-1",
