@@ -406,37 +406,57 @@ export type Database = {
           },
         ]
       }
-      slack_installations: {
+      issues: {
         Row: {
-          bot_token_encrypted: string
+          created_at: string
+          creator_member_id: string | null
+          description_md: string
+          github_repository_id: string | null
           id: string
-          installed_at: string
-          team_id: string
-          team_name: string | null
+          number: number
+          title: string
           updated_at: string
           workspace_id: string
         }
         Insert: {
-          bot_token_encrypted: string
+          created_at?: string
+          creator_member_id?: string | null
+          description_md?: string
+          github_repository_id?: string | null
           id?: string
-          installed_at?: string
-          team_id: string
-          team_name?: string | null
+          number: number
+          title: string
           updated_at?: string
           workspace_id: string
         }
         Update: {
-          bot_token_encrypted?: string
+          created_at?: string
+          creator_member_id?: string | null
+          description_md?: string
+          github_repository_id?: string | null
           id?: string
-          installed_at?: string
-          team_id?: string
-          team_name?: string | null
+          number?: number
+          title?: string
           updated_at?: string
           workspace_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "slack_installations_workspace_id_fkey"
+            foreignKeyName: "issues_creator_member_id_fkey"
+            columns: ["creator_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issues_github_repository_id_fkey"
+            columns: ["github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issues_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -444,90 +464,32 @@ export type Database = {
           },
         ]
       }
-      sessions: {
+      profiles: {
         Row: {
-          archived_at: string | null
+          avatar_url: string | null
           created_at: string
-          creator_member_id: string | null
-          current_artifact_version: number
+          full_name: string | null
           id: string
-          issue_id: string | null
-          linear_issue_id: string | null
-          linear_issue_url: string | null
-          number: number
-          phase: Database["public"]["Enums"]["session_phase"]
-          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
-          prompt_md: string
-          rejection_count: number
-          slack_channel_id: string | null
-          slack_thread_ts: string | null
-          title: string
+          primary_email: string | null
           updated_at: string
-          workspace_id: string
         }
         Insert: {
-          archived_at?: string | null
+          avatar_url?: string | null
           created_at?: string
-          creator_member_id?: string | null
-          current_artifact_version?: number
-          id?: string
-          issue_id?: string | null
-          linear_issue_id?: string | null
-          linear_issue_url?: string | null
-          number: number
-          phase?: Database["public"]["Enums"]["session_phase"]
-          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
-          prompt_md?: string
-          rejection_count?: number
-          slack_channel_id?: string | null
-          slack_thread_ts?: string | null
-          title: string
+          full_name?: string | null
+          id: string
+          primary_email?: string | null
           updated_at?: string
-          workspace_id: string
         }
         Update: {
-          archived_at?: string | null
+          avatar_url?: string | null
           created_at?: string
-          creator_member_id?: string | null
-          current_artifact_version?: number
+          full_name?: string | null
           id?: string
-          issue_id?: string | null
-          linear_issue_id?: string | null
-          linear_issue_url?: string | null
-          number?: number
-          phase?: Database["public"]["Enums"]["session_phase"]
-          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
-          prompt_md?: string
-          rejection_count?: number
-          slack_channel_id?: string | null
-          slack_thread_ts?: string | null
-          title?: string
+          primary_email?: string | null
           updated_at?: string
-          workspace_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "sessions_creator_member_id_fkey"
-            columns: ["creator_member_id"]
-            isOneToOne: false
-            referencedRelation: "workspace_members"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "sessions_issue_id_fkey"
-            columns: ["issue_id"]
-            isOneToOne: true
-            referencedRelation: "issues"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "sessions_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       session_artifacts: {
         Row: {
@@ -690,57 +652,84 @@ export type Database = {
           },
         ]
       }
-      issues: {
+      sessions: {
         Row: {
+          archived_at: string | null
           created_at: string
           creator_member_id: string | null
-          description_md: string
-          github_repository_id: string | null
+          current_artifact_version: number
           id: string
+          issue_id: string | null
+          linear_issue_id: string | null
+          linear_issue_url: string | null
           number: number
+          phase: Database["public"]["Enums"]["session_phase"]
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          prompt_md: string
+          rejection_count: number
+          slack_channel_id: string | null
+          slack_thread_ts: string | null
           title: string
           updated_at: string
           workspace_id: string
         }
         Insert: {
+          archived_at?: string | null
           created_at?: string
           creator_member_id?: string | null
-          description_md?: string
-          github_repository_id?: string | null
+          current_artifact_version?: number
           id?: string
+          issue_id?: string | null
+          linear_issue_id?: string | null
+          linear_issue_url?: string | null
           number: number
+          phase?: Database["public"]["Enums"]["session_phase"]
+          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          prompt_md?: string
+          rejection_count?: number
+          slack_channel_id?: string | null
+          slack_thread_ts?: string | null
           title: string
           updated_at?: string
           workspace_id: string
         }
         Update: {
+          archived_at?: string | null
           created_at?: string
           creator_member_id?: string | null
-          description_md?: string
-          github_repository_id?: string | null
+          current_artifact_version?: number
           id?: string
+          issue_id?: string | null
+          linear_issue_id?: string | null
+          linear_issue_url?: string | null
           number?: number
+          phase?: Database["public"]["Enums"]["session_phase"]
+          phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          prompt_md?: string
+          rejection_count?: number
+          slack_channel_id?: string | null
+          slack_thread_ts?: string | null
           title?: string
           updated_at?: string
           workspace_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "issues_creator_member_id_fkey"
+            foreignKeyName: "sessions_creator_member_id_fkey"
             columns: ["creator_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "issues_github_repository_id_fkey"
-            columns: ["github_repository_id"]
+            foreignKeyName: "sessions_issue_id_fkey"
+            columns: ["issue_id"]
             isOneToOne: false
-            referencedRelation: "github_repositories"
+            referencedRelation: "issues"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "issues_workspace_id_fkey"
+            foreignKeyName: "sessions_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -748,32 +737,164 @@ export type Database = {
           },
         ]
       }
-      profiles: {
+      slack_installations: {
         Row: {
-          avatar_url: string | null
-          created_at: string
-          full_name: string | null
+          bot_token_encrypted: string
           id: string
-          primary_email: string | null
+          installed_at: string
+          team_id: string
+          team_name: string | null
           updated_at: string
+          workspace_id: string
         }
         Insert: {
-          avatar_url?: string | null
-          created_at?: string
-          full_name?: string | null
-          id: string
-          primary_email?: string | null
+          bot_token_encrypted: string
+          id?: string
+          installed_at?: string
+          team_id: string
+          team_name?: string | null
           updated_at?: string
+          workspace_id: string
         }
         Update: {
-          avatar_url?: string | null
-          created_at?: string
-          full_name?: string | null
+          bot_token_encrypted?: string
           id?: string
-          primary_email?: string | null
+          installed_at?: string
+          team_id?: string
+          team_name?: string | null
           updated_at?: string
+          workspace_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "slack_installations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      worker_heartbeats: {
+        Row: {
+          active_job_id: string | null
+          id: string
+          last_heartbeat_at: string
+          metadata: Json
+          started_at: string
+          worker_id: string
+        }
+        Insert: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id: string
+        }
+        Update: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
+            columns: ["active_job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_agent_config: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          updated_at: string
+          value_json: Json
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          updated_at?: string
+          value_json?: Json
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          updated_at?: string
+          value_json?: Json
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_agent_config_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_api_keys: {
+        Row: {
+          created_at: string
+          created_by_member_id: string | null
+          id: string
+          key_hash: string
+          key_prefix: string
+          last_used_at: string | null
+          name: string
+          revoked_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_member_id?: string | null
+          id?: string
+          key_hash: string
+          key_prefix: string
+          last_used_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_member_id?: string | null
+          id?: string
+          key_hash?: string
+          key_prefix?: string
+          last_used_at?: string | null
+          name?: string
+          revoked_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_api_keys_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_api_keys_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       workspace_members: {
         Row: {
@@ -866,92 +987,6 @@ export type Database = {
           },
         ]
       }
-      workspace_api_keys: {
-        Row: {
-          created_at: string
-          created_by_member_id: string | null
-          id: string
-          key_hash: string
-          key_prefix: string
-          last_used_at: string | null
-          name: string
-          revoked_at: string | null
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          created_by_member_id?: string | null
-          id?: string
-          key_hash: string
-          key_prefix: string
-          last_used_at?: string | null
-          name?: string
-          revoked_at?: string | null
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          created_by_member_id?: string | null
-          id?: string
-          key_hash?: string
-          key_prefix?: string
-          last_used_at?: string | null
-          name?: string
-          revoked_at?: string | null
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_api_keys_created_by_member_id_fkey"
-            columns: ["created_by_member_id"]
-            isOneToOne: false
-            referencedRelation: "workspace_members"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "workspace_api_keys_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      workspace_agent_config: {
-        Row: {
-          created_at: string
-          id: string
-          key: string
-          updated_at: string
-          value_json: Json
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          key: string
-          updated_at?: string
-          value_json?: Json
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          key?: string
-          updated_at?: string
-          value_json?: Json
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_agent_config_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       workspace_secrets: {
         Row: {
           created_at: string
@@ -1000,41 +1035,6 @@ export type Database = {
           },
         ]
       }
-      worker_heartbeats: {
-        Row: {
-          active_job_id: string | null
-          id: string
-          last_heartbeat_at: string
-          metadata: Json
-          started_at: string
-          worker_id: string
-        }
-        Insert: {
-          active_job_id?: string | null
-          id?: string
-          last_heartbeat_at?: string
-          metadata?: Json
-          started_at?: string
-          worker_id: string
-        }
-        Update: {
-          active_job_id?: string | null
-          id?: string
-          last_heartbeat_at?: string
-          metadata?: Json
-          started_at?: string
-          worker_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
-            columns: ["active_job_id"]
-            isOneToOne: false
-            referencedRelation: "agent_jobs"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       workspaces: {
         Row: {
           avatar_path: string | null
@@ -1070,8 +1070,57 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_session_phase: {
+        Args: {
+          approver_member_id?: string
+          expected_version: number
+          expected_workspace_id: string
+          target_session_id: string
+        }
+        Returns: {
+          archived_at: string
+          id: string
+          linear_issue_url: string
+          phase: Database["public"]["Enums"]["session_phase"]
+          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          slack_channel_id: string
+          slack_thread_ts: string
+          workspace_id: string
+        }[]
+      }
+      can_manage_workspace: {
+        Args: { target_workspace_id: string }
+        Returns: boolean
+      }
+      claim_agent_job: {
+        Args: { default_concurrency_limit?: number; target_job_id: string }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          dedupe_key: string | null
+          finished_at: string | null
+          id: string
+          issue_id: string | null
+          job_type: string
+          last_error: string | null
+          requested_by_member_id: string | null
+          scheduled_at: string | null
+          session_id: string | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["agent_job_status"]
+          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+          updated_at: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "agent_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       create_workspace: {
-        Args: { requested_slug?: string | null; workspace_name: string }
+        Args: { requested_slug?: string; workspace_name: string }
         Returns: {
           avatar_path: string | null
           created_at: string
@@ -1081,86 +1130,48 @@ export type Database = {
           slug: string
           updated_at: string
         }
-      }
-      can_manage_workspace: {
-        Args: { target_workspace_id: string }
-        Returns: boolean
+        SetofOptions: {
+          from: "*"
+          to: "workspaces"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       current_user_workspace_ids: { Args: never; Returns: string[] }
-      next_issue_number: {
-        Args: { target_workspace_id: string }
-        Returns: number
-      }
       next_session_number: {
         Args: { target_workspace_id: string }
         Returns: number
       }
       schedule_job_retry: {
         Args: {
-          target_job_id: string
           base_delay_ms?: number
           max_backoff_ms?: number
-        }
-        Returns: {
-          id: string
-          workspace_id: string
-          issue_id: string | null
-          session_id: string | null
-          requested_by_member_id: string | null
-          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
-          status: Database["public"]["Enums"]["agent_job_status"]
-          attempt_count: number
-          last_error: string | null
-          dedupe_key: string | null
-          job_type: string
-          scheduled_at: string | null
-          started_at: string | null
-          finished_at: string | null
-          created_at: string
-          updated_at: string
-        }[]
-      }
-      claim_agent_job: {
-        Args: {
           target_job_id: string
-          default_concurrency_limit?: number
         }
         Returns: {
-          id: string
-          workspace_id: string
-          issue_id: string | null
-          session_id: string | null
-          requested_by_member_id: string | null
-          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
-          status: Database["public"]["Enums"]["agent_job_status"]
           attempt_count: number
-          last_error: string | null
-          dedupe_key: string | null
-          job_type: string
-          scheduled_at: string | null
-          started_at: string | null
-          finished_at: string | null
           created_at: string
-          updated_at: string
-        }[]
-      }
-      approve_session_phase: {
-        Args: {
-          target_session_id: string
-          expected_workspace_id: string
-          expected_version: number
-          approver_member_id?: string | null
-        }
-        Returns: {
+          dedupe_key: string | null
+          finished_at: string | null
           id: string
-          phase: Database["public"]["Enums"]["session_phase"]
-          phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          issue_id: string | null
+          job_type: string
+          last_error: string | null
+          requested_by_member_id: string | null
+          scheduled_at: string | null
+          session_id: string | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["agent_job_status"]
+          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+          updated_at: string
           workspace_id: string
-          slack_channel_id: string | null
-          slack_thread_ts: string | null
-          linear_issue_url: string | null
-          archived_at: string | null
         }[]
+        SetofOptions: {
+          from: "*"
+          to: "agent_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
     }
     Enums: {
@@ -1178,6 +1189,8 @@ export type Database = {
         | "assignment"
         | "comment_retry"
         | "slack_mention"
+      member_kind: "human" | "system"
+      member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
         | "agent_generating"
         | "awaiting_review"
@@ -1191,8 +1204,6 @@ export type Database = {
         | "review"
         | "land"
         | "monitor"
-      member_kind: "human" | "system"
-      member_role: "owner" | "admin" | "member" | "agent"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1336,6 +1347,8 @@ export const Constants = {
         "comment_retry",
         "slack_mention",
       ],
+      member_kind: ["human", "system"],
+      member_role: ["owner", "admin", "member", "agent"],
       pipeline_phase_status: [
         "agent_generating",
         "awaiting_review",
@@ -1351,8 +1364,7 @@ export const Constants = {
         "land",
         "monitor",
       ],
-      member_kind: ["human", "system"],
-      member_role: ["owner", "admin", "member", "agent"],
     },
   },
 } as const
+
