@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { normalizeNextPath } from "@/lib/auth";
+import { normalizeNextPath, resolveAuthenticatedSettingsPath } from "@/lib/auth";
 import {
   CODEX_OAUTH_COOKIE,
   exchangeAuthorizationCode,
@@ -37,10 +37,12 @@ export async function GET(request: NextRequest) {
   const user = await getSupabaseUserOrNull(supabase);
   if (!user) {
     return NextResponse.redirect(
-      new URL(loginPath("/settings/profile?codex_connect=unauthenticated"), request.url),
+      new URL(loginPath("/?codex_connect=unauthenticated"), request.url),
       { status: 303 },
     );
   }
+
+  const fallbackSettingsPath = await resolveAuthenticatedSettingsPath(supabase);
 
   const cookieValue = request.cookies.get(CODEX_OAUTH_COOKIE)?.value;
   const returnedState = request.nextUrl.searchParams.get("state");
@@ -49,7 +51,7 @@ export async function GET(request: NextRequest) {
 
   if (!cookieValue) {
     return clearCookie(
-      redirectToNext(request, "/settings/profile", { codex_connect: "state_missing" }),
+      redirectToNext(request, fallbackSettingsPath, { codex_connect: "state_missing" }),
     );
   }
 
@@ -58,11 +60,11 @@ export async function GET(request: NextRequest) {
     stash = JSON.parse(decryptSecretValue(cookieValue)) as StashedState;
   } catch {
     return clearCookie(
-      redirectToNext(request, "/settings/profile", { codex_connect: "state_invalid" }),
+      redirectToNext(request, fallbackSettingsPath, { codex_connect: "state_invalid" }),
     );
   }
 
-  const next = normalizeNextPath(stash.next, "/settings/profile");
+  const next = normalizeNextPath(stash.next, fallbackSettingsPath);
 
   if (providerError) {
     return clearCookie(redirectToNext(request, next, { codex_connect: providerError }));
