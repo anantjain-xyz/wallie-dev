@@ -124,22 +124,28 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   // Apply: rename pipeline if needed, then upsert stages, then delete the
-  // ones not present in the payload. The unique constraints on
-  // (pipeline_id, slug) and (pipeline_id, position) make a naive
-  // upsert-then-delete dangerous (could collide with a renamed stage).
-  // Two-phase: first move all stages to a placeholder position to clear the
-  // unique-position constraint, then write final positions.
+  // ones not present in the payload. The unique constraint on
+  // (pipeline_id, position) makes naive in-place reorders collide, so we
+  // park existing rows at large unused positions first and then write the
+  // final positions in step 2. Large positive values (vs. negative) satisfy
+  // the `position > 0` check constraint.
   if (parsed.name) {
     await admin.from("pipelines").update({ name: parsed.name }).eq("id", pipelineRow.id);
   }
 
-  // Step 1: shift existing stages out of the way with negative positions.
+  // Step 1: shift existing stages to a high position range so step 2 can
+  // assign final positions without colliding on (pipeline_id, position).
+  // PARK_OFFSET is well above any plausible stage count.
+  const PARK_OFFSET = 100000;
   if (existingStages && existingStages.length > 0) {
     for (let i = 0; i < existingStages.length; i++) {
-      await admin
+      const { error: parkError } = await admin
         .from("pipeline_stages")
-        .update({ position: -(i + 1) })
+        .update({ position: PARK_OFFSET + i + 1 })
         .eq("id", existingStages[i]!.id);
+      if (parkError) {
+        return NextResponse.json({ error: parkError.message }, { status: 500 });
+      }
     }
   }
 

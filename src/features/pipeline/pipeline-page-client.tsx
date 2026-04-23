@@ -82,12 +82,16 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
           setCards((prev) => {
             const idx = prev.findIndex((card) => card.id === row.id);
             const existing = idx === -1 ? null : prev[idx]!;
-            // Realtime payload doesn't include the stage slug; reuse what we
-            // already have for this card or look it up in the default
-            // pipeline. Sessions on a non-default pipeline stage will fall
-            // into the "Other" lane.
-            const slug =
-              existing?.currentStageSlug ?? stageIdToSlug.get(row.current_stage_id) ?? "unknown";
+            // When the session's stage changes (approval advanced it), we
+            // must re-resolve the slug from current_stage_id — keeping the
+            // existing slug would leave the card in the old lane until a
+            // full reload. If the stage didn't change, the cached slug is
+            // fine (and is the only way we'd know the slug for sessions
+            // pinned to a non-default stage).
+            const stageChanged = !existing || existing.currentStageId !== row.current_stage_id;
+            const slug = stageChanged
+              ? (stageIdToSlug.get(row.current_stage_id) ?? "unknown")
+              : existing.currentStageSlug;
             const next: PipelineDashboardCard = {
               createdAt: row.created_at,
               currentStageId: row.current_stage_id,

@@ -121,8 +121,9 @@ async function runStage(input: {
   const previousStages = await loadCompletedStageArtifacts(admin, session.id);
 
   // Resume-on-rejection: pull the most recent feedback for this stage so the
-  // template can include it via {{attempt.feedback}}.
-  const lastArtifact = await loadLatestArtifact(admin, session.id, stage.slug);
+  // template can include it via {{attempt.feedback}}. Match on stage_id so a
+  // rename in the editor doesn't cause us to miss the prior attempt.
+  const lastArtifact = await loadLatestArtifact(admin, session.id, stage.id);
   const attemptFeedback = lastArtifact?.feedback_text ?? null;
 
   const prompt = renderStagePrompt(stage, {
@@ -374,11 +375,15 @@ export async function handleRejection(input: {
     };
   }
 
+  // Match on stage_id (immutable FK) rather than stage_slug — a stage
+  // renamed in settings between artifact generation and review would
+  // otherwise cause this update to match zero rows and silently drop the
+  // reviewer's feedback.
   await admin
     .from("session_artifacts")
     .update({ feedback_text: input.feedbackText })
     .eq("session_id", input.sessionId)
-    .eq("stage_slug", stage.slug)
+    .eq("stage_id", stage.id)
     .eq("version", input.version);
 
   if (shouldEscalate(newRejectionCount)) {
@@ -482,13 +487,13 @@ async function loadEmSlackUserId(admin: AdminClient, workspaceId: string): Promi
 async function loadLatestArtifact(
   admin: AdminClient,
   sessionId: string,
-  stageSlug: string,
+  stageId: string,
 ): Promise<Tables<"session_artifacts"> | null> {
   const { data, error } = await admin
     .from("session_artifacts")
     .select("*")
     .eq("session_id", sessionId)
-    .eq("stage_slug", stageSlug)
+    .eq("stage_id", stageId)
     .order("version", { ascending: false })
     .limit(1)
     .maybeSingle();
