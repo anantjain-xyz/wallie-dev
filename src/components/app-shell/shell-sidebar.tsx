@@ -10,10 +10,10 @@ import {
   LogoutIcon,
   PlusIcon,
   SearchIcon,
+  SlidersIcon,
   ViewsIcon,
   WorkspaceGlyph,
 } from "@/components/shared/icons";
-import { Dropdown } from "@/components/shared/dropdown";
 import type { WorkspaceSummary } from "@/lib/auth";
 import {
   type WorkspaceNavItem,
@@ -96,31 +96,14 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
   return (
     <aside className="hidden h-screen w-[216px] shrink-0 overflow-hidden border-r border-border bg-background md:sticky md:top-0 md:flex md:flex-col">
       <div className="flex items-center justify-between px-4 pb-4 pt-4">
-        <Dropdown
-          trigger={
-            <span className="flex min-w-0 items-center gap-2.5">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e0e4ea] text-[10px] font-semibold text-[#5a6070]">
-                {workspace.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="flex min-w-0 items-center gap-1 text-[13px] font-semibold text-foreground">
-                <span className="truncate">{workspace.name}</span>
-                <ChevronDownIcon className="h-3 w-3 text-muted" />
-              </span>
-            </span>
-          }
-        >
-          <Link
-            href={settingsHref}
-            role="menuitem"
-            className={cn(
-              "ui-dropdown-item",
-              isActive(pathname, settingsHref) && "bg-[rgba(47,45,40,0.04)] text-foreground",
-            )}
-          >
-            <ViewsIcon className="h-3.5 w-3.5" />
-            <span>Settings</span>
-          </Link>
-        </Dropdown>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e0e4ea] text-[10px] font-semibold text-[#5a6070]">
+            {workspace.name.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+            {workspace.name}
+          </span>
+        </span>
 
         <div className="flex items-center gap-1.5">
           <Link href={sessionsHref} className="ui-icon-button" aria-label="Search sessions">
@@ -164,7 +147,16 @@ export function ShellSidebar({ navItems, viewerEmail, workspace }: ShellSidebarP
         </section>
       </div>
 
-      <div className="border-t border-border px-3 py-3">
+      <div className="border-t border-border px-2 py-2">
+        <SidebarEntry
+          href={settingsHref}
+          active={isActive(pathname, settingsHref)}
+          icon={<SlidersIcon className="h-3.5 w-3.5" />}
+          label="Workspace settings"
+        />
+      </div>
+
+      <div className="px-3 py-3">
         <div className="flex items-center gap-2 rounded-[8px] bg-surface px-2.5 py-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[12px] font-medium text-foreground">
