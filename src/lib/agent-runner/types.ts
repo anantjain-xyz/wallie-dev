@@ -71,15 +71,18 @@ export interface AgentRunner {
 // ---------------------------------------------------------------------------
 
 export interface AgentRunnerConfig {
-  /** Which provider to use: "claude-code" | "codex" */
+  /** Which provider to use: "codex" | "claude-code" */
   provider: string;
-  /** Model to use (provider-specific, e.g. "claude-sonnet-4-20250514"). */
+  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-20250514"). */
   model?: string;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
+export const DEFAULT_CODEX_MODEL = "gpt-5-codex";
+
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
-  provider: "claude-code",
+  provider: "codex",
+  model: DEFAULT_CODEX_MODEL,
   maxTurns: 5,
 };

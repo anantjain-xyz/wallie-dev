@@ -28,12 +28,14 @@ import type {
   WorkspaceUsageData,
 } from "@/features/settings/data";
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
+import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 
 type SettingsPageClientProps = {
   initialData: SettingsPageData;
   searchState: {
     githubStatus: string | null;
     slackStatus: string | null;
+    codexStatus: string | null;
   };
 };
 
@@ -1156,10 +1158,16 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                   disabled={isSavingAgentConfig}
                   label="Agent Provider"
                   onSave={handleSaveAgentConfig}
-                  options={["claude_code", "codex"]}
+                  options={["codex", "claude_code"]}
                   type="select"
                   value={agentConfig.agent_provider}
                 />
+                {(agentConfig.agent_provider ?? "codex") === "codex" ? (
+                  <p className="text-xs leading-5 text-muted">
+                    Each session runs with its creator&apos;s Codex account. Connect yours below
+                    under &ldquo;Your Codex account&rdquo;.
+                  </p>
+                ) : null}
                 <AgentConfigField
                   configKey="agent_model"
                   description="Model identifier passed to the agent provider."
@@ -1207,6 +1215,10 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               </div>
             )}
           </div>
+        </Section>
+
+        <Section title="Your Codex account">
+          <CodexConnectionPanel connectFlash={searchState.codexStatus} />
         </Section>
       </div>
     </div>

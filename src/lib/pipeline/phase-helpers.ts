@@ -5,7 +5,9 @@ import { App } from "@octokit/app";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { SessionPhase } from "@/features/sessions/types";
-import type { AgentEvent } from "@/lib/agent-runner/types";
+import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import { createAgentRunner } from "@/lib/agent-runner";
+import { CodexNotConnectedError, getCodexAccessTokenForSession } from "@/lib/codex/tokens";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 
 export type AdminClient = SupabaseClient<Database>;
@@ -21,6 +23,44 @@ export interface PhaseResult {
 // ---------------------------------------------------------------------------
 // Data access helpers
 // ---------------------------------------------------------------------------
+
+export type ResolveAgentRunnerResult =
+  | { ok: true; runner: AgentRunner }
+  | { ok: false; error: string };
+
+/**
+ * Build the AgentRunner for a session, resolving provider-specific
+ * credentials (e.g. Codex OAuth tokens) along the way.
+ *
+ * Returns a tagged result rather than throwing so callers can translate a
+ * missing-credential failure into a friendly `errorResult` / job-error row
+ * without swallowing unrelated exceptions.
+ */
+export async function resolveAgentRunner(input: {
+  admin: AdminClient;
+  session: Pick<SessionRow, "creator_member_id">;
+  provider: string;
+  model?: string;
+}): Promise<ResolveAgentRunnerResult> {
+  const normalized = input.provider.replace(/_/g, "-");
+  if (normalized === "codex") {
+    try {
+      const accessToken = await getCodexAccessTokenForSession(input.admin, input.session);
+      return {
+        ok: true,
+        runner: createAgentRunner("codex", {
+          codex: { accessToken, model: input.model },
+        }),
+      };
+    } catch (err) {
+      if (err instanceof CodexNotConnectedError) {
+        return { ok: false, error: err.message };
+      }
+      throw err;
+    }
+  }
+  return { ok: true, runner: createAgentRunner(normalized) };
+}
 
 export async function loadAgentConfig(
   admin: AdminClient,
