@@ -113,9 +113,7 @@ function CreateSessionDialogBody({
         role="dialog"
       >
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-            New session
-          </p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted">New session</p>
           <h2
             id={titleId}
             className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground"
@@ -123,8 +121,7 @@ function CreateSessionDialogBody({
             Start a Wallie pipeline
           </h2>
           <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-            Write the prompt. Wallie drafts a product spec and you review before it moves to
-            design.
+            Write the prompt. Wallie drafts a product spec and you review before it moves to design.
           </p>
         </div>
 
