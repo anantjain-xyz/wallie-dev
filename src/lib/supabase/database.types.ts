@@ -732,6 +732,42 @@ export type Database = {
           },
         ]
       }
+      user_codex_credentials: {
+        Row: {
+          access_token_expires_at: string
+          account_email: string | null
+          account_id: string | null
+          created_at: string
+          encrypted_access_token: string
+          encrypted_refresh_token: string
+          scope: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token_expires_at: string
+          account_email?: string | null
+          account_id?: string | null
+          created_at?: string
+          encrypted_access_token: string
+          encrypted_refresh_token: string
+          scope?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token_expires_at?: string
+          account_email?: string | null
+          account_id?: string | null
+          created_at?: string
+          encrypted_access_token?: string
+          encrypted_refresh_token?: string
+          scope?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       workspace_agent_config: {
         Row: {
           created_at: string

@@ -6,7 +6,8 @@ import { App } from "@octokit/app";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { SessionPhase } from "@/features/sessions/types";
 import type { AgentEvent } from "@/lib/agent-runner/types";
-import { createAgentRunner, DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner";
+import { DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner";
+import { resolveAgentRunner } from "@/lib/pipeline/phase-helpers";
 import { createWorkspace, destroyWorkspace } from "@/lib/workspace-manager/manager";
 import { renderPhasePrompt } from "@/lib/prompt-templates";
 import { resolveGitHubAppConfig } from "@/features/github/config";
@@ -105,7 +106,7 @@ export async function runEngineeringPhase(
     .insert({
       agent_job_id: job.id,
       session_id: session.id,
-      model_name: agentConfig.model ?? "claude-code",
+      model_name: agentConfig.model ?? DEFAULT_AGENT_RUNNER_CONFIG.model ?? "codex",
       model_provider: provider,
       run_type: "engineering",
       status: "running" as const,
@@ -123,8 +124,23 @@ export async function runEngineeringPhase(
   const runId = run.id;
 
   try {
+    // --- Resolve agent runner (codex requires per-user OAuth credentials) ---
+    const runnerResult = await resolveAgentRunner({
+      admin,
+      session,
+      provider,
+      model: agentConfig.model,
+    });
+    if (!runnerResult.ok) {
+      await admin
+        .from("agent_runs")
+        .update({ finished_at: new Date().toISOString(), status: "error" as const })
+        .eq("id", runId);
+      return errorResult(admin, job, runnerResult.error, runId);
+    }
+
     // --- Multi-turn agent loop ---
-    const runner = createAgentRunner(provider);
+    const runner = runnerResult.runner;
     let continueSessionId: string | undefined;
     let turnCount = 0;
     let taskComplete = false;

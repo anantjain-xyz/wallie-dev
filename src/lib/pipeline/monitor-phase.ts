@@ -1,5 +1,5 @@
 import type { Tables } from "@/lib/supabase/database.types";
-import { createAgentRunner, DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner";
+import { DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner";
 import { createWorkspace } from "@/lib/workspace-manager/manager";
 import { renderPhasePrompt } from "@/lib/prompt-templates";
 
@@ -20,6 +20,7 @@ import {
   markRunError,
   markRunSuccess,
   persistEvent,
+  resolveAgentRunner,
   successResult,
   updateRunActivity,
 } from "./phase-helpers";
@@ -108,7 +109,7 @@ export async function runMonitorPhase(input: MonitorPhaseInput): Promise<PhaseRe
   const runId = await createAgentRun(admin, {
     jobId: job.id,
     sessionId: session.id,
-    model: agentConfig.model ?? "claude-code",
+    model: agentConfig.model ?? DEFAULT_AGENT_RUNNER_CONFIG.model ?? "codex",
     provider,
     runType: "monitor",
     workspaceId: session.workspace_id,
@@ -120,8 +121,20 @@ export async function runMonitorPhase(input: MonitorPhaseInput): Promise<PhaseRe
   }
 
   try {
+    // --- Resolve agent runner (codex requires per-user OAuth credentials) ---
+    const runnerResult = await resolveAgentRunner({
+      admin,
+      session,
+      provider,
+      model: agentConfig.model,
+    });
+    if (!runnerResult.ok) {
+      await markRunError(admin, runId);
+      return errorResult(admin, job, runnerResult.error, runId);
+    }
+
     // --- Multi-turn agent loop ---
-    const runner = createAgentRunner(provider);
+    const runner = runnerResult.runner;
     let continueSessionId: string | undefined;
     let taskComplete = false;
 

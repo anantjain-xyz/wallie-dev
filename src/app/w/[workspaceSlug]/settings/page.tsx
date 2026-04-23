@@ -8,6 +8,7 @@ type SettingsPageProps = {
   searchParams: Promise<{
     github?: string;
     slack?: string;
+    codex_connect?: string;
   }>;
 };
 
@@ -22,6 +23,7 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
         slackStatus: resolvedSearchParams.slack ?? null,
+        codexStatus: resolvedSearchParams.codex_connect ?? null,
       }}
     />
   );

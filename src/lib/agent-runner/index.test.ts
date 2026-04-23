@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createAgentRunner, ClaudeCodeRunner, DEFAULT_AGENT_RUNNER_CONFIG } from "./index";
+import {
+  ClaudeCodeRunner,
+  CodexRunner,
+  createAgentRunner,
+  DEFAULT_AGENT_RUNNER_CONFIG,
+  DEFAULT_CODEX_MODEL,
+} from "./index";
 
 describe("createAgentRunner", () => {
   it("creates a ClaudeCodeRunner for 'claude-code'", () => {
@@ -15,6 +21,16 @@ describe("createAgentRunner", () => {
     expect(runner.provider).toBe("claude-code");
   });
 
+  it("creates a CodexRunner for 'codex' when auth is provided", () => {
+    const runner = createAgentRunner("codex", { codex: { accessToken: "tok" } });
+    expect(runner).toBeInstanceOf(CodexRunner);
+    expect(runner.provider).toBe("codex");
+  });
+
+  it("throws when codex is selected without auth", () => {
+    expect(() => createAgentRunner("codex")).toThrow(/codex auth/);
+  });
+
   it("throws for unknown provider", () => {
     expect(() => createAgentRunner("unknown-provider")).toThrow(
       'Unknown agent provider: "unknown-provider"',
@@ -24,7 +40,8 @@ describe("createAgentRunner", () => {
 
 describe("DEFAULT_AGENT_RUNNER_CONFIG", () => {
   it("has sensible defaults", () => {
-    expect(DEFAULT_AGENT_RUNNER_CONFIG.provider).toBe("claude-code");
+    expect(DEFAULT_AGENT_RUNNER_CONFIG.provider).toBe("codex");
+    expect(DEFAULT_AGENT_RUNNER_CONFIG.model).toBe(DEFAULT_CODEX_MODEL);
     expect(DEFAULT_AGENT_RUNNER_CONFIG.maxTurns).toBe(5);
   });
 });
