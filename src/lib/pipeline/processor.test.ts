@@ -14,6 +14,16 @@ const mocked = vi.hoisted(() => ({
   formatEscalationDmBlocks: vi.fn(() => [{ type: "section" }]),
   escapeMrkdwn: vi.fn((s: string) => s),
   createAgentRunner: vi.fn(),
+  createSessionSandbox: vi.fn().mockResolvedValue({
+    id: "sandbox-1",
+    repoPath: "/vercel/sandbox",
+    exec: vi.fn(),
+    readFile: vi.fn(),
+    stop: vi.fn().mockResolvedValue(undefined),
+    writeFile: vi.fn(),
+  }),
+  getCodexAccessTokenForSession: vi.fn().mockResolvedValue("codex-token"),
+  octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadPipelineWithStages: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
@@ -49,6 +59,37 @@ vi.mock("@/lib/prompt-templates", () => ({
 
 vi.mock("@/lib/agent-runner", () => ({
   createAgentRunner: mocked.createAgentRunner,
+  DEFAULT_AGENT_RUNNER_CONFIG: {
+    provider: "codex",
+    model: "gpt-5-codex",
+    maxTurns: 5,
+  },
+}));
+
+vi.mock("@/lib/sandbox", () => ({
+  createSessionSandbox: mocked.createSessionSandbox,
+}));
+
+vi.mock("@/lib/codex/tokens", () => ({
+  CodexNotConnectedError: class CodexNotConnectedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "CodexNotConnectedError";
+    }
+  },
+  getCodexAccessTokenForSession: mocked.getCodexAccessTokenForSession,
+}));
+
+vi.mock("@/features/github/config", () => ({
+  resolveGitHubAppConfig: vi.fn(() => ({})),
+}));
+
+vi.mock("@octokit/app", () => ({
+  App: vi.fn().mockImplementation(function MockApp() {
+    return {
+      octokit: { request: mocked.octokitRequest },
+    };
+  }),
 }));
 
 import { handleApproval, processPipelineJob } from "./processor";
@@ -248,6 +289,31 @@ function buildAdminMock(opts: MockOptions) {
     }),
   } as const;
 
+  const githubInstallationsTable = {
+    select: () => ({
+      eq: () => ({
+        maybeSingle: async () => ({ data: { id: "ghi-1", installation_id: 123 }, error: null }),
+      }),
+    }),
+  } as const;
+
+  const githubRepositoriesTable = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          order: () => ({
+            limit: () => ({
+              maybeSingle: async () => ({
+                data: { default_branch: "main", full_name: "acme/app" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  } as const;
+
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
@@ -258,6 +324,8 @@ function buildAdminMock(opts: MockOptions) {
     agent_jobs: agentJobsTable,
     workspace_members: workspaceMembersTable,
     workspace_secrets: workspaceSecretsTable,
+    github_installations: githubInstallationsTable,
+    github_repositories: githubRepositoriesTable,
   };
 
   return {

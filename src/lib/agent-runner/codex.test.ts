@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { FakeSandbox } from "@/lib/sandbox/fake";
+
 import { CodexRunner, parseCodexLine } from "./codex";
 
 describe("CodexRunner", () => {
@@ -15,6 +17,70 @@ describe("CodexRunner", () => {
 
   it("throws when constructed without an access token", () => {
     expect(() => new CodexRunner({ accessToken: "" })).toThrow(/accessToken/);
+  });
+
+  it("writes auth.json + prompt file and streams events from scripted stdout", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      (c) => c.cmd === "bash",
+      [
+        { data: `{"type":"text","text":"thinking..."}\n`, stream: "stdout" },
+        {
+          data: `{"type":"tool_call","name":"read_file","arguments":{"path":"a.ts"}}\n`,
+          stream: "stdout",
+        },
+        { data: `{"type":"result","summary":"all done"}\n`, stream: "stdout" },
+      ],
+    );
+
+    const runner = new CodexRunner({ accessToken: "tok", model: "gpt-5-codex" });
+    const events = [];
+    for await (const ev of runner.start({
+      sessionId: "s1",
+      sandbox,
+      prompt: "Hello Codex",
+    })) {
+      events.push(ev);
+    }
+
+    expect(events).toEqual([
+      { type: "text", text: "thinking..." },
+      { type: "tool_use", tool: "read_file", input: '{"path":"a.ts"}' },
+      { type: "completion", taskComplete: true, summary: "all done" },
+      { type: "completion", taskComplete: true, summary: "Codex session completed" },
+    ]);
+
+    // auth.json and prompt must land in the sandbox.
+    expect(await sandbox.readFile("/vercel/sandbox/.codex/auth.json")).toContain(
+      `"access_token":"tok"`,
+    );
+    expect(await sandbox.readFile("/vercel/sandbox/.wallie-prompt.txt")).toBe("Hello Codex");
+
+    // CLI invocation uses bash -lc to redirect the prompt file as stdin.
+    expect(sandbox.calls).toHaveLength(1);
+    const [call] = sandbox.calls;
+    expect(call.cmd).toBe("bash");
+    expect(call.args[0]).toBe("-lc");
+    expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5-codex'");
+    expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
+    expect(call.opts.env).toMatchObject({ CODEX_HOME: "/vercel/sandbox/.codex" });
+  });
+
+  it("emits an error event when the CLI exits non-zero", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", [{ data: "fatal: auth failed\n", stream: "stderr" }], {
+      exitCode: 1,
+    });
+
+    const runner = new CodexRunner({ accessToken: "tok" });
+    const events = [];
+    for await (const ev of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      events.push(ev);
+    }
+
+    expect(events[0]).toMatchObject({ type: "error" });
+    expect((events[0] as { message: string }).message).toContain("exited with code 1");
+    expect((events[0] as { message: string }).message).toContain("auth failed");
   });
 });
 

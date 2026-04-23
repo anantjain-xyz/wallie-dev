@@ -1,8 +1,10 @@
 /**
  * Agent Runner abstraction — defines the contract for launching coding agents
- * within a provisioned workspace. Implementations stream structured events
- * back to the caller for persistence and real-time UI.
+ * inside a per-session sandbox. Implementations stream structured events back
+ * to the caller for persistence and real-time UI.
  */
+
+import type { SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
 // Agent Events
@@ -48,7 +50,8 @@ export type AgentEvent =
 
 export interface AgentRunnerStartInput {
   sessionId: string;
-  workspacePath: string;
+  /** Sandbox the agent CLI runs inside. Owned by the phase; reused across turns. */
+  sandbox: SandboxHandle;
   prompt: string;
   /** Optional session ID from a previous turn for continuation. */
   continueSessionId?: string;
@@ -60,7 +63,7 @@ export interface AgentRunner {
   readonly provider: string;
 
   /**
-   * Launch the agent in the given workspace directory with the provided prompt.
+   * Launch the agent inside the sandbox with the provided prompt.
    * Returns an async iterable of structured events.
    */
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent>;

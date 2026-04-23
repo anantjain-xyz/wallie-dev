@@ -23,6 +23,13 @@ export const serverEnvSchema = z.object({
   SUPABASE_SECRET_KEY: requiredEnvStringSchema,
   WALLIE_ENCRYPTION_KEY: z.string().min(32),
   WALLIE_PROCESS_TOKEN: optionalEnvStringSchema,
+  // Vercel Sandbox credentials for agent execution. All three required in
+  // environments that don't run on Vercel infra (where OIDC is used instead).
+  VERCEL_TOKEN: optionalEnvStringSchema,
+  VERCEL_TEAM_ID: optionalEnvStringSchema,
+  VERCEL_PROJECT_ID: optionalEnvStringSchema,
+  // "vercel" (default) or "fake" (tests). Any other value throws at runtime.
+  WALLIE_SANDBOX_IMPL: optionalEnvStringSchema,
 });
 type ServerOnlyEnv = z.infer<typeof serverEnvSchema>;
 export type ServerEnv = ClientEnv & ServerOnlyEnv;
@@ -54,6 +61,10 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     SUPABASE_SECRET_KEY: input.SUPABASE_SECRET_KEY,
     WALLIE_ENCRYPTION_KEY: input.WALLIE_ENCRYPTION_KEY,
     WALLIE_PROCESS_TOKEN: input.WALLIE_PROCESS_TOKEN,
+    VERCEL_TOKEN: input.VERCEL_TOKEN,
+    VERCEL_TEAM_ID: input.VERCEL_TEAM_ID,
+    VERCEL_PROJECT_ID: input.VERCEL_PROJECT_ID,
+    WALLIE_SANDBOX_IMPL: input.WALLIE_SANDBOX_IMPL,
   });
 
   return {
