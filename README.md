@@ -106,13 +106,13 @@ Worker polls --> [POST /api/agent-jobs/process]
 
 If you read only five files to understand Wallie, read these:
 
-| # | File | Role |
-|---|------|------|
-| 1 | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts) | Phase router. Atomic CAS claim, dispatches to six phase handlers, posts Slack. |
-| 2 | [src/lib/pipeline/product-agent.ts](src/lib/pipeline/product-agent.ts) | Calls Claude Sonnet 4. Sanitizes Linear text, builds prompt, parses structured JSON. |
-| 3 | [src/app/api/slack/events/route.ts](src/app/api/slack/events/route.ts) | Slack mention entry. HMAC verify, extract Linear URL, create session. |
-| 4 | [src/lib/wallie/service.ts](src/lib/wallie/service.ts) | Job enqueue + run tracking. Dedup keys, token/cost logging. |
-| 5 | [src/worker/index.ts](src/worker/index.ts) | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler. |
+| #   | File                                                                   | Role                                                                                 |
+| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)         | Phase router. Atomic CAS claim, dispatches to six phase handlers, posts Slack.       |
+| 2   | [src/lib/pipeline/product-agent.ts](src/lib/pipeline/product-agent.ts) | Calls Claude Sonnet 4. Sanitizes Linear text, builds prompt, parses structured JSON. |
+| 3   | [src/app/api/slack/events/route.ts](src/app/api/slack/events/route.ts) | Slack mention entry. HMAC verify, extract Linear URL, create session.                |
+| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                 | Job enqueue + run tracking. Dedup keys, token/cost logging.                          |
+| 5   | [src/worker/index.ts](src/worker/index.ts)                             | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler.          |
 
 ### Walkthrough by Domain
 
