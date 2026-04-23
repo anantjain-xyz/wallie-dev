@@ -313,6 +313,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const [isLaunchingSlackInstall, setIsLaunchingSlackInstall] = useState(false);
   const [isDisconnectingSlack, setIsDisconnectingSlack] = useState(false);
   const [isTestingLinear, setIsTestingLinear] = useState(false);
+  const [linearApiKeyDraft, setLinearApiKeyDraft] = useState("");
+  const [isSavingLinearKey, setIsSavingLinearKey] = useState(false);
+  const [isDeletingLinearKey, setIsDeletingLinearKey] = useState(false);
   const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialData.agentConfig);
   const [isSavingAgentConfig, setIsSavingAgentConfig] = useState(false);
   const [apiKeys, setApiKeys] = useState<ApiKeyPreview[]>(initialData.apiKeys);
@@ -323,6 +326,8 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const isManager = initialData.canManage;
   const hasGitHubAppConfig = initialData.github.missingAppKeys.length === 0;
   const hasSlackAppConfig = initialData.slack.missingAppKeys.length === 0;
+  const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
+  const otherSecrets = secrets.filter((secret) => secret.key !== "LINEAR_API_KEY");
 
   useEffect(() => {
     if (!isManager) {
@@ -590,6 +595,72 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
       });
     } finally {
       setIsTestingLinear(false);
+    }
+  }
+
+  async function handleSaveLinearKey() {
+    const value = linearApiKeyDraft.trim();
+
+    if (!value) {
+      setFlashMessage({ kind: "error", text: "Paste a Linear API key first." });
+      return;
+    }
+
+    setIsSavingLinearKey(true);
+
+    try {
+      const response = await fetch("/api/secrets", {
+        body: JSON.stringify({
+          key: "LINEAR_API_KEY",
+          value,
+          workspaceId: initialData.workspace.id,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = await readResponseJson<UpsertWorkspaceSecretResponse>(response);
+
+      setSecrets((current) => {
+        const next = current.filter((secret) => secret.key !== payload.secret.key);
+        next.push(payload.secret);
+        next.sort((left, right) => left.key.localeCompare(right.key));
+        return next;
+      });
+      setLinearApiKeyDraft("");
+      setFlashMessage({ kind: "success", text: "Linear API key saved." });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Linear API key save failed.",
+      });
+    } finally {
+      setIsSavingLinearKey(false);
+    }
+  }
+
+  async function handleDeleteLinearKey() {
+    if (!window.confirm("Remove the Linear API key for this workspace?")) {
+      return;
+    }
+
+    setIsDeletingLinearKey(true);
+
+    try {
+      const response = await fetch(
+        `/api/secrets/${encodeURIComponent("LINEAR_API_KEY")}?workspaceId=${encodeURIComponent(initialData.workspace.id)}`,
+        { method: "DELETE" },
+      );
+      const payload = await readResponseJson<DeleteWorkspaceSecretResponse>(response);
+
+      setSecrets((current) => current.filter((secret) => secret.key !== payload.deletedKey));
+      setFlashMessage({ kind: "success", text: "Linear API key removed." });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Linear API key deletion failed.",
+      });
+    } finally {
+      setIsDeletingLinearKey(false);
     }
   }
 
@@ -963,6 +1034,84 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           </div>
         </Section>
 
+        <Section title="Linear">
+          <div className="space-y-4">
+            <p className="text-sm leading-7 text-muted">
+              Paste a Linear personal API key so Wallie can read issues referenced in sessions and
+              Slack mentions. Generate one at{" "}
+              <a
+                className={interactiveLinkClass}
+                href="https://linear.app/settings/account/security"
+                rel="noreferrer"
+                target="_blank"
+              >
+                linear.app/settings/account/security
+              </a>
+              .
+            </p>
+
+            {!isManager ? (
+              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
+                Workspace admins can manage the Linear API key from this page.
+              </div>
+            ) : linearSecret ? (
+              <div className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Linear API key configured</p>
+                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.14em] text-muted">
+                    {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
+                    {dateFormatter.format(new Date(linearSecret.updatedAt))}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="ui-button"
+                    disabled={isTestingLinear}
+                    onClick={() => void handleTestLinearConnection()}
+                    type="button"
+                  >
+                    {isTestingLinear ? "Testing…" : "Test Connection"}
+                  </button>
+                  <button
+                    className="ui-button-danger"
+                    disabled={isDeletingLinearKey}
+                    onClick={() => void handleDeleteLinearKey()}
+                    type="button"
+                  >
+                    {isDeletingLinearKey ? "Removing…" : "Remove"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="ui-subpanel space-y-3 p-4">
+                <label className="space-y-2 text-sm font-semibold text-foreground">
+                  <span>Linear API Key</span>
+                  <input
+                    autoComplete="off"
+                    className="ui-input font-mono"
+                    name="linearApiKey"
+                    onChange={(event) => setLinearApiKeyDraft(event.target.value)}
+                    placeholder="lin_api_…"
+                    spellCheck={false}
+                    type="password"
+                    value={linearApiKeyDraft}
+                  />
+                </label>
+                <div className="flex justify-end">
+                  <button
+                    className="ui-button-primary"
+                    disabled={isSavingLinearKey || !linearApiKeyDraft.trim()}
+                    onClick={() => void handleSaveLinearKey()}
+                    type="button"
+                  >
+                    {isSavingLinearKey ? "Saving…" : "Save Linear API Key"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </Section>
+
         <Section title="Secrets">
           <div className="space-y-4">
             <p className="text-sm leading-7 text-muted">
@@ -1014,12 +1163,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                     <div className="ui-subpanel p-4 text-sm text-muted">
                       Loading Secret Previews…
                     </div>
-                  ) : secrets.length === 0 ? (
+                  ) : otherSecrets.length === 0 ? (
                     <div className="ui-subpanel p-4 text-sm text-muted">
                       No workspace secrets yet.
                     </div>
                   ) : (
-                    secrets.map((secret) => (
+                    otherSecrets.map((secret) => (
                       <div
                         className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                         key={secret.id}
@@ -1031,16 +1180,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          {secret.key === "LINEAR_API_KEY" ? (
-                            <button
-                              className="ui-button"
-                              disabled={isTestingLinear}
-                              onClick={() => void handleTestLinearConnection()}
-                              type="button"
-                            >
-                              {isTestingLinear ? "Testing…" : "Test Connection"}
-                            </button>
-                          ) : null}
                           <button
                             className="ui-button-danger"
                             onClick={() => void handleDeleteSecret(secret.key)}
