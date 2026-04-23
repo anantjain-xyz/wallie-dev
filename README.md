@@ -146,7 +146,6 @@ If you read only five files to understand Wallie, read these:
 ```
 agent-jobs/process/route.ts          <- worker calls this
 sessions/[sessionId]/phase-action/   <- in-app approve/reject
-v1/sessions/                         <- public API (api-key auth)
 slack/events/                        <- mentions in
 slack/interactions/                  <- button clicks
 slack/install/ + callback/           <- OAuth
@@ -154,7 +153,6 @@ github/webhooks/                     <- PR/install events
 github/install/ + callback/          <- OAuth
 linear/test-connection/              <- verify API key
 secrets/                             <- encrypted workspace creds
-api-keys/                            <- public API key CRUD
 workspaces/[id]/avatar/              <- storage upload
 agent-runs/[runId]/retry/            <- rerun a failed run
 ```
@@ -173,7 +171,7 @@ agent-runs/[runId]/retry/            <- rerun a failed run
 - **slack/** -- [verify.ts](src/lib/slack/verify.ts) HMAC-SHA256.
 - **linear/** -- [client.ts](src/lib/linear/client.ts) GraphQL.
 - **agent-runner/** -- [claude-code.ts](src/lib/agent-runner/claude-code.ts) spawns Claude Code CLI subprocess.
-- **api-keys/auth.ts**, **workspaces.ts**, **storage/**, **routes.ts**, **env/**.
+- **workspaces.ts**, **storage/**, **routes.ts**, **env/**.
 
 #### UI
 

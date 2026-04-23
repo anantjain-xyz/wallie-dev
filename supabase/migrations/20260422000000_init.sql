@@ -350,19 +350,6 @@ create table public.workspace_prompt_templates (
   constraint workspace_prompt_templates_workspace_phase_key unique (workspace_id, phase)
 );
 
-create table public.workspace_api_keys (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  name text not null default 'Default',
-  key_hash text not null,
-  key_prefix text not null,
-  created_by_member_id uuid references public.workspace_members(id) on delete set null,
-  last_used_at timestamptz,
-  created_at timestamptz not null default now(),
-  revoked_at timestamptz,
-  constraint workspace_api_keys_key_hash_unique unique (key_hash)
-);
-
 create table public.worker_heartbeats (
   id uuid primary key default gen_random_uuid(),
   worker_id text not null,
@@ -473,13 +460,6 @@ create index slack_installations_workspace_id_idx
 
 create index idx_workspace_prompt_templates_workspace
   on public.workspace_prompt_templates (workspace_id);
-
-create index idx_workspace_api_keys_workspace
-  on public.workspace_api_keys (workspace_id);
-
-create index idx_workspace_api_keys_hash
-  on public.workspace_api_keys (key_hash)
-  where revoked_at is null;
 
 create index worker_heartbeats_last_heartbeat_idx
   on public.worker_heartbeats (last_heartbeat_at);
@@ -1331,7 +1311,6 @@ alter table public.agent_run_messages enable row level security;
 alter table public.slack_installations enable row level security;
 alter table public.workspace_agent_config enable row level security;
 alter table public.workspace_prompt_templates enable row level security;
-alter table public.workspace_api_keys enable row level security;
 alter table public.worker_heartbeats enable row level security;
 
 -- ---------------------------------------------------------------------------
@@ -1574,26 +1553,6 @@ create policy workspace_prompt_templates_delete
 
 create policy workspace_prompt_templates_service_role_all
   on public.workspace_prompt_templates for all to service_role
-  using (true) with check (true);
-
-create policy workspace_api_keys_select
-  on public.workspace_api_keys for select to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
-
-create policy workspace_api_keys_insert
-  on public.workspace_api_keys for insert to authenticated
-  with check (public.can_manage_workspace(workspace_id));
-
-create policy workspace_api_keys_update
-  on public.workspace_api_keys for update to authenticated
-  using (public.can_manage_workspace(workspace_id));
-
-create policy workspace_api_keys_delete
-  on public.workspace_api_keys for delete to authenticated
-  using (public.can_manage_workspace(workspace_id));
-
-create policy workspace_api_keys_service_role_all
-  on public.workspace_api_keys for all to service_role
   using (true) with check (true);
 
 create policy worker_heartbeats_select
