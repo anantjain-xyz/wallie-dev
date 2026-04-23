@@ -18,9 +18,16 @@ export const CODEX_TOKEN_URL =
 
 /**
  * Scopes the Codex CLI requests. `offline_access` is required to obtain a
- * refresh token.
+ * refresh token; `api.connectors.*` match the Codex CLI's current request.
  */
-export const CODEX_SCOPES = "openid profile email offline_access";
+export const CODEX_SCOPES =
+  "openid profile email offline_access api.connectors.read api.connectors.invoke";
+
+/**
+ * Originator tag the Codex CLI sends. auth.openai.com rejects the
+ * `app_EMoamEEZ73f0CkXaXp7hrann` public client when this is missing.
+ */
+export const CODEX_ORIGINATOR = "codex_cli_rs";
 
 export const CODEX_OAUTH_COOKIE = "wallie_codex_oauth";
 
@@ -62,6 +69,9 @@ export function buildCodexAuthorizeUrl(input: {
     state: input.state,
     code_challenge: input.codeChallenge,
     code_challenge_method: "S256",
+    id_token_add_organizations: "true",
+    codex_cli_simplified_flow: "true",
+    originator: CODEX_ORIGINATOR,
   });
   return `${CODEX_AUTHORIZE_URL}?${params.toString()}`;
 }
