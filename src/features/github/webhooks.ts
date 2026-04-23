@@ -140,7 +140,7 @@ export async function handleGitHubPullRequestEvent(
         .maybeSingle(),
       admin
         .from("github_issue_branches")
-        .select("id, issue_id")
+        .select("id, session_id")
         .eq("workspace_id", installation.workspace_id)
         .eq("branch_name", payload.pull_request.head.ref)
         .maybeSingle(),

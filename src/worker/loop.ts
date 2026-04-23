@@ -11,7 +11,7 @@ type AdminClient = SupabaseClient<Database>;
 type AgentJobRow = Tables<"agent_jobs">;
 
 const jobSelect =
-  "id, workspace_id, issue_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
+  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 
 export interface PollResult {
   jobId: string | null;

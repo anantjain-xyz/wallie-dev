@@ -87,7 +87,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
   return {
     id: "job-1",
     workspace_id: "ws-1",
-    issue_id: "issue-1",
+    session_id: "sess-1",
     job_type: "session",
     status: "queued",
     created_at: new Date().toISOString(),
@@ -105,7 +105,6 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
   return {
     id: "sess-1",
     workspace_id: "ws-1",
-    issue_id: "issue-1",
     number: 1,
     title: "SSO login",
     prompt_md: "Imported from Linear: TEAM-1",
@@ -509,7 +508,6 @@ describe("processPipelineJob", () => {
 
   function buildProcessorAdmin(opts: {
     session: Tables<"sessions"> | null;
-    issue?: { id: string; title: string; description_md: string } | null;
     claimedRow?: { id: string } | null;
     insertArtifactError?: unknown;
     pointerUpdateError?: unknown;
@@ -559,20 +557,6 @@ describe("processPipelineJob", () => {
           });
           chain.insert = vi.fn(() => chain);
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: opts.session, error: null });
-        } else if (table === "issues") {
-          chain.update = vi.fn(() => {
-            (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
-              resolve({ data: null, error: null });
-            return chain;
-          });
-          chain.maybeSingle = vi.fn().mockResolvedValue({
-            data: opts.issue ?? {
-              id: "issue-1",
-              title: "Linear title",
-              description_md: "Linear body",
-            },
-            error: null,
-          });
         } else if (table === "workspace_secrets") {
           (chain as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
             resolve({

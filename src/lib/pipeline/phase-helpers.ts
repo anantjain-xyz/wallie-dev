@@ -160,7 +160,7 @@ export async function createAgentRun(
   admin: AdminClient,
   input: {
     jobId: string;
-    issueId: string | null | undefined;
+    sessionId: string;
     model: string;
     provider: string;
     runType: string;
@@ -171,7 +171,7 @@ export async function createAgentRun(
     .from("agent_runs")
     .insert({
       agent_job_id: input.jobId,
-      issue_id: input.issueId ?? undefined,
+      session_id: input.sessionId,
       model_name: input.model,
       model_provider: input.provider,
       run_type: input.runType,

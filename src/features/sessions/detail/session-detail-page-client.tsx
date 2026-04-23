@@ -323,7 +323,11 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             <div className="mt-3">
               <IssueWalliePanel
                 initialData={initialData.wallie}
-                issue={initialData.issue}
+                session={{
+                  githubRepositoryId: initialData.sessionGithubRepositoryId,
+                  id: session.id,
+                  workspaceId: session.workspaceId,
+                }}
                 memberIndex={initialData.memberIndex}
                 repositories={initialData.wallie.repository ? [initialData.wallie.repository] : []}
                 supabase={supabase}

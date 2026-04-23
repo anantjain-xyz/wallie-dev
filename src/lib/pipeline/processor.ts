@@ -42,14 +42,7 @@ export async function processPipelineJob(input: {
   const job = input.job;
 
   try {
-    // Load the session row. Prefer the direct session_id FK (Phase 0
-    // addition); fall back to the legacy anchor-issue lookup for jobs
-    // created before the backfill.
-    const session = job.session_id
-      ? await loadSessionById(admin, job.session_id)
-      : job.issue_id
-        ? await loadSessionByIssueId(admin, job.issue_id)
-        : null;
+    const session = await loadSessionById(admin, job.session_id);
     if (!session) {
       await markPipelineJobError(admin, job, "No session row found for this job.");
       return { jobId: job.id, processed: true, result: "error", runId: null };
@@ -661,7 +654,6 @@ export async function handleRejection(input: {
     dedupe_key: session.linear_issue_id
       ? `pipeline:${session.linear_issue_id}:active`
       : `pipeline:session:${session.id}:active`,
-    issue_id: session.issue_id ?? undefined,
     job_type: PIPELINE_JOB_TYPE,
     requested_by_member_id: wallieMember?.id ?? null,
     session_id: session.id,
@@ -682,20 +674,6 @@ export async function handleRejection(input: {
 }
 
 // --- Data access helpers ---
-
-async function loadSessionByIssueId(
-  admin: AdminClient,
-  issueId: string,
-): Promise<SessionRow | null> {
-  const { data, error } = await admin
-    .from("sessions")
-    .select("*")
-    .eq("issue_id", issueId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data;
-}
 
 async function loadSessionById(admin: AdminClient, id: string): Promise<SessionRow | null> {
   const { data, error } = await admin.from("sessions").select("*").eq("id", id).maybeSingle();

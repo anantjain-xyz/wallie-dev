@@ -5,14 +5,14 @@ import type { Tables } from "@/lib/supabase/database.types";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import { buildWallieIssueData } from "@/features/wallie/data";
 import type { WallieIssueRepository } from "@/features/wallie/types";
-import type { IssueMember } from "@/features/issues/types";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 export async function loadWallieIssueData(input: {
-  issue: Pick<Tables<"issues">, "github_repository_id" | "id">;
-  memberIndex: ReadonlyMap<string, IssueMember>;
+  session: { githubRepositoryId: string | null; id: string };
+  memberIndex: ReadonlyMap<string, WorkspaceMember>;
   repository: WallieIssueRepository | null;
   supabase: SupabaseServerClient;
   workspaceId: string;
@@ -23,7 +23,7 @@ export async function loadWallieIssueData(input: {
       input.supabase
         .from("agent_runs")
         .select(runSelect)
-        .eq("issue_id", input.issue.id)
+        .eq("session_id", input.session.id)
         .order("created_at", { ascending: false }),
       admin
         .from("workspace_secrets")
@@ -65,7 +65,7 @@ export async function loadWallieIssueData(input: {
   );
 
   return buildWallieIssueData({
-    issueGithubRepositoryId: input.issue.github_repository_id,
+    sessionGithubRepositoryId: input.session.githubRepositoryId,
     memberIndex: input.memberIndex,
     messages: messageRows,
     missingSecretKeys,

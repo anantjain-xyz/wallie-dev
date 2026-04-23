@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useEffectEvent, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { IssueDetail, IssueMember } from "@/features/issues/types";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
   AgentRunActionResponse,
@@ -30,10 +30,16 @@ type FlashMessage = {
   text: string;
 };
 
+export type WalliePanelSession = {
+  githubRepositoryId: string | null;
+  id: string;
+  workspaceId: string;
+};
+
 type IssueWalliePanelProps = {
   initialData: WallieIssueData;
-  issue: IssueDetail;
-  memberIndex: ReadonlyMap<string, IssueMember>;
+  session: WalliePanelSession;
+  memberIndex: ReadonlyMap<string, WorkspaceMember>;
   repositories: WallieIssueRepository[];
   supabase: SupabaseClient<Database>;
   workspaceSlug: string;
@@ -107,7 +113,7 @@ function actionErrorMessage(payload: AgentRunActionErrorResponse | null) {
 
 export function IssueWalliePanel({
   initialData,
-  issue,
+  session,
   memberIndex,
   repositories,
   supabase,
@@ -119,19 +125,19 @@ export function IssueWalliePanel({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
     buildDefaultExpandedRunIds(initialData.runs),
   );
-  const repository = issue.githubRepositoryId
+  const repository = session.githubRepositoryId
     ? (repositories.find(
-        (candidateRepository) => candidateRepository.id === issue.githubRepositoryId,
+        (candidateRepository) => candidateRepository.id === session.githubRepositoryId,
       ) ?? null)
     : null;
-  const mode = inferWallieRunMode(issue.githubRepositoryId);
+  const mode = inferWallieRunMode(session.githubRepositoryId);
 
   useEffect(() => {
     setRuns(initialData.runs);
     setFlashMessage(null);
     setPendingActionId(null);
     setExpandedRunIds(buildDefaultExpandedRunIds(initialData.runs));
-  }, [initialData.runs, issue.id]);
+  }, [initialData.runs, session.id]);
 
   async function loadRunMessages(runId: string) {
     const { data, error } = await supabase
@@ -198,12 +204,12 @@ export function IssueWalliePanel({
 
   useEffect(() => {
     const runChannel = supabase
-      .channel(`wallie-runs:${issue.id}`)
+      .channel(`wallie-runs:${session.id}`)
       .on(
         "postgres_changes",
         {
           event: "*",
-          filter: `issue_id=eq.${issue.id}`,
+          filter: `session_id=eq.${session.id}`,
           schema: "public",
           table: "agent_runs",
         },
@@ -220,7 +226,7 @@ export function IssueWalliePanel({
     return () => {
       void supabase.removeChannel(runChannel);
     };
-  }, [issue.id, supabase]);
+  }, [session.id, supabase]);
 
   useEffect(() => {
     const channels = runs.map((run) =>
@@ -286,8 +292,8 @@ export function IssueWalliePanel({
 
     try {
       const payload = await queueRun("/api/agent-runs", {
-        issueId: issue.id,
-        workspaceId: issue.workspaceId,
+        sessionId: session.id,
+        workspaceId: session.workspaceId,
       });
 
       setRuns((currentRuns) => upsertWallieRun(currentRuns, payload.run));
@@ -326,7 +332,7 @@ export function IssueWalliePanel({
 
     try {
       const payload = await queueRun(`/api/agent-runs/${runId}/retry`, {
-        workspaceId: issue.workspaceId,
+        workspaceId: session.workspaceId,
       });
 
       setRuns((currentRuns) => upsertWallieRun(currentRuns, payload.run));

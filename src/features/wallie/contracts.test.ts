@@ -11,11 +11,11 @@ describe("wallie route contracts", () => {
   it("accepts valid enqueue payloads", () => {
     expect(
       enqueueAgentRunSchema.parse({
-        issueId: "11111111-1111-1111-1111-111111111111",
+        sessionId: "11111111-1111-1111-1111-111111111111",
         workspaceId: "22222222-2222-2222-2222-222222222222",
       }),
     ).toEqual({
-      issueId: "11111111-1111-1111-1111-111111111111",
+      sessionId: "11111111-1111-1111-1111-111111111111",
       workspaceId: "22222222-2222-2222-2222-222222222222",
     });
   });

@@ -1,4 +1,4 @@
-import type { IssueMember } from "@/features/issues/types";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Enums } from "@/lib/supabase/database.types";
 
 // --- Types migrated from lib/wallie/types.ts (Phase 0.2) ---
@@ -52,7 +52,7 @@ export type WallieRun = {
   runType: WallieRunMode;
   startedAt: string | null;
   status: Enums<"agent_run_status">;
-  triggeredByMember: IssueMember | null;
+  triggeredByMember: WorkspaceMember | null;
   triggeredByMemberId: string | null;
 };
 

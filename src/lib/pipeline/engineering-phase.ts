@@ -104,7 +104,7 @@ export async function runEngineeringPhase(
     .from("agent_runs")
     .insert({
       agent_job_id: job.id,
-      issue_id: job.issue_id ?? session.issue_id ?? undefined,
+      session_id: session.id,
       model_name: agentConfig.model ?? "claude-code",
       model_provider: provider,
       run_type: "engineering",

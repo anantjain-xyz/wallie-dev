@@ -1,4 +1,4 @@
-import type { IssueMember } from "@/features/issues/types";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   buildWallieBlockingReasons,
@@ -56,7 +56,7 @@ export function mapAgentRunRow(
     | "status"
     | "triggered_by_member_id"
   >,
-  memberIndex: ReadonlyMap<string, IssueMember>,
+  memberIndex: ReadonlyMap<string, WorkspaceMember>,
   messages: WallieRunMessage[],
 ): WallieRun {
   return {
@@ -113,8 +113,8 @@ export function upsertWallieRunMessage(
 }
 
 export function buildWallieIssueData(input: {
-  issueGithubRepositoryId: string | null;
-  memberIndex: ReadonlyMap<string, IssueMember>;
+  sessionGithubRepositoryId: string | null;
+  memberIndex: ReadonlyMap<string, WorkspaceMember>;
   messages: readonly Pick<
     Tables<"agent_run_messages">,
     "agent_run_id" | "created_at" | "id" | "kind" | "message_md"
@@ -143,7 +143,7 @@ export function buildWallieIssueData(input: {
     messagesByRunId.set(message.agent_run_id, currentMessages);
   }
 
-  const mode = inferWallieRunMode(input.issueGithubRepositoryId);
+  const mode = inferWallieRunMode(input.sessionGithubRepositoryId);
   const runs = normalizeWallieRuns(
     input.runs.map((run) =>
       mapAgentRunRow(run, input.memberIndex, messagesByRunId.get(run.id) ?? []),

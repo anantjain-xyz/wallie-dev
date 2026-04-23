@@ -77,7 +77,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
             const next: PipelineDashboardCard = {
               createdAt: row.created_at,
               id: row.id,
-              issueId: row.issue_id,
               linearIssueId: row.linear_issue_id,
               linearIssueUrl: row.linear_issue_url,
               number: row.number,
