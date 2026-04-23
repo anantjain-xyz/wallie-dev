@@ -151,28 +151,20 @@ async function handleAppMention(ctx: {
   // Check for existing session with this Linear issue ID. If we already
   // accepted this issue and the row is in a non-rejected state, dedup. If the
   // row is in 'rejected' state, treat the new mention as an explicit retry
-  // request: drop the old session (and its anchor issue) and let the rest of
-  // the flow create a fresh anchor + session. Recovers from the wedged state
-  // where the original mention was rejected and the user @mentions again.
+  // request: drop the old session and let the rest of the flow create a
+  // fresh one. Recovers from the wedged state where the original mention was
+  // rejected and the user @mentions again.
   const { data: existingSession } = await admin
     .from("sessions")
-    .select("id, issue_id, phase_status")
+    .select("id, phase_status")
     .eq("workspace_id", workspaceId)
     .eq("linear_issue_id", linearInfo.issueId)
     .maybeSingle();
 
   if (existingSession) {
     if (existingSession.phase_status === "rejected") {
-      // Delete the session first (cascades to session_artifacts +
-      // session_phase_completions). Then delete the anchor issue — the FK
-      // from sessions.issue_id is on delete cascade, but the issues row
-      // isn't cleaned up by that cascade so we delete it explicitly.
       await admin.from("sessions").delete().eq("id", existingSession.id);
-      if (existingSession.issue_id) {
-        await admin.from("issues").delete().eq("id", existingSession.issue_id);
-      }
     } else {
-      // Already tracking this issue in a non-recoverable state. Don't dup.
       return;
     }
   }
@@ -213,45 +205,25 @@ async function handleAppMention(ctx: {
     .eq("username", "wallie")
     .maybeSingle();
 
-  // Create pipeline anchor: issues row populated from real Linear data.
-  const { data: issueNumber } = await admin.rpc("next_session_number", {
+  const { data: sessionNumber } = await admin.rpc("next_session_number", {
     target_workspace_id: workspaceId,
   });
 
-  const anchorDescription = linearIssue.description
+  const promptMd = linearIssue.description
     ? `${linearIssue.description}\n\n---\nImported from Linear: ${linearIssue.url}`
     : `Imported from Linear: ${linearIssue.url}`;
 
-  const { data: anchorIssue, error: issueError } = await admin
-    .from("issues")
-    .insert({
-      creator_member_id: wallieMember?.id ?? null,
-      description_md: anchorDescription,
-      number: issueNumber ?? 1,
-      title: linearIssue.title,
-      workspace_id: workspaceId,
-    })
-    .select("id")
-    .single();
-
-  if (issueError || !anchorIssue) {
-    console.error("Failed to create pipeline anchor issue", { error: issueError });
-    return;
-  }
-
-  // Create the session row linked to the anchor issue. Sessions is the
-  // source of truth for phase / phase_status / artifacts from this point on.
+  // Sessions is the source of truth for phase / phase_status / artifacts.
   const { data: sessionRow, error: sessionError } = await admin
     .from("sessions")
     .insert({
       creator_member_id: wallieMember?.id ?? null,
-      issue_id: anchorIssue.id,
       linear_issue_id: linearInfo.issueId,
       linear_issue_url: linearInfo.url,
-      number: issueNumber ?? 1,
+      number: sessionNumber ?? 1,
       phase: "product",
       phase_status: "agent_generating",
-      prompt_md: anchorDescription,
+      prompt_md: promptMd,
       slack_channel_id: channelId,
       slack_thread_ts: threadTs,
       title: linearIssue.title,
@@ -261,15 +233,10 @@ async function handleAppMention(ctx: {
     .single();
 
   if (sessionError || !sessionRow) {
-    // Either we lost a unique-violation race on (workspace_id, linear_issue_id)
-    // or the insert failed outright. In both cases the anchor `issues` row we
-    // just created is now orphaned — delete it so we don't leave a ghost
-    // row on the issues table on every concurrent race.
     const isDedupe = sessionError && "code" in sessionError && sessionError.code === "23505";
     if (!isDedupe) {
       console.error("Failed to create session", { error: sessionError });
     }
-    await admin.from("issues").delete().eq("id", anchorIssue.id);
     return;
   }
 
@@ -279,7 +246,6 @@ async function handleAppMention(ctx: {
     .from("agent_jobs")
     .insert({
       dedupe_key: buildPipelineDedupeKey(linearInfo.issueId),
-      issue_id: anchorIssue.id,
       job_type: PIPELINE_JOB_TYPE,
       requested_by_member_id: wallieMember?.id ?? null,
       session_id: sessionRow.id,

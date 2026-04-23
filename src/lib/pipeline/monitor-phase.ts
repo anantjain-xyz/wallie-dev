@@ -107,7 +107,7 @@ export async function runMonitorPhase(input: MonitorPhaseInput): Promise<PhaseRe
   // --- Create agent run record ---
   const runId = await createAgentRun(admin, {
     jobId: job.id,
-    issueId: job.issue_id ?? session.issue_id,
+    sessionId: session.id,
     model: agentConfig.model ?? "claude-code",
     provider,
     runType: "monitor",

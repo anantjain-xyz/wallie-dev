@@ -12,7 +12,6 @@ type SessionRow = Pick<
   | "created_at"
   | "current_artifact_version"
   | "id"
-  | "issue_id"
   | "linear_issue_id"
   | "linear_issue_url"
   | "number"

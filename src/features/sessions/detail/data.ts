@@ -16,53 +16,18 @@ import {
 } from "@/features/sessions/types";
 import { loadWallieIssueData } from "@/features/wallie/server";
 import type { WallieIssueData } from "@/features/wallie/types";
-import type { IssueDetail, IssueMember } from "@/features/issues/types";
-import { mapIssueDetailRow } from "@/features/issues/model";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 
 export type SessionDetailPageData = {
-  currentMember: IssueMember | null;
-  issue: IssueDetail;
-  members: IssueMember[];
-  memberIndex: ReadonlyMap<string, IssueMember>;
+  currentMember: WorkspaceMember | null;
+  members: WorkspaceMember[];
+  memberIndex: ReadonlyMap<string, WorkspaceMember>;
   session: SessionDetail;
+  sessionGithubRepositoryId: string | null;
+  sessionCreator: WorkspaceMember | null;
   wallie: WallieIssueData;
   workspace: WorkspaceSummary;
 };
-
-/**
- * Synthesize a minimal IssueDetail from a session row when no anchor issue
- * exists. This lets existing UI components that accept IssueDetail render
- * without changes.
- */
-function synthesizeIssueFromSession(
-  sessionRow: Pick<
-    Tables<"sessions">,
-    | "created_at"
-    | "creator_member_id"
-    | "id"
-    | "number"
-    | "prompt_md"
-    | "title"
-    | "updated_at"
-    | "workspace_id"
-  >,
-  memberIndex: ReadonlyMap<string, IssueMember>,
-): IssueDetail {
-  return {
-    createdAt: sessionRow.created_at,
-    creator: sessionRow.creator_member_id
-      ? (memberIndex.get(sessionRow.creator_member_id) ?? null)
-      : null,
-    creatorMemberId: sessionRow.creator_member_id,
-    descriptionMd: sessionRow.prompt_md,
-    githubRepositoryId: null,
-    id: sessionRow.id,
-    number: sessionRow.number,
-    title: sessionRow.title,
-    updatedAt: sessionRow.updated_at,
-    workspaceId: sessionRow.workspace_id,
-  };
-}
 
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
@@ -84,7 +49,6 @@ export async function loadSessionDetailPageData(
         created_at,
         creator_member_id,
         updated_at,
-        issue_id,
         linear_issue_id,
         linear_issue_url,
         number,
@@ -110,59 +74,6 @@ export async function loadSessionDetailPageData(
     notFound();
   }
 
-  // Load the anchor issue if one exists (legacy sessions have one). New
-  // sessions created after the Phase 0 migration may omit the anchor issue
-  // entirely. We synthesize a minimal IssueDetail from the session row so
-  // existing UI components that expect an issue object still render.
-  let issue: IssueDetail;
-  let issueData: Tables<"issues"> | null = null;
-
-  if (sessionRow.issue_id) {
-    const { data, error: issueError } = await context.supabase
-      .from("issues")
-      .select("*")
-      .eq("workspace_id", context.workspace.id)
-      .eq("id", sessionRow.issue_id)
-      .maybeSingle();
-
-    if (issueError) {
-      throw issueError;
-    }
-
-    if (data) {
-      issueData = data as Tables<"issues">;
-      issue = mapIssueDetailRow(issueData, context.memberIndex);
-    } else {
-      issue = synthesizeIssueFromSession(sessionRow, context.memberIndex);
-    }
-  } else {
-    issue = synthesizeIssueFromSession(sessionRow, context.memberIndex);
-  }
-
-  // Build parallel queries. github_issue_branches and agent_runs are keyed
-  // on issue_id — when there's no anchor issue we return empty arrays.
-  const prQuery = sessionRow.issue_id
-    ? context.supabase
-        .from("github_issue_branches")
-        .select(
-          "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at",
-        )
-        .eq("workspace_id", context.workspace.id)
-        .eq("issue_id", sessionRow.issue_id)
-        .order("created_at", { ascending: false })
-    : Promise.resolve({ data: [] as never[], error: null });
-
-  const runQuery = sessionRow.issue_id
-    ? context.supabase
-        .from("agent_runs")
-        .select(
-          "id, created_at, finished_at, input_tokens, model_name, output_tokens, run_type, started_at, status, total_cost_usd",
-        )
-        .eq("issue_id", sessionRow.issue_id)
-        .order("created_at", { ascending: false })
-        .limit(10)
-    : Promise.resolve({ data: [] as never[], error: null });
-
   const [
     { data: artifactRows, error: artifactError },
     { data: completionRows, error: completionError },
@@ -178,8 +89,22 @@ export async function loadSessionDetailPageData(
       .from("session_phase_completions")
       .select("completed_at, phase")
       .eq("session_id", sessionRow.id),
-    prQuery,
-    runQuery,
+    context.supabase
+      .from("github_issue_branches")
+      .select(
+        "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at, created_at",
+      )
+      .eq("workspace_id", context.workspace.id)
+      .eq("session_id", sessionRow.id)
+      .order("created_at", { ascending: false }),
+    context.supabase
+      .from("agent_runs")
+      .select(
+        "id, created_at, finished_at, input_tokens, model_name, output_tokens, run_type, started_at, status, total_cost_usd",
+      )
+      .eq("session_id", sessionRow.id)
+      .order("created_at", { ascending: false })
+      .limit(10),
   ]);
 
   if (artifactError) throw artifactError;
@@ -207,45 +132,77 @@ export async function loadSessionDetailPageData(
     phase: row.phase as SessionPhase,
   }));
 
+  const prRowsTyped = (prRows ?? []) as Array<
+    Pick<
+      Tables<"github_issue_branches">,
+      | "branch_name"
+      | "github_repository_id"
+      | "id"
+      | "is_draft"
+      | "pull_request_number"
+      | "pull_request_state"
+      | "pull_request_url"
+      | "updated_at"
+      | "created_at"
+    >
+  >;
+
   const repoIds = Array.from(
     new Set(
-      ((prRows ?? []) as Array<{ github_repository_id: string | null }>)
-        .map((row) => row.github_repository_id)
-        .filter((id): id is string => Boolean(id)),
+      prRowsTyped.map((row) => row.github_repository_id).filter((id): id is string => Boolean(id)),
     ),
   );
 
-  let repositoryIndex = new Map<string, { fullName: string; htmlUrl: string }>();
+  let repositoryIndex = new Map<
+    string,
+    {
+      defaultBranch: string | null;
+      defaultProgrammingLanguage: string | null;
+      fullName: string;
+      htmlUrl: string;
+      isArchived: boolean;
+      isPrivate: boolean;
+    }
+  >();
   if (repoIds.length > 0) {
     const { data: repoRows, error: repoError } = await context.supabase
       .from("github_repositories")
-      .select("id, full_name, html_url")
+      .select(
+        "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
+      )
       .in("id", repoIds);
     if (repoError) {
       throw repoError;
     }
     repositoryIndex = new Map(
-      ((repoRows ?? []) as Array<{ full_name: string; html_url: string; id: string }>).map(
-        (row) => [row.id, { fullName: row.full_name, htmlUrl: row.html_url }],
-      ),
+      (
+        (repoRows ?? []) as Array<
+          Pick<
+            Tables<"github_repositories">,
+            | "default_branch"
+            | "default_programming_language"
+            | "full_name"
+            | "html_url"
+            | "id"
+            | "is_archived"
+            | "private"
+          >
+        >
+      ).map((row) => [
+        row.id,
+        {
+          defaultBranch: row.default_branch,
+          defaultProgrammingLanguage: row.default_programming_language,
+          fullName: row.full_name,
+          htmlUrl: row.html_url,
+          isArchived: row.is_archived,
+          isPrivate: row.private,
+        },
+      ]),
     );
   }
 
-  const pullRequests: SessionPullRequest[] = (
-    (prRows ?? []) as Array<
-      Pick<
-        Tables<"github_issue_branches">,
-        | "branch_name"
-        | "github_repository_id"
-        | "id"
-        | "is_draft"
-        | "pull_request_number"
-        | "pull_request_state"
-        | "pull_request_url"
-        | "updated_at"
-      >
-    >
-  ).map((row) => {
+  const pullRequests: SessionPullRequest[] = prRowsTyped.map((row) => {
     const repo = row.github_repository_id ? repositoryIndex.get(row.github_repository_id) : null;
     return {
       branchName: row.branch_name,
@@ -313,64 +270,40 @@ export async function loadSessionDetailPageData(
     workspaceId: sessionRow.workspace_id,
   };
 
-  // Load wallie panel data only when an anchor issue exists. The wallie
-  // panel queries agent_runs by issue_id and the "Run with Wallie" action
-  // validates against the issues table, so passing a non-issue UUID would
-  // cause query misses and "Issue not found" errors.
-  let wallie: WallieIssueData;
+  const sessionGithubRepositoryId = prRowsTyped[0]?.github_repository_id ?? null;
+  const repository = sessionGithubRepositoryId
+    ? (repositoryIndex.get(sessionGithubRepositoryId) ?? null)
+    : null;
 
-  if (issueData) {
-    const { data: repoForIssueData, error: repoForIssueError } = issueData.github_repository_id
-      ? await context.supabase
-          .from("github_repositories")
-          .select(
-            "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
-          )
-          .eq("id", issueData.github_repository_id)
-          .maybeSingle()
-      : { data: null, error: null };
+  const wallie = await loadWallieIssueData({
+    memberIndex: context.memberIndex,
+    repository: repository
+      ? {
+          defaultBranch: repository.defaultBranch,
+          defaultProgrammingLanguage: repository.defaultProgrammingLanguage,
+          fullName: repository.fullName,
+          htmlUrl: repository.htmlUrl,
+          id: sessionGithubRepositoryId!,
+          isArchived: repository.isArchived,
+          isPrivate: repository.isPrivate,
+        }
+      : null,
+    session: { githubRepositoryId: sessionGithubRepositoryId, id: sessionRow.id },
+    supabase: context.supabase,
+    workspaceId: context.workspace.id,
+  });
 
-    if (repoForIssueError) {
-      throw repoForIssueError;
-    }
-
-    wallie = await loadWallieIssueData({
-      issue: { github_repository_id: issueData.github_repository_id, id: issueData.id },
-      memberIndex: context.memberIndex,
-      repository: repoForIssueData
-        ? {
-            defaultBranch: repoForIssueData.default_branch,
-            defaultProgrammingLanguage: repoForIssueData.default_programming_language,
-            fullName: repoForIssueData.full_name,
-            htmlUrl: repoForIssueData.html_url,
-            id: repoForIssueData.id,
-            isArchived: repoForIssueData.is_archived,
-            isPrivate: repoForIssueData.private,
-          }
-        : null,
-      supabase: context.supabase,
-      workspaceId: context.workspace.id,
-    });
-  } else {
-    // No anchor issue — return an inert wallie state. The panel renders
-    // but enqueue/retry are disabled and no runs are shown.
-    wallie = {
-      blockingReasons: [],
-      canEnqueue: false,
-      missingSecretKeys: [],
-      mode: "project",
-      repository: null,
-      requiredSecretKeys: [],
-      runs: [],
-    };
-  }
+  const sessionCreator = sessionRow.creator_member_id
+    ? (context.memberIndex.get(sessionRow.creator_member_id) ?? null)
+    : null;
 
   return {
     currentMember: context.currentMember,
-    issue,
     memberIndex: context.memberIndex,
     members: context.members,
     session,
+    sessionGithubRepositoryId,
+    sessionCreator,
     wallie,
     workspace: context.workspace,
   };

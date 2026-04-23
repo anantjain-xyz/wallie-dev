@@ -27,16 +27,10 @@ import {
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
-type IssueForRun = Pick<
-  Tables<"issues">,
-  | "created_at"
-  | "description_md"
-  | "github_repository_id"
-  | "id"
-  | "number"
-  | "title"
-  | "workspace_id"
->;
+type SessionForRun = Pick<
+  Tables<"sessions">,
+  "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+> & { github_repository_id: string | null };
 type RepositoryForRun = Pick<
   Tables<"github_repositories">,
   | "default_branch"
@@ -51,14 +45,13 @@ type RepositoryForRun = Pick<
 type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 
-const issueSelect =
-  "id, workspace_id, number, title, description_md, github_repository_id, created_at";
+const sessionSelect = "id, workspace_id, number, title, prompt_md, created_at";
 const repositorySelect =
   "id, workspace_id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
 const jobSelect =
-  "id, workspace_id, issue_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
+  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, issue_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, created_at, updated_at";
 
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
@@ -118,7 +111,7 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
 }
 
 function createRunInsert(input: {
-  issueId: string;
+  sessionId: string;
   jobId: string;
   requestedByMemberId: string;
   runType: WallieRunMode;
@@ -126,7 +119,7 @@ function createRunInsert(input: {
 }): TablesInsert<"agent_runs"> {
   return {
     agent_job_id: input.jobId,
-    issue_id: input.issueId,
+    session_id: input.sessionId,
     model_name: WALLIE_MODEL_NAME,
     model_provider: WALLIE_MODEL_PROVIDER,
     run_type: input.runType,
@@ -136,31 +129,31 @@ function createRunInsert(input: {
 }
 
 function createJobInsert(input: {
-  issueId: string;
+  sessionId: string;
   requestedByMemberId: string;
   triggerType: Enums<"agent_trigger_type">;
   workspaceId: string;
 }): TablesInsert<"agent_jobs"> {
   return {
-    dedupe_key: buildWallieJobDedupeKey(input.issueId),
-    issue_id: input.issueId,
+    dedupe_key: buildWallieJobDedupeKey(input.sessionId),
+    session_id: input.sessionId,
     requested_by_member_id: input.requestedByMemberId,
     trigger_type: input.triggerType,
     workspace_id: input.workspaceId,
   };
 }
 
-async function loadIssueForRun(
+async function loadSessionForRun(
   supabase: SupabaseServerClient,
-  issueId: string | null,
+  sessionId: string | null,
   workspaceId: string,
-) {
-  if (!issueId) return null;
+): Promise<SessionForRun | null> {
+  if (!sessionId) return null;
 
   const { data, error } = await supabase
-    .from("issues")
-    .select(issueSelect)
-    .eq("id", issueId)
+    .from("sessions")
+    .select(sessionSelect)
+    .eq("id", sessionId)
     .eq("workspace_id", workspaceId)
     .maybeSingle();
 
@@ -168,7 +161,34 @@ async function loadIssueForRun(
     throw error;
   }
 
-  return data as IssueForRun | null;
+  if (!data) {
+    return null;
+  }
+
+  // Sessions don't own a repo link directly; derive from the most recent PR
+  // branch recorded against this session. The session detail page orders
+  // github_issue_branches newest-first, so matching here keeps the run's
+  // repo context consistent with what the UI shows. Absent → project mode.
+  const { data: branchRow, error: branchError } = await supabase
+    .from("github_issue_branches")
+    .select("github_repository_id")
+    .eq("workspace_id", workspaceId)
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (branchError) {
+    throw branchError;
+  }
+
+  return {
+    ...(data as Pick<
+      Tables<"sessions">,
+      "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+    >),
+    github_repository_id: branchRow?.github_repository_id ?? null,
+  };
 }
 
 async function loadRepositoryForRun(
@@ -210,11 +230,11 @@ async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
   return [...WALLIE_REQUIRED_SECRET_KEYS].filter((secretKey) => !availableKeys.has(secretKey));
 }
 
-async function loadActiveRunForIssue(admin: AdminClient, issueId: string) {
+async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
   const { data, error } = await admin
     .from("agent_runs")
     .select(runSelect)
-    .eq("issue_id", issueId)
+    .eq("session_id", sessionId)
     .in("status", ["queued", "started", "running"])
     .order("created_at", { ascending: false })
     .limit(1)
@@ -309,33 +329,33 @@ async function waitForRunByJobId(admin: AdminClient, jobId: string, attempts = 5
 
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
-  issueId: string | null;
+  sessionId: string | null;
   requestedRunType?: WallieRunMode;
   supabase: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
 }) {
-  const issue = await loadIssueForRun(input.supabase, input.issueId, input.workspace.id);
+  const session = await loadSessionForRun(input.supabase, input.sessionId, input.workspace.id);
 
-  if (!issue) {
+  if (!session) {
     throw new WallieActionError({
       code: "issue_not_found",
-      message: "Issue not found.",
+      message: "Session not found.",
       statusCode: 404,
     });
   }
 
   const workspace = input.workspace;
-  const runType = input.requestedRunType ?? inferWallieRunMode(issue.github_repository_id);
+  const runType = input.requestedRunType ?? inferWallieRunMode(session.github_repository_id);
   const [repository, missingSecretKeys, activeRun] = await Promise.all([
-    loadRepositoryForRun(input.admin, workspace.id, issue.github_repository_id),
+    loadRepositoryForRun(input.admin, workspace.id, session.github_repository_id),
     loadMissingSecretKeys(input.admin, workspace.id),
-    loadActiveRunForIssue(input.admin, issue.id),
+    loadActiveRunForSession(input.admin, session.id),
   ]);
 
   if (activeRun) {
     return {
       activeRun,
-      issue,
+      session,
       repository,
       runType,
       workspace,
@@ -356,7 +376,7 @@ async function validateQueuedRunRequest(input: {
 
   return {
     activeRun,
-    issue,
+    session,
     repository,
     runType,
     workspace,
@@ -376,14 +396,14 @@ async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
 
 async function createQueuedRun(input: {
   admin: AdminClient;
-  issue: IssueForRun;
+  session: SessionForRun;
   requestedByMemberId: string;
   runType: WallieRunMode;
   triggerType: Enums<"agent_trigger_type">;
   workspace: WorkspaceAccessWorkspace;
 }) {
   const jobInsert = createJobInsert({
-    issueId: input.issue.id,
+    sessionId: input.session.id,
     requestedByMemberId: input.requestedByMemberId,
     triggerType: input.triggerType,
     workspaceId: input.workspace.id,
@@ -398,7 +418,7 @@ async function createQueuedRun(input: {
     const activeJob = await loadActiveJobByDedupeKey(
       input.admin,
       input.workspace.id,
-      buildWallieJobDedupeKey(input.issue.id),
+      buildWallieJobDedupeKey(input.session.id),
     );
 
     if (!activeJob) {
@@ -426,7 +446,7 @@ async function createQueuedRun(input: {
     .from("agent_runs")
     .insert(
       createRunInsert({
-        issueId: input.issue.id,
+        sessionId: input.session.id,
         jobId: job.id,
         requestedByMemberId: input.requestedByMemberId,
         runType: input.runType,
@@ -450,7 +470,7 @@ async function createQueuedRun(input: {
 
 export async function enqueueWallieRun(input: {
   admin?: AdminClient;
-  issueId: string;
+  sessionId: string;
   requestedByMemberId: string;
   supabase: SupabaseServerClient;
   triggerType: Enums<"agent_trigger_type">;
@@ -459,7 +479,7 @@ export async function enqueueWallieRun(input: {
   const admin = input.admin ?? createSupabaseAdminClient();
   const validated = await validateQueuedRunRequest({
     admin,
-    issueId: input.issueId,
+    sessionId: input.sessionId,
     supabase: input.supabase,
     workspace: input.workspace,
   });
@@ -474,7 +494,7 @@ export async function enqueueWallieRun(input: {
 
   return createQueuedRun({
     admin,
-    issue: validated.issue,
+    session: validated.session,
     requestedByMemberId: input.requestedByMemberId,
     runType: validated.runType,
     triggerType: input.triggerType,
@@ -510,7 +530,7 @@ export async function retryWallieRun(input: {
 
   const validated = await validateQueuedRunRequest({
     admin,
-    issueId: existingRun.issue_id,
+    sessionId: existingRun.session_id,
     requestedRunType: parseWallieRunMode(existingRun.run_type),
     supabase: input.supabase,
     workspace: input.workspace,
@@ -526,7 +546,7 @@ export async function retryWallieRun(input: {
 
   return createQueuedRun({
     admin,
-    issue: validated.issue,
+    session: validated.session,
     requestedByMemberId: input.requestedByMemberId,
     runType: validated.runType,
     triggerType: "manual_retry",
@@ -658,9 +678,6 @@ async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }
 
   // Legacy wallie stub executor was removed in Phase 0. Non-pipeline jobs
   // are not supported until a real agent runner is wired up in Phase 2.
-  // Transition the linked agent_run to error so it doesn't block future
-  // run/retry requests for this issue (loadActiveRunForIssue checks for
-  // queued/started/running rows).
   const errorMessage =
     "Legacy wallie executor removed. Non-pipeline jobs will be supported after the agent runner is wired up.";
 

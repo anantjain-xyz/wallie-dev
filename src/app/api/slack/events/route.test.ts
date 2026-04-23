@@ -215,8 +215,6 @@ describe("POST /api/slack/events", () => {
     const { client } = makeAdmin({ slack_installations: installHandler });
     mocked.createSupabaseAdminClient.mockReturnValue(client);
 
-    // No Linear URL → fast-path help reply, which is enough to confirm the
-    // installation lookup actually used enterprise_id.
     const body = JSON.stringify({
       enterprise_id: "E-GRID",
       event: { channel: "C1", text: "<@U> hello", ts: "1.1", type: "app_mention" },
@@ -297,11 +295,8 @@ describe("POST /api/slack/events", () => {
     const json = await response.json();
 
     expect(json.ok).toBe(true);
-    // Linear fetch must NOT be called without an API key
     expect(mocked.fetchLinearIssue).not.toHaveBeenCalled();
-    // No anchor row should have been created
-    expect(fromMock).not.toHaveBeenCalledWith("issues");
-    // The user should have been told to set the key
+    expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
     expect(mockFetch).toHaveBeenCalledWith(
       "https://slack.com/api/chat.postMessage",
       expect.objectContaining({ method: "POST" }),
@@ -351,9 +346,7 @@ describe("POST /api/slack/events", () => {
 
     expect(json.ok).toBe(true);
     expect(mocked.fetchLinearIssue).toHaveBeenCalled();
-    // No anchor row should have been created
-    expect(fromMock).not.toHaveBeenCalledWith("issues");
-    // The user should have been told why
+    expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
     expect(mockFetch).toHaveBeenCalledWith(
       "https://slack.com/api/chat.postMessage",
       expect.objectContaining({ method: "POST" }),
@@ -365,7 +358,7 @@ describe("POST /api/slack/events", () => {
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
   });
 
-  it("creates an anchor issue and a session row linked via issue_id", async () => {
+  it("creates a session row and enqueues a pipeline job from a Linear mention", async () => {
     mocked.decryptSecretValue.mockReturnValue("plain-linear-key");
     mocked.fetchLinearIssue.mockResolvedValue({
       description: "fix the auth bug",
@@ -376,33 +369,25 @@ describe("POST /api/slack/events", () => {
     });
     mocked.processQueuedAgentJobs.mockResolvedValue({});
 
-    const issuesInsert = vi.fn();
+    const agentJobsInsert = vi.fn();
     const sessionsInsert = vi.fn();
 
     const { client, fromMock, rpcMock } = makeAdmin(
       {
         agent_jobs: () => {
           const chain: Record<string, unknown> = {};
-          chain.insert = vi.fn().mockReturnValue(chain);
-          chain.select = vi.fn().mockReturnValue(chain);
-          chain.single = vi.fn().mockResolvedValue({ data: { id: "job-1" }, error: null });
-          return chain;
-        },
-        issues: () => {
-          const chain: Record<string, unknown> = {};
           chain.insert = vi.fn().mockImplementation((row: unknown) => {
-            issuesInsert(row);
+            agentJobsInsert(row);
             return chain;
           });
           chain.select = vi.fn().mockReturnValue(chain);
-          chain.single = vi.fn().mockResolvedValue({ data: { id: "anchor-1" }, error: null });
+          chain.single = vi.fn().mockResolvedValue({ data: { id: "job-1" }, error: null });
           return chain;
         },
         sessions: () => {
           const chain: Record<string, unknown> = {};
           chain.select = vi.fn().mockReturnValue(chain);
           chain.eq = vi.fn().mockReturnValue(chain);
-          // Pre-insert dedup check finds nothing
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
           chain.insert = vi.fn().mockImplementation((row: unknown) => {
             sessionsInsert(row);
@@ -454,19 +439,11 @@ describe("POST /api/slack/events", () => {
 
     expect(json.ok).toBe(true);
     expect(rpcMock).toHaveBeenCalledWith("next_session_number", { target_workspace_id: "ws-1" });
-    // Anchor was populated from Linear data
-    expect(issuesInsert).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Auth bug", workspace_id: "ws-1" }),
-    );
-    const anchorRow = issuesInsert.mock.calls[0]![0] as { description_md: string };
-    expect(anchorRow.description_md).toContain("fix the auth bug");
-    expect(anchorRow.description_md).toContain("https://linear.app/myteam/issue/TEAM-456");
-    // session row references the anchor and carries phase / slack / linear
+    expect(fromMock).not.toHaveBeenCalledWith("issues");
     expect(sessionsInsert).toHaveBeenCalledTimes(1);
     expect(sessionsInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         creator_member_id: "wallie-member-id",
-        issue_id: "anchor-1",
         linear_issue_id: "TEAM-456",
         linear_issue_url: "https://linear.app/myteam/issue/TEAM-456",
         number: 42,
@@ -478,10 +455,20 @@ describe("POST /api/slack/events", () => {
         workspace_id: "ws-1",
       }),
     );
-    expect(fromMock).toHaveBeenCalledWith("agent_jobs");
+    const sessionPromptArg = sessionsInsert.mock.calls[0]![0] as { prompt_md: string };
+    expect(sessionPromptArg.prompt_md).toContain("fix the auth bug");
+    expect(sessionPromptArg.prompt_md).toContain("https://linear.app/myteam/issue/TEAM-456");
+    expect(agentJobsInsert).toHaveBeenCalledTimes(1);
+    expect(agentJobsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session_id: "sess-1",
+        workspace_id: "ws-1",
+        trigger_type: "slack_mention",
+      }),
+    );
   });
 
-  it("deletes the orphan anchor issue when the session insert errors", async () => {
+  it("skips the agent job enqueue when the session insert errors", async () => {
     mocked.decryptSecretValue.mockReturnValue("plain-linear-key");
     mocked.fetchLinearIssue.mockResolvedValue({
       description: "failed insert",
@@ -491,18 +478,8 @@ describe("POST /api/slack/events", () => {
       url: "https://linear.app/team/issue/TEAM-555",
     });
 
-    const issuesDeleteEq = vi.fn().mockResolvedValue({ error: null });
-
     const { client, fromMock } = makeAdmin(
       {
-        issues: () => {
-          const chain: Record<string, unknown> = {};
-          chain.insert = vi.fn().mockReturnValue(chain);
-          chain.select = vi.fn().mockReturnValue(chain);
-          chain.single = vi.fn().mockResolvedValue({ data: { id: "anchor-555" }, error: null });
-          chain.delete = vi.fn().mockReturnValue({ eq: issuesDeleteEq });
-          return chain;
-        },
         sessions: () => {
           const chain: Record<string, unknown> = {};
           chain.select = vi.fn().mockReturnValue(chain);
@@ -556,9 +533,7 @@ describe("POST /api/slack/events", () => {
     const json = await response.json();
 
     expect(json.ok).toBe(true);
-    // Orphan anchor must be cleaned up so the next retry can run.
-    expect(issuesDeleteEq).toHaveBeenCalledWith("id", "anchor-555");
-    // No agent_jobs enqueued for a failed session insert.
+    expect(fromMock).not.toHaveBeenCalledWith("issues");
     expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
   });
 
@@ -574,7 +549,6 @@ describe("POST /api/slack/events", () => {
     mocked.processQueuedAgentJobs.mockResolvedValue({});
 
     const sessionsDeleteEq = vi.fn().mockResolvedValue({ error: null });
-    const issuesDeleteEq = vi.fn().mockResolvedValue({ error: null });
 
     const { client, fromMock } = makeAdmin({
       agent_jobs: () => {
@@ -584,14 +558,6 @@ describe("POST /api/slack/events", () => {
         chain.single = vi.fn().mockResolvedValue({ data: { id: "job-2" }, error: null });
         return chain;
       },
-      issues: () => {
-        const chain: Record<string, unknown> = {};
-        chain.insert = vi.fn().mockReturnValue(chain);
-        chain.select = vi.fn().mockReturnValue(chain);
-        chain.single = vi.fn().mockResolvedValue({ data: { id: "anchor-new" }, error: null });
-        chain.delete = vi.fn().mockReturnValue({ eq: issuesDeleteEq });
-        return chain;
-      },
       sessions: () => {
         const chain: Record<string, unknown> = {};
         chain.select = vi.fn().mockReturnValue(chain);
@@ -599,7 +565,6 @@ describe("POST /api/slack/events", () => {
         chain.maybeSingle = vi.fn().mockResolvedValue({
           data: {
             id: "old-sess",
-            issue_id: "old-anchor",
             phase_status: "rejected",
           },
           error: null,
@@ -648,10 +613,8 @@ describe("POST /api/slack/events", () => {
     const json = await response.json();
 
     expect(json.ok).toBe(true);
-    // Old session + its anchor were dropped
     expect(sessionsDeleteEq).toHaveBeenCalledWith("id", "old-sess");
-    expect(issuesDeleteEq).toHaveBeenCalledWith("id", "old-anchor");
-    // A fresh anchor + agent job were created
+    expect(fromMock).not.toHaveBeenCalledWith("issues");
     expect(fromMock).toHaveBeenCalledWith("agent_jobs");
   });
 
@@ -662,7 +625,7 @@ describe("POST /api/slack/events", () => {
         chain.select = vi.fn().mockReturnValue(chain);
         chain.eq = vi.fn().mockReturnValue(chain);
         chain.maybeSingle = vi.fn().mockResolvedValue({
-          data: { id: "existing-sess", issue_id: "anchor-a", phase_status: "awaiting_review" },
+          data: { id: "existing-sess", phase_status: "awaiting_review" },
           error: null,
         });
         return chain;
@@ -701,25 +664,14 @@ describe("POST /api/slack/events", () => {
       url: "https://linear.app/team/issue/TEAM-111",
     });
 
-    const issuesDeleteEq = vi.fn().mockResolvedValue({ error: null });
-
     const { client, fromMock } = makeAdmin(
       {
-        issues: () => {
-          const chain: Record<string, unknown> = {};
-          chain.insert = vi.fn().mockReturnValue(chain);
-          chain.select = vi.fn().mockReturnValue(chain);
-          chain.single = vi.fn().mockResolvedValue({ data: { id: "anchor-race" }, error: null });
-          chain.delete = vi.fn().mockReturnValue({ eq: issuesDeleteEq });
-          return chain;
-        },
         sessions: () => {
           const chain: Record<string, unknown> = {};
           chain.select = vi.fn().mockReturnValue(chain);
           chain.eq = vi.fn().mockReturnValue(chain);
           chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
           chain.insert = vi.fn().mockReturnValue(chain);
-          // The losing race hits the partial unique index
           chain.single = vi.fn().mockResolvedValue({
             data: null,
             error: { code: "23505", message: "duplicate key value violates unique constraint" },
@@ -768,10 +720,8 @@ describe("POST /api/slack/events", () => {
     const json = await response.json();
 
     expect(json.ok).toBe(true);
-    // The losing race must NOT enqueue a second agent_jobs row
+    expect(fromMock).not.toHaveBeenCalledWith("issues");
     expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
-    // Orphan compensator runs
-    expect(issuesDeleteEq).toHaveBeenCalledWith("id", "anchor-race");
   });
 
   it("handles unknown Slack team gracefully", async () => {

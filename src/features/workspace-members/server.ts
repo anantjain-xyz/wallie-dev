@@ -8,33 +8,33 @@ import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
-  buildIssueMemberIndex,
-  mapIssueMemberRow,
-  mapIssueViewerMemberRow,
-} from "@/features/issues/model";
+  buildWorkspaceMemberIndex,
+  mapWorkspaceMemberRow,
+  mapWorkspaceViewerMemberRow,
+} from "@/features/workspace-members/model";
 import type {
-  IssueMember,
-  IssueViewerMember,
+  WorkspaceMember,
   WorkspaceMemberRow,
+  WorkspaceViewerMember,
   WorkspaceViewerMemberRow,
-} from "@/features/issues/types";
+} from "@/features/workspace-members/types";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";
 const viewerMemberSelect = `${memberSelect}, preferences`;
 
-type IssueWorkspaceContext = {
-  currentMember: IssueViewerMember | null;
-  memberIndex: Map<string, IssueMember>;
-  members: IssueMember[];
+export type WorkspaceMemberContext = {
+  currentMember: WorkspaceViewerMember | null;
+  memberIndex: Map<string, WorkspaceMember>;
+  members: WorkspaceMember[];
   supabase: SupabaseServerClient;
   workspace: WorkspaceSummary;
 };
 
-export async function loadIssueWorkspaceContext(
+export async function loadWorkspaceMemberContext(
   workspaceSlug: string,
-): Promise<IssueWorkspaceContext> {
+): Promise<WorkspaceMemberContext> {
   const supabase = await createSupabaseServerClient();
   const user = await getSupabaseUserOrNull(supabase);
 
@@ -74,10 +74,10 @@ export async function loadIssueWorkspaceContext(
     throw currentMemberError;
   }
 
-  const members = ((membersData ?? []) as WorkspaceMemberRow[]).map(mapIssueMemberRow);
-  const memberIndex = buildIssueMemberIndex(members);
+  const members = ((membersData ?? []) as WorkspaceMemberRow[]).map(mapWorkspaceMemberRow);
+  const memberIndex = buildWorkspaceMemberIndex(members);
   const currentMember = currentMemberData
-    ? mapIssueViewerMemberRow(currentMemberData as WorkspaceViewerMemberRow)
+    ? mapWorkspaceViewerMemberRow(currentMemberData as WorkspaceViewerMemberRow)
     : null;
 
   if (currentMember && !memberIndex.has(currentMember.id)) {

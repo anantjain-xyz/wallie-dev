@@ -87,7 +87,6 @@ export async function loadSessionListPageData(
         archived_at,
         created_at,
         updated_at,
-        issue_id,
         linear_issue_id,
         linear_issue_url,
         number,
@@ -111,35 +110,25 @@ export async function loadSessionListPageData(
 
   const rows = data ?? [];
 
-  // Pull-request counts are still tracked on the legacy
-  // github_issue_branches table keyed by issues.id. Until PR 4 migrates the
-  // GitHub webhook onto session_pull_requests we continue joining through
-  // the anchor issue_id on each session row.
-  const issueIds = rows.map((row) => row.issue_id).filter((id): id is string => Boolean(id));
+  const sessionIds = rows.map((row) => row.id);
 
-  let prCountByIssue = new Map<string, number>();
-  if (issueIds.length > 0) {
+  const prCountBySession = new Map<string, number>();
+  if (sessionIds.length > 0) {
     const { data: prRows, error: prError } = await context.supabase
       .from("github_issue_branches")
-      .select("issue_id")
+      .select("session_id")
       .eq("workspace_id", context.workspace.id)
-      .in("issue_id", issueIds);
+      .in("session_id", sessionIds);
     if (prError) {
       throw prError;
     }
-    const counts = new Map<string, number>();
-    for (const row of (prRows ?? []) as Array<{ issue_id: string | null }>) {
-      if (!row.issue_id) continue;
-      counts.set(row.issue_id, (counts.get(row.issue_id) ?? 0) + 1);
+    for (const row of (prRows ?? []) as Array<{ session_id: string }>) {
+      prCountBySession.set(row.session_id, (prCountBySession.get(row.session_id) ?? 0) + 1);
     }
-    prCountByIssue = counts;
   }
 
   const sessions = rows
-    .map((row) => {
-      const prCount = row.issue_id ? (prCountByIssue.get(row.issue_id) ?? 0) : 0;
-      return mapSessionRow(row, prCount);
-    })
+    .map((row) => mapSessionRow(row, prCountBySession.get(row.id) ?? 0))
     .filter((session) => session.number > 0);
 
   const filtered = sessions.filter((session) => matchesQueryState(session, queryState));

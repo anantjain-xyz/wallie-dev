@@ -11,7 +11,6 @@ import type { SessionPhase, SessionPhaseStatus } from "@/features/sessions/types
 export type PipelineDashboardCard = {
   createdAt: string;
   id: string;
-  issueId: string | null;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   number: number;
@@ -54,7 +53,6 @@ export async function loadPipelineDashboardData(
         id,
         created_at,
         updated_at,
-        issue_id,
         linear_issue_id,
         linear_issue_url,
         number,
@@ -79,7 +77,6 @@ export async function loadPipelineDashboardData(
   const cards = (data ?? []).map<PipelineDashboardCard>((row) => ({
     createdAt: row.created_at,
     id: row.id,
-    issueId: row.issue_id,
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: row.number,

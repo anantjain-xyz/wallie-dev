@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await enqueueWallieRun({
-      issueId: parsed.data.issueId,
+      sessionId: parsed.data.sessionId,
       requestedByMemberId: access.context.currentMember.id,
       supabase: access.context.supabase,
       triggerType: "manual_run",

@@ -16,12 +16,11 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          issue_id: string | null
           job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
-          session_id: string | null
+          session_id: string
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -34,12 +33,11 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          issue_id?: string | null
           job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
-          session_id?: string | null
+          session_id: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -52,12 +50,11 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          issue_id?: string | null
           job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
-          session_id?: string | null
+          session_id?: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_job_status"]
           trigger_type?: Database["public"]["Enums"]["agent_trigger_type"]
@@ -65,13 +62,6 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
-          {
-            foreignKeyName: "agent_jobs_issue_id_fkey"
-            columns: ["issue_id"]
-            isOneToOne: false
-            referencedRelation: "issues"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "agent_jobs_requested_by_member_id_fkey"
             columns: ["requested_by_member_id"]
@@ -144,12 +134,12 @@ export type Database = {
           finished_at: string | null
           id: string
           input_tokens: number | null
-          issue_id: string | null
           last_activity_at: string | null
           model_name: string
           model_provider: string
           output_tokens: number | null
           run_type: string
+          session_id: string
           started_at: string | null
           status: Database["public"]["Enums"]["agent_run_status"]
           total_cost_usd: number | null
@@ -163,12 +153,12 @@ export type Database = {
           finished_at?: string | null
           id?: string
           input_tokens?: number | null
-          issue_id?: string | null
           last_activity_at?: string | null
           model_name: string
           model_provider: string
           output_tokens?: number | null
           run_type: string
+          session_id: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
           total_cost_usd?: number | null
@@ -182,12 +172,12 @@ export type Database = {
           finished_at?: string | null
           id?: string
           input_tokens?: number | null
-          issue_id?: string | null
           last_activity_at?: string | null
           model_name?: string
           model_provider?: string
           output_tokens?: number | null
           run_type?: string
+          session_id?: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
           total_cost_usd?: number | null
@@ -204,10 +194,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "agent_runs_issue_id_fkey"
-            columns: ["issue_id"]
+            foreignKeyName: "agent_runs_session_id_fkey"
+            columns: ["session_id"]
             isOneToOne: false
-            referencedRelation: "issues"
+            referencedRelation: "sessions"
             referencedColumns: ["id"]
           },
           {
@@ -283,10 +273,10 @@ export type Database = {
           github_repository_id: string | null
           id: string
           is_draft: boolean | null
-          issue_id: string
           pull_request_number: number | null
           pull_request_state: string | null
           pull_request_url: string | null
+          session_id: string
           updated_at: string
           workspace_id: string
         }
@@ -296,10 +286,10 @@ export type Database = {
           github_repository_id?: string | null
           id?: string
           is_draft?: boolean | null
-          issue_id: string
           pull_request_number?: number | null
           pull_request_state?: string | null
           pull_request_url?: string | null
+          session_id: string
           updated_at?: string
           workspace_id: string
         }
@@ -309,10 +299,10 @@ export type Database = {
           github_repository_id?: string | null
           id?: string
           is_draft?: boolean | null
-          issue_id?: string
           pull_request_number?: number | null
           pull_request_state?: string | null
           pull_request_url?: string | null
+          session_id?: string
           updated_at?: string
           workspace_id?: string
         }
@@ -325,10 +315,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "github_issue_branches_issue_id_fkey"
-            columns: ["issue_id"]
+            foreignKeyName: "github_issue_branches_session_id_fkey"
+            columns: ["session_id"]
             isOneToOne: false
-            referencedRelation: "issues"
+            referencedRelation: "sessions"
             referencedColumns: ["id"]
           },
           {
@@ -399,64 +389,6 @@ export type Database = {
           },
           {
             foreignKeyName: "github_repositories_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      issues: {
-        Row: {
-          created_at: string
-          creator_member_id: string | null
-          description_md: string
-          github_repository_id: string | null
-          id: string
-          number: number
-          title: string
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          creator_member_id?: string | null
-          description_md?: string
-          github_repository_id?: string | null
-          id?: string
-          number: number
-          title: string
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          creator_member_id?: string | null
-          description_md?: string
-          github_repository_id?: string | null
-          id?: string
-          number?: number
-          title?: string
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "issues_creator_member_id_fkey"
-            columns: ["creator_member_id"]
-            isOneToOne: false
-            referencedRelation: "workspace_members"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issues_github_repository_id_fkey"
-            columns: ["github_repository_id"]
-            isOneToOne: false
-            referencedRelation: "github_repositories"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "issues_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -659,7 +591,6 @@ export type Database = {
           creator_member_id: string | null
           current_artifact_version: number
           id: string
-          issue_id: string | null
           linear_issue_id: string | null
           linear_issue_url: string | null
           number: number
@@ -679,7 +610,6 @@ export type Database = {
           creator_member_id?: string | null
           current_artifact_version?: number
           id?: string
-          issue_id?: string | null
           linear_issue_id?: string | null
           linear_issue_url?: string | null
           number: number
@@ -699,7 +629,6 @@ export type Database = {
           creator_member_id?: string | null
           current_artifact_version?: number
           id?: string
-          issue_id?: string | null
           linear_issue_id?: string | null
           linear_issue_url?: string | null
           number?: number
@@ -719,13 +648,6 @@ export type Database = {
             columns: ["creator_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "sessions_issue_id_fkey"
-            columns: ["issue_id"]
-            isOneToOne: false
-            referencedRelation: "issues"
             referencedColumns: ["id"]
           },
           {
@@ -1049,12 +971,11 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          issue_id: string | null
           job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
-          session_id: string | null
+          session_id: string
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -1103,12 +1024,11 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          issue_id: string | null
           job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
-          session_id: string | null
+          session_id: string
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]

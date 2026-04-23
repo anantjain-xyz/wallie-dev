@@ -146,39 +146,6 @@ create table public.github_repositories (
   constraint github_repositories_installation_repo_unique unique (github_installation_id, repo_id)
 );
 
--- Anchor rows for sessions and github_issue_branches. Minimal shape — title,
--- description, and the repository link. Classical tracker columns (status,
--- priority, estimate, assignee, plan_md, design_md) were removed; discussion
--- lives in Slack + Linear.
-create table public.issues (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  number integer not null,
-  title text not null,
-  description_md text not null default '',
-  creator_member_id uuid references public.workspace_members(id) on delete set null,
-  github_repository_id uuid references public.github_repositories(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint issues_workspace_number_unique unique (workspace_id, number),
-  constraint issues_number_positive_check check (number > 0)
-);
-
-create table public.github_issue_branches (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  issue_id uuid not null references public.issues(id) on delete cascade,
-  github_repository_id uuid references public.github_repositories(id) on delete set null,
-  branch_name text not null,
-  pull_request_number integer,
-  pull_request_url text,
-  pull_request_state text,
-  is_draft boolean,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint github_issue_branches_workspace_branch_unique unique (workspace_id, branch_name)
-);
-
 create table public.workspace_secrets (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -198,7 +165,6 @@ create table public.sessions (
   title text not null,
   prompt_md text not null default '',
   creator_member_id uuid references public.workspace_members(id) on delete set null,
-  issue_id uuid references public.issues(id) on delete cascade,
   linear_issue_id text,
   linear_issue_url text,
   slack_channel_id text,
@@ -216,6 +182,21 @@ create table public.sessions (
     check (rejection_count >= 0),
   constraint sessions_artifact_version_nonnegative_check
     check (current_artifact_version >= 0)
+);
+
+create table public.github_issue_branches (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  github_repository_id uuid references public.github_repositories(id) on delete set null,
+  branch_name text not null,
+  pull_request_number integer,
+  pull_request_url text,
+  pull_request_state text,
+  is_draft boolean,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint github_issue_branches_workspace_branch_unique unique (workspace_id, branch_name)
 );
 
 create table public.session_artifacts (
@@ -265,8 +246,7 @@ create table public.session_pull_requests (
 create table public.agent_jobs (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  issue_id uuid references public.issues(id) on delete cascade,
-  session_id uuid references public.sessions(id) on delete cascade,
+  session_id uuid not null references public.sessions(id) on delete cascade,
   requested_by_member_id uuid references public.workspace_members(id) on delete set null,
   trigger_type public.agent_trigger_type not null,
   status public.agent_job_status not null default 'queued',
@@ -285,7 +265,7 @@ create table public.agent_jobs (
 create table public.agent_runs (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  issue_id uuid references public.issues(id) on delete cascade,
+  session_id uuid not null references public.sessions(id) on delete cascade,
   agent_job_id uuid references public.agent_jobs(id) on delete set null,
   triggered_by_member_id uuid references public.workspace_members(id) on delete set null,
   run_type text not null,
@@ -379,25 +359,8 @@ create unique index workspace_members_one_wallie_system_member_per_workspace
 create index github_repositories_workspace_full_name_idx
   on public.github_repositories (workspace_id, full_name);
 
-create index issues_workspace_number_desc_idx
-  on public.issues (workspace_id, number desc);
-
-create index issues_workspace_github_repository_idx
-  on public.issues (workspace_id, github_repository_id);
-
-create index issues_search_document_idx
-  on public.issues using gin (
-    to_tsvector('english', coalesce(title, '') || ' ' || coalesce(description_md, ''))
-  );
-
-create index issues_title_trgm_idx
-  on public.issues using gin (title extensions.gin_trgm_ops);
-
-create index issues_description_md_trgm_idx
-  on public.issues using gin (description_md extensions.gin_trgm_ops);
-
-create index github_issue_branches_issue_created_at_idx
-  on public.github_issue_branches (issue_id, created_at);
+create index github_issue_branches_session_created_at_idx
+  on public.github_issue_branches (session_id, created_at);
 
 create index sessions_workspace_number_desc_idx
   on public.sessions (workspace_id, number desc);
@@ -415,14 +378,6 @@ create unique index sessions_workspace_linear_issue_idx
 create unique index sessions_workspace_slack_thread_idx
   on public.sessions (workspace_id, slack_channel_id, slack_thread_ts)
   where slack_channel_id is not null and slack_thread_ts is not null;
-
-create index sessions_issue_id_idx
-  on public.sessions (issue_id)
-  where issue_id is not null;
-
-create unique index sessions_issue_id_unique_idx
-  on public.sessions (issue_id)
-  where issue_id is not null;
 
 create index session_artifacts_session_id_idx
   on public.session_artifacts (session_id);
@@ -442,11 +397,10 @@ create index agent_jobs_job_type_status_idx
   where status in ('queued', 'running');
 
 create index agent_jobs_session_id_idx
-  on public.agent_jobs (session_id)
-  where session_id is not null;
+  on public.agent_jobs (session_id);
 
-create index agent_runs_issue_created_at_desc_idx
-  on public.agent_runs (issue_id, created_at desc);
+create index agent_runs_session_created_at_desc_idx
+  on public.agent_runs (session_id, created_at desc);
 
 create index agent_runs_stall_sweep_idx
   on public.agent_runs (last_activity_at)
@@ -586,52 +540,6 @@ $$;
 -- Trigger functions (workspace-consistency enforcement)
 -- ---------------------------------------------------------------------------
 
-create or replace function internal.enforce_issue_defaults_and_refs()
-returns trigger
-language plpgsql
-set search_path = ''
-as $$
-declare
-  current_member_id uuid;
-begin
-  if coalesce(auth.role(), '') <> 'service_role' then
-    if tg_op = 'INSERT' then
-      current_member_id := internal.current_workspace_member_id(new.workspace_id);
-
-      if current_member_id is null then
-        raise exception 'Authenticated user is not an active member of workspace %', new.workspace_id
-          using errcode = '42501';
-      end if;
-
-      if new.creator_member_id is null then
-        new.creator_member_id := current_member_id;
-      elsif new.creator_member_id <> current_member_id then
-        raise exception 'creator_member_id must match the current workspace member'
-          using errcode = '42501';
-      end if;
-    elsif new.creator_member_id is distinct from old.creator_member_id then
-      raise exception 'creator_member_id is immutable after insert'
-        using errcode = '42501';
-    end if;
-  end if;
-
-  perform internal.assert_workspace_match(
-    new.workspace_id,
-    'public.workspace_members',
-    new.creator_member_id,
-    'creator_member_id'
-  );
-  perform internal.assert_workspace_match(
-    new.workspace_id,
-    'public.github_repositories',
-    new.github_repository_id,
-    'github_repository_id'
-  );
-
-  return new;
-end;
-$$;
-
 create or replace function internal.enforce_github_repository_refs()
 returns trigger
 language plpgsql
@@ -649,7 +557,7 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  perform internal.assert_workspace_match(new.workspace_id, 'public.issues', new.issue_id, 'issue_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.sessions', new.session_id, 'session_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.github_repositories', new.github_repository_id, 'github_repository_id');
   return new;
 end;
@@ -672,22 +580,9 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  if new.issue_id is null and new.session_id is null then
-    raise exception 'agent_jobs requires either issue_id or session_id'
-      using errcode = '23514';
-  end if;
-
-  if new.issue_id is not null then
-    perform internal.assert_workspace_match(
-      new.workspace_id, 'public.issues', new.issue_id, 'issue_id'
-    );
-  end if;
-
-  if new.session_id is not null then
-    perform internal.assert_workspace_match(
-      new.workspace_id, 'public.sessions', new.session_id, 'session_id'
-    );
-  end if;
+  perform internal.assert_workspace_match(
+    new.workspace_id, 'public.sessions', new.session_id, 'session_id'
+  );
 
   perform internal.assert_workspace_match(
     new.workspace_id, 'public.workspace_members',
@@ -704,7 +599,7 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  perform internal.assert_workspace_match(new.workspace_id, 'public.issues', new.issue_id, 'issue_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.sessions', new.session_id, 'session_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.agent_jobs', new.agent_job_id, 'agent_job_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.workspace_members', new.triggered_by_member_id, 'triggered_by_member_id');
   return new;
@@ -727,7 +622,34 @@ returns trigger
 language plpgsql
 set search_path = ''
 as $$
+declare
+  current_member_id uuid;
 begin
+  -- For authenticated (non-service_role) inserts, default creator_member_id
+  -- to the current workspace member and lock the field on update. Mirrors
+  -- the old issues trigger so sessions created from the UI stay attributed
+  -- without every client having to wire the member id through.
+  if coalesce(auth.role(), '') <> 'service_role' then
+    if tg_op = 'INSERT' then
+      current_member_id := internal.current_workspace_member_id(new.workspace_id);
+
+      if current_member_id is null then
+        raise exception 'Authenticated user is not an active member of workspace %', new.workspace_id
+          using errcode = '42501';
+      end if;
+
+      if new.creator_member_id is null then
+        new.creator_member_id := current_member_id;
+      elsif new.creator_member_id <> current_member_id then
+        raise exception 'creator_member_id must match the current workspace member'
+          using errcode = '42501';
+      end if;
+    elsif new.creator_member_id is distinct from old.creator_member_id then
+      raise exception 'creator_member_id is immutable after insert'
+        using errcode = '42501';
+    end if;
+  end if;
+
   perform internal.assert_workspace_match(new.workspace_id, 'public.workspace_members', new.creator_member_id, 'creator_member_id');
   return new;
 end;
@@ -801,16 +723,6 @@ create trigger github_repositories_enforce_refs
 before insert or update on public.github_repositories
 for each row
 execute function internal.enforce_github_repository_refs();
-
-create trigger issues_touch_updated_at
-before update on public.issues
-for each row
-execute function internal.touch_updated_at();
-
-create trigger issues_enforce_refs
-before insert or update on public.issues
-for each row
-execute function internal.enforce_issue_defaults_and_refs();
 
 create trigger github_issue_branches_touch_updated_at
 before update on public.github_issue_branches
@@ -1298,7 +1210,6 @@ alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
 alter table public.github_installations enable row level security;
 alter table public.github_repositories enable row level security;
-alter table public.issues enable row level security;
 alter table public.github_issue_branches enable row level security;
 alter table public.workspace_secrets enable row level security;
 alter table public.sessions enable row level security;
@@ -1325,7 +1236,6 @@ revoke all on public.workspaces from anon, authenticated;
 revoke all on public.workspace_members from anon, authenticated;
 revoke all on public.github_installations from anon, authenticated;
 revoke all on public.github_repositories from anon, authenticated;
-revoke all on public.issues from anon, authenticated;
 revoke all on public.github_issue_branches from anon, authenticated;
 revoke all on public.workspace_secrets from anon, authenticated;
 revoke all on public.sessions from anon, authenticated;
@@ -1348,19 +1258,6 @@ grant select on public.workspace_members to authenticated;
 grant update (preferences) on public.workspace_members to authenticated;
 grant select on public.github_installations to authenticated;
 grant select on public.github_repositories to authenticated;
-grant select, delete on public.issues to authenticated;
-grant insert (
-  workspace_id,
-  number,
-  title,
-  description_md,
-  github_repository_id
-) on public.issues to authenticated;
-grant update (
-  title,
-  description_md,
-  github_repository_id
-) on public.issues to authenticated;
 grant select on public.github_issue_branches to authenticated;
 grant select on public.sessions to authenticated;
 grant select on public.session_artifacts to authenticated;
@@ -1436,31 +1333,6 @@ create policy github_installations_select_membership
 create policy github_repositories_select_membership
   on public.github_repositories
   for select
-  to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
-
-create policy issues_select_membership
-  on public.issues
-  for select
-  to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
-
-create policy issues_insert_membership
-  on public.issues
-  for insert
-  to authenticated
-  with check (workspace_id in (select public.current_user_workspace_ids()));
-
-create policy issues_update_membership
-  on public.issues
-  for update
-  to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()))
-  with check (workspace_id in (select public.current_user_workspace_ids()));
-
-create policy issues_delete_membership
-  on public.issues
-  for delete
   to authenticated
   using (workspace_id in (select public.current_user_workspace_ids()));
 
@@ -1571,7 +1443,6 @@ declare
   realtime_targets text[] := array[
     'public.workspaces',
     'public.workspace_members',
-    'public.issues',
     'public.github_installations',
     'public.github_repositories',
     'public.github_issue_branches',

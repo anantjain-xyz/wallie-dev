@@ -121,7 +121,7 @@ export async function runReviewPhase(input: ReviewPhaseInput): Promise<PhaseResu
   // --- Create agent run record ---
   const runId = await createAgentRun(admin, {
     jobId: job.id,
-    issueId: job.issue_id ?? session.issue_id,
+    sessionId: session.id,
     model: agentConfig.model ?? "claude-code",
     provider,
     runType: "review",

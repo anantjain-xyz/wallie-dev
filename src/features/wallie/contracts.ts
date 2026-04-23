@@ -3,12 +3,12 @@ import { z } from "zod";
 import type { WallieActionErrorCode, WallieRun } from "@/features/wallie/types";
 
 const workspaceIdSchema = z.string().uuid("Workspace id is invalid.");
-const issueIdSchema = z.string().uuid("Issue id is invalid.");
+const sessionIdSchema = z.string().uuid("Session id is invalid.");
 const jobIdSchema = z.string().uuid("Job id is invalid.");
 const runIdSchema = z.string().uuid("Run id is invalid.");
 
 export const enqueueAgentRunSchema = z.object({
-  issueId: issueIdSchema,
+  sessionId: sessionIdSchema,
   workspaceId: workspaceIdSchema,
 });
 

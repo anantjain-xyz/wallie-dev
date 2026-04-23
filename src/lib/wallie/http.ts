@@ -1,4 +1,4 @@
-import type { IssueMember } from "@/features/issues/types";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
   AgentRunActionResponse,
@@ -7,7 +7,7 @@ import { mapAgentRunRow } from "@/features/wallie/data";
 import type { Tables } from "@/lib/supabase/database.types";
 import { WallieActionError } from "@/lib/wallie/service";
 
-const emptyMemberIndex = new Map<string, IssueMember>();
+const emptyMemberIndex = new Map<string, WorkspaceMember>();
 
 export function buildAgentRunActionResponse(input: {
   created: boolean;
