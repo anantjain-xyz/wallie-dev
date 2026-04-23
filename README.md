@@ -37,6 +37,176 @@ In-app create
   -> agent job must be triggered separately (not auto-enqueued)
 ```
 
+## Codebase Walkthrough
+
+A 10-minute tour of the repository, file by file.
+
+### Top-Level Map
+
+```
+wallie-cc/
+|-- src/
+|   |-- app/           -> Next.js routes (pages + API)
+|   |-- components/    -> Shared React UI
+|   |-- features/      -> Domain modules (sessions, github, slack...)
+|   |-- lib/           -> Core libraries (pipeline, auth, supabase...)
+|   |-- worker/        -> Background daemon (polls jobs)
+|   `-- middleware.ts  -> Auth gate
+|-- supabase/
+|   `-- migrations/20260422000000_init.sql  -> Entire schema (one file)
+`-- AGENTS.md          -> Arch rules (no ElectricSQL, no PGlite...)
+```
+
+### Domain Model
+
+```
+Workspace (tenant)
+  |-- Members (humans + "wallie" system agent)
+  |-- Secrets (encrypted ANTHROPIC_API_KEY, LINEAR_API_KEY)
+  `-- Sessions <- the unit of work
+      |-- phase: product -> design -> engineering
+      |          -> review -> land -> monitor
+      |-- phase_status: agent_generating | awaiting_review
+      |                 | approved | rejected | escalated
+      |-- Artifacts (versioned JSON per phase)
+      |-- Jobs (work queue entries)
+      `-- Runs (one agent execution; tokens, cost, msgs)
+```
+
+**Session** = one end-to-end workflow. **Artifact** = versioned JSON per phase. **Run** = one agent execution. A rejection produces a new Run.
+
+### Critical Flow (Slack mention -> shipped)
+
+```
+Slack @wallie + Linear URL
+      |
+      v
+[POST /api/slack/events]  -- verify HMAC, ack fast
+      | (after() -- async)
+      v
+Create Session + Enqueue Job  (dedup on workspace+linear_issue)
+      |
+      v
+Worker polls --> [POST /api/agent-jobs/process]
+      |             |- CAS claim (atomic phase_status update)
+      |             |- Route by phase -> runProductPhase()
+      |             |- Load secrets, sanitize Linear text
+      |             |- Call Claude -> ProductSpec JSON
+      |             |- Pre-screen (>=3 acceptance criteria)
+      |             |- Save artifact, status=awaiting_review
+      |             `- Post to Slack thread [Approve][Reject]
+      v
+[POST /api/slack/interactions]
+      |- Approve -> RPC advances phase, enqueues next job
+      `- Reject  -> modal -> feedback -> new run
+                    (3 rejects -> escalate to EM)
+```
+
+### Five Hub Files
+
+If you read only five files to understand Wallie, read these:
+
+| #   | File                                                                   | Role                                                                                 |
+| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)         | Phase router. Atomic CAS claim, dispatches to six phase handlers, posts Slack.       |
+| 2   | [src/lib/pipeline/product-agent.ts](src/lib/pipeline/product-agent.ts) | Calls Claude Sonnet 4. Sanitizes Linear text, builds prompt, parses structured JSON. |
+| 3   | [src/app/api/slack/events/route.ts](src/app/api/slack/events/route.ts) | Slack mention entry. HMAC verify, extract Linear URL, create session.                |
+| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                 | Job enqueue + run tracking. Dedup keys, token/cost logging.                          |
+| 5   | [src/worker/index.ts](src/worker/index.ts)                             | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler.          |
+
+### Walkthrough by Domain
+
+#### Database -- one file tells the whole story
+
+- [supabase/migrations/20260422000000_init.sql](supabase/migrations/20260422000000_init.sql) -- 1664 lines. Every table, RLS policy, trigger, and RPC (`approve_session_phase` is the star). Tables: `workspaces`, `workspace_members`, `sessions`, `session_artifacts`, `agent_jobs`, `agent_runs`, `agent_run_messages`, `workspace_secrets`, `github_installations`, `slack_installations`, `issues`, `session_pull_requests`.
+- [src/lib/supabase/database.types.ts](src/lib/supabase/database.types.ts) -- auto-generated types.
+
+#### Pipeline (`src/lib/pipeline/`) -- the brain
+
+- [processor.ts](src/lib/pipeline/processor.ts) -- phase router hub.
+- [product-agent.ts](src/lib/pipeline/product-agent.ts) -- Claude call for product spec.
+- [state-machine.ts](src/lib/pipeline/state-machine.ts) -- phase transitions + escalation (3-rejection threshold).
+- [pre-screen.ts](src/lib/pipeline/pre-screen.ts) -- quality gate before human review.
+- [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
+- [slack-format.ts](src/lib/pipeline/slack-format.ts) -- artifact to Slack Block Kit.
+- `design-phase.ts`, `engineering-phase.ts`, `review-phase.ts`, `land-phase.ts`, `monitor-phase.ts` -- phases 1-5 (mostly stubs; product phase is the only complete one).
+- [types.ts](src/lib/pipeline/types.ts) -- `ProductSpec` interface.
+
+#### Worker (`src/worker/`) -- the daemon
+
+- [index.ts](src/worker/index.ts) -- main entry (`pnpm worker`).
+- [loop.ts](src/worker/loop.ts) -- one poll iteration (claim + execute).
+- [heartbeat.ts](src/worker/heartbeat.ts) -- worker registration.
+- [stall-detector.ts](src/worker/stall-detector.ts) -- resets runs stuck past timeout.
+- [reconciler.ts](src/worker/reconciler.ts) -- cancels jobs if Linear issue closed.
+- [concurrency.ts](src/worker/concurrency.ts), [config.ts](src/worker/config.ts).
+
+#### API Routes (`src/app/api/`)
+
+```
+agent-jobs/process/route.ts          <- worker calls this
+sessions/[sessionId]/phase-action/   <- in-app approve/reject
+v1/sessions/                         <- public API (api-key auth)
+slack/events/                        <- mentions in
+slack/interactions/                  <- button clicks
+slack/install/ + callback/           <- OAuth
+github/webhooks/                     <- PR/install events
+github/install/ + callback/          <- OAuth
+linear/test-connection/              <- verify API key
+secrets/                             <- encrypted workspace creds
+api-keys/                            <- public API key CRUD
+workspaces/[id]/avatar/              <- storage upload
+agent-runs/[runId]/retry/            <- rerun a failed run
+```
+
+#### Features (`src/features/`) -- domain-grouped
+
+- **sessions/** -- `server.ts` (RLS queries), `client.ts`, `model.ts`, `detail/` (with Realtime subscription in `session-detail-page-client.tsx`), `list/`, `create-session-dialog.tsx`.
+- **github/** -- `service.ts`, `webhooks.ts`, `contracts.ts`.
+- **slack/** -- `service.ts` (OAuth), `state.ts`, `config.ts`.
+- **issues/**, **pipeline/**, **settings/**, **workers/**, **wallie/** (legacy orchestration).
+
+#### Libraries (`src/lib/`)
+
+- **supabase/** -- `admin.ts` (service role), `server.ts` (RLS), `browser.ts` (anon), `middleware.ts`.
+- **secrets/** -- [crypto.ts](src/lib/secrets/crypto.ts) AES-256 encrypt/decrypt.
+- **slack/** -- [verify.ts](src/lib/slack/verify.ts) HMAC-SHA256.
+- **linear/** -- [client.ts](src/lib/linear/client.ts) GraphQL.
+- **agent-runner/** -- [claude-code.ts](src/lib/agent-runner/claude-code.ts) spawns Claude Code CLI subprocess.
+- **api-keys/auth.ts**, **workspaces.ts**, **storage/**, **routes.ts**, **env/**.
+
+#### UI
+
+```
+app/
+|-- layout.tsx, page.tsx         (root)
+|-- login/, signup/, auth/       (public)
+|-- onboarding/workspace/        (first-run)
+`-- w/[workspaceSlug]/           (protected -- all real UI)
+    |-- sessions/                   list + /[sessionNumber] detail
+    |-- issues/                     GitHub issue tracker
+    |-- pipeline/                   phase dashboard
+    |-- settings/                   integrations + secrets
+    `-- workers/                    daemon health
+
+components/
+|-- app-shell/   (shell, header, sidebar)
+|-- auth/        (auth-entry-panel)
+|-- onboarding/  (workspace form)
+`-- shared/      (icons, dropdown, status-chip)
+```
+
+### Mental Model
+
+The codebase is four layers:
+
+1. Supabase schema defines nouns.
+2. `src/lib/pipeline/` is the verb engine.
+3. `src/app/api/` is the edge (ingest + ack).
+4. `src/worker/` drains the queue.
+
+Everything else is UI glue or integration plumbing.
+
 ## Tech Stack
 
 | Layer           | Technology                                          |
@@ -87,6 +257,7 @@ src/
     linear/                   # Linear GraphQL client
     wallie/                   # Job service, executor, HTTP client
     workspaces/               # Access control (role-based)
+  worker/                     # Background daemon (heartbeat, poll loop, stall detector)
 supabase/
   migrations/                 # SQL migrations (schema, RLS, triggers, RPCs)
   seed.sql                    # Development seed data
@@ -149,6 +320,14 @@ pnpm dev
 
 The app runs at `http://localhost:3000`.
 
+### 5. Start the worker (separate terminal)
+
+```bash
+pnpm worker
+```
+
+The worker polls for queued jobs, claims them atomically, and executes phase handlers.
+
 ## Scripts
 
 | Command             | Description                                    |
@@ -156,6 +335,7 @@ The app runs at `http://localhost:3000`.
 | `pnpm dev`          | Start Next.js dev server                       |
 | `pnpm build`        | Production build                               |
 | `pnpm start`        | Start production server                        |
+| `pnpm worker`       | Start the background worker daemon             |
 | `pnpm test`         | Run tests (Vitest)                             |
 | `pnpm test:watch`   | Run tests in watch mode                        |
 | `pnpm lint`         | Lint with ESLint (zero warnings)               |
