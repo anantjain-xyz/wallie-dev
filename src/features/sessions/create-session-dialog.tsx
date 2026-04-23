@@ -112,25 +112,17 @@ function CreateSessionDialogBody({
         className="ui-panel-elevated max-h-[calc(100vh-5rem)] w-full max-w-xl overflow-y-auto overscroll-contain p-6"
         role="dialog"
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              New session
-            </p>
-            <h2
-              id={titleId}
-              className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground"
-            >
-              Start a Wallie pipeline
-            </h2>
-            <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-              Write the prompt. Wallie drafts a product spec and you review before it moves to
-              design.
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="ui-button">
-            Close
-          </button>
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted">New session</p>
+          <h2
+            id={titleId}
+            className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground"
+          >
+            Start a Wallie pipeline
+          </h2>
+          <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
+            Write the prompt. Wallie drafts a product spec and you review before it moves to design.
+          </p>
         </div>
 
         <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
