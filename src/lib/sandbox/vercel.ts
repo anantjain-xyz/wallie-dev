@@ -141,10 +141,11 @@ async function runSetup(
   input: CreateSessionSandboxInput,
   modeKind: "fresh-branch" | "checkout-pr",
 ): Promise<void> {
-  const checkoutCmd =
+  // Expanded after a `git -C <repo>` prefix, so don't prepend another `git`.
+  const checkoutArgs =
     modeKind === "fresh-branch"
-      ? `git checkout -B ${shellQuote(input.branch)}`
-      : `git checkout ${shellQuote(input.branch)}`;
+      ? `checkout -B ${shellQuote(input.branch)}`
+      : `checkout ${shellQuote(input.branch)}`;
 
   const installCmd =
     input.agentProvider === "codex"
@@ -159,7 +160,7 @@ async function runSetup(
     `set -euo pipefail`,
     `git -C ${shellQuote(REPO_PATH)} config user.email "wallie@wallie.cc"`,
     `git -C ${shellQuote(REPO_PATH)} config user.name "Wallie"`,
-    `git -C ${shellQuote(REPO_PATH)} ${checkoutCmd}`,
+    `git -C ${shellQuote(REPO_PATH)} ${checkoutArgs}`,
     `printf "https://x-access-token:%s@github.com\\n" "$GH_TOKEN" > $HOME/.git-credentials`,
     `chmod 600 $HOME/.git-credentials`,
     `git config --global credential.helper store`,
