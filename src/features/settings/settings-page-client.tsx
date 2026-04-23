@@ -24,11 +24,9 @@ import type {
 import type { WorkspaceAvatarUploadResponse } from "@/lib/storage/contracts";
 import type {
   AgentConfigMap,
-  ApiKeyPreview,
   SettingsPageData,
   WorkspaceUsageData,
 } from "@/features/settings/data";
-import type { CreateApiKeyResponse } from "@/app/api/api-keys/route";
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 
 type SettingsPageClientProps = {
@@ -318,10 +316,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const [isDeletingLinearKey, setIsDeletingLinearKey] = useState(false);
   const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialData.agentConfig);
   const [isSavingAgentConfig, setIsSavingAgentConfig] = useState(false);
-  const [apiKeys, setApiKeys] = useState<ApiKeyPreview[]>(initialData.apiKeys);
-  const [isCreatingApiKey, setIsCreatingApiKey] = useState(false);
-  const [newApiKeyRaw, setNewApiKeyRaw] = useState<string | null>(null);
-  const [apiKeyName, setApiKeyName] = useState("");
 
   const isManager = initialData.canManage;
   const hasGitHubAppConfig = initialData.github.missingAppKeys.length === 0;
@@ -689,60 +683,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
       setFlashMessage({
         kind: "error",
         text: error instanceof Error ? error.message : "Workspace secret deletion failed.",
-      });
-    }
-  }
-
-  async function handleCreateApiKey() {
-    setIsCreatingApiKey(true);
-    setNewApiKeyRaw(null);
-
-    try {
-      const response = await fetch("/api/api-keys", {
-        body: JSON.stringify({
-          name: apiKeyName.trim() || "Default",
-          workspaceId: initialData.workspace.id,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      });
-      const payload = await readResponseJson<CreateApiKeyResponse>(response);
-
-      setApiKeys((current) => [payload.key, ...current]);
-      setNewApiKeyRaw(payload.rawKey);
-      setApiKeyName("");
-      setFlashMessage({
-        kind: "success",
-        text: "API key created. Copy it now — it won't be shown again.",
-      });
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "API key creation failed.",
-      });
-    } finally {
-      setIsCreatingApiKey(false);
-    }
-  }
-
-  async function handleRevokeApiKey(keyId: string) {
-    if (!window.confirm("Revoke this API key? This cannot be undone.")) return;
-
-    try {
-      const response = await fetch(
-        `/api/api-keys?keyId=${encodeURIComponent(keyId)}&workspaceId=${encodeURIComponent(initialData.workspace.id)}`,
-        { method: "DELETE" },
-      );
-      await readResponseJson<{ revoked: boolean }>(response);
-
-      setApiKeys((current) =>
-        current.map((k) => (k.id === keyId ? { ...k, revokedAt: new Date().toISOString() } : k)),
-      );
-      setFlashMessage({ kind: "success", text: "API key revoked." });
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "API key revocation failed.",
       });
     }
   }
@@ -1203,92 +1143,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
 
         <Section title="Usage">
           <UsageSummary usage={initialData.usage} />
-        </Section>
-
-        <Section title="API Keys">
-          <div className="space-y-4">
-            <p className="text-sm leading-7 text-muted">
-              API keys authenticate requests to the REST API at{" "}
-              <span className="font-mono text-foreground">/api/v1/sessions</span>. Keys are
-              workspace-scoped and never expire unless revoked.
-            </p>
-
-            {isManager ? (
-              <>
-                <div className="ui-subpanel space-y-3 p-4">
-                  <label className="space-y-2 text-sm font-semibold text-foreground">
-                    <span>Key Name</span>
-                    <input
-                      autoComplete="off"
-                      className="ui-input"
-                      onChange={(event) => setApiKeyName(event.target.value)}
-                      placeholder="e.g. CI Pipeline"
-                      value={apiKeyName}
-                    />
-                  </label>
-                  <div className="flex justify-end">
-                    <button
-                      className="ui-button-primary"
-                      disabled={isCreatingApiKey}
-                      onClick={() => void handleCreateApiKey()}
-                      type="button"
-                    >
-                      {isCreatingApiKey ? "Creating…" : "Create API Key"}
-                    </button>
-                  </div>
-                </div>
-
-                {newApiKeyRaw ? (
-                  <div className="rounded-[6px] border border-success/20 bg-success-soft px-4 py-3 text-sm leading-6 text-success">
-                    <p className="font-semibold">Copy your API key now</p>
-                    <p className="mt-1 break-all font-mono text-xs">{newApiKeyRaw}</p>
-                    <p className="mt-1 text-xs text-muted">This key will not be shown again.</p>
-                  </div>
-                ) : null}
-
-                <div className="space-y-3">
-                  {apiKeys.length === 0 ? (
-                    <div className="ui-subpanel p-4 text-sm text-muted">No API keys yet.</div>
-                  ) : (
-                    apiKeys.map((apiKey) => (
-                      <div
-                        className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
-                        key={apiKey.id}
-                      >
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">
-                            {apiKey.name}
-                            {apiKey.revokedAt ? (
-                              <span className="ml-2 text-xs text-danger">Revoked</span>
-                            ) : null}
-                          </p>
-                          <p className="mt-1 font-mono text-xs text-muted">
-                            {apiKey.keyPrefix}…
-                            {apiKey.lastUsedAt
-                              ? ` · last used ${dateFormatter.format(new Date(apiKey.lastUsedAt))}`
-                              : " · never used"}
-                          </p>
-                        </div>
-                        {!apiKey.revokedAt ? (
-                          <button
-                            className="ui-button-danger"
-                            onClick={() => void handleRevokeApiKey(apiKey.id)}
-                            type="button"
-                          >
-                            Revoke
-                          </button>
-                        ) : null}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-                Workspace admins can manage API keys from this page.
-              </div>
-            )}
-          </div>
         </Section>
 
         <Section title="Coding Agent">
