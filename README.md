@@ -262,45 +262,44 @@ supabase/
   config.toml                 # Supabase CLI config (local dev)
 ```
 
-## Setup
+## Local Setup (End-to-End)
+
+This section walks from a clean clone to a working Slack-mention-to-spec round trip on your laptop.
 
 ### Prerequisites
 
 - Node.js >= 22.13
 - pnpm >= 10
-- [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
 - Docker (for local Supabase)
+- [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
+- A tunnel tool that exposes `localhost:3000` to the public internet. [ngrok](https://ngrok.com/) or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) both work. You only need this if you want to exercise Slack or GitHub; Supabase + Linear + the dev UI work without a tunnel.
+- Accounts/access:
+  - An Anthropic API key (for Claude Sonnet 4)
+  - A Linear workspace + personal API key (for product-spec source context)
+  - A Slack workspace where you can install a custom app (for Slack integration)
+  - A GitHub user or org where you can create a GitHub App (for GitHub integration)
 
-### 1. Install dependencies
+### 1. Clone and install
 
 ```bash
+git clone <this-repo>
+cd wallie-cc
 pnpm install
 ```
 
-### 2. Configure environment
+### 2. Start a public tunnel (optional but recommended)
+
+Slack and GitHub webhooks need a public HTTPS URL. Start the tunnel first so you have a stable origin to paste into app configs.
 
 ```bash
-cp .env.example .env.local
+# ngrok
+ngrok http 3000
+
+# cloudflared (quick tunnel)
+cloudflared tunnel --url http://localhost:3000
 ```
 
-Fill in the required values:
-
-| Variable                               | Required | Description                                            |
-| -------------------------------------- | -------- | ------------------------------------------------------ |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | Supabase project URL                                   |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon/publishable key                          |
-| `NEXT_PUBLIC_APP_URL`                  | Yes      | App origin (`http://localhost:3000` for local dev)     |
-| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                              |
-| `WALLIE_ENCRYPTION_KEY`                | Yes      | 32+ character secret for AES-256 credential encryption |
-| `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token for external job processor calls          |
-| `GITHUB_APP_ID`                        | No       | GitHub App ID (for GitHub integration)                 |
-| `GITHUB_APP_PRIVATE_KEY`               | No       | GitHub App private key                                 |
-| `GITHUB_WEBHOOK_SECRET`                | No       | GitHub webhook signature secret                        |
-| `SLACK_CLIENT_ID`                      | No       | Slack app client ID                                    |
-| `SLACK_CLIENT_SECRET`                  | No       | Slack app client secret                                |
-| `SLACK_SIGNING_SECRET`                 | No       | Slack request signing secret                           |
-
-Integration-specific variables (GitHub, Slack) are optional until those integrations are enabled. Workspace-level secrets like `ANTHROPIC_API_KEY` and `LINEAR_API_KEY` are stored encrypted in the database via the settings UI.
+Note the HTTPS URL the tunnel prints (e.g. `https://wallie-dev.ngrok.app`). It replaces `http://localhost:3000` in `NEXT_PUBLIC_APP_URL` and in every third-party app config below. If you restart the tunnel and get a new URL, update `.env.local` and the Slack / GitHub app settings to match.
 
 ### 3. Start local Supabase
 
@@ -308,23 +307,142 @@ Integration-specific variables (GitHub, Slack) are optional until those integrat
 supabase start
 ```
 
-This starts a local Postgres, Auth, Realtime, and Storage stack. Migrations are applied automatically.
+This boots a local Postgres 17, GoTrue (auth), Realtime, and Storage stack via Docker. Migrations in `supabase/migrations/` are applied automatically. The CLI prints values you need in the next step:
 
-### 4. Start the dev server
+- `API URL` -> `NEXT_PUBLIC_SUPABASE_URL`
+- `anon key` -> `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `service_role key` -> `SUPABASE_SECRET_KEY`
+
+Re-run `supabase status` any time to recover these. Reset the local DB with `supabase db reset`.
+
+### 4. Configure environment
+
+```bash
+cp .env.example .env.local
+```
+
+Fill in the required values. Integration variables can be left blank until you complete the Slack / GitHub app setup below.
+
+| Variable                               | Required | Description                                                                           |
+| -------------------------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)   |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                          |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                       |
+| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                             |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | 32+ character secret used for AES-256 at-rest encryption of workspace secrets         |
+| `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it  |
+| `SLACK_CLIENT_ID`                      | Slack    | Slack app "Basic Information" -> "App Credentials"                                    |
+| `SLACK_CLIENT_SECRET`                  | Slack    | Same panel                                                                            |
+| `SLACK_SIGNING_SECRET`                 | Slack    | Same panel; used to verify `/api/slack/events` + `/api/slack/interactions` signatures |
+| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                      |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)        |
+| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                               |
+
+Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
+
+Workspace-scoped secrets (`ANTHROPIC_API_KEY`, `LINEAR_API_KEY`) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`.
+
+### 5. Create a Slack app
+
+Go to <https://api.slack.com/apps> -> **Create New App** -> **From scratch**, name it (e.g. "Wallie Dev"), pick your Slack workspace.
+
+Then configure the following. `$PUBLIC_URL` = your tunnel origin from step 2.
+
+- **Basic Information** -> **App Credentials**: copy `Client ID`, `Client Secret`, `Signing Secret` into `.env.local`.
+- **OAuth & Permissions**
+  - Redirect URL: `$PUBLIC_URL/api/slack/callback`
+  - Bot Token Scopes: `app_mentions:read`, `chat:write`, `chat:write.public`
+- **Event Subscriptions**
+  - Enable events.
+  - Request URL: `$PUBLIC_URL/api/slack/events` (Slack will verify with a `url_verification` ping -- the dev server must be running and the tunnel live)
+  - Subscribe to bot event: `app_mention`
+- **Interactivity & Shortcuts**
+  - Enable interactivity.
+  - Request URL: `$PUBLIC_URL/api/slack/interactions` (powers the Approve / Request Changes buttons and the rejection-feedback modal)
+- **Install App** -> install to your workspace. Wallie's own OAuth flow at `$PUBLIC_URL/api/slack/install` will create the `slack_installations` row once you trigger it from the Settings -> Integrations page.
+- Invite the bot to the channel you plan to test in: `/invite @Wallie`.
+
+### 6. Create a GitHub App
+
+Go to <https://github.com/settings/apps> -> **New GitHub App** (or your org's equivalent under Settings -> Developer settings).
+
+- **Homepage URL**: `$PUBLIC_URL`
+- **Callback URL**: `$PUBLIC_URL/api/github/callback` (keep "Request user authorization (OAuth) during installation" **off** -- Wallie uses the app-install flow)
+- **Setup URL** (optional, post-install redirect): `$PUBLIC_URL/api/github/callback`
+- **Webhook**
+  - Active: yes
+  - URL: `$PUBLIC_URL/api/github/webhooks`
+  - Secret: any strong random string -- put the same value in `GITHUB_WEBHOOK_SECRET`
+- **Permissions -> Repository**
+  - Pull requests: **Read-only** (tracks PR state/merge)
+  - (Everything else can stay "No access" until a later phase needs it.)
+- **Subscribe to events**: `Pull request`. The `installation` and `installation_repositories` events are delivered automatically by GitHub and are handled at `/api/github/webhooks`.
+- **Where can this GitHub App be installed?** Only on this account (for local dev).
+
+After creation:
+
+1. Copy **App ID** -> `GITHUB_APP_ID`.
+2. Click **Generate a private key**, download the `.pem`, and put its contents in `GITHUB_APP_PRIVATE_KEY`. If you inline it into `.env.local`, replace real newlines with `\n` and quote the value.
+3. Click **Install App** and install it onto the repo(s) you want Wallie to see. Wallie's in-app flow (`GET /api/github/install` -> GitHub -> `GET /api/github/callback`) stores the installation against your workspace.
+
+### 7. Linear API key
+
+Linear is pull-only -- no webhook, no OAuth.
+
+1. Generate a personal API key at <https://linear.app/settings/api>.
+2. After you create a workspace in Wallie (step 9), paste the key into **Settings -> Integrations -> Linear**. The Verify button calls `POST /api/linear/test-connection`.
+
+### 8. Start the dev server
 
 ```bash
 pnpm dev
 ```
 
-The app runs at `http://localhost:3000`.
+The app runs at `http://localhost:3000` and is reachable at your tunnel origin. Keep it running.
 
-### 5. Start the worker (separate terminal)
+### 9. Start the worker
+
+In a second terminal:
 
 ```bash
 pnpm worker
 ```
 
-The worker polls for queued jobs, claims them atomically, and executes phase handlers.
+The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS claim, runs the phase handler (calls Claude for the product phase), and posts results to Slack. Without it, jobs stay queued and nothing progresses past `agent_generating`.
+
+### 10. First run
+
+1. Open `http://localhost:3000`, sign up / log in via Supabase Auth.
+2. Complete onboarding (pick a workspace slug).
+3. **Settings -> Integrations**:
+   - **Anthropic**: paste your `ANTHROPIC_API_KEY` (stored encrypted in `workspace_secrets`).
+   - **Linear**: paste your Linear API key, verify.
+   - **Slack**: click Connect -> OAuth out and back -> `slack_installations` row created.
+   - **GitHub**: click Install -> GitHub App install -> back -> `github_installations` row created. Pick the repo(s) to track.
+4. In Slack, in a channel where the bot is invited:
+   ```
+   @Wallie https://linear.app/<team>/issue/TEAM-123
+   ```
+5. Expect, within ~30s: a session row appears in `/w/<slug>/sessions`, the worker log shows a job claim + Claude call, the Slack thread receives the spec with Approve / Request Changes buttons.
+
+### Tunnel: what must be publicly reachable
+
+| Integration | Endpoint                                                 | Why                                   |
+| ----------- | -------------------------------------------------------- | ------------------------------------- |
+| Slack       | `POST /api/slack/events`, `POST /api/slack/interactions` | Slack posts events and button clicks  |
+| Slack OAuth | `GET  /api/slack/callback`                               | Browser redirect from slack.com       |
+| GitHub      | `POST /api/github/webhooks`                              | App install and PR event deliveries   |
+| GitHub App  | `GET  /api/github/callback`                              | Browser redirect from github.com      |
+| Linear      | -- (pull only)                                           | Wallie calls Linear, never vice versa |
+| Supabase    | -- (local Docker)                                        | App and worker connect to localhost   |
+
+### Troubleshooting
+
+- **Slack "Your URL didn't respond with the value of the challenge parameter"** -- the dev server isn't running, the tunnel is down, or `NEXT_PUBLIC_APP_URL` doesn't match the tunnel URL. Restart, re-verify.
+- **`invalid signature` on Slack events** -- `SLACK_SIGNING_SECRET` doesn't match the app's current signing secret. Rotate and update.
+- **GitHub webhook 401** -- `GITHUB_WEBHOOK_SECRET` in `.env.local` doesn't match the value in the GitHub App. GitHub's Advanced -> Recent Deliveries panel shows the exact error.
+- **Session stays in `agent_generating` forever** -- worker isn't running, Anthropic key is missing or invalid on the workspace, or the worker can't reach `http://localhost:3000`. Check `pnpm worker` logs.
+- **RLS errors during local dev** -- confirm `SUPABASE_SECRET_KEY` is the service role key (not the anon key) and that `supabase start` finished applying migrations.
 
 ## Scripts
 
