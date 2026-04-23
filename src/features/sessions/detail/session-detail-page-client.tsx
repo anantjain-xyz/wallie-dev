@@ -8,16 +8,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
-  SESSION_PHASE_DESCRIPTIONS,
-  SESSION_PHASE_LABELS,
-  SESSION_PHASE_ORDER,
   formatSessionPhaseStatus,
-  isTerminalPhase,
-  sessionPhaseIndex,
+  isTerminalStage,
   sessionPhaseStatusTone,
+  stageIndex,
+  type PipelineStage,
   type SessionArtifactSummary,
   type SessionDetail,
-  type SessionPhase,
   type SessionPhaseStatus,
   type SessionRun,
 } from "@/features/sessions/types";
@@ -39,38 +36,40 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
 });
 
-type PhaseRailState = {
+type StageRailEntry = {
+  stage: PipelineStage;
   status: "completed" | "current" | "upcoming";
-  phase: SessionPhase;
   phaseStatus: SessionPhaseStatus | null;
   completedAt: string | null;
 };
 
-function buildPhaseRail(session: SessionDetail): PhaseRailState[] {
-  const completionIndex = new Map(session.phaseCompletions.map((c) => [c.phase, c.completedAt]));
-  const currentIdx = sessionPhaseIndex(session.phase);
-  return SESSION_PHASE_ORDER.map((phase, idx) => {
-    const completedAt = completionIndex.get(phase) ?? null;
+function buildStageRail(session: SessionDetail): StageRailEntry[] {
+  const completionIndex = new Map(
+    session.phaseCompletions.map((c) => [c.stageSlug, c.completedAt]),
+  );
+  const currentIdx = stageIndex(session.pipeline, session.currentStageSlug);
+  return session.pipeline.stages.map((stage, idx) => {
+    const completedAt = completionIndex.get(stage.slug) ?? null;
     if (idx < currentIdx || completedAt) {
       return {
         completedAt,
-        phase,
         phaseStatus: null,
+        stage,
         status: "completed" as const,
       };
     }
     if (idx === currentIdx) {
       return {
         completedAt: null,
-        phase,
         phaseStatus: session.phaseStatus,
+        stage,
         status: "current" as const,
       };
     }
     return {
       completedAt: null,
-      phase,
       phaseStatus: null,
+      stage,
       status: "upcoming" as const,
     };
   });
@@ -79,22 +78,23 @@ function buildPhaseRail(session: SessionDetail): PhaseRailState[] {
 export function SessionDetailPageClient({ initialData }: SessionDetailPageClientProps) {
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
-  const [selectedPhase, setSelectedPhase] = useState<SessionPhase>(initialData.session.phase);
+  const session = initialData.session;
+  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(session.currentStageSlug);
   const [actionError, setActionError] = useState<string | null>(null);
   const [feedbackDraft, setFeedbackDraft] = useState("");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const session = initialData.session;
+  const stageRail = useMemo(() => buildStageRail(session), [session]);
 
-  const phaseRail = useMemo(() => buildPhaseRail(session), [session]);
+  const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
 
-  const artifactsByPhase = useMemo(() => {
-    const map = new Map<SessionPhase, SessionArtifactSummary[]>();
+  const artifactsByStage = useMemo(() => {
+    const map = new Map<string, SessionArtifactSummary[]>();
     for (const artifact of session.artifacts) {
-      const list = map.get(artifact.phase) ?? [];
+      const list = map.get(artifact.stageSlug) ?? [];
       list.push(artifact);
-      map.set(artifact.phase, list);
+      map.set(artifact.stageSlug, list);
     }
     for (const list of map.values()) {
       list.sort((a, b) => b.version - a.version);
@@ -102,11 +102,11 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     return map;
   }, [session.artifacts]);
 
-  const activeArtifacts = artifactsByPhase.get(selectedPhase) ?? [];
+  const activeArtifacts = artifactsByStage.get(selectedStageSlug) ?? [];
   const latestArtifact = activeArtifacts[0] ?? null;
 
   const canActOnCurrent =
-    selectedPhase === session.phase && session.phaseStatus === "awaiting_review";
+    selectedStageSlug === session.currentStageSlug && session.phaseStatus === "awaiting_review";
 
   async function handlePhaseAction(action: "approve" | "reject") {
     if (action === "reject") {
@@ -174,10 +174,10 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
       </header>
 
       <section className="border-b border-border px-6 py-5">
-        <PhaseRail
-          phaseRail={phaseRail}
-          selectedPhase={selectedPhase}
-          onSelect={setSelectedPhase}
+        <StageRail
+          stageRail={stageRail}
+          selectedStageSlug={selectedStageSlug}
+          onSelect={setSelectedStageSlug}
         />
       </section>
 
@@ -187,13 +187,11 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div>
                 <h2 className="text-[13px] font-semibold text-foreground">
-                  {SESSION_PHASE_LABELS[selectedPhase]} phase
+                  {selectedStage?.name ?? selectedStageSlug} stage
                 </h2>
-                <p className="mt-0.5 text-[11px] text-muted">
-                  {SESSION_PHASE_DESCRIPTIONS[selectedPhase]}
-                </p>
+                <p className="mt-0.5 text-[11px] text-muted">{selectedStage?.description ?? ""}</p>
               </div>
-              {selectedPhase === session.phase ? (
+              {selectedStageSlug === session.currentStageSlug ? (
                 <StatusChip tone={sessionPhaseStatusTone(session.phaseStatus)}>
                   {formatSessionPhaseStatus(session.phaseStatus)}
                 </StatusChip>
@@ -203,14 +201,16 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             <div className="p-4">
               {latestArtifact ? (
                 <ArtifactView artifact={latestArtifact} />
-              ) : selectedPhase === session.phase && session.phaseStatus === "agent_generating" ? (
-                <EmptyHint text="Wallie is drafting the artifact for this phase. Refresh in a moment." />
+              ) : selectedStageSlug === session.currentStageSlug &&
+                session.phaseStatus === "agent_generating" ? (
+                <EmptyHint text="Wallie is drafting the artifact for this stage. Refresh in a moment." />
               ) : (
                 <EmptyHint
                   text={
-                    sessionPhaseIndex(selectedPhase) > sessionPhaseIndex(session.phase)
-                      ? "This phase has not started yet."
-                      : "No artifact recorded for this phase."
+                    stageIndex(session.pipeline, selectedStageSlug) >
+                    stageIndex(session.pipeline, session.currentStageSlug)
+                      ? "This stage has not started yet."
+                      : "No artifact recorded for this stage."
                   }
                 />
               )}
@@ -224,7 +224,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                   <ul className="mt-2 space-y-2">
                     {activeArtifacts.slice(1).map((artifact) => (
                       <li
-                        key={`${artifact.phase}-${artifact.version}`}
+                        key={`${artifact.stageSlug}-${artifact.version}`}
                         className="rounded-[4px] border border-border bg-background p-3"
                       >
                         <p className="text-[11px] uppercase text-muted">
@@ -264,7 +264,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                       value={feedbackDraft}
                       onChange={(event) => setFeedbackDraft(event.target.value)}
                       className="ui-textarea min-h-24"
-                      placeholder="What should change? Wallie will regenerate this phase."
+                      placeholder="What should change? Wallie will regenerate this stage."
                     />
                     <div className="flex items-center justify-end gap-2">
                       <button
@@ -306,7 +306,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                     >
                       {isPending
                         ? "Approving…"
-                        : isTerminalPhase(session.phase)
+                        : isTerminalStage(session.pipeline, session.currentStageSlug)
                           ? "Approve & archive"
                           : "Approve & advance"}
                     </button>
@@ -365,24 +365,24 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   );
 }
 
-function PhaseRail({
+function StageRail({
   onSelect,
-  phaseRail,
-  selectedPhase,
+  stageRail,
+  selectedStageSlug,
 }: {
-  onSelect: (phase: SessionPhase) => void;
-  phaseRail: PhaseRailState[];
-  selectedPhase: SessionPhase;
+  onSelect: (stageSlug: string) => void;
+  stageRail: StageRailEntry[];
+  selectedStageSlug: string;
 }) {
   return (
     <ol className="flex flex-wrap items-center gap-2">
-      {phaseRail.map((entry, index) => {
-        const isSelected = entry.phase === selectedPhase;
+      {stageRail.map((entry, index) => {
+        const isSelected = entry.stage.slug === selectedStageSlug;
         return (
-          <li key={entry.phase} className="flex items-center gap-2">
+          <li key={entry.stage.id} className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => onSelect(entry.phase)}
+              onClick={() => onSelect(entry.stage.slug)}
               className={cn(
                 "group flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
                 isSelected
@@ -391,15 +391,15 @@ function PhaseRail({
               )}
               aria-current={isSelected ? "step" : undefined}
             >
-              <PhaseDot entry={entry} />
-              <span>{SESSION_PHASE_LABELS[entry.phase]}</span>
+              <StageDot entry={entry} />
+              <span>{entry.stage.name}</span>
               {entry.status === "current" && entry.phaseStatus ? (
                 <span className="text-[10px] text-muted">
                   {formatSessionPhaseStatus(entry.phaseStatus)}
                 </span>
               ) : null}
             </button>
-            {index < phaseRail.length - 1 ? (
+            {index < stageRail.length - 1 ? (
               <span aria-hidden="true" className="h-px w-4 bg-border" />
             ) : null}
           </li>
@@ -409,7 +409,7 @@ function PhaseRail({
   );
 }
 
-function PhaseDot({ entry }: { entry: PhaseRailState }) {
+function StageDot({ entry }: { entry: StageRailEntry }) {
   let className = "h-2 w-2 rounded-full";
   if (entry.status === "completed") {
     className = cn(className, "bg-success");

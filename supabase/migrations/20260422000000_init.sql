@@ -59,14 +59,10 @@ create type public.pipeline_phase_status as enum (
   'escalated'
 );
 
-create type public.session_phase as enum (
-  'product',
-  'design',
-  'engineering',
-  'review',
-  'land',
-  'monitor'
-);
+-- Pipelines and pipeline_stages replace the old hardcoded session_phase enum.
+-- Each workspace owns a default pipeline; users can edit stages, prompts, and
+-- per-stage approver lists in the UI. Sessions pin to a pipeline_id and
+-- advance through pipeline_stages by `position`.
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -146,6 +142,37 @@ create table public.github_repositories (
   constraint github_repositories_installation_repo_unique unique (github_installation_id, repo_id)
 );
 
+create table public.pipelines (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  name text not null default 'Default',
+  is_default boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.pipeline_stages (
+  id uuid primary key default gen_random_uuid(),
+  pipeline_id uuid not null references public.pipelines(id) on delete cascade,
+  -- Denormalized for RLS / workspace-consistency triggers; kept in sync by
+  -- enforce_pipeline_stage_refs which copies pipelines.workspace_id.
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  position integer not null,
+  slug text not null,
+  name text not null,
+  description text not null default '',
+  prompt_template_md text not null default '',
+  -- Empty array means "any owner/admin can approve" (fallback).
+  approver_member_ids uuid[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint pipeline_stages_position_positive check (position > 0),
+  constraint pipeline_stages_slug_format
+    check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
+  constraint pipeline_stages_pipeline_slug_unique unique (pipeline_id, slug),
+  constraint pipeline_stages_pipeline_position_unique unique (pipeline_id, position)
+);
+
 create table public.workspace_secrets (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -169,7 +196,11 @@ create table public.sessions (
   linear_issue_url text,
   slack_channel_id text,
   slack_thread_ts text,
-  phase public.session_phase not null default 'product',
+  -- Pinned at create time. Edits to the pipeline don't retroactively change a
+  -- session's shape: stage_slug snapshots on artifacts/completions preserve
+  -- history if a stage is renamed or removed.
+  pipeline_id uuid not null references public.pipelines(id) on delete restrict,
+  current_stage_id uuid not null references public.pipeline_stages(id) on delete restrict,
   phase_status public.pipeline_phase_status not null default 'agent_generating',
   rejection_count integer not null default 0,
   current_artifact_version integer not null default 0,
@@ -203,7 +234,10 @@ create table public.session_artifacts (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references public.sessions(id) on delete cascade,
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  phase public.session_phase not null,
+  -- stage_id may be null after a stage is deleted — stage_slug snapshot keeps
+  -- the history readable. Inserts always set both.
+  stage_id uuid references public.pipeline_stages(id) on delete set null,
+  stage_slug text not null,
   version integer not null,
   artifact_json jsonb not null,
   feedback_text text,
@@ -211,18 +245,19 @@ create table public.session_artifacts (
   constraint session_artifacts_version_positive_check
     check (version > 0),
   constraint session_artifacts_unique_version
-    unique (session_id, phase, version)
+    unique (session_id, stage_slug, version)
 );
 
 create table public.session_phase_completions (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references public.sessions(id) on delete cascade,
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  phase public.session_phase not null,
+  stage_id uuid references public.pipeline_stages(id) on delete set null,
+  stage_slug text not null,
   completed_at timestamptz not null default now(),
   completed_by_member_id uuid references public.workspace_members(id) on delete set null,
-  constraint session_phase_completions_unique_phase
-    unique (session_id, phase)
+  constraint session_phase_completions_unique_stage
+    unique (session_id, stage_slug)
 );
 
 create table public.session_pull_requests (
@@ -320,16 +355,6 @@ create table public.workspace_agent_config (
   constraint workspace_agent_config_workspace_key_unique unique (workspace_id, key)
 );
 
-create table public.workspace_prompt_templates (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  phase public.session_phase not null,
-  template_md text not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint workspace_prompt_templates_workspace_phase_key unique (workspace_id, phase)
-);
-
 create table public.worker_heartbeats (
   id uuid primary key default gen_random_uuid(),
   worker_id text not null,
@@ -365,8 +390,26 @@ create index github_issue_branches_session_created_at_idx
 create index sessions_workspace_number_desc_idx
   on public.sessions (workspace_id, number desc);
 
-create index sessions_workspace_phase_idx
-  on public.sessions (workspace_id, phase);
+create index sessions_workspace_current_stage_idx
+  on public.sessions (workspace_id, current_stage_id);
+
+create index sessions_pipeline_id_idx
+  on public.sessions (pipeline_id);
+
+create index pipelines_workspace_id_idx
+  on public.pipelines (workspace_id);
+
+create unique index pipelines_one_default_per_workspace
+  on public.pipelines (workspace_id) where is_default;
+
+create index pipeline_stages_pipeline_position_idx
+  on public.pipeline_stages (pipeline_id, position);
+
+create index session_artifacts_stage_id_idx
+  on public.session_artifacts (stage_id);
+
+create index session_phase_completions_stage_id_idx
+  on public.session_phase_completions (stage_id);
 
 create index sessions_workspace_archived_idx
   on public.sessions (workspace_id, archived_at);
@@ -411,9 +454,6 @@ create index agent_run_messages_agent_run_created_at_idx
 
 create index slack_installations_workspace_id_idx
   on public.slack_installations (workspace_id);
-
-create index idx_workspace_prompt_templates_workspace
-  on public.workspace_prompt_templates (workspace_id);
 
 create index worker_heartbeats_last_heartbeat_idx
   on public.worker_heartbeats (last_heartbeat_at);
@@ -617,6 +657,30 @@ begin
 end;
 $$;
 
+create or replace function internal.enforce_pipeline_stage_refs()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  pipeline_workspace_id uuid;
+begin
+  select p.workspace_id into pipeline_workspace_id
+  from public.pipelines p
+  where p.id = new.pipeline_id;
+
+  if pipeline_workspace_id is null then
+    raise exception 'pipeline_id references a missing pipeline'
+      using errcode = '23503';
+  end if;
+
+  -- Keep workspace_id in lockstep with the parent pipeline so RLS and the
+  -- assert_workspace_match calls on artifacts/completions stay consistent.
+  new.workspace_id := pipeline_workspace_id;
+  return new;
+end;
+$$;
+
 create or replace function internal.enforce_session_refs()
 returns trigger
 language plpgsql
@@ -625,6 +689,9 @@ as $$
 declare
   current_member_id uuid;
 begin
+  perform internal.assert_workspace_match(new.workspace_id, 'public.pipelines', new.pipeline_id, 'pipeline_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.pipeline_stages', new.current_stage_id, 'current_stage_id');
+
   -- For authenticated (non-service_role) inserts, default creator_member_id
   -- to the current workspace member and lock the field on update. Mirrors
   -- the old issues trigger so sessions created from the UI stay attributed
@@ -662,6 +729,7 @@ set search_path = ''
 as $$
 begin
   perform internal.assert_workspace_match(new.workspace_id, 'public.sessions', new.session_id, 'session_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.pipeline_stages', new.stage_id, 'stage_id');
   return new;
 end;
 $$;
@@ -673,6 +741,7 @@ set search_path = ''
 as $$
 begin
   perform internal.assert_workspace_match(new.workspace_id, 'public.sessions', new.session_id, 'session_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.pipeline_stages', new.stage_id, 'stage_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.workspace_members', new.completed_by_member_id, 'completed_by_member_id');
   return new;
 end;
@@ -733,6 +802,21 @@ create trigger github_issue_branches_enforce_refs
 before insert or update on public.github_issue_branches
 for each row
 execute function internal.enforce_github_issue_branch_refs();
+
+create trigger pipelines_touch_updated_at
+before update on public.pipelines
+for each row
+execute function internal.touch_updated_at();
+
+create trigger pipeline_stages_touch_updated_at
+before update on public.pipeline_stages
+for each row
+execute function internal.touch_updated_at();
+
+create trigger pipeline_stages_enforce_refs
+before insert or update on public.pipeline_stages
+for each row
+execute function internal.enforce_pipeline_stage_refs();
 
 create trigger workspace_secrets_touch_updated_at
 before update on public.workspace_secrets
@@ -814,14 +898,103 @@ before update on public.workspace_agent_config
 for each row
 execute function internal.touch_updated_at();
 
-create trigger workspace_prompt_templates_touch_updated_at
-before update on public.workspace_prompt_templates
-for each row
-execute function internal.touch_updated_at();
-
 -- ---------------------------------------------------------------------------
 -- Public RPCs
 -- ---------------------------------------------------------------------------
+
+-- Default stage seed shared by create_workspace and the "Reset to defaults"
+-- button in the settings UI. Mirrors the legacy 6-phase pipeline so that
+-- existing UX continues to work out of the box; workspaces can edit, add,
+-- remove, or reorder stages from the settings page.
+create or replace function internal.default_pipeline_stages()
+returns table (
+  position integer,
+  slug text,
+  name text,
+  description text,
+  prompt_template_md text
+)
+language sql
+immutable
+set search_path = ''
+as $$
+  values
+    (
+      1,
+      'product',
+      'Product',
+      'Write the spec and approve the problem framing.',
+      '## Task' || E'\n\n' ||
+      '{{session.title}}' || E'\n\n' ||
+      '## Description' || E'\n\n' ||
+      '{{session.prompt}}' || E'\n'
+    ),
+    (
+      2,
+      'design',
+      'Design',
+      'Resolve the design approach before engineering picks it up.',
+      'Design the technical approach for: {{session.title}}' || E'\n\n' ||
+      '## Description' || E'\n\n' ||
+      '{{session.prompt}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.product}}## Approved Product Spec' || E'\n\n' ||
+      '{{artifact.previousStages.product}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
+      '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
+      '## Instructions' || E'\n\n' ||
+      'Produce a concise technical design document that covers approach, key files, data model, API surface, testing, and risks.' || E'\n'
+    ),
+    (
+      3,
+      'engineering',
+      'Engineering',
+      'Scope the implementation plan and confirm the diff shape.',
+      'Implement: {{session.title}}' || E'\n\n' ||
+      '## Description' || E'\n\n' ||
+      '{{session.prompt}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.product}}## Product Spec' || E'\n\n' ||
+      '{{artifact.previousStages.product}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.design}}## Design Document' || E'\n\n' ||
+      '{{artifact.previousStages.design}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
+      '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
+      '## Instructions' || E'\n\n' ||
+      'Read the codebase, implement the change, follow existing patterns, and produce small focused commits.' || E'\n'
+    ),
+    (
+      4,
+      'review',
+      'Review',
+      'Human review of the generated change set.',
+      'Review the implementation for: {{session.title}}' || E'\n\n' ||
+      '## Description' || E'\n\n' ||
+      '{{session.prompt}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.engineering}}## Engineering Output' || E'\n\n' ||
+      '{{artifact.previousStages.engineering}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if attempt.feedback}}## Previous Feedback' || E'\n\n' ||
+      '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
+      '## Instructions' || E'\n\n' ||
+      'Verify the implementation matches the spec, call out risks, and report findings as a structured review.' || E'\n'
+    ),
+    (
+      5,
+      'land',
+      'Land',
+      'Merge, tag, and roll out.',
+      'Merge the approved change for "{{session.title}}". Confirm CI is green and the rollout plan is captured below.' || E'\n'
+    ),
+    (
+      6,
+      'monitor',
+      'Monitor',
+      'Watch for regressions. Terminal phase — approving archives.',
+      'Verify that landing "{{session.title}}" has not introduced regressions.' || E'\n\n' ||
+      '## Description' || E'\n\n' ||
+      '{{session.prompt}}' || E'\n\n' ||
+      '## Instructions' || E'\n\n' ||
+      'Run tests, lint, and a smoke check; produce a monitoring report with pass/fail status.' || E'\n'
+    );
+$$;
 
 create or replace function public.next_session_number(target_workspace_id uuid)
 returns integer
@@ -888,6 +1061,7 @@ declare
   suffix integer := 0;
   created_workspace public.workspaces%rowtype;
   profile_row public.profiles%rowtype;
+  default_pipeline_id uuid;
 begin
   if actor_id is null then
     raise exception 'Authenticated user required to create a workspace'
@@ -982,13 +1156,42 @@ begin
   )
   on conflict (workspace_id) do nothing;
 
+  -- Seed the default pipeline so new workspaces have a working flow without
+  -- needing to open settings first. Owners can edit/replace it from the UI.
+  insert into public.pipelines (workspace_id, name, is_default)
+  values (created_workspace.id, 'Default', true)
+  returning id into default_pipeline_id;
+
+  insert into public.pipeline_stages (
+    pipeline_id, workspace_id, position, slug, name, description, prompt_template_md
+  )
+  select
+    default_pipeline_id,
+    created_workspace.id,
+    s.position,
+    s.slug,
+    s.name,
+    s.description,
+    s.prompt_template_md
+  from internal.default_pipeline_stages() s;
+
   return created_workspace;
 end;
 $$;
 
--- CAS-guarded phase approval. Phase order lives inline so adding a phase is a
--- one-line change here plus a matching update to the TypeScript mirror.
-create or replace function public.approve_session_phase(
+-- CAS-guarded stage approval. Stage order is read from pipeline_stages.position
+-- on the session's pinned pipeline, so renaming/inserting/removing stages in
+-- settings doesn't require touching this function.
+--
+-- Approver gate:
+--   1. If approver_member_id is in the stage's approver_member_ids list, allow.
+--   2. Otherwise, if the list is empty AND approver_member_id is an active
+--      owner/admin, allow.
+--   3. Otherwise, return empty (caller treats this as a 403).
+-- A null approver_member_id (e.g. from a service-side automation) only passes
+-- when the list is empty AND no role check is required, which today means it
+-- never passes — the route handler always resolves the member id first.
+create or replace function public.approve_session_stage(
   target_session_id uuid,
   expected_workspace_id uuid,
   expected_version integer,
@@ -996,7 +1199,9 @@ create or replace function public.approve_session_phase(
 )
 returns table (
   id uuid,
-  phase public.session_phase,
+  pipeline_id uuid,
+  current_stage_id uuid,
+  current_stage_slug text,
   phase_status public.pipeline_phase_status,
   workspace_id uuid,
   slack_channel_id text,
@@ -1009,73 +1214,106 @@ security definer
 set search_path = public
 as $$
 declare
-  phase_order public.session_phase[] := array[
-    'product'::public.session_phase,
-    'design'::public.session_phase,
-    'engineering'::public.session_phase,
-    'review'::public.session_phase,
-    'land'::public.session_phase,
-    'monitor'::public.session_phase
-  ];
-  current_phase public.session_phase;
-  current_phase_idx integer;
-  next_phase public.session_phase;
+  session_pipeline_id uuid;
+  current_stage_id_v uuid;
+  current_stage_slug_v text;
+  current_position integer;
+  approver_list uuid[];
+  approver_role public.member_role;
+  approver_active boolean;
+  approver_workspace uuid;
+  next_stage_id uuid;
   approved_at_now timestamptz := now();
 begin
+  -- Lookup the current stage so we can check approvers BEFORE flipping state.
+  select s.pipeline_id, s.current_stage_id
+  into session_pipeline_id, current_stage_id_v
+  from public.sessions s
+  where s.id = target_session_id
+    and s.workspace_id = expected_workspace_id
+    and s.current_artifact_version = expected_version
+    and s.phase_status = 'awaiting_review';
+
+  if current_stage_id_v is null then
+    return;
+  end if;
+
+  select ps.position, ps.slug, ps.approver_member_ids
+  into current_position, current_stage_slug_v, approver_list
+  from public.pipeline_stages ps
+  where ps.id = current_stage_id_v;
+
+  if approver_member_id is not null then
+    select wm.role, wm.is_active, wm.workspace_id
+    into approver_role, approver_active, approver_workspace
+    from public.workspace_members wm
+    where wm.id = approver_member_id;
+
+    if not coalesce(approver_active, false)
+       or approver_workspace is distinct from expected_workspace_id then
+      return;
+    end if;
+  end if;
+
+  if coalesce(array_length(approver_list, 1), 0) > 0 then
+    if approver_member_id is null
+       or not (approver_member_id = any(approver_list)) then
+      return;
+    end if;
+  else
+    -- Empty list: fall back to workspace owner/admin.
+    if approver_member_id is null
+       or approver_role is null
+       or approver_role not in ('owner', 'admin') then
+      return;
+    end if;
+  end if;
+
+  -- Approver checks passed; flip phase_status with the same CAS gate as before.
   update public.sessions s
   set phase_status = 'approved'
   where s.id = target_session_id
     and s.workspace_id = expected_workspace_id
     and s.current_artifact_version = expected_version
-    and s.phase_status = 'awaiting_review'
-  returning s.phase into current_phase;
+    and s.phase_status = 'awaiting_review';
 
-  if current_phase is null then
+  if not found then
     return;
   end if;
 
   insert into public.session_phase_completions (
     session_id,
     workspace_id,
-    phase,
+    stage_id,
+    stage_slug,
     completed_at,
     completed_by_member_id
   )
   values (
     target_session_id,
     expected_workspace_id,
-    current_phase,
+    current_stage_id_v,
+    current_stage_slug_v,
     approved_at_now,
     approver_member_id
   )
-  on conflict (session_id, phase) do nothing;
+  on conflict (session_id, stage_slug) do nothing;
 
-  current_phase_idx := array_position(phase_order, current_phase);
+  -- Find the next stage by position. Null result = terminal stage; archive.
+  select ps.id into next_stage_id
+  from public.pipeline_stages ps
+  where ps.pipeline_id = session_pipeline_id
+    and ps.position > current_position
+  order by ps.position asc
+  limit 1;
 
-  if current_phase_idx is null then
-    return query
-      select
-        s.id,
-        s.phase,
-        s.phase_status,
-        s.workspace_id,
-        s.slack_channel_id,
-        s.slack_thread_ts,
-        s.linear_issue_url,
-        s.archived_at
-      from public.sessions s
-      where s.id = target_session_id;
-    return;
-  end if;
-
-  if current_phase_idx >= array_length(phase_order, 1) then
+  if next_stage_id is null then
     update public.sessions
     set archived_at = approved_at_now
     where id = target_session_id;
   else
-    next_phase := phase_order[current_phase_idx + 1];
     update public.sessions
-    set phase = next_phase,
+    set current_stage_id = next_stage_id,
         phase_status = 'agent_generating',
         current_artifact_version = 0,
         rejection_count = 0
@@ -1085,7 +1323,9 @@ begin
   return query
     select
       s.id,
-      s.phase,
+      s.pipeline_id,
+      s.current_stage_id,
+      ps.slug,
       s.phase_status,
       s.workspace_id,
       s.slack_channel_id,
@@ -1093,6 +1333,7 @@ begin
       s.linear_issue_url,
       s.archived_at
     from public.sessions s
+    join public.pipeline_stages ps on ps.id = s.current_stage_id
     where s.id = target_session_id;
 end;
 $$;
@@ -1212,6 +1453,8 @@ alter table public.github_installations enable row level security;
 alter table public.github_repositories enable row level security;
 alter table public.github_issue_branches enable row level security;
 alter table public.workspace_secrets enable row level security;
+alter table public.pipelines enable row level security;
+alter table public.pipeline_stages enable row level security;
 alter table public.sessions enable row level security;
 alter table public.session_artifacts enable row level security;
 alter table public.session_phase_completions enable row level security;
@@ -1221,7 +1464,6 @@ alter table public.agent_runs enable row level security;
 alter table public.agent_run_messages enable row level security;
 alter table public.slack_installations enable row level security;
 alter table public.workspace_agent_config enable row level security;
-alter table public.workspace_prompt_templates enable row level security;
 alter table public.worker_heartbeats enable row level security;
 
 -- ---------------------------------------------------------------------------
@@ -1238,6 +1480,8 @@ revoke all on public.github_installations from anon, authenticated;
 revoke all on public.github_repositories from anon, authenticated;
 revoke all on public.github_issue_branches from anon, authenticated;
 revoke all on public.workspace_secrets from anon, authenticated;
+revoke all on public.pipelines from anon, authenticated;
+revoke all on public.pipeline_stages from anon, authenticated;
 revoke all on public.sessions from anon, authenticated;
 revoke all on public.session_artifacts from anon, authenticated;
 revoke all on public.session_phase_completions from anon, authenticated;
@@ -1259,6 +1503,8 @@ grant update (preferences) on public.workspace_members to authenticated;
 grant select on public.github_installations to authenticated;
 grant select on public.github_repositories to authenticated;
 grant select on public.github_issue_branches to authenticated;
+grant select on public.pipelines to authenticated;
+grant select on public.pipeline_stages to authenticated;
 grant select on public.sessions to authenticated;
 grant select on public.session_artifacts to authenticated;
 grant select on public.session_phase_completions to authenticated;
@@ -1276,8 +1522,8 @@ grant execute on function public.can_manage_workspace(uuid) to authenticated;
 grant execute on function public.next_session_number(uuid) to authenticated;
 grant execute on function public.create_workspace(text, text) to authenticated;
 
-revoke all on function public.approve_session_phase(uuid, uuid, integer, uuid) from public;
-grant execute on function public.approve_session_phase(uuid, uuid, integer, uuid) to service_role;
+revoke all on function public.approve_session_stage(uuid, uuid, integer, uuid) from public;
+grant execute on function public.approve_session_stage(uuid, uuid, integer, uuid) to service_role;
 
 revoke all on function public.schedule_job_retry(uuid, int, int) from public;
 grant execute on function public.schedule_job_retry(uuid, int, int) to service_role;
@@ -1406,26 +1652,39 @@ create policy workspace_agent_config_delete
   for delete
   using (public.can_manage_workspace(workspace_id));
 
-create policy workspace_prompt_templates_select
-  on public.workspace_prompt_templates for select to authenticated
+create policy pipelines_select_membership
+  on public.pipelines for select to authenticated
   using (workspace_id in (select public.current_user_workspace_ids()));
 
-create policy workspace_prompt_templates_insert
-  on public.workspace_prompt_templates for insert to authenticated
+create policy pipelines_insert_manager
+  on public.pipelines for insert to authenticated
   with check (public.can_manage_workspace(workspace_id));
 
-create policy workspace_prompt_templates_update
-  on public.workspace_prompt_templates for update to authenticated
+create policy pipelines_update_manager
+  on public.pipelines for update to authenticated
   using (public.can_manage_workspace(workspace_id))
   with check (public.can_manage_workspace(workspace_id));
 
-create policy workspace_prompt_templates_delete
-  on public.workspace_prompt_templates for delete to authenticated
+create policy pipelines_delete_manager
+  on public.pipelines for delete to authenticated
   using (public.can_manage_workspace(workspace_id));
 
-create policy workspace_prompt_templates_service_role_all
-  on public.workspace_prompt_templates for all to service_role
-  using (true) with check (true);
+create policy pipeline_stages_select_membership
+  on public.pipeline_stages for select to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy pipeline_stages_insert_manager
+  on public.pipeline_stages for insert to authenticated
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy pipeline_stages_update_manager
+  on public.pipeline_stages for update to authenticated
+  using (public.can_manage_workspace(workspace_id))
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy pipeline_stages_delete_manager
+  on public.pipeline_stages for delete to authenticated
+  using (public.can_manage_workspace(workspace_id));
 
 create policy worker_heartbeats_select
   on public.worker_heartbeats
@@ -1448,7 +1707,9 @@ declare
     'public.github_issue_branches',
     'public.agent_runs',
     'public.agent_run_messages',
-    'public.sessions'
+    'public.sessions',
+    'public.pipelines',
+    'public.pipeline_stages'
   ];
 begin
   if not exists (select 1 from pg_publication where pubname = publication_name) then

@@ -1,6 +1,6 @@
 import { after, NextResponse } from "next/server";
 
-import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
+import { handleRejection } from "@/lib/pipeline/processor";
 import { openSlackView } from "@/lib/pipeline/slack-format";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { verifySlackSignature } from "@/lib/slack/verify";
@@ -142,37 +142,15 @@ export async function POST(request: Request) {
   }
 
   if (action.action_id === "pipeline_approve") {
-    const result = await handleApproval({
-      expectedWorkspaceId,
-      sessionId: actionValue.session_id,
-      version: actionValue.version,
-    });
-
-    if (!result.success) {
-      // Version mismatch / stale buttons: replace the original message
-      // so the dead buttons are removed and the user sees why.
-      const isStale =
-        result.error?.includes("stale") ||
-        result.error?.includes("version") ||
-        result.error?.includes("already reviewed");
-      if (isStale) {
-        return NextResponse.json({
-          replace_original: true,
-          text: `:warning: This spec version is outdated — a newer version has been posted above.`,
-        });
-      }
-
-      return NextResponse.json({
-        replace_original: false,
-        response_type: "ephemeral",
-        text: result.error ?? "Approval failed.",
-      });
-    }
-
-    // Update the original message to remove action buttons
+    // Slack interactions don't carry a workspace_members.id mapping today.
+    // The RPC's approver gate refuses null approver_member_id, so until a
+    // Slack-user → workspace-member mapping is wired up, Slack approvals are
+    // surfaced as ephemeral messages directing the reviewer to the web UI.
+    // (This trade-off is documented in the user-defined-pipeline rollout.)
     return NextResponse.json({
-      replace_original: true,
-      text: `:white_check_mark: Spec v${actionValue.version} approved! Moving to next phase.`,
+      replace_original: false,
+      response_type: "ephemeral",
+      text: "Approve from the web UI — Slack approval needs workspace-member mapping (coming soon).",
     });
   }
 

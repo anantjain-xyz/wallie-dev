@@ -1,22 +1,25 @@
 import type { Tables } from "@/lib/supabase/database.types";
 
-import type { SessionPhase, SessionPhaseStatus, SessionSummary } from "@/features/sessions/types";
+import type { SessionPhaseStatus, SessionSummary } from "@/features/sessions/types";
 
-// Mappers from the `sessions` table rows to the session domain types the UI
-// consumes. Sessions is the source of truth for phase / phase_status /
-// artifacts after the backend cutover.
+// Mappers from `sessions` table rows to the domain types the UI consumes.
+// The session row no longer carries phase/name/slug — those live on
+// pipeline_stages — so the mapper takes them as a separate stage record so
+// callers can pre-join (or pre-resolve via a stage map) without an extra
+// query per row.
 
 type SessionRow = Pick<
   Tables<"sessions">,
   | "archived_at"
   | "created_at"
   | "current_artifact_version"
+  | "current_stage_id"
   | "id"
   | "linear_issue_id"
   | "linear_issue_url"
   | "number"
-  | "phase"
   | "phase_status"
+  | "pipeline_id"
   | "prompt_md"
   | "rejection_count"
   | "slack_channel_id"
@@ -26,17 +29,29 @@ type SessionRow = Pick<
   | "workspace_id"
 >;
 
-export function mapSessionRow(row: SessionRow, pullRequestCount = 0): SessionSummary {
+export interface CurrentStageInfo {
+  name: string;
+  slug: string;
+}
+
+export function mapSessionRow(
+  row: SessionRow,
+  stage: CurrentStageInfo,
+  pullRequestCount = 0,
+): SessionSummary {
   return {
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     currentArtifactVersion: row.current_artifact_version,
+    currentStageId: row.current_stage_id,
+    currentStageName: stage.name,
+    currentStageSlug: stage.slug,
     id: row.id,
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: row.number,
-    phase: row.phase as SessionPhase,
     phaseStatus: row.phase_status as SessionPhaseStatus,
+    pipelineId: row.pipeline_id,
     promptMd: row.prompt_md,
     pullRequestCount,
     rejectionCount: row.rejection_count,
@@ -46,15 +61,4 @@ export function mapSessionRow(row: SessionRow, pullRequestCount = 0): SessionSum
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,
   };
-}
-
-// A minimally-shaped row coming back from the realtime channel. Realtime
-// payloads are the full row but no joins — the caller supplies the last
-// known pull-request count because we don't re-query github_issue_branches
-// on every change notification.
-export function mapSessionRealtimeRow(
-  row: Tables<"sessions">,
-  fallback: { pullRequestCount: number },
-): SessionSummary {
-  return mapSessionRow(row, fallback.pullRequestCount);
 }

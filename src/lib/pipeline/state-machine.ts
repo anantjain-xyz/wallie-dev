@@ -1,27 +1,10 @@
-import {
-  SESSION_PHASE_ORDER,
-  type SessionPhase,
-  type SessionPhaseStatus,
-} from "@/features/sessions/types";
+import type { SessionPhaseStatus } from "@/features/sessions/types";
 
 import { PIPELINE_ESCALATION_THRESHOLD } from "./types";
 
-export const PHASE_ORDER = SESSION_PHASE_ORDER;
-export type { SessionPhase };
-
-export function isSessionPhase(value: string): value is SessionPhase {
-  return (PHASE_ORDER as readonly string[]).includes(value);
-}
-
-export function nextPhase(current: SessionPhase): SessionPhase | null {
-  const idx = PHASE_ORDER.indexOf(current);
-  if (idx === -1 || idx >= PHASE_ORDER.length - 1) return null;
-  return PHASE_ORDER[idx + 1]!;
-}
-
-export function isTerminalPhase(phase: SessionPhase): boolean {
-  return nextPhase(phase) === null;
-}
+// Stage ordering used to live here as a hardcoded array. It now lives on
+// pipeline_stages.position and is enumerated by the approve_session_stage
+// RPC, so this module only owns status-side state checks.
 
 export function shouldEscalate(rejectionCount: number): boolean {
   return rejectionCount >= PIPELINE_ESCALATION_THRESHOLD;

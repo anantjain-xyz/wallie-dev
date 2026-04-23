@@ -1,63 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  PHASE_ORDER,
-  canApprove,
-  canReject,
-  isSessionPhase,
-  isTerminal,
-  isTerminalPhase,
-  nextPhase,
-  shouldEscalate,
-} from "@/lib/pipeline/state-machine";
+import { canApprove, canReject, isTerminal, shouldEscalate } from "@/lib/pipeline/state-machine";
 
 describe("pipeline state machine", () => {
-  describe("PHASE_ORDER", () => {
-    it("contains the six pipeline phases in order", () => {
-      expect(PHASE_ORDER).toEqual([
-        "product",
-        "design",
-        "engineering",
-        "review",
-        "land",
-        "monitor",
-      ]);
-    });
-  });
-
-  describe("nextPhase", () => {
-    it("advances through the full sequence", () => {
-      expect(nextPhase("product")).toBe("design");
-      expect(nextPhase("design")).toBe("engineering");
-      expect(nextPhase("engineering")).toBe("review");
-      expect(nextPhase("review")).toBe("land");
-      expect(nextPhase("land")).toBe("monitor");
-    });
-
-    it("returns null for the terminal monitor phase", () => {
-      expect(nextPhase("monitor")).toBeNull();
-    });
-  });
-
-  describe("isTerminalPhase", () => {
-    it("treats monitor as terminal and other phases as non-terminal", () => {
-      expect(isTerminalPhase("monitor")).toBe(true);
-      expect(isTerminalPhase("product")).toBe(false);
-      expect(isTerminalPhase("land")).toBe(false);
-    });
-  });
-
-  describe("isSessionPhase", () => {
-    it("accepts the six valid phase names and rejects others", () => {
-      for (const phase of PHASE_ORDER) {
-        expect(isSessionPhase(phase)).toBe(true);
-      }
-      expect(isSessionPhase("shipped")).toBe(false);
-      expect(isSessionPhase("")).toBe(false);
-      expect(isSessionPhase("Product")).toBe(false);
-    });
-  });
-
   describe("shouldEscalate", () => {
     it("escalates at the threshold (3 rejections)", () => {
       expect(shouldEscalate(0)).toBe(false);

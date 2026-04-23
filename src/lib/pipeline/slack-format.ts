@@ -1,88 +1,64 @@
 import "server-only";
 
-import type { ProductSpec } from "./types";
+import type { PipelineStage } from "@/features/sessions/types";
 
 // Slack mrkdwn escape: `<url|label>` is rendered as a clickable link and
-// `<!channel>` etc are control sequences. LLM-generated spec fields flow
-// into mrkdwn sections, so any unescaped `<` allows a Linear ticket author
-// to plant phishing links in the reviewer channel even if the LLM ignores
-// the injection attempt and simply quotes the hostile string verbatim.
-// Slack's documented escape rule: `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`.
-// Order matters — escape `&` first so we don't double-escape.
+// `<!channel>` etc are control sequences. LLM-generated artifact text flows
+// into mrkdwn sections, so any unescaped `<` allows a hostile prompt to plant
+// phishing links in the reviewer channel even if the LLM ignores the
+// injection attempt and simply quotes the hostile string verbatim. Slack's
+// documented escape rule: `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`. Order
+// matters — escape `&` first so we don't double-escape.
 export function escapeMrkdwn(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export function formatSpecBlocks(input: {
+// One generic awaiting-review block used for every stage. Replaces the old
+// per-phase formatters (formatSpecBlocks, formatSpecDiffBlocks,
+// formatPreScreenFailBlocks) — the user-facing surface is "review the
+// markdown the agent produced and approve/request changes."
+export function formatStageReviewBlocks(input: {
+  artifactPreviewMd: string;
   linearUrl: string | null;
+  nextStage: Pick<PipelineStage, "name"> | null;
   sessionId: string;
-  spec: ProductSpec;
+  stage: Pick<PipelineStage, "name">;
   version: number;
 }): Record<string, unknown>[] {
   const esc = escapeMrkdwn;
+
+  // Cap the preview so a long artifact doesn't break the Slack message limit
+  // (3000 char per text block). Reviewer can always click into the web UI.
+  const preview =
+    input.artifactPreviewMd.length > 2400
+      ? input.artifactPreviewMd.slice(0, 2400) + "\n…"
+      : input.artifactPreviewMd;
+
+  const nextLabel = input.nextStage?.name ?? "completion";
   const blocks: Record<string, unknown>[] = [
     {
       text: {
-        // Slack `header` blocks require plain_text. The title is already the
-        // header's bold style; no mrkdwn wrapping.
         emoji: true,
-        text: `${input.spec.title} (v${input.version})`,
+        text: `${input.stage.name} — v${input.version}`,
         type: "plain_text",
       },
       type: "header",
     },
     {
       text: {
-        text: `*Problem Statement*\n${esc(input.spec.problem_statement)}`,
+        text: `Approve to advance this session from *${esc(input.stage.name)}* to *${esc(nextLabel)}*.`,
         type: "mrkdwn",
       },
       type: "section",
     },
     {
       text: {
-        text: `*User Story*\n${esc(input.spec.user_story)}`,
-        type: "mrkdwn",
-      },
-      type: "section",
-    },
-    {
-      text: {
-        text: `*Acceptance Criteria*\n${input.spec.acceptance_criteria.map((c) => `- ${esc(c)}`).join("\n")}`,
+        text: esc(preview),
         type: "mrkdwn",
       },
       type: "section",
     },
   ];
-
-  if (input.spec.constraints.length > 0) {
-    blocks.push({
-      text: {
-        text: `*Constraints*\n${input.spec.constraints.map((c) => `- ${esc(c)}`).join("\n")}`,
-        type: "mrkdwn",
-      },
-      type: "section",
-    });
-  }
-
-  if (input.spec.non_goals.length > 0) {
-    blocks.push({
-      text: {
-        text: `*Non-Goals*\n${input.spec.non_goals.map((n) => `- ${esc(n)}`).join("\n")}`,
-        type: "mrkdwn",
-      },
-      type: "section",
-    });
-  }
-
-  if (input.spec.open_questions.length > 0) {
-    blocks.push({
-      text: {
-        text: `*Open Questions*\n${input.spec.open_questions.map((q) => `- ${esc(q)}`).join("\n")}`,
-        type: "mrkdwn",
-      },
-      type: "section",
-    });
-  }
 
   if (input.linearUrl) {
     blocks.push({
@@ -96,7 +72,6 @@ export function formatSpecBlocks(input: {
     });
   }
 
-  // Action buttons
   blocks.push({
     block_id: `pipeline_actions:${input.sessionId}:${input.version}`,
     elements: [
@@ -126,11 +101,11 @@ export function formatSpecBlocks(input: {
   return blocks;
 }
 
-export function formatPreScreenFailBlocks(reason: string): Record<string, unknown>[] {
+export function formatGenerationFailureBlocks(stageName: string): Record<string, unknown>[] {
   return [
     {
       text: {
-        text: `:warning: This issue needs more detail before I can generate a spec.\n\n*Reason:* ${escapeMrkdwn(reason)}`,
+        text: `:warning: ${escapeMrkdwn(stageName)} stage failed to generate. An operator will investigate.`,
         type: "mrkdwn",
       },
       type: "section",
@@ -142,13 +117,14 @@ export function formatEscalationDmBlocks(input: {
   channelId: string;
   linearUrl: string | null;
   rejectionCount: number;
-  specTitle: string;
+  sessionTitle: string;
+  stageName: string;
   threadTs: string;
 }): Record<string, unknown>[] {
   const blocks: Record<string, unknown>[] = [
     {
       text: {
-        text: `:rotating_light: *Spec escalation: ${escapeMrkdwn(input.specTitle)}*\n\nThis spec has been rejected ${input.rejectionCount} times. The reviewer may need your help resolving the feedback.`,
+        text: `:rotating_light: *Stage escalation: ${escapeMrkdwn(input.sessionTitle)}*\n\nThe *${escapeMrkdwn(input.stageName)}* stage has been rejected ${input.rejectionCount} times. The reviewer may need your help resolving the feedback.`,
         type: "mrkdwn",
       },
       type: "section",
@@ -167,57 +143,11 @@ export function formatEscalationDmBlocks(input: {
   return blocks;
 }
 
-export function formatSpecDiffBlocks(input: {
-  newSpec: ProductSpec;
-  oldSpec: ProductSpec;
-}): Record<string, unknown>[] {
-  const changes: string[] = [];
-
-  if (input.oldSpec.problem_statement !== input.newSpec.problem_statement) {
-    changes.push("- Problem statement updated");
-  }
-  if (input.oldSpec.user_story !== input.newSpec.user_story) {
-    changes.push("- User story updated");
-  }
-
-  const oldCriteria = new Set(input.oldSpec.acceptance_criteria);
-  const newCriteria = new Set(input.newSpec.acceptance_criteria);
-  const addedCriteria = input.newSpec.acceptance_criteria.filter((c) => !oldCriteria.has(c));
-  const removedCriteria = input.oldSpec.acceptance_criteria.filter((c) => !newCriteria.has(c));
-  if (addedCriteria.length > 0) changes.push(`- Added ${addedCriteria.length} acceptance criteria`);
-  if (removedCriteria.length > 0)
-    changes.push(`- Removed ${removedCriteria.length} acceptance criteria`);
-
-  const oldConstraints = new Set(input.oldSpec.constraints);
-  const newConstraints = new Set(input.newSpec.constraints);
-  const addedConstraints = input.newSpec.constraints.filter((c) => !oldConstraints.has(c));
-  const removedConstraints = input.oldSpec.constraints.filter((c) => !newConstraints.has(c));
-  if (addedConstraints.length > 0) changes.push(`- Added ${addedConstraints.length} constraints`);
-  if (removedConstraints.length > 0)
-    changes.push(`- Removed ${removedConstraints.length} constraints`);
-
-  if (changes.length === 0) {
-    changes.push("- Minor wording changes");
-  }
-
-  return [
-    {
-      text: {
-        text: `*Changes from previous version:*\n${changes.join("\n")}`,
-        type: "mrkdwn",
-      },
-      type: "section",
-    },
-  ];
-}
-
 // Slack Web API responds 200 OK with `{ ok: false, error: "..." }` for most
 // logical failures (invalid_auth, missing_scope, channel_not_found,
-// thread_not_found, invalid_blocks). Earlier versions of these helpers
-// returned the raw body and every caller forgot to check `ok`, so a failed
-// post would silently advance pipeline state. These helpers now throw on
-// `ok: false` so an outer try/catch is the only way to continue past a
-// Slack failure — which makes the failure path explicit at every call site.
+// thread_not_found, invalid_blocks). These helpers throw on `ok: false` so an
+// outer try/catch is the only way to continue past a Slack failure — which
+// makes the failure path explicit at every call site.
 async function callSlackApi<T extends { ok: boolean; error?: string }>(
   url: string,
   body: Record<string, unknown>,

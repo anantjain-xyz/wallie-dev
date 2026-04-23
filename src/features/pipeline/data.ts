@@ -6,15 +6,16 @@ import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/aut
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { SessionPhase, SessionPhaseStatus } from "@/features/sessions/types";
+import type { PipelineStage, SessionPhaseStatus } from "@/features/sessions/types";
 
 export type PipelineDashboardCard = {
   createdAt: string;
+  currentStageId: string;
+  currentStageSlug: string;
   id: string;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   number: number;
-  phase: SessionPhase;
   phaseStatus: SessionPhaseStatus;
   rejectionCount: number;
   slackChannelId: string | null;
@@ -26,6 +27,7 @@ export type PipelineDashboardCard = {
 
 export type PipelineDashboardData = {
   cards: PipelineDashboardCard[];
+  defaultPipelineStages: PipelineStage[];
   workspace: { id: string; name: string; slug: string };
 };
 
@@ -44,8 +46,40 @@ export async function loadPipelineDashboardData(
     notFound();
   }
 
-  // RLS scopes sessions to workspace membership, so the workspace_id filter
-  // here is defense-in-depth rather than a primary access gate.
+  // Pull the default pipeline so the dashboard knows which lanes to render.
+  // Sessions whose current stage isn't in the default pipeline (e.g. the
+  // pipeline was edited mid-flight) fall under an "Other" lane in the UI.
+  const { data: pipelineRow, error: pipelineError } = await supabase
+    .from("pipelines")
+    .select("id")
+    .eq("workspace_id", workspace.id)
+    .eq("is_default", true)
+    .maybeSingle();
+  if (pipelineError) throw pipelineError;
+
+  let defaultPipelineStages: PipelineStage[] = [];
+  if (pipelineRow) {
+    const { data: stageRows, error: stagesError } = await supabase
+      .from("pipeline_stages")
+      .select(
+        "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
+      )
+      .eq("pipeline_id", pipelineRow.id)
+      .order("position", { ascending: true });
+    if (stagesError) throw stagesError;
+    defaultPipelineStages = (stageRows ?? []).map((s) => ({
+      approverMemberIds: s.approver_member_ids ?? [],
+      description: s.description,
+      id: s.id,
+      name: s.name,
+      pipelineId: s.pipeline_id,
+      position: s.position,
+      promptTemplateMd: s.prompt_template_md,
+      slug: s.slug,
+    }));
+  }
+
+  // Load sessions with their stage joined for slug rendering.
   const { data, error } = await supabase
     .from("sessions")
     .select(
@@ -56,7 +90,7 @@ export async function loadPipelineDashboardData(
         linear_issue_id,
         linear_issue_url,
         number,
-        phase,
+        current_stage_id,
         phase_status,
         rejection_count,
         slack_channel_id,
@@ -74,13 +108,28 @@ export async function loadPipelineDashboardData(
     throw error;
   }
 
-  const cards = (data ?? []).map<PipelineDashboardCard>((row) => ({
+  const rows = data ?? [];
+  const stageIds = Array.from(new Set(rows.map((r) => r.current_stage_id))).filter(Boolean);
+  const stageSlugMap = new Map<string, string>();
+  if (stageIds.length > 0) {
+    const { data: stageRows, error: stageError } = await supabase
+      .from("pipeline_stages")
+      .select("id, slug")
+      .in("id", stageIds);
+    if (stageError) throw stageError;
+    for (const s of stageRows ?? []) {
+      stageSlugMap.set(s.id, s.slug);
+    }
+  }
+
+  const cards: PipelineDashboardCard[] = rows.map((row) => ({
     createdAt: row.created_at,
+    currentStageId: row.current_stage_id,
+    currentStageSlug: stageSlugMap.get(row.current_stage_id) ?? "unknown",
     id: row.id,
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: row.number,
-    phase: row.phase as SessionPhase,
     phaseStatus: row.phase_status as SessionPhaseStatus,
     rejectionCount: row.rejection_count,
     slackChannelId: row.slack_channel_id,
@@ -92,6 +141,7 @@ export async function loadPipelineDashboardData(
 
   return {
     cards,
+    defaultPipelineStages,
     workspace,
   };
 }

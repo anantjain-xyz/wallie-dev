@@ -151,8 +151,10 @@ describe("POST /api/slack/interactions", () => {
       return chain;
     });
     mocked.createSupabaseAdminClient.mockReturnValue({ from: fromMock });
-    mocked.handleApproval.mockResolvedValue({ success: true });
 
+    // pipeline_approve in the user-defined-pipeline build returns an
+    // ephemeral message pointing to the web UI; we no longer call
+    // handleApproval from Slack until Slack-user→member mapping exists.
     const payload = {
       actions: [
         {
@@ -166,11 +168,8 @@ describe("POST /api/slack/interactions", () => {
     const response = await POST(makeInteractionRequest(payload));
 
     expect(response.status).toBe(200);
-    expect(mocked.handleApproval).toHaveBeenCalledWith({
-      expectedWorkspaceId: "ws-grid",
-      sessionId: "pi-grid",
-      version: 1,
-    });
+    // Enterprise.id is still resolved (so unknown teams still get 403);
+    // we just no longer dispatch handleApproval here.
     expect(lookups).toContainEqual({ col: "team_id", value: "E-GRID" });
   });
 
@@ -194,9 +193,8 @@ describe("POST /api/slack/interactions", () => {
     expect(mocked.handleApproval).not.toHaveBeenCalled();
   });
 
-  it("handles successful approval", async () => {
+  it("returns an ephemeral pointer to the web UI for Slack approve clicks", async () => {
     installSlackLookup("ws-1");
-    mocked.handleApproval.mockResolvedValue({ success: true });
 
     const payload = {
       actions: [
@@ -211,60 +209,13 @@ describe("POST /api/slack/interactions", () => {
     const response = await POST(makeInteractionRequest(payload));
     const json = await response.json();
 
-    expect(mocked.handleApproval).toHaveBeenCalledWith({
-      expectedWorkspaceId: "ws-1",
-      sessionId: "pi-1",
-      version: 2,
-    });
-    expect(json.replace_original).toBe(true);
-    expect(json.text).toContain("v2 approved");
-  });
-
-  it("replaces original message on stale version approval", async () => {
-    installSlackLookup();
-    mocked.handleApproval.mockResolvedValue({
-      error: "Approval failed: session version is stale or already reviewed.",
-      success: false,
-    });
-
-    const payload = {
-      actions: [
-        {
-          action_id: "pipeline_approve",
-          value: JSON.stringify({ session_id: "pi-1", version: 1 }),
-        },
-      ],
-      team: { id: "T1" },
-    };
-
-    const response = await POST(makeInteractionRequest(payload));
-    const json = await response.json();
-
-    expect(json.replace_original).toBe(true);
-    expect(json.text).toContain("outdated");
-  });
-
-  it("handles double-click approval idempotently", async () => {
-    installSlackLookup();
-    mocked.handleApproval.mockResolvedValue({
-      error: "Approval failed: spec version is stale or already reviewed.",
-      success: false,
-    });
-
-    const payload = {
-      actions: [
-        {
-          action_id: "pipeline_approve",
-          value: JSON.stringify({ session_id: "pi-1", version: 1 }),
-        },
-      ],
-      team: { id: "T1" },
-    };
-
-    const response = await POST(makeInteractionRequest(payload));
-
-    // Should not crash, returns ephemeral message
+    // Slack approve no longer routes through handleApproval — the per-stage
+    // approver gate needs a workspace_members.id resolution that doesn't
+    // exist for Slack identities yet. Reviewer is sent to the web UI.
+    expect(mocked.handleApproval).not.toHaveBeenCalled();
     expect(response.status).toBe(200);
+    expect(json.response_type).toBe("ephemeral");
+    expect(json.text.toLowerCase()).toContain("web ui");
   });
 
   it("opens feedback modal on request changes using the signed team's bot token", async () => {

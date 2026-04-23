@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
 
 type Params = { params: Promise<{ sessionId: string }> };
@@ -37,7 +38,7 @@ export async function POST(request: Request, { params }: Params) {
   // member, this returns null and we 404.
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id, phase_status")
+    .select("id, workspace_id, phase_status, current_stage_id")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -52,18 +53,34 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Session is not awaiting review." }, { status: 409 });
   }
 
-  // Resolve the approving workspace member so approve_session_phase can
-  // record it in session_phase_completions.completed_by_member_id.
+  // Resolve the calling member id so the RPC's approver gate can evaluate it.
   const { data: memberRow } = await supabase
     .from("workspace_members")
-    .select("id")
+    .select("id, role")
     .eq("workspace_id", sessionRow.workspace_id)
     .eq("user_id", user.id)
     .maybeSingle();
 
+  if (!memberRow) {
+    return NextResponse.json({ error: "Not a member of this workspace." }, { status: 403 });
+  }
+
   if (body.action === "approve") {
+    // Belt-and-suspenders authz check: the RPC enforces this too, but doing it
+    // here gives a clearer 403 ("not in approver list") instead of the RPC's
+    // generic CAS-miss "stale or already reviewed" message.
+    const authError = await checkApproverAuthorization(
+      sessionRow.workspace_id,
+      sessionRow.current_stage_id,
+      memberRow.id,
+      memberRow.role,
+    );
+    if (authError) {
+      return NextResponse.json({ error: authError }, { status: 403 });
+    }
+
     const result = await handleApproval({
-      approverMemberId: memberRow?.id ?? null,
+      approverMemberId: memberRow.id,
       expectedWorkspaceId: sessionRow.workspace_id,
       sessionId: sessionRow.id,
       version: body.version,
@@ -92,4 +109,39 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+}
+
+async function checkApproverAuthorization(
+  workspaceId: string,
+  stageId: string,
+  memberId: string,
+  memberRole: string,
+): Promise<string | null> {
+  // Use the admin client to read the stage's approver list. RLS would also
+  // allow this read for the current user, but using admin keeps a single code
+  // path regardless of who the caller is.
+  const admin = createSupabaseAdminClient();
+  const { data: stage, error } = await admin
+    .from("pipeline_stages")
+    .select("approver_member_ids, name")
+    .eq("id", stageId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+
+  if (error) return error.message;
+  if (!stage) return "Stage not found.";
+
+  const approvers = stage.approver_member_ids ?? [];
+  if (approvers.length > 0) {
+    if (!approvers.includes(memberId)) {
+      return `You are not authorized to approve the ${stage.name} stage.`;
+    }
+    return null;
+  }
+
+  // Empty list: fall back to workspace owners/admins.
+  if (memberRole !== "owner" && memberRole !== "admin") {
+    return `Only workspace owners and admins can approve the ${stage.name} stage (no approver list set).`;
+  }
+  return null;
 }
