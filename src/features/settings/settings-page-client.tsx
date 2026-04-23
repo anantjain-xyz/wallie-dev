@@ -53,11 +53,11 @@ const interactiveLinkClass =
 
 function Section({ children, title }: { children: ReactNode; title: string }) {
   return (
-    <section className="rounded-[20px] bg-surface px-5 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_28px_rgba(16,24,40,0.05)] sm:px-6 sm:py-6">
+    <section className="space-y-5 rounded-[20px] bg-surface px-5 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_28px_rgba(16,24,40,0.05)] sm:px-6 sm:py-6">
       <h2 className="text-base font-semibold tracking-tight text-balance text-foreground">
         {title}
       </h2>
-      <div className="mt-5">{children}</div>
+      <div>{children}</div>
     </section>
   );
 }
@@ -79,9 +79,9 @@ function ConfigState({ missingKeys, title }: { missingKeys: string[]; title: str
   }
 
   return (
-    <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
+    <div className="space-y-1 rounded-[6px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning">
       <p className="font-semibold">{title}</p>
-      <p className="mt-1">Missing env vars: {missingKeys.join(", ")}</p>
+      <p>Missing env vars: {missingKeys.join(", ")}</p>
     </div>
   );
 }
@@ -202,36 +202,37 @@ function AgentConfigField({
   }
 
   return (
-    <div className="ui-subpanel space-y-2 p-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <label className="flex-1 space-y-1 text-sm font-semibold text-foreground">
-          <span>{label}</span>
-          {type === "select" && options ? (
-            <select
-              className="ui-input"
-              disabled={disabled}
-              onChange={(event) => setDraft(event.target.value)}
-              value={draft}
-            >
-              <option value="">Not configured</option>
-              {options.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              autoComplete="off"
-              className="ui-input"
-              disabled={disabled}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={placeholder}
-              type={type === "number" ? "number" : "text"}
-              value={draft}
-            />
-          )}
-        </label>
+    <div className="ui-subpanel space-y-4 p-4">
+      <label className="space-y-2 text-sm font-semibold text-foreground">
+        <span>{label}</span>
+        {type === "select" && options ? (
+          <select
+            className="ui-input"
+            disabled={disabled}
+            onChange={(event) => setDraft(event.target.value)}
+            value={draft}
+          >
+            <option value="">Not configured</option>
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            autoComplete="off"
+            className="ui-input"
+            disabled={disabled}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={placeholder}
+            type={type === "number" ? "number" : "text"}
+            value={draft}
+          />
+        )}
+      </label>
+      <p className="text-xs leading-5 text-muted">{description}</p>
+      <div className="flex justify-end">
         <button
           className="ui-button-primary"
           disabled={disabled || !isDirty}
@@ -241,7 +242,6 @@ function AgentConfigField({
           Save
         </button>
       </div>
-      <p className="text-xs leading-5 text-muted">{description}</p>
     </div>
   );
 }
@@ -259,27 +259,25 @@ function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
         Aggregate token usage and costs across all agent runs in this workspace.
       </p>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <div className="ui-subpanel p-4">
+        <div className="ui-subpanel space-y-1 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted">Total Runs</p>
-          <p className="mt-1 text-lg font-semibold text-foreground">{usage.totalRuns}</p>
+          <p className="text-lg font-semibold text-foreground">{usage.totalRuns}</p>
         </div>
-        <div className="ui-subpanel p-4">
+        <div className="ui-subpanel space-y-1 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted">Input Tokens</p>
-          <p className="mt-1 text-lg font-semibold text-foreground">
+          <p className="text-lg font-semibold text-foreground">
             {formatTokens(usage.totalInputTokens)}
           </p>
         </div>
-        <div className="ui-subpanel p-4">
+        <div className="ui-subpanel space-y-1 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted">Output Tokens</p>
-          <p className="mt-1 text-lg font-semibold text-foreground">
+          <p className="text-lg font-semibold text-foreground">
             {formatTokens(usage.totalOutputTokens)}
           </p>
         </div>
-        <div className="ui-subpanel p-4">
+        <div className="ui-subpanel space-y-1 p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted">Total Cost</p>
-          <p className="mt-1 text-lg font-semibold text-foreground">
-            ${usage.totalCostUsd.toFixed(2)}
-          </p>
+          <p className="text-lg font-semibold text-foreground">${usage.totalCostUsd.toFixed(2)}</p>
         </div>
       </div>
     </div>
@@ -717,12 +715,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   return (
     <div className="min-h-full bg-[#f6f5f2] px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
-        <header className="rounded-[24px] bg-surface px-6 py-6 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_14px_32px_rgba(16,24,40,0.06)] sm:px-8 sm:py-8">
+        <header className="space-y-3 rounded-[24px] bg-surface px-6 py-6 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_14px_32px_rgba(16,24,40,0.06)] sm:px-8 sm:py-8">
           <p className="ui-label">Workspace Admin</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-balance text-foreground">
+          <h1 className="text-3xl font-semibold tracking-tight text-balance text-foreground">
             Settings
           </h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
+          <p className="max-w-3xl text-sm leading-6 text-muted">
             Manage workspace identity, GitHub sync, Slack installation, and encrypted secrets from
             one route.
           </p>
@@ -731,7 +729,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         {flashMessage ? (
           <div
             aria-live="polite"
-            className={`rounded-[10px] border px-4 py-3 text-sm shadow-[0_1px_2px_rgba(16,24,40,0.04)] ${toneClass(flashMessage.kind)}`}
+            className={`rounded-[14px] border px-4 py-3 text-sm shadow-[0_1px_2px_rgba(16,24,40,0.04)] ${toneClass(flashMessage.kind)}`}
             role="status"
           >
             {flashMessage.text}
@@ -799,21 +797,21 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             />
 
             {githubInstallation ? (
-              <div className="ui-subpanel space-y-4 p-5">
+              <div className="ui-subpanel space-y-4 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <p className="text-sm font-semibold text-foreground">
                       Connected to{" "}
                       {githubInstallation.targetType.charAt(0).toUpperCase() +
                         githubInstallation.targetType.slice(1).toLowerCase()}{" "}
                       <span className="font-mono">{githubInstallation.targetName}</span>
                     </p>
-                    <p className="mt-1 text-sm text-muted">
+                    <p className="text-sm text-muted">
                       Installation #{githubInstallation.installationId} · last synced{" "}
                       {dateFormatter.format(new Date(githubInstallation.updatedAt))}
                     </p>
                     {githubInstallation.suspended ? (
-                      <p className="mt-2 text-sm font-semibold text-amber-950">
+                      <p className="text-sm font-semibold text-amber-950">
                         GitHub marked this installation as suspended.
                       </p>
                     ) : null}
@@ -846,7 +844,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                     </div>
                   ) : (
                     repositories.map((repository) => (
-                      <div className="ui-muted-panel p-4" key={repository.id}>
+                      <div className="ui-muted-panel space-y-3 p-4" key={repository.id}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-2">
                             <a
@@ -868,9 +866,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                           </div>
                         </div>
                         {repository.description ? (
-                          <p className="mt-3 text-sm leading-6 text-muted">
-                            {repository.description}
-                          </p>
+                          <p className="text-sm leading-6 text-muted">{repository.description}</p>
                         ) : null}
                       </div>
                     ))
@@ -878,7 +874,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 </div>
               </div>
             ) : (
-              <div className="ui-subpanel space-y-4 p-5">
+              <div className="ui-subpanel space-y-4 p-4">
                 <div className="space-y-2">
                   <p className="text-sm leading-7 text-foreground">
                     Install the workspace GitHub App so PR status appears on each issue
@@ -911,16 +907,16 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             />
 
             {slackInstallation ? (
-              <div className="ui-subpanel space-y-4 p-5">
+              <div className="ui-subpanel space-y-4 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <p className="text-sm font-semibold text-foreground">
                       Connected to{" "}
                       <span className="font-mono">
                         {slackInstallation.teamName ?? slackInstallation.teamId}
                       </span>
                     </p>
-                    <p className="mt-1 text-sm text-muted">
+                    <p className="text-sm text-muted">
                       Installed {dateFormatter.format(new Date(slackInstallation.installedAt))} ·
                       Team ID <span className="font-mono">{slackInstallation.teamId}</span>
                     </p>
@@ -947,7 +943,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 </div>
               </div>
             ) : (
-              <div className="ui-subpanel space-y-4 p-5">
+              <div className="ui-subpanel space-y-4 p-4">
                 <div className="space-y-2">
                   <p className="text-sm leading-7 text-foreground">
                     Connect Slack so the Wallie product agent can pick up @mentions on Linear
@@ -991,14 +987,14 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             </p>
 
             {!isManager ? (
-              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
+              <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
                 Workspace admins can manage the Linear API key from this page.
               </div>
             ) : linearSecret ? (
               <div className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4">
-                <div>
+                <div className="space-y-1">
                   <p className="text-sm font-semibold text-foreground">Linear API key configured</p>
-                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.14em] text-muted">
+                  <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
                     {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
                     {dateFormatter.format(new Date(linearSecret.updatedAt))}
                   </p>
@@ -1023,7 +1019,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 </div>
               </div>
             ) : (
-              <div className="ui-subpanel space-y-3 p-4">
+              <div className="ui-subpanel space-y-4 p-4">
                 <label className="space-y-2 text-sm font-semibold text-foreground">
                   <span>Linear API Key</span>
                   <input
@@ -1061,7 +1057,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
 
             {isManager ? (
               <>
-                <div className="ui-subpanel space-y-3 p-4">
+                <div className="ui-subpanel space-y-4 p-4">
                   <label className="space-y-2 text-sm font-semibold text-foreground">
                     <span>Secret Key</span>
                     <input
@@ -1113,9 +1109,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                         className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
                         key={secret.id}
                       >
-                        <div>
+                        <div className="space-y-1">
                           <p className="text-sm font-semibold text-foreground">{secret.key}</p>
-                          <p className="mt-1 font-mono text-xs uppercase tracking-[0.14em] text-muted">
+                          <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
                             {secret.valuePreview ?? "preview unavailable"}
                           </p>
                         </div>
@@ -1134,7 +1130,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 </div>
               </>
             ) : (
-              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
+              <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
                 Workspace admins can manage encrypted secret previews from this surface.
               </div>
             )}
@@ -1206,7 +1202,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 />
               </div>
             ) : (
-              <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
+              <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
                 Workspace admins can configure coding agent settings from this page.
               </div>
             )}
