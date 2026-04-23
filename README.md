@@ -325,20 +325,20 @@ cp .env.example .env.local
 
 Fill in the required values. Integration variables can be left blank until you complete the Slack / GitHub app setup below.
 
-| Variable                               | Required  | Description                                                                           |
-| -------------------------------------- | --------- | ------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`                  | Yes       | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)   |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Yes       | From `supabase start` output                                                          |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes       | Supabase anon / publishable key                                                       |
-| `SUPABASE_SECRET_KEY`                  | Yes       | Supabase service role key                                                             |
-| `WALLIE_ENCRYPTION_KEY`                | Yes       | 32+ character secret used for AES-256 at-rest encryption of workspace secrets         |
-| `WALLIE_PROCESS_TOKEN`                 | No        | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it  |
-| `SLACK_CLIENT_ID`                      | Slack     | Slack app "Basic Information" -> "App Credentials"                                    |
-| `SLACK_CLIENT_SECRET`                  | Slack     | Same panel                                                                            |
-| `SLACK_SIGNING_SECRET`                 | Slack     | Same panel; used to verify `/api/slack/events` + `/api/slack/interactions` signatures |
-| `GITHUB_APP_ID`                        | GitHub    | GitHub App "General" -> "App ID"                                                      |
-| `GITHUB_APP_PRIVATE_KEY`               | GitHub    | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)        |
-| `GITHUB_WEBHOOK_SECRET`                | GitHub    | The webhook secret you set when creating the GitHub App                               |
+| Variable                               | Required | Description                                                                           |
+| -------------------------------------- | -------- | ------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)   |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                          |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                       |
+| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                             |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | 32+ character secret used for AES-256 at-rest encryption of workspace secrets         |
+| `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it  |
+| `SLACK_CLIENT_ID`                      | Slack    | Slack app "Basic Information" -> "App Credentials"                                    |
+| `SLACK_CLIENT_SECRET`                  | Slack    | Same panel                                                                            |
+| `SLACK_SIGNING_SECRET`                 | Slack    | Same panel; used to verify `/api/slack/events` + `/api/slack/interactions` signatures |
+| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                      |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)        |
+| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                               |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
@@ -429,14 +429,14 @@ The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS cla
 
 ### Tunnel: what must be publicly reachable
 
-| Integration | Endpoint                                              | Why                                     |
-| ----------- | ----------------------------------------------------- | --------------------------------------- |
-| Slack       | `POST /api/slack/events`, `POST /api/slack/interactions` | Slack posts events and button clicks   |
-| Slack OAuth | `GET  /api/slack/callback`                            | Browser redirect from slack.com         |
-| GitHub      | `POST /api/github/webhooks`                           | App install and PR event deliveries     |
-| GitHub App  | `GET  /api/github/callback`                           | Browser redirect from github.com        |
-| Linear      | -- (pull only)                                        | Wallie calls Linear, never vice versa   |
-| Supabase    | -- (local Docker)                                     | App and worker connect to localhost     |
+| Integration | Endpoint                                                 | Why                                   |
+| ----------- | -------------------------------------------------------- | ------------------------------------- |
+| Slack       | `POST /api/slack/events`, `POST /api/slack/interactions` | Slack posts events and button clicks  |
+| Slack OAuth | `GET  /api/slack/callback`                               | Browser redirect from slack.com       |
+| GitHub      | `POST /api/github/webhooks`                              | App install and PR event deliveries   |
+| GitHub App  | `GET  /api/github/callback`                              | Browser redirect from github.com      |
+| Linear      | -- (pull only)                                           | Wallie calls Linear, never vice versa |
+| Supabase    | -- (local Docker)                                        | App and worker connect to localhost   |
 
 ### Troubleshooting
 
