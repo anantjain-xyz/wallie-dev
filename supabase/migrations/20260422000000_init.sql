@@ -908,7 +908,7 @@ execute function internal.touch_updated_at();
 -- remove, or reorder stages from the settings page.
 create or replace function internal.default_pipeline_stages()
 returns table (
-  position integer,
+  stage_position integer,
   slug text,
   name text,
   description text,
@@ -1168,7 +1168,7 @@ begin
   select
     default_pipeline_id,
     created_workspace.id,
-    s.position,
+    s.stage_position,
     s.slug,
     s.name,
     s.description,

@@ -179,7 +179,7 @@ BEGIN
   INSERT INTO public.pipeline_stages (
     pipeline_id, workspace_id, position, slug, name, description, prompt_template_md
   )
-  SELECT default_pipeline_id, ws_id, s.position, s.slug, s.name, s.description, s.prompt_template_md
+  SELECT default_pipeline_id, ws_id, s.stage_position, s.slug, s.name, s.description, s.prompt_template_md
   FROM internal.default_pipeline_stages() s;
 
   SELECT id INTO stage_product_id     FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'product';
