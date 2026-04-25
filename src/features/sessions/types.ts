@@ -1,37 +1,9 @@
 import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 
-// The 6-phase model targeted by the refactor. PR 1 expands the DB enum to
-// match; the UI hard-codes this order because it's the load-bearing product
-// surface and we want the phase rail to render all six even before the DB
-// catches up.
-export type SessionPhase = "product" | "design" | "engineering" | "review" | "land" | "monitor";
-
-export const SESSION_PHASE_ORDER = [
-  "product",
-  "design",
-  "engineering",
-  "review",
-  "land",
-  "monitor",
-] as const satisfies readonly SessionPhase[];
-
-export const SESSION_PHASE_LABELS: Record<SessionPhase, string> = {
-  product: "Product",
-  design: "Design",
-  engineering: "Engineering",
-  review: "Review",
-  land: "Land",
-  monitor: "Monitor",
-};
-
-export const SESSION_PHASE_DESCRIPTIONS: Record<SessionPhase, string> = {
-  product: "Write the spec and approve the problem framing.",
-  design: "Resolve the design approach before engineering picks it up.",
-  engineering: "Scope the implementation plan and confirm the diff shape.",
-  review: "Human review of the generated change set.",
-  land: "Merge, tag, and roll out.",
-  monitor: "Watch for regressions. Terminal phase — approving archives.",
-};
+// Sessions used to be pinned to a hardcoded 6-phase enum (product → design →
+// engineering → review → land → monitor). They now reference a workspace's
+// pipeline by id and advance through pipeline_stages by `position`. Stages
+// are user-editable in settings; the 6-phase shape is the seeded default.
 
 export type SessionPhaseStatus = PipelinePhaseStatus;
 
@@ -41,6 +13,24 @@ export const SESSION_PHASE_STATUS_LABELS: Record<SessionPhaseStatus, string> = {
   approved: "approved",
   rejected: "rejected",
   escalated: "escalated",
+};
+
+export type PipelineStage = {
+  approverMemberIds: string[];
+  description: string;
+  id: string;
+  name: string;
+  pipelineId: string;
+  position: number;
+  promptTemplateMd: string;
+  slug: string;
+};
+
+export type SessionPipeline = {
+  id: string;
+  isDefault: boolean;
+  name: string;
+  stages: PipelineStage[];
 };
 
 export type SessionPullRequest = {
@@ -57,13 +47,13 @@ export type SessionPullRequest = {
 
 export type SessionPhaseCompletion = {
   completedAt: string;
-  phase: SessionPhase;
+  stageSlug: string;
 };
 
 export type SessionArtifactSummary = {
   createdAt: string;
-  phase: SessionPhase;
   payload: unknown;
+  stageSlug: string;
   version: number;
 };
 
@@ -71,12 +61,15 @@ export type SessionSummary = {
   archivedAt: string | null;
   createdAt: string;
   currentArtifactVersion: number | null;
+  currentStageId: string;
+  currentStageName: string;
+  currentStageSlug: string;
   id: string;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   number: number;
-  phase: SessionPhase;
   phaseStatus: SessionPhaseStatus;
+  pipelineId: string;
   promptMd: string;
   pullRequestCount: number;
   rejectionCount: number;
@@ -90,6 +83,7 @@ export type SessionSummary = {
 export type SessionDetail = SessionSummary & {
   artifacts: SessionArtifactSummary[];
   phaseCompletions: SessionPhaseCompletion[];
+  pipeline: SessionPipeline;
   pullRequests: SessionPullRequest[];
   runHistory: SessionRun[];
 };
@@ -110,17 +104,18 @@ export type SessionRun = {
 export type SessionFilterKey = "all" | "active" | "archived" | "has-pr";
 
 export type SessionListQueryState = {
-  phase: SessionPhase | null;
   query: string;
   scope: SessionFilterKey;
+  stageSlug: string | null;
 };
 
-export function sessionPhaseIndex(phase: SessionPhase): number {
-  return SESSION_PHASE_ORDER.indexOf(phase);
+export function stageIndex(pipeline: SessionPipeline, stageSlug: string): number {
+  return pipeline.stages.findIndex((s) => s.slug === stageSlug);
 }
 
-export function isTerminalPhase(phase: SessionPhase): boolean {
-  return phase === "monitor";
+export function isTerminalStage(pipeline: SessionPipeline, stageSlug: string): boolean {
+  if (pipeline.stages.length === 0) return false;
+  return pipeline.stages[pipeline.stages.length - 1]!.slug === stageSlug;
 }
 
 export function sessionPhaseStatusTone(

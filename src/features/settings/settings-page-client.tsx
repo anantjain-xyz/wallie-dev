@@ -29,6 +29,7 @@ import type {
 } from "@/features/settings/data";
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
+import { PipelineEditor } from "@/features/settings/pipeline-editor";
 
 type SettingsPageClientProps = {
   initialData: SettingsPageData;
@@ -1141,6 +1142,21 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
 
         <Section title="Usage">
           <UsageSummary usage={initialData.usage} />
+        </Section>
+
+        <Section title="Pipeline">
+          <div className="space-y-4">
+            <p className="text-sm leading-7 text-muted">
+              Stages run in order; each stage&apos;s prompt is sent to the agent, and an approver
+              reviews the markdown output before the session advances.
+            </p>
+            <PipelineEditor
+              canManage={isManager}
+              pipeline={initialData.pipeline}
+              workspaceId={initialData.workspace.id}
+              workspaceMembers={initialData.workspaceMembers}
+            />
+          </div>
         </Section>
 
         <Section title="Coding Agent">

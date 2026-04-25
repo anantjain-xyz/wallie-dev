@@ -6,11 +6,12 @@ import type { WorkspaceSummary } from "@/lib/auth";
 import type { Tables } from "@/lib/supabase/database.types";
 import { loadSessionWorkspaceContext } from "@/features/sessions/server";
 import {
+  type PipelineStage,
   type SessionArtifactSummary,
   type SessionDetail,
-  type SessionPhase,
   type SessionPhaseCompletion,
   type SessionPhaseStatus,
+  type SessionPipeline,
   type SessionPullRequest,
   type SessionRun,
 } from "@/features/sessions/types";
@@ -52,7 +53,8 @@ export async function loadSessionDetailPageData(
         linear_issue_id,
         linear_issue_url,
         number,
-        phase,
+        pipeline_id,
+        current_stage_id,
         phase_status,
         current_artifact_version,
         prompt_md,
@@ -75,19 +77,31 @@ export async function loadSessionDetailPageData(
   }
 
   const [
+    { data: pipelineRow, error: pipelineError },
+    { data: stageRows, error: stagesError },
     { data: artifactRows, error: artifactError },
     { data: completionRows, error: completionError },
     { data: prRows, error: prError },
     { data: runRows, error: runError },
   ] = await Promise.all([
     context.supabase
+      .from("pipelines")
+      .select("id, name, is_default")
+      .eq("id", sessionRow.pipeline_id)
+      .maybeSingle(),
+    context.supabase
+      .from("pipeline_stages")
+      .select("*")
+      .eq("pipeline_id", sessionRow.pipeline_id)
+      .order("position", { ascending: true }),
+    context.supabase
       .from("session_artifacts")
-      .select("artifact_json, created_at, phase, version")
+      .select("artifact_json, created_at, stage_slug, version")
       .eq("session_id", sessionRow.id)
       .order("version", { ascending: false }),
     context.supabase
       .from("session_phase_completions")
-      .select("completed_at, phase")
+      .select("completed_at, stage_slug")
       .eq("session_id", sessionRow.id),
     context.supabase
       .from("github_issue_branches")
@@ -107,29 +121,48 @@ export async function loadSessionDetailPageData(
       .limit(10),
   ]);
 
+  if (pipelineError) throw pipelineError;
+  if (stagesError) throw stagesError;
   if (artifactError) throw artifactError;
   if (completionError) throw completionError;
   if (prError) throw prError;
   if (runError) throw runError;
+  if (!pipelineRow) {
+    throw new Error(
+      `Session ${sessionRow.id} references missing pipeline ${sessionRow.pipeline_id}`,
+    );
+  }
 
-  const artifacts: SessionArtifactSummary[] = (
-    (artifactRows ?? []) as Array<
-      Pick<Tables<"session_artifacts">, "artifact_json" | "created_at" | "phase" | "version">
-    >
-  ).map((row) => ({
+  const pipelineStages: PipelineStage[] = (stageRows ?? []).map((s) => ({
+    approverMemberIds: s.approver_member_ids ?? [],
+    description: s.description,
+    id: s.id,
+    name: s.name,
+    pipelineId: s.pipeline_id,
+    position: s.position,
+    promptTemplateMd: s.prompt_template_md,
+    slug: s.slug,
+  }));
+
+  const pipeline: SessionPipeline = {
+    id: pipelineRow.id,
+    isDefault: pipelineRow.is_default,
+    name: pipelineRow.name,
+    stages: pipelineStages,
+  };
+
+  const currentStage = pipelineStages.find((s) => s.id === sessionRow.current_stage_id);
+
+  const artifacts: SessionArtifactSummary[] = (artifactRows ?? []).map((row) => ({
     createdAt: row.created_at,
-    phase: row.phase as SessionPhase,
     payload: row.artifact_json,
+    stageSlug: row.stage_slug,
     version: row.version,
   }));
 
-  const phaseCompletions: SessionPhaseCompletion[] = (
-    (completionRows ?? []) as Array<
-      Pick<Tables<"session_phase_completions">, "completed_at" | "phase">
-    >
-  ).map((row) => ({
+  const phaseCompletions: SessionPhaseCompletion[] = (completionRows ?? []).map((row) => ({
     completedAt: row.completed_at,
-    phase: row.phase as SessionPhase,
+    stageSlug: row.stage_slug,
   }));
 
   const prRowsTyped = (prRows ?? []) as Array<
@@ -217,23 +250,7 @@ export async function loadSessionDetailPageData(
     };
   });
 
-  const runHistory: SessionRun[] = (
-    (runRows ?? []) as Array<
-      Pick<
-        Tables<"agent_runs">,
-        | "created_at"
-        | "finished_at"
-        | "id"
-        | "input_tokens"
-        | "model_name"
-        | "output_tokens"
-        | "run_type"
-        | "started_at"
-        | "status"
-        | "total_cost_usd"
-      >
-    >
-  ).map((row) => ({
+  const runHistory: SessionRun[] = (runRows ?? []).map((row) => ({
     createdAt: row.created_at,
     finishedAt: row.finished_at,
     id: row.id,
@@ -251,13 +268,17 @@ export async function loadSessionDetailPageData(
     artifacts,
     createdAt: sessionRow.created_at,
     currentArtifactVersion: sessionRow.current_artifact_version,
+    currentStageId: sessionRow.current_stage_id,
+    currentStageName: currentStage?.name ?? "Unknown",
+    currentStageSlug: currentStage?.slug ?? "unknown",
     id: sessionRow.id,
     linearIssueId: sessionRow.linear_issue_id,
     linearIssueUrl: sessionRow.linear_issue_url,
     number: sessionRow.number,
-    phase: sessionRow.phase as SessionPhase,
     phaseStatus: sessionRow.phase_status as SessionPhaseStatus,
     phaseCompletions,
+    pipeline,
+    pipelineId: sessionRow.pipeline_id,
     promptMd: sessionRow.prompt_md,
     pullRequestCount: pullRequests.length,
     pullRequests,

@@ -9,12 +9,8 @@ import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pi
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
 import {
-  SESSION_PHASE_DESCRIPTIONS,
-  SESSION_PHASE_LABELS,
-  SESSION_PHASE_ORDER,
   formatSessionPhaseStatus,
   sessionPhaseStatusTone,
-  type SessionPhase,
   type SessionPhaseStatus,
 } from "@/features/sessions/types";
 import { workspaceSessionDetailPath } from "@/lib/routes";
@@ -25,6 +21,8 @@ import { cn } from "@/lib/utils";
 type PipelinePageClientProps = {
   initialData: PipelineDashboardData;
 };
+
+const OTHER_LANE = { name: "Other", slug: "__other__" };
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -43,6 +41,17 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   const [cards, setCards] = useState<PipelineDashboardCard[]>(initialData.cards);
   const [createOpen, setCreateOpen] = useState(false);
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  // Index of stage_id → slug, built once from the default-pipeline payload.
+  // Realtime updates carry stage IDs; we resolve them locally so we don't
+  // round-trip per change.
+  const stageIdToSlug = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const stage of initialData.defaultPipelineStages) {
+      map.set(stage.id, stage.slug);
+    }
+    return map;
+  }, [initialData.defaultPipelineStages]);
 
   useEffect(() => {
     const channel = supabase
@@ -65,8 +74,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
           const row = payload.new as Tables<"sessions">;
 
-          // Archived rows fall off the dashboard when realtime advances them
-          // past the terminal monitor approval.
           if (row.archived_at) {
             setCards((prev) => prev.filter((card) => card.id !== row.id));
             return;
@@ -74,13 +81,25 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
           setCards((prev) => {
             const idx = prev.findIndex((card) => card.id === row.id);
+            const existing = idx === -1 ? null : prev[idx]!;
+            // When the session's stage changes (approval advanced it), we
+            // must re-resolve the slug from current_stage_id — keeping the
+            // existing slug would leave the card in the old lane until a
+            // full reload. If the stage didn't change, the cached slug is
+            // fine (and is the only way we'd know the slug for sessions
+            // pinned to a non-default stage).
+            const stageChanged = !existing || existing.currentStageId !== row.current_stage_id;
+            const slug = stageChanged
+              ? (stageIdToSlug.get(row.current_stage_id) ?? "unknown")
+              : existing.currentStageSlug;
             const next: PipelineDashboardCard = {
               createdAt: row.created_at,
+              currentStageId: row.current_stage_id,
+              currentStageSlug: slug,
               id: row.id,
               linearIssueId: row.linear_issue_id,
               linearIssueUrl: row.linear_issue_url,
               number: row.number,
-              phase: row.phase as SessionPhase,
               phaseStatus: row.phase_status as SessionPhaseStatus,
               rejectionCount: row.rejection_count,
               slackChannelId: row.slack_channel_id,
@@ -101,27 +120,39 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [initialData.workspace.id, supabase]);
+  }, [initialData.workspace.id, stageIdToSlug, supabase]);
 
-  const grouped = useMemo(() => {
-    const buckets = new Map<SessionPhase, PipelineDashboardCard[]>();
-    for (const phase of SESSION_PHASE_ORDER) {
-      buckets.set(phase, []);
-    }
+  // Lanes: every default stage gets a column, plus an "Other" column for
+  // sessions whose stage doesn't appear in the default (e.g. an admin renamed
+  // a stage while the session was in flight).
+  const lanes = useMemo(() => {
+    const knownSlugs = new Set(initialData.defaultPipelineStages.map((s) => s.slug));
+    const order: { slug: string; name: string; description: string }[] =
+      initialData.defaultPipelineStages.map((s) => ({
+        description: s.description,
+        name: s.name,
+        slug: s.slug,
+      }));
+    const buckets = new Map<string, PipelineDashboardCard[]>();
+    for (const lane of order) buckets.set(lane.slug, []);
+    let hasOther = false;
     for (const card of cards) {
-      const phase = card.phase as SessionPhase;
-      const list = buckets.get(phase);
-      if (list) {
-        list.push(card);
-      } else {
-        buckets.set(phase, [card]);
-      }
+      const target = knownSlugs.has(card.currentStageSlug)
+        ? card.currentStageSlug
+        : OTHER_LANE.slug;
+      if (!knownSlugs.has(card.currentStageSlug)) hasOther = true;
+      const list = buckets.get(target) ?? [];
+      if (!buckets.has(target)) buckets.set(target, list);
+      list.push(card);
+    }
+    if (hasOther) {
+      order.push({ description: "Sessions on a non-default stage.", ...OTHER_LANE });
     }
     for (const list of buckets.values()) {
       list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     }
-    return buckets;
-  }, [cards]);
+    return { buckets, order };
+  }, [cards, initialData.defaultPipelineStages]);
 
   return (
     <main className="flex min-h-screen flex-col bg-background">
@@ -133,8 +164,8 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
               {initialData.workspace.name}
             </h1>
             <p className="mt-1 max-w-2xl text-sm leading-5 text-muted">
-              Every Wallie session flows through product → design → engineering → review → land →
-              monitor. Approve or request changes from the session detail page to advance a card.
+              Stages, prompts, and approvers are configured in workspace settings. Approve or
+              request changes from the session detail page to advance a card.
             </p>
           </div>
           <button
@@ -150,21 +181,17 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
       <div className="flex-1 overflow-x-auto px-6 py-6">
         <div className="flex gap-4">
-          {SESSION_PHASE_ORDER.map((phase) => {
-            const items = grouped.get(phase) ?? [];
+          {lanes.order.map((lane) => {
+            const items = lanes.buckets.get(lane.slug) ?? [];
             return (
               <section
-                key={phase}
+                key={lane.slug}
                 className="flex min-h-[200px] min-w-[220px] flex-1 flex-col rounded-[8px] border border-border bg-surface"
               >
                 <header className="flex items-baseline justify-between border-b border-border px-3 py-2.5">
                   <div>
-                    <h2 className="text-[13px] font-semibold text-foreground">
-                      {SESSION_PHASE_LABELS[phase]}
-                    </h2>
-                    <p className="mt-0.5 text-[11px] leading-4 text-muted">
-                      {SESSION_PHASE_DESCRIPTIONS[phase]}
-                    </p>
+                    <h2 className="text-[13px] font-semibold text-foreground">{lane.name}</h2>
+                    <p className="mt-0.5 text-[11px] leading-4 text-muted">{lane.description}</p>
                   </div>
                   <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-muted">
                     {items.length}

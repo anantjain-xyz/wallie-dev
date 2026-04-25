@@ -423,14 +423,107 @@ export type Database = {
         }
         Relationships: []
       }
+      pipelines: {
+        Row: {
+          created_at: string
+          id: string
+          is_default: boolean
+          name: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          name?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_default?: boolean
+          name?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipelines_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_stages: {
+        Row: {
+          approver_member_ids: string[]
+          created_at: string
+          description: string
+          id: string
+          name: string
+          pipeline_id: string
+          position: number
+          prompt_template_md: string
+          slug: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          approver_member_ids?: string[]
+          created_at?: string
+          description?: string
+          id?: string
+          name: string
+          pipeline_id: string
+          position: number
+          prompt_template_md?: string
+          slug: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Update: {
+          approver_member_ids?: string[]
+          created_at?: string
+          description?: string
+          id?: string
+          name?: string
+          pipeline_id?: string
+          position?: number
+          prompt_template_md?: string
+          slug?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_stages_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_artifacts: {
         Row: {
           artifact_json: Json
           created_at: string
           feedback_text: string | null
           id: string
-          phase: Database["public"]["Enums"]["session_phase"]
           session_id: string
+          stage_id: string | null
+          stage_slug: string
           version: number
           workspace_id: string
         }
@@ -439,8 +532,9 @@ export type Database = {
           created_at?: string
           feedback_text?: string | null
           id?: string
-          phase: Database["public"]["Enums"]["session_phase"]
           session_id: string
+          stage_id?: string | null
+          stage_slug: string
           version: number
           workspace_id: string
         }
@@ -449,8 +543,9 @@ export type Database = {
           created_at?: string
           feedback_text?: string | null
           id?: string
-          phase?: Database["public"]["Enums"]["session_phase"]
           session_id?: string
+          stage_id?: string | null
+          stage_slug?: string
           version?: number
           workspace_id?: string
         }
@@ -460,6 +555,13 @@ export type Database = {
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_artifacts_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
           {
@@ -476,24 +578,27 @@ export type Database = {
           completed_at: string
           completed_by_member_id: string | null
           id: string
-          phase: Database["public"]["Enums"]["session_phase"]
           session_id: string
+          stage_id: string | null
+          stage_slug: string
           workspace_id: string
         }
         Insert: {
           completed_at?: string
           completed_by_member_id?: string | null
           id?: string
-          phase: Database["public"]["Enums"]["session_phase"]
           session_id: string
+          stage_id?: string | null
+          stage_slug: string
           workspace_id: string
         }
         Update: {
           completed_at?: string
           completed_by_member_id?: string | null
           id?: string
-          phase?: Database["public"]["Enums"]["session_phase"]
           session_id?: string
+          stage_id?: string | null
+          stage_slug?: string
           workspace_id?: string
         }
         Relationships: [
@@ -509,6 +614,13 @@ export type Database = {
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_phase_completions_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
           {
@@ -590,12 +702,13 @@ export type Database = {
           created_at: string
           creator_member_id: string | null
           current_artifact_version: number
+          current_stage_id: string
           id: string
           linear_issue_id: string | null
           linear_issue_url: string | null
           number: number
-          phase: Database["public"]["Enums"]["session_phase"]
           phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          pipeline_id: string
           prompt_md: string
           rejection_count: number
           slack_channel_id: string | null
@@ -609,12 +722,13 @@ export type Database = {
           created_at?: string
           creator_member_id?: string | null
           current_artifact_version?: number
+          current_stage_id: string
           id?: string
           linear_issue_id?: string | null
           linear_issue_url?: string | null
           number: number
-          phase?: Database["public"]["Enums"]["session_phase"]
           phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          pipeline_id: string
           prompt_md?: string
           rejection_count?: number
           slack_channel_id?: string | null
@@ -628,12 +742,13 @@ export type Database = {
           created_at?: string
           creator_member_id?: string | null
           current_artifact_version?: number
+          current_stage_id?: string
           id?: string
           linear_issue_id?: string | null
           linear_issue_url?: string | null
           number?: number
-          phase?: Database["public"]["Enums"]["session_phase"]
           phase_status?: Database["public"]["Enums"]["pipeline_phase_status"]
+          pipeline_id?: string
           prompt_md?: string
           rejection_count?: number
           slack_channel_id?: string | null
@@ -648,6 +763,20 @@ export type Database = {
             columns: ["creator_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_current_stage_id_fkey"
+            columns: ["current_stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
           {
@@ -859,41 +988,6 @@ export type Database = {
           },
         ]
       }
-      workspace_prompt_templates: {
-        Row: {
-          created_at: string
-          id: string
-          phase: Database["public"]["Enums"]["session_phase"]
-          template_md: string
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          phase: Database["public"]["Enums"]["session_phase"]
-          template_md: string
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          phase?: Database["public"]["Enums"]["session_phase"]
-          template_md?: string
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_prompt_templates_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       workspace_secrets: {
         Row: {
           created_at: string
@@ -977,7 +1071,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      approve_session_phase: {
+      approve_session_stage: {
         Args: {
           approver_member_id?: string
           expected_version: number
@@ -986,10 +1080,12 @@ export type Database = {
         }
         Returns: {
           archived_at: string
+          current_stage_id: string
+          current_stage_slug: string
           id: string
           linear_issue_url: string
-          phase: Database["public"]["Enums"]["session_phase"]
           phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
+          pipeline_id: string
           slack_channel_id: string
           slack_thread_ts: string
           workspace_id: string
@@ -1102,13 +1198,6 @@ export type Database = {
         | "approved"
         | "rejected"
         | "escalated"
-      session_phase:
-        | "product"
-        | "design"
-        | "engineering"
-        | "review"
-        | "land"
-        | "monitor"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1260,14 +1349,6 @@ export const Constants = {
         "approved",
         "rejected",
         "escalated",
-      ],
-      session_phase: [
-        "product",
-        "design",
-        "engineering",
-        "review",
-        "land",
-        "monitor",
       ],
     },
   },

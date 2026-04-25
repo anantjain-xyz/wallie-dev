@@ -8,13 +8,10 @@ import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
-  SESSION_PHASE_LABELS,
-  SESSION_PHASE_ORDER,
   formatSessionPhaseStatus,
   sessionPhaseStatusTone,
   type SessionFilterKey,
   type SessionListQueryState,
-  type SessionPhase,
   type SessionSummary,
 } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -28,10 +25,10 @@ type SessionsPageClientProps = {
 
 function buildHref(
   base: string,
-  state: Pick<SessionListQueryState, "phase" | "query" | "scope">,
+  state: Pick<SessionListQueryState, "stageSlug" | "query" | "scope">,
 ): string {
   const params = new URLSearchParams();
-  if (state.phase) params.set("phase", state.phase);
+  if (state.stageSlug) params.set("stage", state.stageSlug);
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.scope !== "all") params.set("scope", state.scope);
   const qs = params.toString();
@@ -77,9 +74,9 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
-      phase: next.phase !== undefined ? next.phase : initialData.queryState.phase,
       query: next.query !== undefined ? next.query : initialData.queryState.query,
       scope: next.scope !== undefined ? next.scope : initialData.queryState.scope,
+      stageSlug: next.stageSlug !== undefined ? next.stageSlug : initialData.queryState.stageSlug,
     };
     startTransition(() => {
       router.replace(buildHref(basePath, merged));
@@ -103,13 +100,22 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   }
 
   const sessions = initialData.sessions;
-  const groupedByPhase = useMemo(() => {
-    const counts = new Map<SessionPhase, number>();
-    for (const phase of SESSION_PHASE_ORDER) counts.set(phase, 0);
+  // Build the stage filter chips from whatever stages appear in the loaded
+  // sessions. This keeps the chip set in sync with workspaces that have
+  // edited their pipeline; we don't need to know the workspace's pipeline
+  // shape at this layer.
+  const stageGroups = useMemo(() => {
+    const order: { name: string; slug: string }[] = [];
+    const counts = new Map<string, number>();
+    const seen = new Set<string>();
     for (const session of sessions) {
-      counts.set(session.phase, (counts.get(session.phase) ?? 0) + 1);
+      if (!seen.has(session.currentStageSlug)) {
+        seen.add(session.currentStageSlug);
+        order.push({ name: session.currentStageName, slug: session.currentStageSlug });
+      }
+      counts.set(session.currentStageSlug, (counts.get(session.currentStageSlug) ?? 0) + 1);
     }
-    return counts;
+    return { counts, order };
   }, [sessions]);
 
   return (
@@ -170,25 +176,25 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
               type="button"
               className={cn(
                 "ui-filter-chip",
-                initialData.queryState.phase === null && "ui-filter-chip-active",
+                initialData.queryState.stageSlug === null && "ui-filter-chip-active",
               )}
-              onClick={() => updateQueryState({ phase: null })}
+              onClick={() => updateQueryState({ stageSlug: null })}
             >
-              All phases
+              All stages
             </button>
-            {SESSION_PHASE_ORDER.map((phase) => (
+            {stageGroups.order.map((stage) => (
               <button
-                key={phase}
+                key={stage.slug}
                 type="button"
                 className={cn(
                   "ui-filter-chip",
-                  initialData.queryState.phase === phase && "ui-filter-chip-active",
+                  initialData.queryState.stageSlug === stage.slug && "ui-filter-chip-active",
                 )}
-                onClick={() => updateQueryState({ phase })}
+                onClick={() => updateQueryState({ stageSlug: stage.slug })}
               >
-                {SESSION_PHASE_LABELS[phase]}
+                {stage.name}
                 <span className="ml-1 text-[10px] text-muted">
-                  {groupedByPhase.get(phase) ?? 0}
+                  {stageGroups.counts.get(stage.slug) ?? 0}
                 </span>
               </button>
             ))}
@@ -245,7 +251,7 @@ function SessionRow({
           </Link>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-          <span>{SESSION_PHASE_LABELS[session.phase]}</span>
+          <span>{session.currentStageName}</span>
           <span>·</span>
           <StatusChip tone={sessionPhaseStatusTone(session.phaseStatus)}>
             {formatSessionPhaseStatus(session.phaseStatus)}

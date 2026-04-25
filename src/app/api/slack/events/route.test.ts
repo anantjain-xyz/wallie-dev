@@ -417,6 +417,28 @@ describe("POST /api/slack/events", () => {
           });
           return chain;
         },
+        pipelines: () => {
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.eq = vi.fn().mockReturnValue(chain);
+          chain.maybeSingle = vi.fn().mockResolvedValue({
+            data: { id: "pipe-default" },
+            error: null,
+          });
+          return chain;
+        },
+        pipeline_stages: () => {
+          const chain: Record<string, unknown> = {};
+          chain.select = vi.fn().mockReturnValue(chain);
+          chain.eq = vi.fn().mockReturnValue(chain);
+          chain.order = vi.fn().mockReturnValue(chain);
+          chain.limit = vi.fn().mockReturnValue(chain);
+          chain.maybeSingle = vi.fn().mockResolvedValue({
+            data: { id: "stage-product" },
+            error: null,
+          });
+          return chain;
+        },
       },
       { data: 42, error: null },
     );
@@ -447,7 +469,6 @@ describe("POST /api/slack/events", () => {
         linear_issue_id: "TEAM-456",
         linear_issue_url: "https://linear.app/myteam/issue/TEAM-456",
         number: 42,
-        phase: "product",
         phase_status: "agent_generating",
         slack_channel_id: "C1",
         slack_thread_ts: "1.1",
@@ -591,6 +612,28 @@ describe("POST /api/slack/events", () => {
         chain.eq = vi.fn().mockReturnValue(chain);
         chain.maybeSingle = vi.fn().mockResolvedValue({
           data: { encrypted_value: "enc-linear-key" },
+          error: null,
+        });
+        return chain;
+      },
+      pipelines: () => {
+        const chain: Record<string, unknown> = {};
+        chain.select = vi.fn().mockReturnValue(chain);
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { id: "pipe-default" },
+          error: null,
+        });
+        return chain;
+      },
+      pipeline_stages: () => {
+        const chain: Record<string, unknown> = {};
+        chain.select = vi.fn().mockReturnValue(chain);
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.order = vi.fn().mockReturnValue(chain);
+        chain.limit = vi.fn().mockReturnValue(chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: { id: "stage-product" },
           error: null,
         });
         return chain;

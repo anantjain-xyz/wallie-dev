@@ -4,10 +4,8 @@ import type { WorkspaceSummary } from "@/lib/auth";
 import { loadSessionWorkspaceContext } from "@/features/sessions/server";
 import { mapSessionRow } from "@/features/sessions/model";
 import {
-  SESSION_PHASE_ORDER,
   type SessionFilterKey,
   type SessionListQueryState,
-  type SessionPhase,
   type SessionSummary,
 } from "@/features/sessions/types";
 
@@ -35,21 +33,19 @@ function parseScope(raw: string | null): SessionFilterKey {
   return "all";
 }
 
-function parsePhase(raw: string | null): SessionPhase | null {
-  if (!raw) return null;
-  return (SESSION_PHASE_ORDER as readonly string[]).includes(raw) ? (raw as SessionPhase) : null;
-}
-
 export function parseSessionListQueryState(searchParams: SearchParamInput): SessionListQueryState {
+  // Stage filter is a free-form slug now (workspaces can define their own
+  // stages); we surface whatever's in the URL and let the dashboard decide
+  // what to render for unknown slugs.
   return {
-    phase: parsePhase(readSingle(searchParams, "phase")),
     query: readSingle(searchParams, "q") ?? "",
     scope: parseScope(readSingle(searchParams, "scope")),
+    stageSlug: readSingle(searchParams, "stage"),
   };
 }
 
 function matchesQueryState(session: SessionSummary, queryState: SessionListQueryState): boolean {
-  if (queryState.phase && session.phase !== queryState.phase) {
+  if (queryState.stageSlug && session.currentStageSlug !== queryState.stageSlug) {
     return false;
   }
   if (queryState.scope === "archived" && !session.archivedAt) {
@@ -90,7 +86,8 @@ export async function loadSessionListPageData(
         linear_issue_id,
         linear_issue_url,
         number,
-        phase,
+        pipeline_id,
+        current_stage_id,
         phase_status,
         current_artifact_version,
         prompt_md,
@@ -110,6 +107,22 @@ export async function loadSessionListPageData(
 
   const rows = data ?? [];
 
+  // Resolve the (slug, name) of each session's current stage in a single
+  // query. Sessions in this workspace may pin to multiple pipelines, so we
+  // index by stage id rather than assuming one pipeline.
+  const stageIds = Array.from(new Set(rows.map((r) => r.current_stage_id))).filter(Boolean);
+  const stageMap = new Map<string, { name: string; slug: string }>();
+  if (stageIds.length > 0) {
+    const { data: stageRows, error: stageError } = await context.supabase
+      .from("pipeline_stages")
+      .select("id, slug, name")
+      .in("id", stageIds);
+    if (stageError) throw stageError;
+    for (const s of stageRows ?? []) {
+      stageMap.set(s.id, { name: s.name, slug: s.slug });
+    }
+  }
+
   const sessionIds = rows.map((row) => row.id);
 
   const prCountBySession = new Map<string, number>();
@@ -128,7 +141,10 @@ export async function loadSessionListPageData(
   }
 
   const sessions = rows
-    .map((row) => mapSessionRow(row, prCountBySession.get(row.id) ?? 0))
+    .map((row) => {
+      const stage = stageMap.get(row.current_stage_id) ?? { name: "Unknown", slug: "unknown" };
+      return mapSessionRow(row, stage, prCountBySession.get(row.id) ?? 0);
+    })
     .filter((session) => session.number > 0);
 
   const filtered = sessions.filter((session) => matchesQueryState(session, queryState));

@@ -213,16 +213,40 @@ async function handleAppMention(ctx: {
     ? `${linearIssue.description}\n\n---\nImported from Linear: ${linearIssue.url}`
     : `Imported from Linear: ${linearIssue.url}`;
 
-  // Sessions is the source of truth for phase / phase_status / artifacts.
+  // Sessions pin to the workspace's default pipeline + its first stage.
+  const { data: defaultPipeline } = await admin
+    .from("pipelines")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("is_default", true)
+    .maybeSingle();
+  const { data: firstStage } = defaultPipeline
+    ? await admin
+        .from("pipeline_stages")
+        .select("id")
+        .eq("pipeline_id", defaultPipeline.id)
+        .order("position", { ascending: true })
+        .limit(1)
+        .maybeSingle()
+    : { data: null as { id: string } | null };
+
+  if (!defaultPipeline || !firstStage) {
+    return NextResponse.json(
+      { error: "Workspace has no default pipeline configured." },
+      { status: 500 },
+    );
+  }
+
   const { data: sessionRow, error: sessionError } = await admin
     .from("sessions")
     .insert({
       creator_member_id: wallieMember?.id ?? null,
+      current_stage_id: firstStage.id,
       linear_issue_id: linearInfo.issueId,
       linear_issue_url: linearInfo.url,
       number: sessionNumber ?? 1,
-      phase: "product",
       phase_status: "agent_generating",
+      pipeline_id: defaultPipeline.id,
       prompt_md: promptMd,
       slack_channel_id: channelId,
       slack_thread_ts: threadTs,

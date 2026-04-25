@@ -3,6 +3,7 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import { getSlackConfigStatus } from "@/features/slack/config";
 import { getSlackInstallationForWorkspace } from "@/features/slack/service";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
@@ -77,6 +78,13 @@ export type SettingsPageData = {
     name: string;
     slug: string;
   };
+  pipeline: SessionPipeline | null;
+  workspaceMembers: Array<{
+    id: string;
+    fullName: string | null;
+    email: string | null;
+    role: "owner" | "admin" | "member" | "agent";
+  }>;
 };
 
 export async function loadSettingsPageData(workspaceSlug: string) {
@@ -183,6 +191,61 @@ export async function loadSettingsPageData(workspaceSlug: string) {
 
   const canManage = currentMember.role === "owner" || currentMember.role === "admin";
 
+  // Load the workspace's default pipeline + stages for the PipelineEditor.
+  const { data: pipelineRow } = await supabase
+    .from("pipelines")
+    .select("id, name, is_default")
+    .eq("workspace_id", workspace.id)
+    .eq("is_default", true)
+    .maybeSingle();
+
+  let pipeline: SessionPipeline | null = null;
+  if (pipelineRow) {
+    const { data: stageRows } = await supabase
+      .from("pipeline_stages")
+      .select(
+        "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
+      )
+      .eq("pipeline_id", pipelineRow.id)
+      .order("position", { ascending: true });
+
+    const stages: PipelineStage[] = (stageRows ?? []).map((s) => ({
+      approverMemberIds: s.approver_member_ids ?? [],
+      description: s.description,
+      id: s.id,
+      name: s.name,
+      pipelineId: s.pipeline_id,
+      position: s.position,
+      promptTemplateMd: s.prompt_template_md,
+      slug: s.slug,
+    }));
+
+    pipeline = {
+      id: pipelineRow.id,
+      isDefault: pipelineRow.is_default,
+      name: pipelineRow.name,
+      stages,
+    };
+  }
+
+  // Members are needed to render the per-stage approver picker. Restrict to
+  // human members so the system "wallie" agent doesn't show up as a possible
+  // approver.
+  const { data: memberRows } = await supabase
+    .from("workspace_members")
+    .select("id, full_name, email, role, kind, is_active")
+    .eq("workspace_id", workspace.id)
+    .eq("kind", "human")
+    .eq("is_active", true)
+    .order("full_name", { ascending: true });
+
+  const workspaceMembers = (memberRows ?? []).map((m) => ({
+    email: m.email,
+    fullName: m.full_name,
+    id: m.id,
+    role: m.role as "owner" | "admin" | "member" | "agent",
+  }));
+
   return {
     agentConfig,
     canManage,
@@ -230,5 +293,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
       name: workspace.name,
       slug: workspace.slug,
     },
+    pipeline,
+    workspaceMembers,
   } satisfies SettingsPageData;
 }

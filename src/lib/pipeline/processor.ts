@@ -1,30 +1,31 @@
 import "server-only";
 
-import type { Tables } from "@/lib/supabase/database.types";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { decryptSecretValue } from "@/lib/secrets/crypto";
-import { SESSION_PHASE_LABELS, type SessionPhase } from "@/features/sessions/types";
-import { runDesignPhase } from "./design-phase";
-import { runEngineeringPhase } from "./engineering-phase";
-import { runLandPhase } from "./land-phase";
-import { runMonitorPhase } from "./monitor-phase";
-import { runReviewPhase } from "./review-phase";
+import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 
-import { preScreenIssue } from "./pre-screen";
-import { generateProductSpec } from "./product-agent";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import type { Database, Tables } from "@/lib/supabase/database.types";
+import type { PipelineStage } from "@/features/sessions/types";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { createAgentRunner } from "@/lib/agent-runner";
+import type { AgentEvent } from "@/lib/agent-runner/types";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
+import { renderStagePrompt } from "@/lib/prompt-templates";
+
 import {
-  escapeMrkdwn,
   formatEscalationDmBlocks,
-  formatPreScreenFailBlocks,
-  formatSpecBlocks,
-  formatSpecDiffBlocks,
+  formatGenerationFailureBlocks,
+  formatStageReviewBlocks,
   openSlackDm,
   postSlackMessage,
 } from "./slack-format";
-import { nextPhase, shouldEscalate } from "./state-machine";
-import { PIPELINE_JOB_TYPE, type ProductSpec, markdownToSpec, specToMarkdown } from "./types";
+import { loadCompletedStageArtifacts, loadPipelineWithStages, loadStageById } from "./stages";
+import { shouldEscalate } from "./state-machine";
+import { PIPELINE_JOB_TYPE } from "./types";
 
-type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
+type AdminClient = SupabaseClient<Database>;
 type SessionRow = Tables<"sessions">;
 
 interface ProcessPipelineJobResult {
@@ -48,17 +49,6 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
 
-    // Load workspace secrets: ANTHROPIC_API_KEY (product-phase only) and
-    // EM_SLACK_USER_ID. The key is only required for the product phase —
-    // the other 5 phases use runManualPhaseStub, which doesn't hit the
-    // model, so a missing key there must not block the job.
-    const secrets = await loadPipelineSecrets(admin, job.workspace_id);
-    if (session.phase === "product" && !secrets.anthropicApiKey) {
-      await markPipelineJobError(admin, job, "Missing ANTHROPIC_API_KEY in workspace secrets.");
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-
-    // Load Slack bot token from slack_installations
     const slackInstall = await loadSlackInstallation(admin, job.workspace_id);
     const botToken = slackInstall ? decryptSecretValue(slackInstall.bot_token_encrypted) : null;
 
@@ -67,9 +57,19 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "error", runId: null };
     }
 
+    const stage = await loadStageById(admin, session.current_stage_id);
+    if (!stage) {
+      await markPipelineJobError(
+        admin,
+        job,
+        `Session ${session.id} references missing stage ${session.current_stage_id}.`,
+      );
+      return { jobId: job.id, processed: true, result: "error", runId: null };
+    }
+
     // Atomic CAS claim: only proceed if the session is in a non-terminal
-    // state for this phase. This prevents a second worker from regenerating
-    // a spec that has already been approved or escalated.
+    // state for the current stage. Prevents a second worker from regenerating
+    // an artifact that has already been approved or escalated.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
       .update({ phase_status: "agent_generating" })
@@ -89,76 +89,7 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
 
-    // Route by phase: all 6 phases have real implementations.
-    // Product uses a structured Claude API call; design, engineering,
-    // review, and monitor use the agent runner; land merges the PR
-    // via the GitHub App API.
-    if (session.phase === "product") {
-      // Non-null assertion: the phase-gated check above already rejected
-      // product-phase jobs with a missing key.
-      return await runProductPhase({
-        admin,
-        anthropicApiKey: secrets.anthropicApiKey!,
-        botToken,
-        emSlackUserId: secrets.emSlackUserId,
-        job,
-        session,
-      });
-    }
-
-    if (session.phase === "design") {
-      return await runDesignPhase({
-        admin,
-        botToken,
-        job,
-        session,
-      });
-    }
-
-    if (session.phase === "engineering") {
-      return await runEngineeringPhase({
-        admin,
-        botToken,
-        job,
-        session,
-      });
-    }
-
-    if (session.phase === "review") {
-      return await runReviewPhase({
-        admin,
-        botToken,
-        job,
-        session,
-      });
-    }
-
-    if (session.phase === "land") {
-      return await runLandPhase({
-        admin,
-        botToken,
-        job,
-        session,
-      });
-    }
-
-    if (session.phase === "monitor") {
-      return await runMonitorPhase({
-        admin,
-        botToken,
-        job,
-        session,
-      });
-    }
-
-    // Fallback for any unrecognized phase (should not happen with current
-    // phase set, but keeps the code forward-compatible).
-    return await runManualPhaseStub({
-      admin,
-      botToken,
-      job,
-      session,
-    });
+    return await runStage({ admin, botToken, job, session, stage });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Pipeline job failed";
     await markPipelineJobError(admin, job, message);
@@ -166,105 +97,98 @@ export async function processPipelineJob(input: {
   }
 }
 
-// --- Product phase (real agent) ---
-
-async function runProductPhase(input: {
+// --- Generic stage runner ---
+//
+// One implementation handles every user-defined stage. Render the stage's
+// prompt against the session context, run it through the agent runner, capture
+// the text output as a markdown artifact, flip phase_status, and post a
+// review block to Slack. No git, no PR creation, no specialized output
+// shapes — that's the v1 trade-off for letting workspaces define their own
+// pipeline.
+async function runStage(input: {
   admin: AdminClient;
-  anthropicApiKey: string;
   botToken: string;
-  emSlackUserId: string | null;
   job: Tables<"agent_jobs">;
   session: SessionRow;
+  stage: PipelineStage;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, anthropicApiKey, botToken, job, session } = input;
+  const { admin, botToken, job, session, stage } = input;
 
-  // Use session title and prompt directly — no anchor issue lookup needed.
-  const issueTitle = session.title;
-  const issueDescription = session.prompt_md;
+  const newVersion = session.current_artifact_version + 1;
 
-  // Run pre-screen
-  const preScreenResult = await preScreenIssue({
-    anthropicApiKey,
-    issueDescription,
-    issueTitle,
+  // Pull artifacts from completed prior stages so the prompt can reference
+  // them via {{artifact.previousStages.<slug>}}.
+  const previousStages = await loadCompletedStageArtifacts(admin, session.id);
+
+  // Resume-on-rejection: pull the most recent feedback for this stage so the
+  // template can include it via {{attempt.feedback}}. Match on stage_id so a
+  // rename in the editor doesn't cause us to miss the prior attempt.
+  const lastArtifact = await loadLatestArtifact(admin, session.id, stage.id);
+  const attemptFeedback = lastArtifact?.feedback_text ?? null;
+
+  const prompt = renderStagePrompt(stage, {
+    attemptFeedback,
+    attemptNumber: session.rejection_count + 1,
+    previousStages,
+    sessionPrompt: session.prompt_md,
+    sessionTitle: session.title,
   });
 
-  if (!preScreenResult.pass) {
-    // Post pre-screen fail to Slack. If the post fails (invalid_auth,
-    // channel_not_found, etc.), the session is still logically rejected
-    // — the reviewer just won't see a warning. Record the state flip
-    // either way and mark the job as errored so operators can investigate.
-    let slackPostError: string | null = null;
-    if (session.slack_channel_id) {
-      try {
-        await postSlackMessage({
-          blocks: formatPreScreenFailBlocks(preScreenResult.reason),
-          botToken,
-          channel: session.slack_channel_id,
-          text: `Issue needs more detail: ${preScreenResult.reason}`,
-          threadTs: session.slack_thread_ts ?? undefined,
-        });
-      } catch (postError) {
-        slackPostError = postError instanceof Error ? postError.message : String(postError);
-      }
-    }
+  const config = await loadAgentConfig(admin, session.workspace_id);
+  const runner = createAgentRunner(config.provider ?? "claude-code");
 
-    await updateSessionStatus(admin, session.id, "rejected");
-    if (slackPostError) {
-      await markPipelineJobError(
-        admin,
-        job,
-        `Pre-screen failed; Slack notification also failed: ${slackPostError}`,
-      );
-      return { jobId: job.id, processed: true, result: "error", runId: null };
-    }
-    await markPipelineJobSuccess(admin, job);
-    return { jobId: job.id, processed: true, result: "success", runId: null };
-  }
+  // Generic prompt-only stages don't need a git checkout. Use a per-run
+  // scratch dir; the agent writes its output to the event stream which we
+  // capture as markdown.
+  const workspacePath = await createScratchDirectory(session.id, stage.slug);
 
-  // Load previous spec if this is a revision of the product phase.
-  let previousSpec: ProductSpec | null = null;
-  let feedbackText: string | null = null;
-  if (session.current_artifact_version > 0) {
-    const lastArtifact = await loadLatestArtifact(admin, session.id, session.phase);
-    if (lastArtifact) {
-      // Support both legacy JSON artifacts and new markdown artifacts
-      const raw = lastArtifact.artifact_json;
-      if (typeof raw === "string") {
-        previousSpec = markdownToSpec(raw);
-      } else {
-        previousSpec = raw as unknown as ProductSpec;
-      }
-      feedbackText = lastArtifact.feedback_text;
-    }
-  }
-
-  // Generate spec AND persist the artifact + version pointer. Bundled into
-  // a single try/catch because a failure anywhere in this block leaves the
-  // session in the same observable state (no spec to review) and must
-  // recover the same way: post a generic Slack warning, flip phase_status
-  // to 'rejected', error the agent_job. Without the compensating delete
-  // below, a partial save would wedge the next retry on the unique
-  // (session_id, phase, version) constraint.
-  const newVersion = session.current_artifact_version + 1;
-  let spec: ProductSpec;
+  let runId: string | null = null;
+  const collectedText: string[] = [];
   let artifactInserted = false;
   try {
-    spec = await generateProductSpec({
-      anthropicApiKey,
-      feedback: feedbackText,
-      issueDescription,
-      issueTitle,
-      previousSpec,
+    runId = await createAgentRun(admin, {
+      jobId: job.id,
+      model: config.model ?? "claude-sonnet-4-20250514",
+      provider: runner.provider,
+      runType: stage.slug,
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
     });
 
-    const specMarkdown = specToMarkdown(spec);
+    let usage: { inputTokens: number; outputTokens: number } | undefined;
+
+    for await (const event of runner.start({
+      maxTokens: undefined,
+      prompt,
+      sessionId: session.id,
+      workspacePath,
+    })) {
+      if (runId) {
+        await persistEvent(admin, runId, session.workspace_id, event);
+      }
+      if (event.type === "text") {
+        collectedText.push(event.text);
+      } else if (event.type === "completion") {
+        if (event.summary) collectedText.push(event.summary);
+        if (event.usage) usage = event.usage;
+      } else if (event.type === "error") {
+        throw new Error(event.message);
+      }
+    }
+
+    if (runId) {
+      await markRunSuccess(admin, runId, usage);
+    }
+
+    const artifactMarkdown =
+      collectedText.join("\n").trim() || `_${stage.name} produced no output._`;
 
     await insertArtifact(admin, {
-      artifactJson: specMarkdown,
+      artifactJson: artifactMarkdown,
       feedbackText: null,
-      phase: session.phase,
       sessionId: session.id,
+      stageId: stage.id,
+      stageSlug: stage.slug,
       version: newVersion,
       workspaceId: session.workspace_id,
     });
@@ -278,222 +202,93 @@ async function runProductPhase(input: {
       })
       .eq("id", session.id);
     if (pointerError) throw pointerError;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Spec generation failed";
 
-    // Compensate: if we inserted the artifact but a downstream write failed,
-    // delete the orphan so the next retry computes newVersion against the
-    // pre-insert pointer and doesn't hit 23505 on (session_id, phase,
-    // version). We ignore the delete's own error — it's best-effort and a
-    // leftover orphan is still recoverable by operator intervention.
-    if (artifactInserted) {
-      await admin
-        .from("session_artifacts")
-        .delete()
-        .eq("session_id", session.id)
-        .eq("phase", session.phase)
-        .eq("version", newVersion);
-    }
-
-    // Post a generic warning to the Slack thread. We intentionally do not
-    // surface the raw SDK/LLM error message — it can contain unescaped Slack
-    // mrkdwn that renders as phishing links, and it can leak provider
-    // internals. Operators can read the full message from agent_jobs.last_error.
     if (session.slack_channel_id) {
-      const friendly = ":warning: Spec generation failed. An operator will investigate.";
+      const pipeline = await loadPipelineWithStages(admin, session.pipeline_id);
+      const stages = pipeline?.stages ?? [];
+      const idx = stages.findIndex((s) => s.id === stage.id);
+      const nextStage = idx >= 0 && idx < stages.length - 1 ? stages[idx + 1]! : null;
+
       try {
         await postSlackMessage({
-          blocks: [
-            {
-              text: {
-                text: friendly,
-                type: "mrkdwn",
-              },
-              type: "section",
-            },
-          ],
+          blocks: formatStageReviewBlocks({
+            artifactPreviewMd: artifactMarkdown,
+            linearUrl: session.linear_issue_url,
+            nextStage,
+            sessionId: session.id,
+            stage,
+            version: newVersion,
+          }),
           botToken,
           channel: session.slack_channel_id,
-          text: "Spec generation failed",
+          text: `${stage.name} ready for review (v${newVersion})`,
           threadTs: session.slack_thread_ts ?? undefined,
         });
-      } catch (warnError) {
-        console.error("Failed to post spec-gen warning to Slack", {
-          error: warnError instanceof Error ? warnError.message : String(warnError),
+      } catch (postError) {
+        // State flip is durable; failing to post Slack is recoverable from the
+        // in-app dashboard. Log and continue.
+        console.error("Failed to post stage review to Slack", {
+          error: postError instanceof Error ? postError.message : String(postError),
           sessionId: session.id,
         });
       }
     }
-
-    await updateSessionStatus(admin, session.id, "rejected");
-    await markPipelineJobError(admin, job, message);
-    return { jobId: job.id, processed: true, result: "error", runId: null };
-  }
-
-  // Post to Slack
-  if (session.slack_channel_id) {
-    const blocks = formatSpecBlocks({
-      linearUrl: session.linear_issue_url,
-      sessionId: session.id,
-      spec,
-      version: newVersion,
-    });
-
-    // If revision, prepend diff
-    if (previousSpec && newVersion > 1) {
-      const diffBlocks = formatSpecDiffBlocks({
-        newSpec: spec,
-        oldSpec: previousSpec,
-      });
-      blocks.unshift(...diffBlocks);
-    }
-
-    await postSlackMessage({
-      blocks,
-      botToken,
-      channel: session.slack_channel_id,
-      text: `Product spec for "${escapeMrkdwn(spec.title)}" (v${newVersion})`,
-      threadTs: session.slack_thread_ts ?? undefined,
-    });
-  }
-
-  await markPipelineJobSuccess(admin, job);
-  return { jobId: job.id, processed: true, result: "success", runId: null };
-}
-
-// --- Manual phase stub (design / engineering / review / land / monitor) ---
-//
-// Writes an empty "manual" artifact, flips state to awaiting_review, and
-// posts a Slack prompt asking a human to approve the transition. Adding a
-// real agent for any phase later means replacing this call with a
-// `runDesignPhase()` / `runEngineeringPhase()` / etc., nothing else changes.
-async function runManualPhaseStub(input: {
-  admin: AdminClient;
-  botToken: string;
-  job: Tables<"agent_jobs">;
-  session: SessionRow;
-}): Promise<ProcessPipelineJobResult> {
-  const { admin, botToken, job, session } = input;
-
-  const newVersion = session.current_artifact_version + 1;
-  const phaseLabel = SESSION_PHASE_LABELS[session.phase as SessionPhase] ?? session.phase;
-  const stubMarkdown = `# ${phaseLabel}\n\n_Awaiting manual completion._\n`;
-
-  let artifactInserted = false;
-  try {
-    await insertArtifact(admin, {
-      artifactJson: stubMarkdown,
-      feedbackText: null,
-      phase: session.phase,
-      sessionId: session.id,
-      version: newVersion,
-      workspaceId: session.workspace_id,
-    });
-    artifactInserted = true;
-
-    const { error: pointerError } = await admin
-      .from("sessions")
-      .update({
-        current_artifact_version: newVersion,
-        phase_status: "awaiting_review",
-      })
-      .eq("id", session.id);
-    if (pointerError) throw pointerError;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Manual phase stub failed";
+    if (runId) {
+      await markRunError(admin, runId);
+    }
     if (artifactInserted) {
+      // Compensate: drop the orphan so the next retry doesn't hit the
+      // (session_id, stage_slug, version) unique constraint.
       await admin
         .from("session_artifacts")
         .delete()
         .eq("session_id", session.id)
-        .eq("phase", session.phase)
+        .eq("stage_slug", stage.slug)
         .eq("version", newVersion);
     }
-    await updateSessionStatus(admin, session.id, "rejected");
-    await markPipelineJobError(admin, job, message);
-    return { jobId: job.id, processed: true, result: "error", runId: null };
-  }
 
-  // Post a lightweight "awaiting approval" message on the same Slack
-  // thread, if there is one. The UI path (in-app approve button) handles
-  // sessions without a Slack channel — for those, the stub just flips
-  // phase_status and the dashboard picks it up via realtime.
-  if (session.slack_channel_id) {
-    const phaseLabel = SESSION_PHASE_LABELS[session.phase as SessionPhase] ?? session.phase;
-    const next = nextPhase(session.phase as SessionPhase);
-    const nextLabel = next ? SESSION_PHASE_LABELS[next] : "completed";
-
-    try {
-      await postSlackMessage({
-        blocks: [
-          {
-            text: {
-              text: `*${phaseLabel} phase ready for review*\nApprove to advance this session from *${phaseLabel}* to *${nextLabel}*.`,
-              type: "mrkdwn",
-            },
-            type: "section",
-          },
-          {
-            block_id: `pipeline_actions:${session.id}:${newVersion}`,
-            elements: [
-              {
-                action_id: "pipeline_approve",
-                style: "primary",
-                text: { text: "Approve", type: "plain_text" },
-                type: "button",
-                value: JSON.stringify({
-                  session_id: session.id,
-                  version: newVersion,
-                }),
-              },
-              {
-                action_id: "pipeline_request_changes",
-                text: { text: "Request Changes", type: "plain_text" },
-                type: "button",
-                value: JSON.stringify({
-                  session_id: session.id,
-                  version: newVersion,
-                }),
-              },
-            ],
-            type: "actions",
-          },
-        ],
-        botToken,
-        channel: session.slack_channel_id,
-        text: `${phaseLabel} phase awaiting review`,
-        threadTs: session.slack_thread_ts ?? undefined,
-      });
-    } catch (postError) {
-      // Slack post failure is non-fatal — the state flip already happened
-      // and the in-app UI still shows the awaiting-review prompt.
-      console.error("Failed to post manual stub prompt to Slack", {
-        error: postError instanceof Error ? postError.message : String(postError),
-        sessionId: session.id,
-      });
+    if (session.slack_channel_id) {
+      try {
+        await postSlackMessage({
+          blocks: formatGenerationFailureBlocks(stage.name),
+          botToken,
+          channel: session.slack_channel_id,
+          text: `${stage.name} generation failed`,
+          threadTs: session.slack_thread_ts ?? undefined,
+        });
+      } catch {
+        // Ignore — operator will see the agent_jobs row.
+      }
     }
+
+    await updateSessionStatus(admin, session.id, "rejected");
+    const message = error instanceof Error ? error.message : "Stage generation failed";
+    await markPipelineJobError(admin, job, message);
+    return { jobId: job.id, processed: true, result: "error", runId };
+  } finally {
+    await fsPromises.rm(workspacePath, { recursive: true, force: true }).catch(() => {});
   }
 
   await markPipelineJobSuccess(admin, job);
-  return { jobId: job.id, processed: true, result: "success", runId: null };
+  return { jobId: job.id, processed: true, result: "success", runId };
 }
 
 // --- Approval + rejection handlers ---
 
 export async function handleApproval(input: {
   admin?: AdminClient;
-  approverMemberId?: string | null;
+  approverMemberId: string | null;
   expectedWorkspaceId: string;
   sessionId: string;
   version: number;
 }): Promise<{ error?: string; success: boolean }> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
-  // Atomic approval: a single Postgres function handles the CAS, records the
-  // phase completion, and advances (or archives on terminal monitor) in one
-  // transaction. The RPC also enforces the workspace match, so a Slack
-  // interaction from workspace A still cannot approve a session in B.
-  const { data, error } = await admin.rpc("approve_session_phase", {
+  // The RPC enforces the approver gate (per-stage approver list, with
+  // owner/admin fallback), records the completion, and advances to the next
+  // stage by `position` in one transaction.
+  const { data, error } = await admin.rpc("approve_session_stage", {
     approver_member_id: input.approverMemberId ?? undefined,
     expected_version: input.version,
     expected_workspace_id: input.expectedWorkspaceId,
@@ -508,7 +303,8 @@ export async function handleApproval(input: {
 
   if (!row) {
     return {
-      error: "Approval failed: session version is stale or already reviewed.",
+      error:
+        "Approval failed: version is stale, stage already reviewed, or you are not authorized to approve this stage.",
       success: false,
     };
   }
@@ -530,9 +326,6 @@ export async function handleRejection(input: {
     return { escalated: false, error: "Session not found.", success: false };
   }
 
-  // Cross-workspace guard: the Slack team that sent the feedback modal must
-  // own this session. Checked here (in addition to the CAS below) so the
-  // load-then-branch logic never leaks rows across tenants.
   if (session.workspace_id !== input.expectedWorkspaceId) {
     return { escalated: false, error: "Session not found.", success: false };
   }
@@ -545,13 +338,20 @@ export async function handleRejection(input: {
     return { escalated: false, error: "Version mismatch: a newer version exists.", success: false };
   }
 
+  const stage = await loadStageById(admin, session.current_stage_id);
+  if (!stage) {
+    return {
+      escalated: false,
+      error: "Session references a missing stage.",
+      success: false,
+    };
+  }
+
   const newRejectionCount = session.rejection_count + 1;
 
   // Atomic CAS on rejection_count: only the first rejection that observed
-  // the current count can advance it. A concurrent second rejection
-  // (e.g. Submit Feedback double-click) sees rows-updated=0 and exits
-  // without double-counting. This also implicitly re-checks phase_status,
-  // version, and workspace_id.
+  // the current count can advance it. A concurrent second rejection sees
+  // rows-updated=0 and exits without double-counting.
   const { data: claimedRejection, error: claimRejectionError } = await admin
     .from("sessions")
     .update({ rejection_count: newRejectionCount })
@@ -575,62 +375,43 @@ export async function handleRejection(input: {
     };
   }
 
-  // Save feedback on the current artifact
+  // Match on stage_id (immutable FK) rather than stage_slug — a stage
+  // renamed in settings between artifact generation and review would
+  // otherwise cause this update to match zero rows and silently drop the
+  // reviewer's feedback.
   await admin
     .from("session_artifacts")
     .update({ feedback_text: input.feedbackText })
     .eq("session_id", input.sessionId)
-    .eq("phase", session.phase)
+    .eq("stage_id", stage.id)
     .eq("version", input.version);
 
   if (shouldEscalate(newRejectionCount)) {
-    // Escalation. rejection_count was already advanced by the CAS above;
-    // only update phase_status here.
     await admin.from("sessions").update({ phase_status: "escalated" }).eq("id", input.sessionId);
 
-    // Send EM escalation DM
     const slackInstall = await loadSlackInstallation(admin, session.workspace_id);
     const botToken = slackInstall ? decryptSecretValue(slackInstall.bot_token_encrypted) : null;
-    const secrets = await loadPipelineSecrets(admin, session.workspace_id);
+    const emSlackUserId = await loadEmSlackUserId(admin, session.workspace_id);
 
-    if (botToken && secrets.emSlackUserId) {
-      // Escalation state is already persisted. Failing to deliver the EM DM
-      // here is recoverable — the dashboard still shows the escalated
-      // state, and an operator can re-run the DM manually. Log but do not
-      // roll back; returning an error to the reviewer's modal would imply
-      // their click failed, which it didn't.
+    if (botToken && emSlackUserId) {
       try {
         const dmChannelId = await openSlackDm({
           botToken,
-          userId: secrets.emSlackUserId,
+          userId: emSlackUserId,
         });
-        const latestArtifact = await loadLatestArtifact(admin, session.id, session.phase);
-        let specTitle = session.title;
-        if (latestArtifact) {
-          const raw = latestArtifact.artifact_json;
-          if (typeof raw === "string") {
-            const parsed = markdownToSpec(raw);
-            // Only use the parsed title if it looks like a real spec title,
-            // not a phase label from a manual stub (e.g. "Design", "Review").
-            if (parsed.title && parsed.problem_statement) {
-              specTitle = parsed.title;
-            }
-          } else {
-            specTitle = (raw as unknown as ProductSpec)?.title ?? specTitle;
-          }
-        }
 
         await postSlackMessage({
           blocks: formatEscalationDmBlocks({
             channelId: session.slack_channel_id ?? "",
             linearUrl: session.linear_issue_url,
             rejectionCount: newRejectionCount,
-            specTitle,
+            sessionTitle: session.title,
+            stageName: stage.name,
             threadTs: session.slack_thread_ts ?? "",
           }),
           botToken,
           channel: dmChannelId,
-          text: `Spec escalation: ${specTitle} has been rejected ${newRejectionCount} times.`,
+          text: `Stage escalation: ${session.title} (${stage.name}) rejected ${newRejectionCount} times.`,
         });
       } catch (dmError) {
         console.error("Failed to deliver escalation DM", {
@@ -646,8 +427,7 @@ export async function handleRejection(input: {
   // Not escalated: enqueue a new generation job BEFORE flipping phase_status
   // to 'rejected'. If the enqueue fails with a non-dedupe error we must not
   // transition into 'rejected', because 'rejected' with no queued worker is
-  // a wedged state the UI cannot recover from. Leaving phase_status at
-  // 'awaiting_review' lets the reviewer click Submit Feedback again.
+  // a wedged state the UI cannot recover from.
   const wallieMember = await loadWallieSystemMember(admin, session.workspace_id);
 
   const { error: enqueueError } = await admin.from("agent_jobs").insert({
@@ -667,7 +447,6 @@ export async function handleRejection(input: {
     return { escalated: false, error: enqueueError.message, success: false };
   }
 
-  // Retry is now durably queued. Flip state.
   await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
 
   return { escalated: false, success: true };
@@ -677,7 +456,6 @@ export async function handleRejection(input: {
 
 async function loadSessionById(admin: AdminClient, id: string): Promise<SessionRow | null> {
   const { data, error } = await admin.from("sessions").select("*").eq("id", id).maybeSingle();
-
   if (error) throw error;
   return data;
 }
@@ -691,51 +469,34 @@ async function loadSlackInstallation(
     .select("*")
     .eq("workspace_id", workspaceId)
     .maybeSingle();
-
   if (error) throw error;
   return data;
 }
 
-async function loadPipelineSecrets(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<{
-  anthropicApiKey: string | null;
-  emSlackUserId: string | null;
-}> {
+async function loadEmSlackUserId(admin: AdminClient, workspaceId: string): Promise<string | null> {
   const { data, error } = await admin
     .from("workspace_secrets")
-    .select("key, encrypted_value")
+    .select("encrypted_value")
     .eq("workspace_id", workspaceId)
-    .in("key", ["ANTHROPIC_API_KEY", "EM_SLACK_USER_ID"]);
-
-  if (error) throw error;
-
-  const secrets: Record<string, string> = {};
-  for (const row of data ?? []) {
-    secrets[row.key] = decryptSecretValue(row.encrypted_value);
-  }
-
-  return {
-    anthropicApiKey: secrets.ANTHROPIC_API_KEY ?? null,
-    emSlackUserId: secrets.EM_SLACK_USER_ID ?? null,
-  };
+    .eq("key", "EM_SLACK_USER_ID")
+    .maybeSingle();
+  if (error) return null;
+  return data ? decryptSecretValue(data.encrypted_value) : null;
 }
 
 async function loadLatestArtifact(
   admin: AdminClient,
   sessionId: string,
-  phase: SessionRow["phase"],
+  stageId: string,
 ): Promise<Tables<"session_artifacts"> | null> {
   const { data, error } = await admin
     .from("session_artifacts")
     .select("*")
     .eq("session_id", sessionId)
-    .eq("phase", phase)
+    .eq("stage_id", stageId)
     .order("version", { ascending: false })
     .limit(1)
     .maybeSingle();
-
   if (error) throw error;
   return data;
 }
@@ -751,7 +512,6 @@ async function loadWallieSystemMember(
     .eq("kind", "system")
     .eq("username", "wallie")
     .maybeSingle();
-
   if (error) throw error;
   return data;
 }
@@ -765,34 +525,155 @@ async function updateSessionStatus(
     .from("sessions")
     .update({ phase_status: status })
     .eq("id", sessionId);
-
   if (error) throw error;
 }
 
 async function insertArtifact(
   admin: AdminClient,
   input: {
-    artifactJson: Record<string, unknown> | string;
+    artifactJson: string;
     feedbackText: string | null;
-    phase: SessionRow["phase"];
     sessionId: string;
+    stageId: string;
+    stageSlug: string;
     version: number;
     workspaceId: string;
   },
 ): Promise<void> {
   const { error } = await admin.from("session_artifacts").insert({
-    artifact_json:
-      typeof input.artifactJson === "string"
-        ? input.artifactJson
-        : JSON.parse(JSON.stringify(input.artifactJson)),
+    artifact_json: input.artifactJson,
     feedback_text: input.feedbackText,
-    phase: input.phase,
     session_id: input.sessionId,
+    stage_id: input.stageId,
+    stage_slug: input.stageSlug,
     version: input.version,
     workspace_id: input.workspaceId,
   });
-
   if (error) throw error;
+}
+
+async function loadAgentConfig(
+  admin: AdminClient,
+  workspaceId: string,
+): Promise<{ maxTurns?: number; model?: string; provider?: string }> {
+  const { data } = await admin
+    .from("workspace_agent_config")
+    .select("key, value_json")
+    .eq("workspace_id", workspaceId)
+    .in("key", ["max_turns", "agent_provider", "agent_model"]);
+
+  const config: Record<string, unknown> = {};
+  for (const row of data ?? []) {
+    config[row.key] = row.value_json;
+  }
+
+  return {
+    maxTurns: typeof config.max_turns === "number" ? config.max_turns : undefined,
+    model: typeof config.agent_model === "string" ? config.agent_model : undefined,
+    provider: typeof config.agent_provider === "string" ? config.agent_provider : undefined,
+  };
+}
+
+async function createAgentRun(
+  admin: AdminClient,
+  input: {
+    jobId: string;
+    sessionId: string;
+    model: string;
+    provider: string;
+    runType: string;
+    workspaceId: string;
+  },
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from("agent_runs")
+    .insert({
+      agent_job_id: input.jobId,
+      model_name: input.model,
+      model_provider: input.provider,
+      run_type: input.runType,
+      session_id: input.sessionId,
+      started_at: new Date().toISOString(),
+      status: "running" as const,
+      workspace_id: input.workspaceId,
+    })
+    .select("id")
+    .single();
+  if (error || !data) return null;
+  return data.id;
+}
+
+async function markRunSuccess(
+  admin: AdminClient,
+  runId: string,
+  usage?: { inputTokens: number; outputTokens: number },
+): Promise<void> {
+  await admin
+    .from("agent_runs")
+    .update({
+      finished_at: new Date().toISOString(),
+      status: "success" as const,
+      ...(usage
+        ? {
+            input_tokens: usage.inputTokens,
+            output_tokens: usage.outputTokens,
+          }
+        : {}),
+    })
+    .eq("id", runId);
+}
+
+async function markRunError(admin: AdminClient, runId: string): Promise<void> {
+  await admin
+    .from("agent_runs")
+    .update({
+      finished_at: new Date().toISOString(),
+      status: "error" as const,
+    })
+    .eq("id", runId);
+}
+
+async function persistEvent(
+  admin: AdminClient,
+  runId: string,
+  workspaceId: string,
+  event: AgentEvent,
+): Promise<void> {
+  let kind: string;
+  let messageMd: string;
+
+  switch (event.type) {
+    case "text":
+      kind = "text";
+      messageMd = event.text;
+      break;
+    case "tool_use":
+      kind = "tool_use";
+      messageMd = `**Tool:** ${event.tool}\n\n\`\`\`\n${event.input}\n\`\`\``;
+      break;
+    case "completion":
+      kind = "completion";
+      messageMd = event.summary;
+      break;
+    case "error":
+      kind = "error";
+      messageMd = `**Error:** ${event.message}`;
+      break;
+  }
+
+  await admin.from("agent_run_messages").insert({
+    agent_run_id: runId,
+    kind,
+    message_md: messageMd,
+    workspace_id: workspaceId,
+  });
+}
+
+async function createScratchDirectory(sessionId: string, stageSlug: string): Promise<string> {
+  const dir = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), `wallie-stage-${sessionId}-${stageSlug}-`),
+  );
+  return dir;
 }
 
 async function markPipelineJobSuccess(
@@ -819,7 +700,7 @@ async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<
   if (data && typeof data.value_json === "number") {
     return data.value_json;
   }
-  return 3; // default max retries
+  return 3;
 }
 
 async function markPipelineJobError(
@@ -827,13 +708,9 @@ async function markPipelineJobError(
   job: Tables<"agent_jobs">,
   errorMessage: string,
 ): Promise<void> {
-  // Check if we should schedule a retry with exponential backoff.
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
   if (job.attempt_count < maxRetries) {
-    // Schedule retry via the schedule_job_retry RPC. This sets
-    // scheduled_at to now() + min(5s * 2^attempt, 5min) and
-    // transitions the job back to 'queued'.
     const { error: retryError } = await admin.rpc("schedule_job_retry", {
       target_job_id: job.id,
       base_delay_ms: 5000,
@@ -841,11 +718,9 @@ async function markPipelineJobError(
     });
 
     if (!retryError) {
-      // Update last_error so the dashboard can show why it's retrying.
       await admin.from("agent_jobs").update({ last_error: errorMessage }).eq("id", job.id);
       return;
     }
-    // If scheduling fails, fall through to terminal error.
   }
 
   await admin
