@@ -1,16 +1,17 @@
 import "server-only";
 
-import * as fsPromises from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
-
+import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { PipelineStage } from "@/features/sessions/types";
+import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createAgentRunner } from "@/lib/agent-runner";
-import type { AgentEvent } from "@/lib/agent-runner/types";
+import { createAgentRunner, DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner";
+import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import { CodexNotConnectedError, getCodexAccessTokenForSession } from "@/lib/codex/tokens";
+import { createSessionSandbox } from "@/lib/sandbox";
+import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
@@ -116,6 +117,19 @@ async function runStage(input: {
 
   const newVersion = session.current_artifact_version + 1;
 
+  const config = await loadAgentConfig(admin, session.workspace_id);
+  const provider = normalizeAgentProvider(config.provider);
+
+  const github = await loadGitHubContext(admin, session.workspace_id);
+  if (!github) {
+    await markPipelineJobError(
+      admin,
+      job,
+      "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
+    );
+    return { jobId: job.id, processed: true, result: "error", runId: null };
+  }
+
   // Pull artifacts from completed prior stages so the prompt can reference
   // them via {{artifact.previousStages.<slug>}}.
   const previousStages = await loadCompletedStageArtifacts(admin, session.id);
@@ -134,22 +148,33 @@ async function runStage(input: {
     sessionTitle: session.title,
   });
 
-  const config = await loadAgentConfig(admin, session.workspace_id);
-  const runner = createAgentRunner(config.provider ?? "claude-code");
-
-  // Generic prompt-only stages don't need a git checkout. Use a per-run
-  // scratch dir; the agent writes its output to the event stream which we
-  // capture as markdown.
-  const workspacePath = await createScratchDirectory(session.id, stage.slug);
-
   let runId: string | null = null;
+  let sandbox: SandboxHandle | null = null;
   const collectedText: string[] = [];
   let artifactInserted = false;
   try {
+    const resolvedRunner = await resolveAgentRunner({
+      admin,
+      model: config.model,
+      provider,
+      session,
+    });
+    const installationToken = await mintInstallationToken(github.installationId);
+    const branch = buildStageBranchName(session.id, stage.slug);
+    sandbox = await createSessionSandbox({
+      agentProvider: provider,
+      baseBranch: github.repo.default_branch ?? "main",
+      branch,
+      codexAccessToken: resolvedRunner.codexAccessToken,
+      installationToken,
+      repoFullName: github.repo.full_name,
+      sessionId: session.id,
+    });
+
     runId = await createAgentRun(admin, {
       jobId: job.id,
-      model: config.model ?? "claude-sonnet-4-20250514",
-      provider: runner.provider,
+      model: config.model ?? DEFAULT_AGENT_RUNNER_CONFIG.model ?? "codex",
+      provider: resolvedRunner.runner.provider,
       runType: stage.slug,
       sessionId: session.id,
       workspaceId: session.workspace_id,
@@ -157,11 +182,11 @@ async function runStage(input: {
 
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
-    for await (const event of runner.start({
+    for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,
+      sandbox,
       sessionId: session.id,
-      workspacePath,
     })) {
       if (runId) {
         await persistEvent(admin, runId, session.workspace_id, event);
@@ -267,7 +292,14 @@ async function runStage(input: {
     await markPipelineJobError(admin, job, message);
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
-    await fsPromises.rm(workspacePath, { recursive: true, force: true }).catch(() => {});
+    try {
+      await sandbox?.stop();
+    } catch (stopError) {
+      console.error("Failed to stop stage sandbox", {
+        error: stopError instanceof Error ? stopError.message : String(stopError),
+        sessionId: session.id,
+      });
+    }
   }
 
   await markPipelineJobSuccess(admin, job);
@@ -574,6 +606,96 @@ async function loadAgentConfig(
   };
 }
 
+function normalizeAgentProvider(provider: string | undefined): AgentProvider {
+  const normalized = (provider ?? DEFAULT_AGENT_RUNNER_CONFIG.provider).replace(/_/g, "-");
+  if (normalized === "codex" || normalized === "claude-code") {
+    return normalized;
+  }
+  throw new Error(
+    `Unknown agent provider: "${provider}". Supported: codex, claude-code, claude_code`,
+  );
+}
+
+async function resolveAgentRunner(input: {
+  admin: AdminClient;
+  model?: string;
+  provider: AgentProvider;
+  session: Pick<SessionRow, "creator_member_id">;
+}): Promise<{ codexAccessToken?: string; runner: AgentRunner }> {
+  if (input.provider === "codex") {
+    try {
+      const accessToken = await getCodexAccessTokenForSession(input.admin, input.session);
+      return {
+        codexAccessToken: accessToken,
+        runner: createAgentRunner("codex", {
+          codex: { accessToken, model: input.model },
+        }),
+      };
+    } catch (error) {
+      if (error instanceof CodexNotConnectedError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
+  }
+
+  return { runner: createAgentRunner(input.provider) };
+}
+
+interface GitHubContext {
+  installationId: number;
+  repo: {
+    default_branch: string | null;
+    full_name: string;
+  };
+}
+
+async function loadGitHubContext(
+  admin: AdminClient,
+  workspaceId: string,
+): Promise<GitHubContext | null> {
+  const { data: installation } = await admin
+    .from("github_installations")
+    .select("id, installation_id")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+
+  if (!installation) return null;
+
+  const { data: repo } = await admin
+    .from("github_repositories")
+    .select("full_name, default_branch")
+    .eq("github_installation_id", installation.id)
+    .eq("is_archived", false)
+    .order("full_name", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!repo) return null;
+
+  return {
+    installationId: installation.installation_id,
+    repo: {
+      default_branch: repo.default_branch,
+      full_name: repo.full_name,
+    },
+  };
+}
+
+async function mintInstallationToken(installationId: number): Promise<string> {
+  const app = new App(resolveGitHubAppConfig());
+  const { data } = await app.octokit.request(
+    "POST /app/installations/{installation_id}/access_tokens",
+    { installation_id: installationId },
+  );
+  return data.token;
+}
+
+function buildStageBranchName(sessionId: string, stageSlug: string): string {
+  const safeSlug = stageSlug.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `wallie/${safeSlug || "stage"}-${sessionId}`;
+}
+
 async function createAgentRun(
   admin: AdminClient,
   input: {
@@ -667,13 +789,6 @@ async function persistEvent(
     message_md: messageMd,
     workspace_id: workspaceId,
   });
-}
-
-async function createScratchDirectory(sessionId: string, stageSlug: string): Promise<string> {
-  const dir = await fsPromises.mkdtemp(
-    path.join(os.tmpdir(), `wallie-stage-${sessionId}-${stageSlug}-`),
-  );
-  return dir;
 }
 
 async function markPipelineJobSuccess(

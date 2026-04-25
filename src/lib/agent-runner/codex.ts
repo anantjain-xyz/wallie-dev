@@ -1,10 +1,8 @@
-import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL } from "./types";
+
+const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
+const CODEX_HOME = "/vercel/sandbox/.codex";
 
 export interface CodexRunnerOptions {
   /** OAuth access token fetched via getCodexAccessTokenForUser. */
@@ -16,13 +14,12 @@ export interface CodexRunnerOptions {
 /**
  * Codex CLI agent runner.
  *
- * Launches `codex exec` as a subprocess in the workspace directory, feeding
- * the OAuth access token via a scratch CODEX_HOME dir so the CLI discovers
- * it exactly as it would from `~/.codex/auth.json` after `codex login`.
- * Streams stdout line-by-line as text events, emits a completion event
- * on exit.
+ * Runs `codex exec` inside a per-session sandbox. The OAuth access token is
+ * materialised as `{CODEX_HOME}/auth.json` either by the sandbox factory
+ * (first turn) or here on demand (subsequent turns or if the factory skipped
+ * it). Streams stdout line-by-line as AgentEvents.
  *
- * Requires `codex` to be available on the worker's PATH.
+ * Expects `codex` on PATH inside the sandbox (installed at sandbox boot).
  */
 export class CodexRunner implements AgentRunner {
   readonly provider = "codex";
@@ -34,121 +31,73 @@ export class CodexRunner implements AgentRunner {
   }
 
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+    const { sandbox } = input;
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
 
-    // Materialise a Codex-compatible auth.json in a temp CODEX_HOME so the
-    // CLI picks up the OAuth token without touching the user's real
-    // ~/.codex/auth.json (or running in a fresh container where it doesn't
-    // exist).
-    const codexHome = await mkdtemp(path.join(tmpdir(), "wallie-codex-"));
-    await writeFile(
-      path.join(codexHome, "auth.json"),
-      JSON.stringify({ OPENAI_API_KEY: null, tokens: { access_token: this.options.accessToken } }),
+    // Ensure auth.json exists. Idempotent; overwrites are fine because the
+    // token is fetched (and refreshed) per phase by the caller.
+    await sandbox.writeFile(
+      `${CODEX_HOME}/auth.json`,
+      JSON.stringify({
+        OPENAI_API_KEY: null,
+        tokens: { access_token: this.options.accessToken },
+      }),
       { mode: 0o600 },
     );
 
-    const args = ["exec", "--model", model, "--json", "-"];
+    await sandbox.writeFile(PROMPT_FILE, input.prompt);
 
-    const child = spawn("codex", args, {
-      cwd: input.workspacePath,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        CI: "1",
-        CODEX_HOME: codexHome,
-      },
+    const cliArgs = ["exec", "--model", model, "--json", "-"];
+    const shellCmd = `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
+
+    const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
+      cwd: sandbox.repoPath,
+      env: { CI: "1", CODEX_HOME },
     });
 
-    child.stdin.write(input.prompt);
-    child.stdin.end();
+    let stdoutBuf = "";
+    let stderrBuf = "";
 
-    let buffer = "";
-    const eventQueue: (AgentEvent | null)[] = [];
-    let resolve: (() => void) | null = null;
-
-    function enqueue(event: AgentEvent | null) {
-      eventQueue.push(event);
-      if (resolve) {
-        resolve();
-        resolve = null;
+    for await (const log of proc.logs()) {
+      if (log.stream === "stderr") {
+        stderrBuf += log.data;
+        continue;
       }
-    }
 
-    function waitForEvent(): Promise<void> {
-      if (eventQueue.length > 0) return Promise.resolve();
-      return new Promise<void>((r) => {
-        resolve = r;
-      });
-    }
+      stdoutBuf += log.data;
+      const lines = stdoutBuf.split("\n");
+      stdoutBuf = lines.pop() ?? "";
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf-8");
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
       for (const line of lines) {
         const event = parseCodexLine(line);
-        if (event) enqueue(event);
-      }
-    });
-
-    let stderrOutput = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderrOutput += chunk.toString("utf-8");
-    });
-
-    const cleanup = async () => {
-      await rm(codexHome, { force: true, recursive: true }).catch(() => {
-        // Non-fatal: temp dir cleanup is best-effort.
-      });
-    };
-
-    child.on("close", async (code) => {
-      if (buffer.trim()) {
-        const event = parseCodexLine(buffer);
-        if (event) enqueue(event);
-      }
-
-      if (code !== 0 && code !== null) {
-        enqueue({
-          type: "error",
-          message: `codex CLI exited with code ${code}: ${stderrOutput.slice(0, 500)}`,
-        });
-      }
-
-      await cleanup();
-      enqueue(null);
-    });
-
-    child.on("error", async (err) => {
-      enqueue({
-        type: "error",
-        message: `Failed to spawn codex CLI: ${err.message}`,
-      });
-      await cleanup();
-      enqueue(null);
-    });
-
-    while (true) {
-      await waitForEvent();
-      while (eventQueue.length > 0) {
-        const event = eventQueue.shift()!;
-        if (event === null) {
-          yield {
-            type: "completion",
-            taskComplete: true,
-            summary: "Codex session completed",
-          } satisfies AgentEvent;
-          return;
-        }
-        yield event;
+        if (event) yield event;
       }
     }
+
+    if (stdoutBuf.trim()) {
+      const event = parseCodexLine(stdoutBuf);
+      if (event) yield event;
+    }
+
+    const code = await proc.exitCode;
+    if (code !== 0) {
+      yield {
+        type: "error",
+        message: `codex CLI exited with code ${code}: ${stderrBuf.slice(0, 500)}`,
+      };
+    }
+
+    yield {
+      type: "completion",
+      taskComplete: true,
+      summary: "Codex session completed",
+    };
   }
 }
 
 /**
- * Parse a single line of Codex CLI `--json` output. The CLI emits one JSON
- * object per line. Known event shapes:
+ * Parse a single line of Codex CLI `--json` output. One JSON object per line.
+ * Known event shapes:
  *   { type: "message", role: "assistant", content: "..." }
  *   { type: "text", text: "..." }
  *   { type: "tool_call", name: "...", arguments: {...} }
@@ -191,4 +140,8 @@ export function parseCodexLine(raw: string): AgentEvent | null {
   } catch {
     return { type: "text", text: trimmed };
   }
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
