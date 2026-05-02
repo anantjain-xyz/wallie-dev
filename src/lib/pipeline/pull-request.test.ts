@@ -60,7 +60,7 @@ function scriptHappyPathSandbox(sandbox: FakeSandbox) {
     (call) => call.cmd === "bash" && call.args.join(" ").includes("rev-list"),
     [{ stream: "stdout", data: "1\n" }],
   );
-  // git push --force-with-lease origin <branch> → exit 0.
+  // git push --force origin <branch> → exit 0.
   sandbox.scriptExec((call) => call.cmd === "bash" && call.args.join(" ").includes("git push"), []);
 }
 

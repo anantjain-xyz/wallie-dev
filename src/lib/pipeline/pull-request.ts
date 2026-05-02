@@ -143,14 +143,13 @@ async function branchHasCommitsAhead(sandbox: SandboxHandle, baseBranch: string)
 }
 
 async function pushSandboxBranch(sandbox: SandboxHandle, branch: string): Promise<string | null> {
-  // --force-with-lease is safe both ways: on a fresh branch the upstream is
-  // empty so the lease is trivially satisfied; on a stage retry the prior
-  // run's commits get cleanly overwritten by this run's commits without
-  // racing a concurrent push (Wallie owns these branches by construction).
-  const proc = await sandbox.exec("bash", [
-    "-lc",
-    `git push --force-with-lease origin ${shellQuote(branch)}`,
-  ]);
+  // Plain --force, not --force-with-lease: the sandbox is a fresh clone of the
+  // base branch with no remote-tracking ref for `wallie/<stage>-<session>`, so
+  // a lease without an explicit expected SHA fails as "stale info" on every
+  // retry and blocks the PR refresh. Wallie owns these branches by
+  // construction (one stage branch per session, one writer), so there is no
+  // concurrent pusher to protect against.
+  const proc = await sandbox.exec("bash", ["-lc", `git push --force origin ${shellQuote(branch)}`]);
   const stderr: string[] = [];
   for await (const log of proc.logs()) {
     if (log.stream === "stderr") stderr.push(log.data);
