@@ -103,7 +103,7 @@ vi.mock("@octokit/app", () => ({
   }),
 }));
 
-import { handleApproval, processPipelineJob } from "./processor";
+import { handleApproval, handleRejection, processPipelineJob } from "./processor";
 
 // ---- fixtures -----------------------------------------------------------
 
@@ -183,6 +183,9 @@ interface MockOptions {
   claimSucceeds?: boolean;
   artifactInsertError?: { message: string } | null;
   pointerUpdateError?: { message: string } | null;
+  feedbackInsertError?: { message: string } | null;
+  /** Latest-feedback row returned to `loadLatestFeedback`. */
+  latestFeedback?: { feedback_text: string } | null;
   /** Map of `key` → encrypted_value returned from `workspace_secrets`. */
   workspaceSecrets?: Record<string, string>;
   /** When set, github_installations.maybeSingle returns this row. Default: a row exists. */
@@ -230,26 +233,29 @@ function buildAdminMock(opts: MockOptions) {
       insertedArtifacts.push(row);
       return { error: opts.artifactInsertError ?? null };
     },
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
-          }),
-        }),
-      }),
-    }),
-    update: () => ({
-      eq: () => ({
-        eq: () => ({
-          eq: async () => ({ error: null }),
-        }),
-      }),
-    }),
     delete: () => ({
       eq: () => ({
         eq: () => ({
           eq: async () => ({ error: null }),
+        }),
+      }),
+    }),
+  } as const;
+
+  const insertedFeedback: Array<Record<string, unknown>> = [];
+  const feedbackTable = {
+    insert: async (row: Record<string, unknown>) => {
+      insertedFeedback.push(row);
+      return { error: opts.feedbackInsertError ?? null };
+    },
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          order: () => ({
+            limit: () => ({
+              maybeSingle: async () => ({ data: opts.latestFeedback ?? null, error: null }),
+            }),
+          }),
         }),
       }),
     }),
@@ -343,6 +349,7 @@ function buildAdminMock(opts: MockOptions) {
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
+    session_artifact_feedback: feedbackTable,
     slack_installations: slackTable,
     workspace_agent_config: agentConfigTable,
     agent_runs: agentRunsTable,
@@ -360,6 +367,7 @@ function buildAdminMock(opts: MockOptions) {
       rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     },
     insertedArtifacts,
+    insertedFeedback,
     updatedSessions,
   };
 }
@@ -579,5 +587,132 @@ describe("handleApproval", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("not authorized");
+  });
+});
+
+describe("handleRejection", () => {
+  function buildRejectionAdmin(opts: {
+    session: Tables<"sessions">;
+    feedbackInsertError?: { message: string } | null;
+  }) {
+    const insertedFeedback: Array<Record<string, unknown>> = [];
+    const updatedSessions: Array<Record<string, unknown>> = [];
+
+    // Five-deep `.eq()` chain matches the rejection_count CAS in handleRejection.
+    const eqChain = (terminal: () => unknown): unknown => {
+      const node: Record<string, unknown> = {
+        select: () => ({ maybeSingle: terminal }),
+      };
+      node.eq = () => node;
+      return node;
+    };
+
+    const sessionsTable = {
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: opts.session, error: null }),
+        }),
+      }),
+      update: (patch: Record<string, unknown>) => {
+        updatedSessions.push(patch);
+        return eqChain(async () => ({ data: { id: opts.session.id }, error: null }));
+      },
+    };
+
+    const feedbackTable = {
+      insert: async (row: Record<string, unknown>) => {
+        insertedFeedback.push(row);
+        return { error: opts.feedbackInsertError ?? null };
+      },
+    };
+
+    const workspaceMembersTable = {
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { id: "mem-wallie" }, error: null }) }),
+          }),
+        }),
+      }),
+    };
+
+    const agentJobsTable = {
+      insert: async () => ({ error: null }),
+    };
+
+    const tables: Record<string, unknown> = {
+      sessions: sessionsTable,
+      session_artifact_feedback: feedbackTable,
+      workspace_members: workspaceMembersTable,
+      agent_jobs: agentJobsTable,
+    };
+
+    return {
+      admin: { from: (name: string) => tables[name] ?? {} },
+      insertedFeedback,
+      updatedSessions,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.loadStageById.mockResolvedValue(productStage);
+  });
+
+  it("inserts a feedback row keyed on (session, stage, target_version) and does not write to session_artifacts", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 2,
+      rejection_count: 0,
+    });
+    const { admin, insertedFeedback, updatedSessions } = buildRejectionAdmin({ session });
+
+    const result = await handleRejection({
+      admin: admin as never,
+      expectedWorkspaceId: session.workspace_id,
+      feedbackText: "Add error handling section",
+      sessionId: session.id,
+      version: 2,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.escalated).toBe(false);
+    expect(insertedFeedback).toHaveLength(1);
+    expect(insertedFeedback[0]).toEqual({
+      feedback_text: "Add error handling section",
+      session_id: session.id,
+      stage_id: productStage.id,
+      stage_slug: productStage.slug,
+      target_version: 2,
+      workspace_id: session.workspace_id,
+    });
+    // Sanity: the rejection-count CAS and the final phase_status flip both touch sessions.
+    expect(updatedSessions.find((u) => u.rejection_count === 1)).toBeDefined();
+    expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeDefined();
+  });
+
+  it("aborts the rejection when the feedback insert fails (e.g., duplicate-key from a concurrent rejection)", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 0,
+    });
+    const { admin, updatedSessions } = buildRejectionAdmin({
+      session,
+      feedbackInsertError: { message: "duplicate key value violates unique constraint" },
+    });
+
+    const result = await handleRejection({
+      admin: admin as never,
+      expectedWorkspaceId: session.workspace_id,
+      feedbackText: "race",
+      sessionId: session.id,
+      version: 1,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("duplicate key");
+    // No phase flip after a failed feedback insert.
+    expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeUndefined();
   });
 });
