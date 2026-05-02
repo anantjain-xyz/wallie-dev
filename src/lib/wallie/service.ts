@@ -16,12 +16,8 @@ import type {
   WallieBlockingReason,
   WallieRunMode,
 } from "@/features/wallie/types";
-import {
-  buildWallieJobDedupeKey,
-  WALLIE_MODEL_NAME,
-  WALLIE_MODEL_PROVIDER,
-  WALLIE_REQUIRED_SECRET_KEYS,
-} from "@/lib/wallie/constants";
+import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
+import { buildWallieJobDedupeKey, WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -112,6 +108,8 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
 function createRunInsert(input: {
   sessionId: string;
   jobId: string;
+  modelName: string;
+  modelProvider: string;
   requestedByMemberId: string;
   runType: WallieRunMode;
   workspaceId: string;
@@ -119,8 +117,8 @@ function createRunInsert(input: {
   return {
     agent_job_id: input.jobId,
     session_id: input.sessionId,
-    model_name: WALLIE_MODEL_NAME,
-    model_provider: WALLIE_MODEL_PROVIDER,
+    model_name: input.modelName,
+    model_provider: input.modelProvider,
     run_type: input.runType,
     triggered_by_member_id: input.requestedByMemberId,
     workspace_id: input.workspaceId,
@@ -441,12 +439,20 @@ async function createQueuedRun(input: {
     throw jobError;
   }
 
+  // Resolve the workspace's configured model so the queued row matches what
+  // the executor will actually run. Source-of-truth is the same lookup
+  // pipeline/processor.ts uses; drift between the two re-introduces the
+  // original placeholder bug.
+  const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspace.id);
+
   const { data: run, error: runError } = await input.admin
     .from("agent_runs")
     .insert(
       createRunInsert({
         sessionId: input.session.id,
         jobId: job.id,
+        modelName: agentConfig.model,
+        modelProvider: agentConfig.provider,
         requestedByMemberId: input.requestedByMemberId,
         runType: input.runType,
         workspaceId: input.workspace.id,

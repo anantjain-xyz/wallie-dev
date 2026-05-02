@@ -27,6 +27,7 @@ const mocked = vi.hoisted(() => ({
   loadStageById: vi.fn(),
   loadPipelineWithStages: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
+  loadWorkspaceAgentConfig: vi.fn(),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
   openSessionPullRequest: vi.fn().mockResolvedValue({
     kind: "success",
@@ -75,6 +76,7 @@ vi.mock("@/lib/agent-runner", () => ({
     model: "gpt-5-codex",
     maxTurns: 5,
   },
+  loadWorkspaceAgentConfig: mocked.loadWorkspaceAgentConfig,
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -192,6 +194,21 @@ interface MockOptions {
 function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
+
+  // Mirror the resolution logic in `loadWorkspaceAgentConfig` so tests can
+  // continue to drive behavior via the existing `agentConfig` option.
+  const lookup: Record<string, unknown> = {};
+  for (const row of opts.agentConfig ?? []) {
+    lookup[row.key] = row.value_json;
+  }
+  const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
+  const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
+  const resolvedConfig = {
+    maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
+    model: rawModel ?? "gpt-5-codex",
+    provider: (rawProvider ?? "codex").replace(/_/g, "-"),
+  };
+  mocked.loadWorkspaceAgentConfig.mockResolvedValue(resolvedConfig);
 
   const sessionsTable = {
     select: () => ({
