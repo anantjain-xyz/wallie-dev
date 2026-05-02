@@ -695,6 +695,16 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     }),
   };
 
+  // WAL-14 split rejection feedback into its own table; capture the
+  // feedback_text from the insert row so existing assertions on
+  // `artifactUpdates` keep matching the contract they were written for.
+  const artifactFeedbackTable = {
+    insert: async (row: Record<string, unknown>) => {
+      artifactUpdates.push({ patch: { feedback_text: row.feedback_text } });
+      return { error: null };
+    },
+  };
+
   const slackTable = {
     select: () => ({
       eq: () => ({ maybeSingle: async () => ({ data: opts.slackInstall ?? null, error: null }) }),
@@ -738,6 +748,7 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
+    session_artifact_feedback: artifactFeedbackTable,
     slack_installations: slackTable,
     workspace_secrets: workspaceSecretsTable,
     workspace_members: workspaceMembersTable,
