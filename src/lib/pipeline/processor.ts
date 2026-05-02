@@ -7,7 +7,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createAgentRunner, DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner";
+import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { CodexNotConnectedError, getCodexAccessTokenForSession } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
@@ -118,8 +118,8 @@ async function runStage(input: {
 
   const newVersion = session.current_artifact_version + 1;
 
-  const config = await loadAgentConfig(admin, session.workspace_id);
-  const provider = normalizeAgentProvider(config.provider);
+  const config = await loadWorkspaceAgentConfig(admin, session.workspace_id);
+  const provider = narrowAgentProvider(config.provider);
 
   // Pull artifacts from completed prior stages so the prompt can reference
   // them via {{artifact.previousStages.<slug>}}.
@@ -184,7 +184,7 @@ async function runStage(input: {
 
     runId = await createAgentRun(admin, {
       jobId: job.id,
-      model: config.model ?? DEFAULT_AGENT_RUNNER_CONFIG.model ?? "codex",
+      model: config.model,
       provider: resolvedRunner.runner.provider,
       runType: stage.slug,
       sandboxId: sandbox?.id ?? null,
@@ -624,32 +624,9 @@ async function insertArtifact(
   if (error) throw error;
 }
 
-async function loadAgentConfig(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<{ maxTurns?: number; model?: string; provider?: string }> {
-  const { data } = await admin
-    .from("workspace_agent_config")
-    .select("key, value_json")
-    .eq("workspace_id", workspaceId)
-    .in("key", ["max_turns", "agent_provider", "agent_model"]);
-
-  const config: Record<string, unknown> = {};
-  for (const row of data ?? []) {
-    config[row.key] = row.value_json;
-  }
-
-  return {
-    maxTurns: typeof config.max_turns === "number" ? config.max_turns : undefined,
-    model: typeof config.agent_model === "string" ? config.agent_model : undefined,
-    provider: typeof config.agent_provider === "string" ? config.agent_provider : undefined,
-  };
-}
-
-function normalizeAgentProvider(provider: string | undefined): AgentProvider {
-  const normalized = (provider ?? DEFAULT_AGENT_RUNNER_CONFIG.provider).replace(/_/g, "-");
-  if (normalized === "codex" || normalized === "claude-code" || normalized === "anthropic-api") {
-    return normalized;
+function narrowAgentProvider(provider: string): AgentProvider {
+  if (provider === "codex" || provider === "claude-code" || provider === "anthropic-api") {
+    return provider;
   }
   throw new Error(
     `Unknown agent provider: "${provider}". Supported: codex, claude-code, claude_code, anthropic-api, anthropic_api`,
