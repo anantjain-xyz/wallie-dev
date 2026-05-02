@@ -28,6 +28,14 @@ import type {
   WorkspaceUsageData,
 } from "@/features/settings/data";
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
+import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
+import {
+  type AgentConfigKey,
+  type AgentProvider,
+  AGENT_CONFIG_LIMITS,
+  isAgentProvider,
+  parseAgentConfigValue,
+} from "@/lib/agent-config/contracts";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 
@@ -173,22 +181,57 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
   }
 }
 
+type AgentConfigVerifyResult =
+  | { kind: "ok" }
+  | { kind: "error"; message: string }
+  | { kind: "skipped"; reason: string };
+
+function parseDraftForKey(
+  configKey: AgentConfigKey,
+  type: "number" | "select" | "text",
+  draft: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const trimmed = draft.trim();
+
+  if (type === "number") {
+    if (trimmed === "") {
+      return { ok: false, error: "Enter a number." };
+    }
+    const numeric = Number(trimmed);
+    if (Number.isNaN(numeric)) {
+      return { ok: false, error: "Must be a number." };
+    }
+    return parseAgentConfigValue(configKey, numeric);
+  }
+
+  if (type === "select") {
+    if (trimmed === "") {
+      return { ok: false, error: "Pick a value." };
+    }
+    return parseAgentConfigValue(configKey, trimmed);
+  }
+
+  return parseAgentConfigValue(configKey, trimmed);
+}
+
 function AgentConfigField({
   configKey,
   description,
   disabled,
   label,
   onSave,
+  onVerify,
   options,
   placeholder,
   type,
   value,
 }: {
-  configKey: string;
+  configKey: AgentConfigKey;
   description: string;
   disabled: boolean;
   label: string;
-  onSave: (key: string, value: unknown) => Promise<void>;
+  onSave: (key: AgentConfigKey, value: unknown) => Promise<void>;
+  onVerify?: (rawDraft: string) => Promise<AgentConfigVerifyResult>;
   options?: string[];
   placeholder?: string;
   type: "number" | "select" | "text";
@@ -196,12 +239,36 @@ function AgentConfigField({
 }) {
   const currentValue = typeof value === "string" || typeof value === "number" ? String(value) : "";
   const [draft, setDraft] = useState(currentValue);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<AgentConfigVerifyResult | null>(null);
   const isDirty = draft !== currentValue;
 
+  const draftIsEmpty = draft.trim() === "";
+  const validation = draftIsEmpty ? null : parseDraftForKey(configKey, type, draft);
+  const validationError = validation && !validation.ok ? validation.error : null;
+  const canSave = !disabled && isDirty && validation?.ok === true;
+  const canVerify = Boolean(onVerify) && !disabled && !isVerifying && draft.trim() !== "";
+
+  function handleDraftChange(next: string) {
+    setDraft(next);
+    setVerifyResult(null);
+  }
+
   function handleSave() {
-    const parsed = type === "number" ? Number(draft) : draft;
-    if (type === "number" && Number.isNaN(parsed)) return;
-    void onSave(configKey, parsed);
+    if (!validation?.ok) return;
+    void onSave(configKey, validation.value);
+  }
+
+  async function handleVerify() {
+    if (!onVerify) return;
+    setIsVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await onVerify(draft);
+      setVerifyResult(result);
+    } finally {
+      setIsVerifying(false);
+    }
   }
 
   return (
@@ -212,7 +279,7 @@ function AgentConfigField({
           <select
             className="ui-input"
             disabled={disabled}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => handleDraftChange(event.target.value)}
             value={draft}
           >
             <option value="">Not configured</option>
@@ -227,18 +294,51 @@ function AgentConfigField({
             autoComplete="off"
             className="ui-input"
             disabled={disabled}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => handleDraftChange(event.target.value)}
             placeholder={placeholder}
             type={type === "number" ? "number" : "text"}
             value={draft}
           />
         )}
       </label>
+      {validationError ? (
+        <p className="text-xs leading-5 text-danger" role="alert">
+          {validationError}
+        </p>
+      ) : null}
       <p className="text-xs leading-5 text-muted">{description}</p>
-      <div className="flex justify-end">
+      {verifyResult ? (
+        <p
+          className={`text-xs leading-5 ${
+            verifyResult.kind === "ok"
+              ? "text-success"
+              : verifyResult.kind === "skipped"
+                ? "text-muted"
+                : "text-danger"
+          }`}
+          role="status"
+        >
+          {verifyResult.kind === "ok"
+            ? "✓ Reachable"
+            : verifyResult.kind === "skipped"
+              ? `ⓘ ${verifyResult.reason}`
+              : `✗ ${verifyResult.message}`}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap justify-end gap-2">
+        {onVerify ? (
+          <button
+            className="ui-button"
+            disabled={!canVerify}
+            onClick={() => void handleVerify()}
+            type="button"
+          >
+            {isVerifying ? "Verifying…" : "Verify"}
+          </button>
+        ) : null}
         <button
           className="ui-button-primary"
-          disabled={disabled || !isDirty}
+          disabled={!canSave}
           onClick={handleSave}
           type="button"
         >
@@ -688,7 +788,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
     }
   }
 
-  async function handleSaveAgentConfig(key: string, value: unknown) {
+  async function handleSaveAgentConfig(key: AgentConfigKey, value: unknown) {
     setIsSavingAgentConfig(true);
 
     try {
@@ -712,6 +812,51 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
       });
     } finally {
       setIsSavingAgentConfig(false);
+    }
+  }
+
+  async function handleVerifyAgentModel(rawDraft: string): Promise<AgentConfigVerifyResult> {
+    const provider = isAgentProvider(agentConfig.agent_provider)
+      ? (agentConfig.agent_provider as AgentProvider)
+      : "codex";
+
+    try {
+      const response = await fetch("/api/agent-config/verify", {
+        body: JSON.stringify({
+          model: rawDraft.trim(),
+          provider,
+          workspaceId: initialData.workspace.id,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as VerifyAgentConfigResponse | null;
+
+      if (!response.ok) {
+        const message =
+          (payload && "error" in payload && payload.error) ||
+          `Verify request failed (${response.status}).`;
+        return { kind: "error", message };
+      }
+
+      if (!payload) {
+        return { kind: "error", message: "Empty response from verify endpoint." };
+      }
+
+      if (payload.ok === true) {
+        return { kind: "ok" };
+      }
+
+      if (payload.ok === "skipped") {
+        return { kind: "skipped", reason: payload.reason };
+      }
+
+      return { kind: "error", message: payload.error };
+    } catch (error) {
+      return {
+        kind: "error",
+        message: error instanceof Error ? error.message : "Verify call failed.",
+      };
     }
   }
 
@@ -1214,17 +1359,18 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 ) : null}
                 <AgentConfigField
                   configKey="agent_model"
-                  description="Model identifier passed to the agent provider."
+                  description="Model identifier passed to the agent provider. Use Verify to send a 1-token test call with this workspace's stored credentials."
                   disabled={isSavingAgentConfig}
                   label="Agent Model"
                   onSave={handleSaveAgentConfig}
+                  onVerify={handleVerifyAgentModel}
                   placeholder="claude-sonnet-4-20250514"
                   type="text"
                   value={agentConfig.agent_model}
                 />
                 <AgentConfigField
                   configKey="concurrency_limit"
-                  description="Max number of agent jobs that can run simultaneously."
+                  description={`Max number of agent jobs that can run simultaneously (${AGENT_CONFIG_LIMITS.concurrency_limit.min}–${AGENT_CONFIG_LIMITS.concurrency_limit.max}).`}
                   disabled={isSavingAgentConfig}
                   label="Concurrency Limit"
                   onSave={handleSaveAgentConfig}
@@ -1234,7 +1380,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 />
                 <AgentConfigField
                   configKey="stall_timeout_ms"
-                  description="Time in milliseconds before a run with no activity is considered stalled."
+                  description={`Time in milliseconds before a run with no activity is considered stalled (${AGENT_CONFIG_LIMITS.stall_timeout_ms.min.toLocaleString()}–${AGENT_CONFIG_LIMITS.stall_timeout_ms.max.toLocaleString()} ms).`}
                   disabled={isSavingAgentConfig}
                   label="Stall Timeout (ms)"
                   onSave={handleSaveAgentConfig}
@@ -1244,7 +1390,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 />
                 <AgentConfigField
                   configKey="max_retries"
-                  description="Maximum automatic retries for failed agent runs."
+                  description={`Maximum automatic retries for failed agent runs (${AGENT_CONFIG_LIMITS.max_retries.min}–${AGENT_CONFIG_LIMITS.max_retries.max}).`}
                   disabled={isSavingAgentConfig}
                   label="Max Retries"
                   onSave={handleSaveAgentConfig}

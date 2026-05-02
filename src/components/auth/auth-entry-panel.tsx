@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { StatusChip } from "@/components/shared/status-chip";
+import { isLocalDev } from "@/env/deploy";
 import { loginPath, signupPath } from "@/lib/routes";
 
 const authErrorMessages = {
@@ -150,7 +151,7 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
         </div>
       </div>
 
-      {process.env.NODE_ENV === "development" && (
+      {isLocalDev() && (
         <form action="/auth/password" method="post" className="ui-subpanel mt-6 p-5">
           <input type="hidden" name="mode" value={mode} />
           <input type="hidden" name="next" value={next} />
