@@ -1,7 +1,13 @@
 import type { Message, RawMessageStreamEvent } from "@anthropic-ai/sdk/resources/messages/messages";
 import { describe, expect, it } from "vitest";
 
-import { AnthropicApiRunner, type AnthropicClientLike, parseStreamEvent } from "./anthropic-api";
+import {
+  AnthropicApiRunner,
+  type AnthropicClientLike,
+  DEFAULT_ANTHROPIC_MODEL,
+  parseStreamEvent,
+  resolveAnthropicModel,
+} from "./anthropic-api";
 
 interface FakeStreamSpec {
   events: RawMessageStreamEvent[];
@@ -184,6 +190,17 @@ describe("AnthropicApiRunner", () => {
     ]);
   });
 
+  it("falls back to the default model when configured with a non-Anthropic model id", async () => {
+    const { client, calls } = fakeClient({ events: [], finalMessage: baseFinal() });
+    const runner = new AnthropicApiRunner({ apiKey: "k", model: "gpt-5-codex", client });
+
+    for await (const _ of runner.start({ sessionId: "s", prompt: "p" })) {
+      void _;
+    }
+
+    expect(calls[0]?.model).toBe(DEFAULT_ANTHROPIC_MODEL);
+  });
+
   it("forwards maxTokens override when supplied", async () => {
     const { client, calls } = fakeClient({ events: [], finalMessage: baseFinal() });
     const runner = new AnthropicApiRunner({ apiKey: "k", client });
@@ -193,6 +210,24 @@ describe("AnthropicApiRunner", () => {
     }
 
     expect(calls[0]?.max_tokens).toBe(256);
+  });
+});
+
+describe("resolveAnthropicModel", () => {
+  it("passes through Anthropic model ids unchanged", () => {
+    expect(resolveAnthropicModel("claude-sonnet-4-5")).toBe("claude-sonnet-4-5");
+    expect(resolveAnthropicModel("claude-opus-4-1")).toBe("claude-opus-4-1");
+  });
+
+  it("falls back to the default when the model is undefined or empty", () => {
+    expect(resolveAnthropicModel(undefined)).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(resolveAnthropicModel("")).toBe(DEFAULT_ANTHROPIC_MODEL);
+  });
+
+  it("falls back to the default for non-Anthropic providers' model ids", () => {
+    expect(resolveAnthropicModel("gpt-5-codex")).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(resolveAnthropicModel("gpt-4o")).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(resolveAnthropicModel("o1-preview")).toBe(DEFAULT_ANTHROPIC_MODEL);
   });
 });
 

@@ -53,7 +53,7 @@ export class AnthropicApiRunner implements AgentRunner {
     }
     this.client =
       options.client ?? (new Anthropic({ apiKey: options.apiKey }) as AnthropicClientLike);
-    this.model = options.model ?? DEFAULT_ANTHROPIC_MODEL;
+    this.model = resolveAnthropicModel(options.model);
   }
 
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
@@ -105,6 +105,21 @@ export class AnthropicApiRunner implements AgentRunner {
       ...(usage ? { usage } : {}),
     };
   }
+}
+
+/**
+ * Pick a model id this runner can actually send to the Anthropic API.
+ *
+ * Workspaces store one `agent_model` setting that's shared across providers,
+ * so a workspace previously configured for Codex (e.g. `gpt-5-codex`) will
+ * forward that value here on switch. Anthropic rejects any non-`claude-*`
+ * model, breaking every stage until the user manually fixes the setting.
+ * Treat anything that isn't an Anthropic family id as "not configured" and
+ * fall back to the default.
+ */
+export function resolveAnthropicModel(model: string | undefined): string {
+  if (model && model.startsWith("claude-")) return model;
+  return DEFAULT_ANTHROPIC_MODEL;
 }
 
 /**
