@@ -141,6 +141,11 @@ async function runStage(input: {
 
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
+  let github: {
+    installationId: number;
+    repo: { default_branch: string | null; full_name: string; id: string };
+  } | null = null;
+  let branch: string | null = null;
   const collectedText: string[] = [];
   let artifactInserted = false;
   try {
@@ -155,7 +160,7 @@ async function runStage(input: {
     // clone. Text-only runners (anthropic-api) skip both — saving the
     // sandbox-spawn latency that the issue called out.
     if (resolvedRunner.runner.requiresSandbox) {
-      const github = await loadGitHubContext(admin, session.workspace_id);
+      github = await loadGitHubContext(admin, session.workspace_id);
       if (!github) {
         await markPipelineJobError(
           admin,
@@ -165,7 +170,7 @@ async function runStage(input: {
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
       const installationToken = await mintInstallationToken(github.installationId);
-      const branch = buildStageBranchName(session.id, stage.slug);
+      branch = buildStageBranchName(session.id, stage.slug);
       sandbox = await createSessionSandbox({
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
@@ -182,7 +187,7 @@ async function runStage(input: {
       model: config.model ?? DEFAULT_AGENT_RUNNER_CONFIG.model ?? "codex",
       provider: resolvedRunner.runner.provider,
       runType: stage.slug,
-      sandboxId: sandbox.id,
+      sandboxId: sandbox?.id ?? null,
       sessionId: session.id,
       workspaceId: session.workspace_id,
     });
@@ -226,30 +231,32 @@ async function runStage(input: {
     });
     artifactInserted = true;
 
-    const prOutcome = await openSessionPullRequest({
-      admin,
-      baseBranch: github.repo.default_branch ?? "main",
-      body: artifactMarkdown.slice(0, 60000),
-      branch,
-      installationId: github.installationId,
-      repoFullName: github.repo.full_name,
-      repoId: github.repo.id,
-      sandbox,
-      sessionId: session.id,
-      title: `${stage.name}: ${session.title}`,
-      workspaceId: session.workspace_id,
-    });
-
-    if (prOutcome.kind !== "success" && prOutcome.kind !== "no_commits") {
-      // PR plumbing is recoverable — the artifact is durable and the reviewer
-      // can approve the artifact directly. Surface the failure for ops without
-      // blocking the stage.
-      console.error("Failed to open session pull request", {
-        kind: prOutcome.kind,
-        reason: prOutcome.reason,
+    if (sandbox && github && branch) {
+      const prOutcome = await openSessionPullRequest({
+        admin,
+        baseBranch: github.repo.default_branch ?? "main",
+        body: artifactMarkdown.slice(0, 60000),
+        branch,
+        installationId: github.installationId,
+        repoFullName: github.repo.full_name,
+        repoId: github.repo.id,
+        sandbox,
         sessionId: session.id,
-        stageSlug: stage.slug,
+        title: `${stage.name}: ${session.title}`,
+        workspaceId: session.workspace_id,
       });
+
+      if (prOutcome.kind !== "success" && prOutcome.kind !== "no_commits") {
+        // PR plumbing is recoverable — the artifact is durable and the reviewer
+        // can approve the artifact directly. Surface the failure for ops without
+        // blocking the stage.
+        console.error("Failed to open session pull request", {
+          kind: prOutcome.kind,
+          reason: prOutcome.reason,
+          sessionId: session.id,
+          stageSlug: stage.slug,
+        });
+      }
     }
 
     const { error: pointerError } = await admin
@@ -767,7 +774,7 @@ async function createAgentRun(
     model: string;
     provider: string;
     runType: string;
-    sandboxId: string;
+    sandboxId: string | null;
     workspaceId: string;
   },
 ): Promise<string | null> {
