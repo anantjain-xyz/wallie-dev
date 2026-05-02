@@ -399,6 +399,16 @@ async function createQueuedRun(input: {
   triggerType: Enums<"agent_trigger_type">;
   workspace: WorkspaceAccessWorkspace;
 }) {
+  // Resolve the workspace's configured model so the queued row matches what
+  // the executor will actually run. Source-of-truth is the same lookup
+  // pipeline/processor.ts uses; drift between the two re-introduces the
+  // original placeholder bug. Resolved BEFORE the job insert so the
+  // duplicate-enqueue path (unique-violation → waitForRunByJobId) doesn't
+  // race against this query — `waitForRunByJobId` only retries for ~200ms,
+  // and any extra latency between job insert and run insert eats into that
+  // window.
+  const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspace.id);
+
   const jobInsert = createJobInsert({
     sessionId: input.session.id,
     requestedByMemberId: input.requestedByMemberId,
@@ -438,12 +448,6 @@ async function createQueuedRun(input: {
   if (jobError) {
     throw jobError;
   }
-
-  // Resolve the workspace's configured model so the queued row matches what
-  // the executor will actually run. Source-of-truth is the same lookup
-  // pipeline/processor.ts uses; drift between the two re-introduces the
-  // original placeholder bug.
-  const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspace.id);
 
   const { data: run, error: runError } = await input.admin
     .from("agent_runs")
