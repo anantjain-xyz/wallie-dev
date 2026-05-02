@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 
 import { fetchLinearIssue } from "@/lib/linear/client";
 import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { verifySlackSignature } from "@/lib/slack/verify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -81,6 +82,25 @@ export async function POST(request: Request) {
 
   // Extract Linear URL from mention text
   const linearInfo = extractLinearUrl(text);
+
+  // Rate limit on the Slack-side identifiers we have synchronously. Keying on
+  // team_id (rather than waiting for the workspace_id lookup) means we drop
+  // floods before issuing any DB queries. We always return 200 ok:true to
+  // Slack — a 429 here would trigger Slack's retry, which would just hammer
+  // the limiter again. Enforcement = silently skip the after() handler.
+  const [workspaceLimit, channelLimit] = await Promise.all([
+    checkRateLimit("slackPerWorkspace", teamId),
+    checkRateLimit("slackPerChannel", `${teamId}:${channelId}`),
+  ]);
+  if (!workspaceLimit.success || !channelLimit.success) {
+    console.warn("Slack mention dropped by rate limiter", {
+      channelId,
+      channelLimit: channelLimit.success ? "ok" : "blocked",
+      teamId,
+      workspaceLimit: workspaceLimit.success ? "ok" : "blocked",
+    });
+    return NextResponse.json({ ok: true });
+  }
 
   // Ack Slack immediately — all remaining work (DB queries, Linear API,
   // session creation, job processing) runs in after() so we never risk

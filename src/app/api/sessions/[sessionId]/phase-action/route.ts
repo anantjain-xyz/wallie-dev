@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
+import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
 
 type Params = { params: Promise<{ sessionId: string }> };
 
@@ -51,6 +52,11 @@ export async function POST(request: Request, { params }: Params) {
 
   if (sessionRow.phase_status !== "awaiting_review") {
     return NextResponse.json({ error: "Session is not awaiting review." }, { status: 409 });
+  }
+
+  const gated = await enforceRateLimit("phaseAction", `${sessionRow.workspace_id}:${user.id}`);
+  if (gated.response) {
+    return gated.response;
   }
 
   // Resolve the calling member id so the RPC's approver gate can evaluate it.
