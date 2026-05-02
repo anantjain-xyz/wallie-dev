@@ -13,7 +13,11 @@ vi.mock("@/features/github/service", () => ({
   syncGitHubRepositoriesForWorkspace: mocked.syncGitHubRepositoriesForWorkspace,
 }));
 
-import { handleGitHubPullRequestEvent } from "./webhooks";
+import {
+  handleGitHubInstallationEvent,
+  handleGitHubInstallationRepositoriesEvent,
+  handleGitHubPullRequestEvent,
+} from "./webhooks";
 
 interface UpdateCall {
   table: string;
@@ -225,5 +229,194 @@ describe("handleGitHubPullRequestEvent", () => {
       workspace_id: "ws-1",
       branch_name: "wallie/product-sess-1",
     });
+  });
+});
+
+// ---- installation lifecycle ---------------------------------------------
+
+interface InstallationCall {
+  type: "delete" | "update";
+  filters: Record<string, unknown>;
+  patch?: Record<string, unknown>;
+}
+
+function buildInstallationsAdmin(opts: { error?: { message: string } | null } = {}) {
+  const calls: InstallationCall[] = [];
+  return {
+    calls,
+    admin: {
+      from(table: string) {
+        if (table !== "github_installations") {
+          throw new Error(`unexpected table ${table}`);
+        }
+        return {
+          delete() {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq(column: string, value: unknown) {
+                filters[column] = value;
+                return chain;
+              },
+              then(resolve: (value: { data: null; error: unknown }) => void) {
+                calls.push({ type: "delete", filters });
+                resolve({ data: null, error: opts.error ?? null });
+              },
+            };
+            return chain;
+          },
+          update(patch: Record<string, unknown>) {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq(column: string, value: unknown) {
+                filters[column] = value;
+                return chain;
+              },
+              then(resolve: (value: { data: null; error: unknown }) => void) {
+                calls.push({ type: "update", filters, patch });
+                resolve({ data: null, error: opts.error ?? null });
+              },
+            };
+            return chain;
+          },
+        };
+      },
+    } as unknown,
+  };
+}
+
+describe("handleGitHubInstallationEvent", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("deletes the installation row when GitHub reports the app was uninstalled", async () => {
+    const { admin, calls } = buildInstallationsAdmin();
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubInstallationEvent({ action: "deleted", installation: { id: 999 } }, env);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      type: "delete",
+      filters: { installation_id: 999 },
+    });
+  });
+
+  it("toggles the suspended flag on suspend and unsuspend events", async () => {
+    const { admin, calls } = buildInstallationsAdmin();
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubInstallationEvent({ action: "suspend", installation: { id: 999 } }, env);
+    await handleGitHubInstallationEvent({ action: "unsuspend", installation: { id: 999 } }, env);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      type: "update",
+      filters: { installation_id: 999 },
+      patch: { suspended: true },
+    });
+    expect(calls[1]).toEqual({
+      type: "update",
+      filters: { installation_id: 999 },
+      patch: { suspended: false },
+    });
+  });
+
+  it("ignores actions that aren't lifecycle transitions (e.g. created)", async () => {
+    const { admin, calls } = buildInstallationsAdmin();
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubInstallationEvent({ action: "created", installation: { id: 999 } }, env);
+    await handleGitHubInstallationEvent(
+      { action: "new_permissions_accepted", installation: { id: 999 } },
+      env,
+    );
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it("propagates supabase errors so the webhook handler can return 5xx and trigger retry", async () => {
+    const { admin } = buildInstallationsAdmin({ error: { message: "rls denied" } });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await expect(
+      handleGitHubInstallationEvent({ action: "deleted", installation: { id: 999 } }, env),
+    ).rejects.toMatchObject({ message: "rls denied" });
+  });
+});
+
+describe("handleGitHubInstallationRepositoriesEvent", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function buildLookupAdmin(opts: {
+    installation: { workspace_id: string; installation_id: number } | null;
+    error?: { message: string } | null;
+  }) {
+    return {
+      from: (table: string) => {
+        if (table !== "github_installations") {
+          throw new Error(`unexpected table ${table}`);
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: opts.installation,
+                error: opts.error ?? null,
+              }),
+            }),
+          }),
+        };
+      },
+    } as unknown;
+  }
+
+  it("re-syncs the workspace's repositories when the installation is recognized", async () => {
+    const admin = buildLookupAdmin({
+      installation: { workspace_id: "ws-1", installation_id: 123 },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubInstallationRepositoriesEvent(
+      { action: "added", installation: { id: 123 } },
+      env,
+    );
+
+    expect(mocked.syncGitHubRepositoriesForWorkspace).toHaveBeenCalledTimes(1);
+    expect(mocked.syncGitHubRepositoriesForWorkspace).toHaveBeenCalledWith(
+      { installationId: 123, workspaceId: "ws-1" },
+      env,
+    );
+  });
+
+  it("is a no-op when the installation isn't tracked locally (nothing to sync)", async () => {
+    const admin = buildLookupAdmin({ installation: null });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubInstallationRepositoriesEvent(
+      { action: "removed", installation: { id: 555 } },
+      env,
+    );
+
+    expect(mocked.syncGitHubRepositoriesForWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("propagates lookup errors so retries can surface", async () => {
+    const admin = buildLookupAdmin({
+      installation: null,
+      error: { message: "lookup boom" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await expect(
+      handleGitHubInstallationRepositoriesEvent(
+        { action: "added", installation: { id: 123 } },
+        env,
+      ),
+    ).rejects.toMatchObject({ message: "lookup boom" });
+
+    expect(mocked.syncGitHubRepositoriesForWorkspace).not.toHaveBeenCalled();
   });
 });
