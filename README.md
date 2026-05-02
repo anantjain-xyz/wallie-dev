@@ -4,36 +4,44 @@ AI-powered product development automation. Wallie turns Linear issues into struc
 
 ## How It Works
 
-Wallie organizes work into **sessions** that progress through a six-phase pipeline:
+Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. A worker drains the job queue, runs the session's current stage, and posts the result to Slack for review.
 
-1. **Product** -- Claude AI generates a structured product spec from a Linear issue
-2. **Design** -- design artifact generation (manual stub, agent planned)
-3. **Engineering** -- implementation (manual stub, agent planned)
-4. **Review** -- code review (manual stub, agent planned)
-5. **Land** -- merge and deploy (manual stub, agent planned)
-6. **Monitor** -- post-deploy health check (manual stub, agent planned)
+Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `product → design → engineering → review → land → monitor` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, prompt template, and approver list -- nothing in code distinguishes one stage from another.
 
-Each phase produces a versioned artifact. Humans approve or reject artifacts via Slack buttons; rejected specs can be regenerated with feedback. After three rejections, the session escalates to an engineering manager.
+A single generic stage runner (`runStage()` in `src/lib/pipeline/processor.ts`) handles every stage:
+
+1. Render the stage's prompt template against the session context (title, description, prior stage artifacts, last reviewer feedback).
+2. Spin up a sandbox cloned from the workspace's connected GitHub repo on a per-stage branch.
+3. Run the workspace's configured agent (Codex or Claude Code) inside the sandbox.
+4. Capture the agent's text output as a markdown artifact, version it as `(session_id, stage_slug, version)`, and flip the session to `awaiting_review`.
+5. Post the artifact to the session's Slack thread with Approve / Request Changes buttons.
+
+Humans approve or reject artifacts via Slack (or the in-app dashboard). Approval advances to the next stage by `position` via the `approve_session_stage` RPC. Rejection writes the feedback onto the artifact and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt. Three rejections escalate the session to the engineering manager via Slack DM.
 
 ### Entry Points
 
-- **Slack**: mention the bot with a Linear issue URL (`@wallie https://linear.app/team/issue/TEAM-123`) to create a session and kick off the product phase automatically.
+- **Slack**: mention the bot with a Linear issue URL (`@wallie https://linear.app/team/issue/TEAM-123`) to create a session and kick off its first stage automatically.
 - **In-app**: click "New Session" from the sessions list to create one manually.
 
 ### Pipeline Flow
 
 ```
 Slack mention
-  -> session created (phase: product, status: agent_generating)
+  -> session created, pinned to workspace's default pipeline
+     (current_stage_id = first stage, phase_status = agent_generating)
   -> agent job enqueued automatically
-  -> POST /api/agent-jobs/process picks up the job
-  -> Claude generates product spec (with pre-screen quality gate)
-  -> spec posted to Slack with [Approve] / [Reject] buttons
-  -> approval advances to next phase; rejection re-generates with feedback
-  -> repeat until monitor phase completes -> session archived
+  -> worker claims job (atomic CAS on phase_status)
+  -> runStage() renders prompt, runs agent in sandbox,
+     writes markdown artifact, status=awaiting_review
+  -> artifact posted to Slack thread with [Approve] / [Request Changes]
+  -> approve  -> approve_session_stage RPC advances to next stage by position,
+                 enqueues the next job
+  -> reject   -> feedback saved on artifact; new job re-runs the same stage
+  -> repeat until the terminal stage is approved -> session archived
+  -> 3 rejections at any stage -> escalation DM to the engineering manager
 
 In-app create
-  -> session created (phase: product)
+  -> session created with chosen pipeline
   -> agent job must be triggered separately (not auto-enqueued)
 ```
 
@@ -62,18 +70,26 @@ wallie-cc/
 ```
 Workspace (tenant)
   |-- Members (humans + "wallie" system agent)
-  |-- Secrets (encrypted ANTHROPIC_API_KEY, LINEAR_API_KEY)
+  |-- Secrets (encrypted: ANTHROPIC_API_KEY, LINEAR_API_KEY,
+  |            EM_SLACK_USER_ID, ...)
+  |-- Pipelines (1..N; one flagged is_default)
+  |    `-- Stages (position, slug, name, prompt_template_md,
+  |                approver_member_ids[])
   `-- Sessions <- the unit of work
-      |-- phase: product -> design -> engineering
-      |          -> review -> land -> monitor
-      |-- phase_status: agent_generating | awaiting_review
-      |                 | approved | rejected | escalated
-      |-- Artifacts (versioned JSON per phase)
-      |-- Jobs (work queue entries)
-      `-- Runs (one agent execution; tokens, cost, msgs)
+       |-- pipeline_id (pinned at create time -- edits to the pipeline
+       |   don't reshape historical sessions)
+       |-- current_stage_id, current_artifact_version, rejection_count
+       |-- phase_status: agent_generating | awaiting_review
+       |                 | approved | rejected | escalated
+       |-- Artifacts (markdown, versioned on
+       |              (session_id, stage_slug, version))
+       |-- Phase Completions (one row per approved stage; preserves
+       |                      stage_slug snapshot for history)
+       |-- Jobs (work queue entries; dedupe per active stage)
+       `-- Runs (one agent execution; provider, tokens, messages)
 ```
 
-**Session** = one end-to-end workflow. **Artifact** = versioned JSON per phase. **Run** = one agent execution. A rejection produces a new Run.
+**Pipeline** = ordered list of stages owned by a workspace. **Stage** = a row with a prompt template and approver list; one row per stage in `pipeline_stages`. **Session** = one end-to-end workflow pinned to a pipeline. **Artifact** = versioned markdown per `(session, stage_slug, version)`. **Run** = one agent execution; a rejection produces a new Run on the same stage.
 
 ### Critical Flow (Slack mention -> shipped)
 
@@ -84,35 +100,38 @@ Slack @wallie + Linear URL
 [POST /api/slack/events]  -- verify HMAC, ack fast
       | (after() -- async)
       v
-Create Session + Enqueue Job  (dedup on workspace+linear_issue)
-      |
+Create Session (pinned to default pipeline) + Enqueue Job
+      | (dedup: pipeline:<linear_issue_id>:active)
       v
 Worker polls --> [POST /api/agent-jobs/process]
       |             |- CAS claim (atomic phase_status update)
-      |             |- Route by phase -> runProductPhase()
-      |             |- Load secrets, sanitize Linear text
-      |             |- Call Claude -> ProductSpec JSON
-      |             |- Pre-screen (>=3 acceptance criteria)
-      |             |- Save artifact, status=awaiting_review
-      |             `- Post to Slack thread [Approve][Reject]
+      |             |- Generic runStage():
+      |             |    * load current stage + prior artifacts
+      |             |    * render prompt_template_md against session
+      |             |    * mint GitHub installation token, spin up sandbox
+      |             |    * run agent runner (Codex or Claude Code)
+      |             |    * stream events into agent_run_messages
+      |             |- Save markdown artifact, status=awaiting_review
+      |             `- Post to Slack thread [Approve][Request Changes]
       v
 [POST /api/slack/interactions]
-      |- Approve -> RPC advances phase, enqueues next job
-      `- Reject  -> modal -> feedback -> new run
-                    (3 rejects -> escalate to EM)
+      |- Approve -> approve_session_stage RPC: records completion,
+      |             advances to next stage by position, enqueues next job
+      `- Reject  -> modal -> feedback saved on artifact; new job re-runs
+                    the same stage (3 rejects -> escalation DM to EM)
 ```
 
 ### Five Hub Files
 
 If you read only five files to understand Wallie, read these:
 
-| #   | File                                                                   | Role                                                                                 |
-| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)         | Phase router. Atomic CAS claim, dispatches to six phase handlers, posts Slack.       |
-| 2   | [src/lib/pipeline/product-agent.ts](src/lib/pipeline/product-agent.ts) | Calls Claude Sonnet 4. Sanitizes Linear text, builds prompt, parses structured JSON. |
-| 3   | [src/app/api/slack/events/route.ts](src/app/api/slack/events/route.ts) | Slack mention entry. HMAC verify, extract Linear URL, create session.                |
-| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                 | Job enqueue + run tracking. Dedup keys, token/cost logging.                          |
-| 5   | [src/worker/index.ts](src/worker/index.ts)                             | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler.          |
+| #   | File                                                                   | Role                                                                                                                          |
+| --- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)         | Generic stage runner. CAS claim, render prompt, run agent in sandbox, write artifact, post to Slack. Approve/reject handlers. |
+| 2   | [src/lib/pipeline/stages.ts](src/lib/pipeline/stages.ts)               | Pipeline + stage loaders. Maps `pipeline_stages` rows into the runtime stage shape and gathers prior artifacts.               |
+| 3   | [src/app/api/slack/events/route.ts](src/app/api/slack/events/route.ts) | Slack mention entry. HMAC verify, extract Linear URL, create session, enqueue first stage.                                    |
+| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                 | Job enqueue + run tracking. Dedup keys, secret loading, agent_runs lifecycle.                                                 |
+| 5   | [src/worker/index.ts](src/worker/index.ts)                             | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler.                                                   |
 
 ### Walkthrough by Domain
 
@@ -123,14 +142,16 @@ If you read only five files to understand Wallie, read these:
 
 #### Pipeline (`src/lib/pipeline/`) -- the brain
 
-- [processor.ts](src/lib/pipeline/processor.ts) -- phase router hub.
-- [product-agent.ts](src/lib/pipeline/product-agent.ts) -- Claude call for product spec.
-- [state-machine.ts](src/lib/pipeline/state-machine.ts) -- phase transitions + escalation (3-rejection threshold).
-- [pre-screen.ts](src/lib/pipeline/pre-screen.ts) -- quality gate before human review.
+The whole module is stage-agnostic. There are no per-phase files; one generic runner drives every user-defined stage by reading rows from `pipeline_stages`.
+
+- [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. `runStage()` renders the stage prompt, spins a sandbox, runs the agent, writes the markdown artifact, and posts the review to Slack. Also exports `handleApproval` / `handleRejection`.
+- [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages` and the prior-stage artifact map used by the prompt template.
+- [state-machine.ts](src/lib/pipeline/state-machine.ts) -- status checks (`canApprove`, `canReject`, `isTerminal`) and the 3-rejection escalation threshold. Stage ordering itself lives on `pipeline_stages.position` and is enumerated by the `approve_session_stage` RPC.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
-- [slack-format.ts](src/lib/pipeline/slack-format.ts) -- artifact to Slack Block Kit.
-- `design-phase.ts`, `engineering-phase.ts`, `review-phase.ts`, `land-phase.ts`, `monitor-phase.ts` -- phases 1-5 (mostly stubs; product phase is the only complete one).
-- [types.ts](src/lib/pipeline/types.ts) -- `ProductSpec` interface.
+- [slack-format.ts](src/lib/pipeline/slack-format.ts) -- artifact and escalation messages as Slack Block Kit.
+- [types.ts](src/lib/pipeline/types.ts) -- pipeline job type, model, escalation threshold, dedupe key helper.
+
+The default `product → design → engineering → review → land → monitor` seed lives in the `internal.default_pipeline_stages()` SQL function in the migration -- workspaces can edit, add, remove, or reorder stages from settings, and `renderStagePrompt` (in `src/lib/prompt-templates/`) handles the `{{session.title}}` / `{{session.prompt}}` / `{{artifact.previousStages.<slug>}}` / `{{attempt.feedback}}` placeholders.
 
 #### Worker (`src/worker/`) -- the daemon
 
@@ -249,7 +270,7 @@ src/
     slack/                    # Slack integration helpers
     wallie/                   # Legacy agent orchestration (being replaced)
   lib/                        # Core logic
-    pipeline/                 # Phase router, product agent, pre-screen, state machine
+    pipeline/                 # Generic stage runner, stage loaders, state machine
     supabase/                 # DB clients, auth, middleware, generated types
     secrets/                  # AES-256 encryption for stored credentials
     linear/                   # Linear GraphQL client

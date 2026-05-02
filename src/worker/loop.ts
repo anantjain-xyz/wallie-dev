@@ -2,7 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { processPipelineJob } from "@/lib/pipeline/processor";
-import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 
 import type { WorkerConfig } from "./config";
 import { sendHeartbeat } from "./heartbeat";
@@ -106,30 +105,8 @@ async function claimJobAtomic(
   return (row as AgentJobRow | null) ?? null;
 }
 
-/**
- * Route a claimed job to the appropriate processor.
- */
 async function processClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {
-  if (job.job_type === PIPELINE_JOB_TYPE) {
-    await processPipelineJob({ admin, job });
-    return;
-  }
-
-  // Non-pipeline jobs are not yet supported (Phase 2 will wire up the
-  // agent runner). Mark as error so they don't block the queue.
-  const errorMessage =
-    "Non-pipeline jobs are not yet supported. Agent runner integration is planned for Phase 2.";
-
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "error" as const,
-    })
-    .eq("agent_job_id", job.id)
-    .in("status", ["queued", "started", "running"]);
-
-  await markJobError(admin, job, errorMessage);
+  await processPipelineJob({ admin, job });
 }
 
 async function markJobError(
