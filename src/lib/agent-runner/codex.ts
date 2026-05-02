@@ -23,6 +23,7 @@ export interface CodexRunnerOptions {
  */
 export class CodexRunner implements AgentRunner {
   readonly provider = "codex";
+  readonly requiresSandbox = true;
 
   constructor(private readonly options: CodexRunnerOptions) {
     if (!options.accessToken) {
@@ -32,6 +33,9 @@ export class CodexRunner implements AgentRunner {
 
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
+    if (!sandbox) {
+      throw new Error("CodexRunner requires a sandbox.");
+    }
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
 
     // Ensure auth.json exists. Idempotent; overwrites are fine because the

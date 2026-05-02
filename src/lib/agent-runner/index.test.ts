@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AnthropicApiRunner,
   ClaudeCodeRunner,
   CodexRunner,
   createAgentRunner,
@@ -13,6 +14,7 @@ describe("createAgentRunner", () => {
     const runner = createAgentRunner("claude-code");
     expect(runner).toBeInstanceOf(ClaudeCodeRunner);
     expect(runner.provider).toBe("claude-code");
+    expect(runner.requiresSandbox).toBe(true);
   });
 
   it("creates a ClaudeCodeRunner for 'claude_code' (settings alias)", () => {
@@ -25,10 +27,28 @@ describe("createAgentRunner", () => {
     const runner = createAgentRunner("codex", { codex: { accessToken: "tok" } });
     expect(runner).toBeInstanceOf(CodexRunner);
     expect(runner.provider).toBe("codex");
+    expect(runner.requiresSandbox).toBe(true);
+  });
+
+  it("creates an AnthropicApiRunner for 'anthropic-api' when auth is provided", () => {
+    const runner = createAgentRunner("anthropic-api", { anthropic: { apiKey: "sk" } });
+    expect(runner).toBeInstanceOf(AnthropicApiRunner);
+    expect(runner.provider).toBe("anthropic-api");
+    expect(runner.requiresSandbox).toBe(false);
+  });
+
+  it("creates an AnthropicApiRunner for 'anthropic_api' (settings alias)", () => {
+    const runner = createAgentRunner("anthropic_api", { anthropic: { apiKey: "sk" } });
+    expect(runner).toBeInstanceOf(AnthropicApiRunner);
+    expect(runner.provider).toBe("anthropic-api");
   });
 
   it("throws when codex is selected without auth", () => {
     expect(() => createAgentRunner("codex")).toThrow(/codex auth/);
+  });
+
+  it("throws when anthropic-api is selected without auth", () => {
+    expect(() => createAgentRunner("anthropic-api")).toThrow(/anthropic auth/);
   });
 
   it("throws for unknown provider", () => {

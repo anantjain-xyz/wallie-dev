@@ -8,6 +8,7 @@ describe("CodexRunner", () => {
   it("has the correct provider name", () => {
     const runner = new CodexRunner({ accessToken: "test-token" });
     expect(runner.provider).toBe("codex");
+    expect(runner.requiresSandbox).toBe(true);
   });
 
   it("implements the AgentRunner interface", () => {
@@ -17,6 +18,18 @@ describe("CodexRunner", () => {
 
   it("throws when constructed without an access token", () => {
     expect(() => new CodexRunner({ accessToken: "" })).toThrow(/accessToken/);
+  });
+
+  it("throws when started without a sandbox", async () => {
+    const runner = new CodexRunner({ accessToken: "tok" });
+    const iter = runner.start({ sessionId: "s", prompt: "p" });
+    await expect(
+      (async () => {
+        for await (const _ of iter) {
+          void _;
+        }
+      })(),
+    ).rejects.toThrow(/requires a sandbox/);
   });
 
   it("writes auth.json + prompt file and streams events from scripted stdout", async () => {

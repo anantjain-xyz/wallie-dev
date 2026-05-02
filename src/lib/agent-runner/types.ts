@@ -50,8 +50,12 @@ export type AgentEvent =
 
 export interface AgentRunnerStartInput {
   sessionId: string;
-  /** Sandbox the agent CLI runs inside. Owned by the phase; reused across turns. */
-  sandbox: SandboxHandle;
+  /**
+   * Sandbox the agent CLI runs inside. Owned by the phase; reused across turns.
+   * Optional because text-only runners (e.g. anthropic-api) skip sandbox provisioning.
+   * CLI-based runners (codex, claude-code) require it and assert at start.
+   */
+  sandbox?: SandboxHandle;
   prompt: string;
   /** Optional session ID from a previous turn for continuation. */
   continueSessionId?: string;
@@ -63,7 +67,14 @@ export interface AgentRunner {
   readonly provider: string;
 
   /**
-   * Launch the agent inside the sandbox with the provided prompt.
+   * Whether this runner needs a per-session sandbox. CLI runners do; runners
+   * that hit a hosted API directly do not. The pipeline reads this to skip
+   * sandbox/GitHub provisioning for text-only stages.
+   */
+  readonly requiresSandbox: boolean;
+
+  /**
+   * Launch the agent with the provided prompt.
    * Returns an async iterable of structured events.
    */
   start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent>;

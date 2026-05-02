@@ -1170,11 +1170,11 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               <div className="space-y-4">
                 <AgentConfigField
                   configKey="agent_provider"
-                  description="Which agent CLI or API to use for coding tasks."
+                  description="Which agent CLI or API to use for coding tasks. Anthropic API skips the sandbox (faster for text-only stages)."
                   disabled={isSavingAgentConfig}
                   label="Agent Provider"
                   onSave={handleSaveAgentConfig}
-                  options={["codex", "claude_code"]}
+                  options={["codex", "claude_code", "anthropic_api"]}
                   type="select"
                   value={agentConfig.agent_provider}
                 />
@@ -1182,6 +1182,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                   <p className="text-xs leading-5 text-muted">
                     Each session runs with its creator&apos;s Codex account. Connect yours below
                     under &ldquo;Your Codex account&rdquo;.
+                  </p>
+                ) : null}
+                {agentConfig.agent_provider === "anthropic_api" ? (
+                  <p className="text-xs leading-5 text-muted">
+                    Calls Anthropic&apos;s Messages API directly — no sandbox spawn, no GitHub repo
+                    required. Add your <code>ANTHROPIC_API_KEY</code> under Integrations above.
                   </p>
                 ) : null}
                 <AgentConfigField
