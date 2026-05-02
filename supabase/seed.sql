@@ -880,7 +880,7 @@ BEGIN
     (id, workspace_id, session_id, requested_by_member_id, trigger_type, job_type,
      status, attempt_count, started_at, finished_at, created_at)
   VALUES
-    (job1_id, ws_id, sess4_id, mem1_id, 'slack_mention', 'pipeline',
+    (job1_id, ws_id, sess4_id, mem1_id, 'slack_mention', 'session',
      'success', 1, now() - interval '6 days', now() - interval '5 days 23 hours',
      now() - interval '6 days');
 
@@ -912,7 +912,7 @@ BEGIN
     (id, workspace_id, session_id, requested_by_member_id, trigger_type, job_type,
      status, attempt_count, started_at, created_at)
   VALUES
-    (job2_id, ws_id, sess2_id, mem1_id, 'slack_mention', 'pipeline',
+    (job2_id, ws_id, sess2_id, mem1_id, 'slack_mention', 'session',
      'running', 1, now() - interval '30 minutes',
      now() - interval '30 minutes');
 
