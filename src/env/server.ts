@@ -13,6 +13,15 @@ const optionalEnvStringSchema = z.preprocess(
   requiredEnvStringSchema.optional(),
 );
 
+// Accepts hex with >=32 bytes (>=64 chars), or base64/base64url with >=32
+// bytes encoded (>=43 chars). Rejects human-typed phrases that happen to be
+// >=32 chars but contain whitespace, punctuation, or insufficient entropy
+// shape. Generate via `openssl rand -hex 32` or `openssl rand -base64 32`.
+const hexEncryptionKeyShape = /^[0-9a-fA-F]{64,}$/;
+const base64EncryptionKeyShape = /^[A-Za-z0-9+/_-]{43,}={0,2}$/;
+const encryptionKeyShapeMessage =
+  "WALLIE_ENCRYPTION_KEY must be hex-encoded (>=64 chars) or base64-encoded (>=43 chars). Generate with `openssl rand -hex 32`.";
+
 export const serverEnvSchema = z.object({
   GITHUB_APP_ID: optionalEnvStringSchema,
   GITHUB_APP_PRIVATE_KEY: optionalEnvStringSchema,
@@ -21,7 +30,12 @@ export const serverEnvSchema = z.object({
   SLACK_CLIENT_SECRET: optionalEnvStringSchema,
   SLACK_SIGNING_SECRET: optionalEnvStringSchema,
   SUPABASE_SECRET_KEY: requiredEnvStringSchema,
-  WALLIE_ENCRYPTION_KEY: z.string().min(32),
+  WALLIE_ENCRYPTION_KEY: z
+    .string()
+    .refine(
+      (value) => hexEncryptionKeyShape.test(value) || base64EncryptionKeyShape.test(value),
+      encryptionKeyShapeMessage,
+    ),
   WALLIE_PROCESS_TOKEN: optionalEnvStringSchema,
   // Vercel Sandbox credentials for agent execution. All three required in
   // environments that don't run on Vercel infra (where OIDC is used instead).

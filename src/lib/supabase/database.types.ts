@@ -518,11 +518,65 @@ export type Database = {
           },
         ]
       }
+      session_artifact_feedback: {
+        Row: {
+          created_at: string
+          feedback_text: string
+          id: string
+          session_id: string
+          stage_id: string | null
+          stage_slug: string
+          target_version: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          feedback_text: string
+          id?: string
+          session_id: string
+          stage_id?: string | null
+          stage_slug: string
+          target_version: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          feedback_text?: string
+          id?: string
+          session_id?: string
+          stage_id?: string | null
+          stage_slug?: string
+          target_version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_artifact_feedback_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_artifact_feedback_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_artifact_feedback_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_artifacts: {
         Row: {
           artifact_json: Json
           created_at: string
-          feedback_text: string | null
           id: string
           session_id: string
           stage_id: string | null
@@ -533,7 +587,6 @@ export type Database = {
         Insert: {
           artifact_json: Json
           created_at?: string
-          feedback_text?: string | null
           id?: string
           session_id: string
           stage_id?: string | null
@@ -544,7 +597,6 @@ export type Database = {
         Update: {
           artifact_json?: Json
           created_at?: string
-          feedback_text?: string | null
           id?: string
           session_id?: string
           stage_id?: string | null

@@ -13,6 +13,11 @@ export { DEFAULT_AGENT_RUNNER_CONFIG, DEFAULT_CODEX_MODEL } from "./types";
 export { ClaudeCodeRunner } from "./claude-code";
 export { CodexRunner } from "./codex";
 export { AnthropicApiRunner, DEFAULT_ANTHROPIC_MODEL } from "./anthropic-api";
+export {
+  loadWorkspaceAgentConfig,
+  normalizeAgentProviderName,
+  type ResolvedWorkspaceAgentConfig,
+} from "./workspace-config";
 
 import type { AgentRunner } from "./types";
 import { AnthropicApiRunner, type AnthropicApiRunnerOptions } from "./anthropic-api";

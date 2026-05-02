@@ -34,6 +34,16 @@ export const CODEX_OAUTH_COOKIE = "wallie_codex_oauth";
 /** Short-lived cookie TTL (seconds) covering the OAuth round-trip. */
 export const CODEX_OAUTH_COOKIE_MAX_AGE = 10 * 60;
 
+/**
+ * Whether OAuth cookies should ship with the `Secure` attribute. Defaults to
+ * `true` for every environment (preview, staging, production) so the cookie
+ * never leaks over a downgraded HTTP request. Local HTTP dev can opt out by
+ * exporting `WALLIE_ALLOW_INSECURE_COOKIES=1`.
+ */
+export function shouldUseSecureCookies(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.WALLIE_ALLOW_INSECURE_COOKIES !== "1";
+}
+
 export interface PkcePair {
   verifier: string;
   challenge: string;
