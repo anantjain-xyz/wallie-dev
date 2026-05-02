@@ -128,8 +128,7 @@ async function runStage(input: {
   // Resume-on-rejection: pull the most recent feedback for this stage so the
   // template can include it via {{attempt.feedback}}. Match on stage_id so a
   // rename in the editor doesn't cause us to miss the prior attempt.
-  const lastArtifact = await loadLatestArtifact(admin, session.id, stage.id);
-  const attemptFeedback = lastArtifact?.feedback_text ?? null;
+  const attemptFeedback = await loadLatestFeedback(admin, session.id, stage.id);
 
   const prompt = renderStagePrompt(stage, {
     attemptFeedback,
@@ -222,7 +221,6 @@ async function runStage(input: {
 
     await insertArtifact(admin, {
       artifactJson: artifactMarkdown,
-      feedbackText: null,
       sessionId: session.id,
       stageId: stage.id,
       stageSlug: stage.slug,
@@ -447,16 +445,29 @@ export async function handleRejection(input: {
     };
   }
 
-  // Match on stage_id (immutable FK) rather than stage_slug — a stage
-  // renamed in settings between artifact generation and review would
-  // otherwise cause this update to match zero rows and silently drop the
-  // reviewer's feedback.
-  await admin
-    .from("session_artifacts")
-    .update({ feedback_text: input.feedbackText })
-    .eq("session_id", input.sessionId)
-    .eq("stage_id", stage.id)
-    .eq("version", input.version);
+  // Feedback lives in its own table keyed on (session_id, stage_id,
+  // target_version). Stage_id is the immutable FK so a stage rename between
+  // generation and review does not orphan the row. The unique constraint
+  // makes the row a first-write-wins record of "why was this version
+  // rejected" — the loser of a truly concurrent rejection is caught by the
+  // CAS guard above; this insert is a defense-in-depth check.
+  const { error: feedbackInsertError } = await admin.from("session_artifact_feedback").insert({
+    feedback_text: input.feedbackText,
+    session_id: input.sessionId,
+    stage_id: stage.id,
+    stage_slug: stage.slug,
+    target_version: input.version,
+    workspace_id: session.workspace_id,
+  });
+
+  // 23505 = unique_violation: feedback already exists for this target_version,
+  // which means a prior attempt inserted it but a later step (e.g., agent_jobs
+  // enqueue) failed and the session never advanced. Treat as idempotent
+  // success and proceed to enqueue/escalation rather than wedging the session
+  // in awaiting_review with rejection_count bumped but nothing queued.
+  if (feedbackInsertError && feedbackInsertError.code !== "23505") {
+    return { escalated: false, error: feedbackInsertError.message, success: false };
+  }
 
   if (shouldEscalate(newRejectionCount)) {
     await admin.from("sessions").update({ phase_status: "escalated" }).eq("id", input.sessionId);
@@ -556,21 +567,21 @@ async function loadEmSlackUserId(admin: AdminClient, workspaceId: string): Promi
   return data ? decryptSecretValue(data.encrypted_value) : null;
 }
 
-async function loadLatestArtifact(
+async function loadLatestFeedback(
   admin: AdminClient,
   sessionId: string,
   stageId: string,
-): Promise<Tables<"session_artifacts"> | null> {
+): Promise<string | null> {
   const { data, error } = await admin
-    .from("session_artifacts")
-    .select("*")
+    .from("session_artifact_feedback")
+    .select("feedback_text")
     .eq("session_id", sessionId)
     .eq("stage_id", stageId)
-    .order("version", { ascending: false })
+    .order("target_version", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  return data;
+  return data?.feedback_text ?? null;
 }
 
 async function loadWallieSystemMember(
@@ -604,7 +615,6 @@ async function insertArtifact(
   admin: AdminClient,
   input: {
     artifactJson: string;
-    feedbackText: string | null;
     sessionId: string;
     stageId: string;
     stageSlug: string;
@@ -614,7 +624,6 @@ async function insertArtifact(
 ): Promise<void> {
   const { error } = await admin.from("session_artifacts").insert({
     artifact_json: input.artifactJson,
-    feedback_text: input.feedbackText,
     session_id: input.sessionId,
     stage_id: input.stageId,
     stage_slug: input.stageSlug,
