@@ -103,7 +103,7 @@ vi.mock("@octokit/app", () => ({
   }),
 }));
 
-import { handleApproval, processPipelineJob } from "./processor";
+import { handleApproval, handleRejection, processPipelineJob } from "./processor";
 
 // ---- fixtures -----------------------------------------------------------
 
@@ -542,6 +542,395 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
     expect(result.result).toBe("error");
     expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
+  });
+
+  it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {
+    const session = baseSession();
+    // Default runner is claude-code (requiresSandbox: true). With no github
+    // install the processor must error out — without this branch the run would
+    // try to mint a token for installation_id=undefined and crash later.
+    const { admin } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+      githubInstallation: null,
+    });
+    const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
+    expect(result.result).toBe("error");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(new Error("vercel sandbox unavailable"));
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+    });
+
+    const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    // Sandbox failed before run row got created, so no orphan artifact, no PR.
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    // Session status compensated to rejected so the UI surfaces the failure.
+    expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeDefined();
+    // Slack failure message posted (not the review one).
+    expect(mocked.formatGenerationFailureBlocks).toHaveBeenCalledTimes(1);
+    expect(mocked.formatStageReviewBlocks).not.toHaveBeenCalled();
+  });
+
+  it("treats an agent error event as a stage failure and deletes the orphan artifact", async () => {
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([
+        { type: "text", text: "partial output" },
+        { type: "error", message: "rate limited" },
+      ]),
+    );
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+    });
+
+    const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    // Error fires *before* artifact insert (the for-await throws when type === "error"),
+    // so no orphan should exist. The artifact-insert branch is guarded by
+    // `artifactInserted` and never runs.
+    expect(insertedArtifacts).toHaveLength(0);
+    // No PR opened.
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    // Session compensated to rejected and Slack failure posted.
+    expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeDefined();
+    expect(mocked.formatGenerationFailureBlocks).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---- handleRejection ----------------------------------------------------
+
+interface RejectionMockOptions {
+  session: Tables<"sessions"> | null;
+  rejectionClaim?: { id: string } | null;
+  rejectionClaimError?: { message: string } | null;
+  slackInstall?: { bot_token_encrypted: string } | null;
+  workspaceSecrets?: Record<string, string>;
+  enqueueError?: { code?: string; message: string } | null;
+  workspaceMember?: { id: string } | null;
+}
+
+function buildRejectionMock(opts: RejectionMockOptions) {
+  const sessionUpdates: Array<Record<string, unknown>> = [];
+  const artifactUpdates: Array<{ patch: Record<string, unknown> }> = [];
+  const enqueuedJobs: Array<Record<string, unknown>> = [];
+
+  const sessionsTable = {
+    select: () => ({
+      eq: () => ({ maybeSingle: async () => ({ data: opts.session, error: null }) }),
+    }),
+    update: (patch: Record<string, unknown>) => {
+      sessionUpdates.push(patch);
+      // If this is the CAS rejection_count update, it has 5 .eq() calls
+      // followed by .select().maybeSingle(). All other updates are plain.
+      const builder: Record<string, unknown> = {};
+      const eqChain = {
+        eq() {
+          return eqChain;
+        },
+        select() {
+          return {
+            maybeSingle: async () => ({
+              data: opts.rejectionClaim === undefined ? { id: "sess-1" } : opts.rejectionClaim,
+              error: opts.rejectionClaimError ?? null,
+            }),
+          };
+        },
+        then(resolve: (value: { data: null; error: null }) => void) {
+          resolve({ data: null, error: null });
+        },
+      };
+      builder.eq = () => eqChain;
+      return builder;
+    },
+  };
+
+  const artifactsTable = {
+    update: (patch: Record<string, unknown>) => ({
+      eq: () => ({
+        eq: () => ({
+          eq: async () => {
+            artifactUpdates.push({ patch });
+            return { error: null };
+          },
+        }),
+      }),
+    }),
+  };
+
+  const slackTable = {
+    select: () => ({
+      eq: () => ({ maybeSingle: async () => ({ data: opts.slackInstall ?? null, error: null }) }),
+    }),
+  };
+
+  const workspaceSecretsTable = {
+    select: () => ({
+      eq: () => ({
+        eq: (_col: string, key: string) => ({
+          maybeSingle: async () => ({
+            data: opts.workspaceSecrets?.[key]
+              ? { encrypted_value: opts.workspaceSecrets[key] }
+              : null,
+            error: null,
+          }),
+        }),
+      }),
+    }),
+  };
+
+  const workspaceMembersTable = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: opts.workspaceMember ?? null, error: null }),
+          }),
+        }),
+      }),
+    }),
+  };
+
+  const agentJobsTable = {
+    insert: async (row: Record<string, unknown>) => {
+      enqueuedJobs.push(row);
+      return { error: opts.enqueueError ?? null };
+    },
+  };
+
+  const tables: Record<string, unknown> = {
+    sessions: sessionsTable,
+    session_artifacts: artifactsTable,
+    slack_installations: slackTable,
+    workspace_secrets: workspaceSecretsTable,
+    workspace_members: workspaceMembersTable,
+    agent_jobs: agentJobsTable,
+  };
+
+  return {
+    admin: { from: (name: string) => tables[name] ?? {} } as never,
+    sessionUpdates,
+    artifactUpdates,
+    enqueuedJobs,
+  };
+}
+
+describe("handleRejection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.loadStageById.mockResolvedValue(productStage);
+  });
+
+  it("returns 'session not found' when the session row is missing", async () => {
+    const { admin } = buildRejectionMock({ session: null });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Session not found");
+  });
+
+  it("returns 'session not found' when the workspace doesn't match (cross-workspace guard)", async () => {
+    const session = baseSession({ workspace_id: "ws-OTHER", phase_status: "awaiting_review" });
+    const { admin } = buildRejectionMock({ session });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Session not found");
+  });
+
+  it("rejects with a version-mismatch error when current_artifact_version moved on", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 2,
+    });
+    const { admin } = buildRejectionMock({ session });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Version mismatch");
+  });
+
+  it("rejects with 'race' when the rejection_count CAS finds no matching row", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+    });
+    const { admin } = buildRejectionMock({ session, rejectionClaim: null });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("raced");
+  });
+
+  it("on a non-escalating rejection, writes feedback, enqueues a retry, then flips status to rejected", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 0,
+    });
+    const { admin, sessionUpdates, artifactUpdates, enqueuedJobs } = buildRejectionMock({
+      session,
+      workspaceMember: { id: "mem-wallie" },
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "tighten the spec",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.escalated).toBe(false);
+    // Artifact feedback recorded.
+    expect(artifactUpdates).toEqual([{ patch: { feedback_text: "tighten the spec" } }]);
+    // Retry enqueued before flipping to rejected.
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(enqueuedJobs[0]!.session_id).toBe("sess-1");
+    expect(enqueuedJobs[0]!.requested_by_member_id).toBe("mem-wallie");
+    // Session updates: rejection_count CAS first, then phase_status=rejected.
+    expect(sessionUpdates[0]).toEqual({ rejection_count: 1 });
+    expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
+    // Crucially we don't escalate when below threshold.
+    expect(sessionUpdates.find((u) => u.phase_status === "escalated")).toBeUndefined();
+  });
+
+  it("treats a unique_violation on enqueue (23505) as silent success — the existing queued job will pick up the feedback", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 0,
+    });
+    const { admin, sessionUpdates } = buildRejectionMock({
+      session,
+      enqueueError: { code: "23505", message: "duplicate" },
+    });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "again",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(true);
+    // Status flip still happens.
+    expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
+  });
+
+  it("returns the enqueue error and stops *before* flipping to rejected when the retry can't be queued", async () => {
+    // Rationale captured in processor.ts: a 'rejected' state with no queued
+    // worker is a wedged state the UI can't recover from. We must not flip if
+    // the enqueue failed for any reason other than a duplicate.
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 0,
+    });
+    const { admin, sessionUpdates } = buildRejectionMock({
+      session,
+      enqueueError: { code: "deadlock", message: "queue write failed" },
+    });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "boom",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("queue write failed");
+    expect(sessionUpdates.find((u) => u.phase_status === "rejected")).toBeUndefined();
+  });
+
+  it("escalates when the rejection_count crosses the threshold (3) and DM payload is built from session + stage", async () => {
+    // shouldEscalate returns true at >= 3; rejection_count was 2, so this
+    // becomes the third rejection. With slack install + EM_SLACK_USER_ID set,
+    // an escalation DM is dispatched.
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 2,
+    });
+    const { admin, sessionUpdates, enqueuedJobs } = buildRejectionMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+      workspaceSecrets: { EM_SLACK_USER_ID: "U-em" },
+    });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "still wrong",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(true);
+    expect(result.escalated).toBe(true);
+    expect(sessionUpdates.find((u) => u.phase_status === "escalated")).toBeDefined();
+    // Escalation does NOT enqueue a retry — that's only for non-escalating rejections.
+    expect(enqueuedJobs).toHaveLength(0);
+    expect(mocked.openSlackDm).toHaveBeenCalledTimes(1);
+    expect(mocked.formatEscalationDmBlocks).toHaveBeenCalledTimes(1);
+    const dmBlocksArgs = (
+      mocked.formatEscalationDmBlocks.mock.calls as unknown as Array<[Record<string, unknown>]>
+    )[0]![0];
+    expect(dmBlocksArgs.rejectionCount).toBe(3);
+    expect(dmBlocksArgs.stageName).toBe(productStage.name);
+  });
+
+  it("escalates without crashing even when no Slack install or EM user id is configured", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 2,
+    });
+    const { admin } = buildRejectionMock({
+      session,
+      slackInstall: null,
+      workspaceSecrets: {},
+    });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "still wrong",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(true);
+    expect(result.escalated).toBe(true);
+    expect(mocked.openSlackDm).not.toHaveBeenCalled();
   });
 });
 
