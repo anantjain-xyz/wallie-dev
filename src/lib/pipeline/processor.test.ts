@@ -509,6 +509,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(result.result).toBe("success");
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(mocked.createAgentRunner).toHaveBeenCalledWith(
       "anthropic-api",
       expect.objectContaining({ anthropic: expect.objectContaining({ apiKey: "sk-ant-…" }) }),
