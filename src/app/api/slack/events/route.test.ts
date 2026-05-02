@@ -1,5 +1,7 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
+
+import { RATE_LIMITS, clearRateLimitsForTesting } from "@/lib/rate-limit";
 
 const SIGNING_SECRET = "test-signing-secret";
 
@@ -127,6 +129,12 @@ function freshSessionsHandler(): TableHandler {
 describe("POST /api/slack/events", () => {
   beforeAll(() => {
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
+  });
+
+  beforeEach(() => {
+    // Each test starts with a fresh rate limit window so per-(team, channel)
+    // bursts in earlier tests don't trip the limiter in later tests.
+    clearRateLimitsForTesting();
   });
 
   afterEach(async () => {
@@ -794,5 +802,49 @@ describe("POST /api/slack/events", () => {
     const json = await response.json();
 
     expect(json.ok).toBe(true);
+  });
+
+  it("drops mentions silently after the per-channel rate limit is exceeded", async () => {
+    // Build a fresh admin mock so the unrelated tables resolve cleanly. We
+    // never expect the route to reach the admin client once the limit trips.
+    const { client, fromMock } = makeAdmin({
+      slack_installations: slackInstallHandler(),
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(client);
+
+    const buildBody = (issue: string) =>
+      JSON.stringify({
+        event: {
+          channel: "C-flood",
+          text: `<@U> https://linear.app/team/issue/${issue}`,
+          ts: "1.1",
+          type: "app_mention",
+        },
+        team_id: "T-flood",
+      });
+
+    // Fill the per-channel bucket up to its cap. Each request must still
+    // return 200 ok:true to Slack.
+    const cap = RATE_LIMITS.slackPerChannel.max;
+    for (let i = 0; i < cap; i += 1) {
+      const r = await POST(makeRequest(buildBody(`FLOOD-${i}`)));
+      const j = await r.json();
+      expect(j.ok).toBe(true);
+    }
+
+    fromMock.mockClear();
+
+    // The next mention is over the limit. Slack still gets 200 (so it
+    // doesn't retry) but the after() handler must not fire — meaning no
+    // admin client lookups, no Linear fetch, no session insert.
+    const blocked = await POST(makeRequest(buildBody("FLOOD-OVER")));
+    await flushAfterCallbacks();
+    const blockedJson = await blocked.json();
+
+    expect(blocked.status).toBe(200);
+    expect(blockedJson.ok).toBe(true);
+    expect(fromMock).not.toHaveBeenCalled();
+    expect(mocked.fetchLinearIssue).not.toHaveBeenCalled();
+    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
   });
 });

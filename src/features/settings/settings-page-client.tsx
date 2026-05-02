@@ -1144,6 +1144,28 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           <UsageSummary usage={initialData.usage} />
         </Section>
 
+        <Section title="Rate limits">
+          <div className="space-y-3">
+            <p className="text-sm leading-7 text-muted">
+              Per-endpoint caps protecting sandbox spawns, paid LLM calls, and Slack-triggered
+              session creation. Excess requests return <code>429 Too Many Requests</code> with a{" "}
+              <code>Retry-After</code> header. Contact an administrator to raise these limits for a
+              trusted workspace.
+            </p>
+            <ul className="ui-subpanel divide-y divide-border-soft text-sm">
+              {initialData.rateLimits.map((limit) => (
+                <li key={limit.endpoint} className="flex flex-col gap-1 px-4 py-3">
+                  <span className="font-mono text-xs text-muted">{limit.endpoint}</span>
+                  <span className="font-semibold text-foreground">
+                    {limit.max} req / {Math.round(limit.windowMs / 1000)}s
+                  </span>
+                  <span className="text-xs text-muted">{limit.description}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Section>
+
         <Section title="Pipeline">
           <div className="space-y-4">
             <p className="text-sm leading-7 text-muted">

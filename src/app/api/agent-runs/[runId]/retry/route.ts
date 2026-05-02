@@ -5,6 +5,7 @@ import {
   retryAgentRunSchema,
   type AgentRunActionResponse,
 } from "@/features/wallie/contracts";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { buildAgentRunActionErrorResponse, buildAgentRunActionResponse } from "@/lib/wallie/http";
 import { processQueuedAgentJobs, retryWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -40,6 +41,14 @@ export async function POST(request: Request, { params }: RetryAgentRunRouteProps
       },
       { status: access.status },
     );
+  }
+
+  const gated = await enforceRateLimit(
+    "agentRuns",
+    `${access.context.workspace.id}:${access.context.user.id}`,
+  );
+  if (gated.response) {
+    return gated.response;
   }
 
   try {

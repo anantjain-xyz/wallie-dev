@@ -6,6 +6,7 @@ import { getGitHubConfigStatus } from "@/features/github/config";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import { getSlackConfigStatus } from "@/features/slack/config";
 import { getSlackInstallationForWorkspace } from "@/features/slack/service";
+import { describeRateLimits } from "@/lib/rate-limit";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -26,8 +27,16 @@ export type WorkspaceUsageData = {
   totalRuns: number;
 };
 
+export type RateLimitDisplay = {
+  endpoint: string;
+  description: string;
+  windowMs: number;
+  max: number;
+};
+
 export type SettingsPageData = {
   agentConfig: AgentConfigMap;
+  rateLimits: RateLimitDisplay[];
   usage: WorkspaceUsageData;
   canManage: boolean;
   currentMember: {
@@ -246,9 +255,17 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     role: m.role as "owner" | "admin" | "member" | "agent",
   }));
 
+  const rateLimits: RateLimitDisplay[] = describeRateLimits().map((entry) => ({
+    description: entry.description,
+    endpoint: entry.endpoint,
+    max: entry.max,
+    windowMs: entry.windowMs,
+  }));
+
   return {
     agentConfig,
     canManage,
+    rateLimits,
     usage,
     currentMember: {
       id: currentMember.id,
