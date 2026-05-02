@@ -4,6 +4,7 @@ import { parseWorkerConfig } from "./config";
 import { deregisterWorker, registerWorker, sendHeartbeat } from "./heartbeat";
 import { pollOnce } from "./loop";
 import { reconcileLinearState } from "./reconciler";
+import { reapOrphanSandboxes } from "./sandbox-reaper";
 import { sweepStalledRuns } from "./stall-detector";
 
 async function main() {
@@ -16,6 +17,7 @@ async function main() {
     heartbeatIntervalMs: config.heartbeatIntervalMs,
     pollIntervalMs: config.pollIntervalMs,
     reconcileIntervalMs: config.reconcileIntervalMs,
+    sandboxReapIntervalMs: config.sandboxReapIntervalMs,
     stallSweepIntervalMs: config.stallSweepIntervalMs,
     workerId: config.workerId,
   });
@@ -66,6 +68,23 @@ async function main() {
     });
   }, config.reconcileIntervalMs);
 
+  // --- Sandbox reaper interval ---
+  // Recovers Vercel sandboxes whose owning agent_run row is missing or
+  // already terminal — the case where a worker crashed mid-stage before the
+  // processor's `finally` could call sandbox.stop(). Independent of the
+  // stall sweep so we still catch sandboxes whose linked run never made it
+  // into the DB.
+  const sandboxReapTimer = setInterval(() => {
+    void reapOrphanSandboxes(admin).then((result) => {
+      if (result.reapedSandboxIds.length > 0) {
+        console.log("[worker] sandbox reap results", {
+          activeProviderCount: result.activeProviderCount,
+          reapedSandboxIds: result.reapedSandboxIds,
+        });
+      }
+    });
+  }, config.sandboxReapIntervalMs);
+
   // --- Main polling loop ---
   console.log("[worker] entering poll loop");
   while (!shuttingDown) {
@@ -92,6 +111,7 @@ async function main() {
   clearInterval(heartbeatTimer);
   clearInterval(stallTimer);
   clearInterval(reconcileTimer);
+  clearInterval(sandboxReapTimer);
 }
 
 function delay(ms: number): Promise<void> {

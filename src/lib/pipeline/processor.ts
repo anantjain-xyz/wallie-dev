@@ -182,6 +182,7 @@ async function runStage(input: {
       model: config.model ?? DEFAULT_AGENT_RUNNER_CONFIG.model ?? "codex",
       provider: resolvedRunner.runner.provider,
       runType: stage.slug,
+      sandboxId: sandbox.id,
       sessionId: session.id,
       workspaceId: session.workspace_id,
     });
@@ -766,6 +767,7 @@ async function createAgentRun(
     model: string;
     provider: string;
     runType: string;
+    sandboxId: string;
     workspaceId: string;
   },
 ): Promise<string | null> {
@@ -776,6 +778,7 @@ async function createAgentRun(
       model_name: input.model,
       model_provider: input.provider,
       run_type: input.runType,
+      sandbox_id: input.sandboxId,
       session_id: input.sessionId,
       started_at: new Date().toISOString(),
       status: "running" as const,
