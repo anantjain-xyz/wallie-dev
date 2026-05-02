@@ -7,6 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { syncGitHubRepositoriesForWorkspace } from "@/features/github/service";
 
 type PullRequestEventPayload = {
+  action: string;
   installation?: {
     id: number;
   };
@@ -31,6 +32,16 @@ type InstallationEventPayload = {
     id: number;
   };
 };
+
+const TRACKED_PR_ACTIONS = new Set([
+  "closed",
+  "converted_to_draft",
+  "edited",
+  "opened",
+  "ready_for_review",
+  "reopened",
+  "synchronize",
+]);
 
 export async function verifyGitHubWebhookRequest(
   payload: string,
@@ -111,65 +122,66 @@ export async function handleGitHubPullRequestEvent(
   payload: PullRequestEventPayload,
   input: Record<string, string | undefined> = process.env,
 ) {
-  if (!payload.installation) {
-    return;
-  }
+  if (!payload.installation) return;
+  if (!TRACKED_PR_ACTIONS.has(payload.action)) return;
+
+  const branchName = payload.pull_request.head.ref;
+  // Only PRs from Wallie-managed branches map back to a session. The pipeline
+  // names them `wallie/<stage-slug>-<sessionId>` (see `buildStageBranchName`
+  // in `lib/pipeline/processor.ts`).
+  if (!branchName.startsWith("wallie/")) return;
 
   const admin = createSupabaseAdminClient(input);
+
   const { data: installation, error: installationError } = await admin
     .from("github_installations")
     .select("id, workspace_id")
     .eq("installation_id", payload.installation.id)
     .maybeSingle();
 
-  if (installationError) {
-    throw installationError;
+  if (installationError) throw installationError;
+  if (!installation) return;
+
+  const { data: repository, error: repositoryError } = await admin
+    .from("github_repositories")
+    .select("id")
+    .eq("github_installation_id", installation.id)
+    .eq("repo_id", payload.repository.id)
+    .maybeSingle();
+
+  if (repositoryError) throw repositoryError;
+
+  // Match by (github_repository_id, pull_request_number) when we know the
+  // repo — that's the durable pair on rows the pipeline already opened.
+  // Fall back to (workspace_id, branch_name) for the brief window between
+  // pipeline-side INSERT and the first webhook delivery (or if the row was
+  // inserted before the repo FK was resolvable).
+  const updates = {
+    github_repository_id: repository?.id ?? null,
+    is_draft: payload.pull_request.draft,
+    pull_request_number: payload.pull_request.number,
+    pull_request_state: payload.pull_request.merged ? "merged" : payload.pull_request.state,
+    pull_request_url: payload.pull_request.html_url,
+  };
+
+  if (repository) {
+    const { data: byPr, error: byPrError } = await admin
+      .from("session_pull_requests")
+      .update(updates)
+      .eq("workspace_id", installation.workspace_id)
+      .eq("github_repository_id", repository.id)
+      .eq("pull_request_number", payload.pull_request.number)
+      .select("id");
+
+    if (byPrError) throw byPrError;
+    if (byPr && byPr.length > 0) return;
   }
 
-  if (!installation) {
-    return;
-  }
+  const { error: byBranchError } = await admin
+    .from("session_pull_requests")
+    .update(updates)
+    .eq("workspace_id", installation.workspace_id)
+    .eq("branch_name", branchName);
 
-  const [{ data: repository, error: repositoryError }, { data: branchRow, error: branchError }] =
-    await Promise.all([
-      admin
-        .from("github_repositories")
-        .select("id")
-        .eq("github_installation_id", installation.id)
-        .eq("repo_id", payload.repository.id)
-        .maybeSingle(),
-      admin
-        .from("github_issue_branches")
-        .select("id, session_id")
-        .eq("workspace_id", installation.workspace_id)
-        .eq("branch_name", payload.pull_request.head.ref)
-        .maybeSingle(),
-    ]);
-
-  if (repositoryError) {
-    throw repositoryError;
-  }
-
-  if (branchError) {
-    throw branchError;
-  }
-
-  if (!branchRow) {
-    return;
-  }
-
-  const { error: branchUpdateError } = await admin
-    .from("github_issue_branches")
-    .update({
-      github_repository_id: repository?.id ?? null,
-      is_draft: payload.pull_request.draft,
-      pull_request_number: payload.pull_request.number,
-      pull_request_state: payload.pull_request.merged ? "merged" : payload.pull_request.state,
-      pull_request_url: payload.pull_request.html_url,
-    })
-    .eq("id", branchRow.id);
-
-  if (branchUpdateError) {
-    throw branchUpdateError;
-  }
+  if (byBranchError) throw byBranchError;
 }

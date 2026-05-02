@@ -166,10 +166,10 @@ async function loadSessionForRun(
 
   // Sessions don't own a repo link directly; derive from the most recent PR
   // branch recorded against this session. The session detail page orders
-  // github_issue_branches newest-first, so matching here keeps the run's
+  // session_pull_requests newest-first, so matching here keeps the run's
   // repo context consistent with what the UI shows. Absent → project mode.
   const { data: branchRow, error: branchError } = await supabase
-    .from("github_issue_branches")
+    .from("session_pull_requests")
     .select("github_repository_id")
     .eq("workspace_id", workspaceId)
     .eq("session_id", sessionId)

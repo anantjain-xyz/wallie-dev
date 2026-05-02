@@ -28,6 +28,13 @@ const mocked = vi.hoisted(() => ({
   loadPipelineWithStages: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
+  openSessionPullRequest: vi.fn().mockResolvedValue({
+    kind: "success",
+    isDraft: false,
+    prNumber: 42,
+    prState: "open",
+    prUrl: "https://github.com/acme/app/pull/42",
+  }),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -51,6 +58,10 @@ vi.mock("./stages", () => ({
   loadStageById: mocked.loadStageById,
   loadPipelineWithStages: mocked.loadPipelineWithStages,
   loadCompletedStageArtifacts: mocked.loadCompletedStageArtifacts,
+}));
+
+vi.mock("./pull-request", () => ({
+  openSessionPullRequest: mocked.openSessionPullRequest,
 }));
 
 vi.mock("@/lib/prompt-templates", () => ({
@@ -304,7 +315,7 @@ function buildAdminMock(opts: MockOptions) {
           order: () => ({
             limit: () => ({
               maybeSingle: async () => ({
-                data: { default_branch: "main", full_name: "acme/app" },
+                data: { default_branch: "main", full_name: "acme/app", id: "repo-1" },
                 error: null,
               }),
             }),
@@ -392,6 +403,53 @@ describe("processPipelineJob (generic stage runner)", () => {
     const flip = updatedSessions.find((u) => u.phase_status === "awaiting_review");
     expect(flip).toBeDefined();
     expect(result.result).toBe("success");
+  });
+
+  it("opens a session pull request after the artifact is persisted", async () => {
+    const session = baseSession();
+    const job = baseJob();
+    const { admin } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+    });
+
+    await processPipelineJob({ admin: admin as never, job });
+
+    expect(mocked.openSessionPullRequest).toHaveBeenCalledTimes(1);
+    const call = mocked.openSessionPullRequest.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.baseBranch).toBe("main");
+    expect(call.repoFullName).toBe("acme/app");
+    expect(call.repoId).toBe("repo-1");
+    expect(call.installationId).toBe(123);
+    expect(call.sessionId).toBe(session.id);
+    expect(call.workspaceId).toBe(session.workspace_id);
+    expect(typeof call.branch).toBe("string");
+    expect((call.branch as string).startsWith("wallie/")).toBe(true);
+    expect((call.branch as string).endsWith(session.id)).toBe(true);
+    expect(call.title).toBe(`${productStage.name}: ${session.title}`);
+    expect(call.body).toContain("Drafted spec body");
+  });
+
+  it("does not abort the stage when opening the pull request fails", async () => {
+    mocked.openSessionPullRequest.mockResolvedValueOnce({
+      kind: "pr_failed",
+      reason: "boom",
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+    });
+
+    const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
+
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(updatedSessions.find((u) => u.phase_status === "awaiting_review")).toBeDefined();
+    expect(mocked.postSlackMessage).toHaveBeenCalledTimes(1);
+    expect(result.result).toBe("success");
+    consoleError.mockRestore();
   });
 
   it("returns success without running the agent when the CAS claim fails (terminal state)", async () => {
