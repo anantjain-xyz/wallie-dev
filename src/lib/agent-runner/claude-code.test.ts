@@ -8,11 +8,24 @@ describe("ClaudeCodeRunner", () => {
   it("has the correct provider name", () => {
     const runner = new ClaudeCodeRunner();
     expect(runner.provider).toBe("claude-code");
+    expect(runner.requiresSandbox).toBe(true);
   });
 
   it("implements the AgentRunner interface", () => {
     const runner = new ClaudeCodeRunner();
     expect(typeof runner.start).toBe("function");
+  });
+
+  it("throws when started without a sandbox", async () => {
+    const runner = new ClaudeCodeRunner();
+    const iter = runner.start({ sessionId: "s", prompt: "p" });
+    await expect(
+      (async () => {
+        for await (const _ of iter) {
+          void _;
+        }
+      })(),
+    ).rejects.toThrow(/requires a sandbox/);
   });
 
   it("streams parsed events and bakes the session id into the completion summary", async () => {

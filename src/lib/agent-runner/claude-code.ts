@@ -11,9 +11,13 @@ const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
  */
 export class ClaudeCodeRunner implements AgentRunner {
   readonly provider = "claude-code";
+  readonly requiresSandbox = true;
 
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
+    if (!sandbox) {
+      throw new Error("ClaudeCodeRunner requires a sandbox.");
+    }
 
     // Vercel Sandbox's runCommand has no stdin support; materialise the prompt
     // as a file and pipe it via bash redirection.

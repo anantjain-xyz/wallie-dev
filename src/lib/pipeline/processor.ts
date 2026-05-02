@@ -120,16 +120,6 @@ async function runStage(input: {
   const config = await loadAgentConfig(admin, session.workspace_id);
   const provider = normalizeAgentProvider(config.provider);
 
-  const github = await loadGitHubContext(admin, session.workspace_id);
-  if (!github) {
-    await markPipelineJobError(
-      admin,
-      job,
-      "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
-    );
-    return { jobId: job.id, processed: true, result: "error", runId: null };
-  }
-
   // Pull artifacts from completed prior stages so the prompt can reference
   // them via {{artifact.previousStages.<slug>}}.
   const previousStages = await loadCompletedStageArtifacts(admin, session.id);
@@ -159,17 +149,32 @@ async function runStage(input: {
       provider,
       session,
     });
-    const installationToken = await mintInstallationToken(github.installationId);
-    const branch = buildStageBranchName(session.id, stage.slug);
-    sandbox = await createSessionSandbox({
-      agentProvider: provider,
-      baseBranch: github.repo.default_branch ?? "main",
-      branch,
-      codexAccessToken: resolvedRunner.codexAccessToken,
-      installationToken,
-      repoFullName: github.repo.full_name,
-      sessionId: session.id,
-    });
+
+    // Sandbox-needing runners (codex, claude-code) require a GitHub repo to
+    // clone. Text-only runners (anthropic-api) skip both — saving the
+    // sandbox-spawn latency that the issue called out.
+    if (resolvedRunner.runner.requiresSandbox) {
+      const github = await loadGitHubContext(admin, session.workspace_id);
+      if (!github) {
+        await markPipelineJobError(
+          admin,
+          job,
+          "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
+        );
+        return { jobId: job.id, processed: true, result: "error", runId: null };
+      }
+      const installationToken = await mintInstallationToken(github.installationId);
+      const branch = buildStageBranchName(session.id, stage.slug);
+      sandbox = await createSessionSandbox({
+        agentProvider: provider,
+        baseBranch: github.repo.default_branch ?? "main",
+        branch,
+        codexAccessToken: resolvedRunner.codexAccessToken,
+        installationToken,
+        repoFullName: github.repo.full_name,
+        sessionId: session.id,
+      });
+    }
 
     runId = await createAgentRun(admin, {
       jobId: job.id,
@@ -185,7 +190,7 @@ async function runStage(input: {
     for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,
-      sandbox,
+      sandbox: sandbox ?? undefined,
       sessionId: session.id,
     })) {
       if (runId) {
@@ -608,19 +613,33 @@ async function loadAgentConfig(
 
 function normalizeAgentProvider(provider: string | undefined): AgentProvider {
   const normalized = (provider ?? DEFAULT_AGENT_RUNNER_CONFIG.provider).replace(/_/g, "-");
-  if (normalized === "codex" || normalized === "claude-code") {
+  if (normalized === "codex" || normalized === "claude-code" || normalized === "anthropic-api") {
     return normalized;
   }
   throw new Error(
-    `Unknown agent provider: "${provider}". Supported: codex, claude-code, claude_code`,
+    `Unknown agent provider: "${provider}". Supported: codex, claude-code, claude_code, anthropic-api, anthropic_api`,
   );
+}
+
+async function loadAnthropicApiKey(
+  admin: AdminClient,
+  workspaceId: string,
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from("workspace_secrets")
+    .select("encrypted_value")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "ANTHROPIC_API_KEY")
+    .maybeSingle();
+  if (error) return null;
+  return data ? decryptSecretValue(data.encrypted_value) : null;
 }
 
 async function resolveAgentRunner(input: {
   admin: AdminClient;
   model?: string;
   provider: AgentProvider;
-  session: Pick<SessionRow, "creator_member_id">;
+  session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
 }): Promise<{ codexAccessToken?: string; runner: AgentRunner }> {
   if (input.provider === "codex") {
     try {
@@ -637,6 +656,20 @@ async function resolveAgentRunner(input: {
       }
       throw error;
     }
+  }
+
+  if (input.provider === "anthropic-api") {
+    const apiKey = await loadAnthropicApiKey(input.admin, input.session.workspace_id);
+    if (!apiKey) {
+      throw new Error(
+        "anthropic-api provider requires ANTHROPIC_API_KEY in workspace secrets. Add it under Settings → Integrations → Anthropic.",
+      );
+    }
+    return {
+      runner: createAgentRunner("anthropic-api", {
+        anthropic: { apiKey, model: input.model },
+      }),
+    };
   }
 
   return { runner: createAgentRunner(input.provider) };

@@ -172,6 +172,10 @@ interface MockOptions {
   claimSucceeds?: boolean;
   artifactInsertError?: { message: string } | null;
   pointerUpdateError?: { message: string } | null;
+  /** Map of `key` → encrypted_value returned from `workspace_secrets`. */
+  workspaceSecrets?: Record<string, string>;
+  /** When set, github_installations.maybeSingle returns this row. Default: a row exists. */
+  githubInstallation?: { id: string; installation_id: number } | null;
 }
 
 function buildAdminMock(opts: MockOptions) {
@@ -284,15 +288,26 @@ function buildAdminMock(opts: MockOptions) {
   const workspaceSecretsTable = {
     select: () => ({
       eq: () => ({
-        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+        eq: (_col: string, key: string) => ({
+          maybeSingle: async () => ({
+            data: opts.workspaceSecrets?.[key]
+              ? { encrypted_value: opts.workspaceSecrets[key] }
+              : null,
+            error: null,
+          }),
+        }),
       }),
     }),
   } as const;
 
+  const githubInstallation =
+    opts.githubInstallation === undefined
+      ? { id: "ghi-1", installation_id: 123 }
+      : opts.githubInstallation;
   const githubInstallationsTable = {
     select: () => ({
       eq: () => ({
-        maybeSingle: async () => ({ data: { id: "ghi-1", installation_id: 123 }, error: null }),
+        maybeSingle: async () => ({ data: githubInstallation, error: null }),
       }),
     }),
   } as const;
@@ -340,9 +355,13 @@ function buildAdminMock(opts: MockOptions) {
 
 // ---- agent-runner mock --------------------------------------------------
 
-function makeRunner(events: AgentEvent[]): AgentRunner {
+function makeRunner(
+  events: AgentEvent[],
+  opts: { provider?: string; requiresSandbox?: boolean } = {},
+): AgentRunner {
   return {
-    provider: "claude-code",
+    provider: opts.provider ?? "claude-code",
+    requiresSandbox: opts.requiresSandbox ?? true,
     async *start() {
       for (const event of events) yield event;
     },
@@ -404,6 +423,55 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
     expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
     expect(result.result).toBe("success");
+  });
+
+  it("skips sandbox + GitHub provisioning when the runner is anthropic-api", async () => {
+    const session = baseSession();
+    const job = baseJob();
+    const { admin, insertedArtifacts } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+      agentConfig: [{ key: "agent_provider", value_json: "anthropic_api" }],
+      workspaceSecrets: { ANTHROPIC_API_KEY: "sk-ant-…" },
+      // Even with no GitHub install, anthropic-api should still run.
+      githubInstallation: null,
+    });
+
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner(
+        [
+          { type: "text", text: "Hello from API" },
+          { type: "completion", taskComplete: true, summary: "Done" },
+        ],
+        { provider: "anthropic-api", requiresSandbox: false },
+      ),
+    );
+
+    const result = await processPipelineJob({ admin: admin as never, job });
+
+    expect(result.result).toBe("success");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith(
+      "anthropic-api",
+      expect.objectContaining({ anthropic: expect.objectContaining({ apiKey: "sk-ant-…" }) }),
+    );
+    expect(insertedArtifacts).toHaveLength(1);
+    expect((insertedArtifacts[0] as { artifact_json: string }).artifact_json).toContain(
+      "Hello from API",
+    );
+  });
+
+  it("errors when anthropic-api is selected but ANTHROPIC_API_KEY is missing", async () => {
+    const session = baseSession();
+    const { admin } = buildAdminMock({
+      session,
+      slackInstall: { bot_token_encrypted: "tok" },
+      agentConfig: [{ key: "agent_provider", value_json: "anthropic_api" }],
+      workspaceSecrets: {},
+    });
+    const result = await processPipelineJob({ admin: admin as never, job: baseJob() });
+    expect(result.result).toBe("error");
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
   });
 
   it("errors out cleanly when the workspace has no Slack installation", async () => {

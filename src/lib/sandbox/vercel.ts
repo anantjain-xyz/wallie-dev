@@ -147,10 +147,7 @@ async function runSetup(
       ? `checkout -B ${shellQuote(input.branch)}`
       : `checkout ${shellQuote(input.branch)}`;
 
-  const installCmd =
-    input.agentProvider === "codex"
-      ? "npm install -g @openai/codex"
-      : "npm install -g @anthropic-ai/claude-code";
+  const installCmd = resolveAgentCliInstall(input.agentProvider);
 
   // Single shell invocation: configure git identity + credential helper + CLI install.
   // Credentials: the clone URL already embeds `x-access-token:$GH_TOKEN`, so
@@ -177,6 +174,20 @@ async function runSetup(
     throw new Error(
       `Sandbox setup failed (exit ${code}): ${stderr.join("").slice(0, 500) || "(no stderr)"}`,
     );
+  }
+}
+
+function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvider"]): string {
+  switch (provider) {
+    case "codex":
+      return "npm install -g @openai/codex";
+    case "claude-code":
+      return "npm install -g @anthropic-ai/claude-code";
+    case "anthropic-api":
+      // No CLI to install — runner calls the Messages API directly.
+      // Pipeline normally skips sandbox provisioning for this provider; this
+      // branch only fires if a caller explicitly requests a sandbox anyway.
+      return "true";
   }
 }
 

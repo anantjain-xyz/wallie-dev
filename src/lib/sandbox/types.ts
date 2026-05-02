@@ -61,7 +61,7 @@ export interface SandboxHandle {
 // Factory input
 // ---------------------------------------------------------------------------
 
-export type AgentProvider = "codex" | "claude-code";
+export type AgentProvider = "codex" | "claude-code" | "anthropic-api";
 
 export type SandboxCheckoutMode =
   /** Clone baseBranch and create a new `branch` from it (default). */
