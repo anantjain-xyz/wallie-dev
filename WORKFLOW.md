@@ -34,7 +34,7 @@ hooks:
   after_create: |
     git clone "$REPO_URL" .
     git checkout -B "${ISSUE_BRANCH:-symphony/${ISSUE_IDENTIFIER}}"
-    eval "${SYMPHONY_INSTALL_CMD:-npm ci}"
+    eval "${SYMPHONY_INSTALL_CMD:-pnpm install --frozen-lockfile}"
   before_run: |
     echo "starting attempt for ${ISSUE_IDENTIFIER}"
   after_run: |
@@ -111,7 +111,7 @@ You are working on issue **{{identifier}}: {{title}}**.
 - Current state: {{state}}
 - Branch: {{branch}}
 - Labels: {{#labels.length}}{{#labels}}{{.}} {{/labels}}{{/labels.length}}
-{{#description}}
+  {{#description}}
 
 ## Description
 
@@ -122,9 +122,10 @@ You are working on issue **{{identifier}}: {{title}}**.
 ## Blockers
 
 {{#blockers}}
+
 - {{.}}
-{{/blockers}}
-{{/blockers.length}}
+  {{/blockers}}
+  {{/blockers.length}}
 
 ## Instructions
 
@@ -137,16 +138,16 @@ You are working on issue **{{identifier}}: {{title}}**.
 
 Repeatable mechanics live under `.agents/skills/<name>/SKILL.md` (the canonical, runner-agnostic location; `.claude/skills/<name>` are symlinks Claude Code uses for auto-discovery). Reach for them by name — your runner will surface the right one on demand:
 
-| Skill | Use when |
-|---|---|
-| `workpad` | finding, bootstrapping, updating, or resetting the Symphony Workpad on a Linear issue |
-| `pull` | syncing the branch with `origin/main` and resolving conflicts |
-| `commit` | creating a well-formed git commit from staged changes |
-| `push` | pushing the branch and ensuring a PR exists with the `symphony` label |
-| `pr-feedback` | sweeping the PR for actionable reviewer feedback before `In Review` |
-| `land` | squash-merging the PR once approved and green (entered via `Merging`) |
+| Skill         | Use when                                                                              |
+| ------------- | ------------------------------------------------------------------------------------- |
+| `workpad`     | finding, bootstrapping, updating, or resetting the Symphony Workpad on a Linear issue |
+| `pull`        | syncing the branch with `origin/main` and resolving conflicts                         |
+| `commit`      | creating a well-formed git commit from staged changes                                 |
+| `push`        | pushing the branch and ensuring a PR exists with the `symphony` label                 |
+| `pr-feedback` | sweeping the PR for actionable reviewer feedback before `In Review`                   |
+| `land`        | squash-merging the PR once approved and green (entered via `Merging`)                 |
 
-This workflow tells you *which* skill applies at each step; the skill body has the exact commands and gotchas. Don't re-derive what's already in a skill.
+This workflow tells you _which_ skill applies at each step; the skill body has the exact commands and gotchas. Don't re-derive what's already in a skill.
 
 ## Environment
 
@@ -155,7 +156,7 @@ Facts about this run — do not waste turns rediscovering them.
 - **Linear**: the Linear MCP server is the primary path — use its tools (`mcp__linear-server__*`) directly. If — and only if — no Linear MCP tools appear in your environment, fall back to the HTTP API: `curl -fsS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" https://api.linear.app/graphql -d '{"query":"..."}'`. `$LINEAR_API_KEY` is always present. Do not spend turns probing — one of these two paths is configured.
 - **Linear MCP gotchas**: `mcp__linear-server__save_comment` with a `commentId` creates a NEW comment instead of updating in place — see the `workpad` skill for the GraphQL `commentUpdate` workaround. `mcp__linear-server__create_attachment` only accepts file uploads (base64); for URL attachments (e.g., a PR link), the auto-link from `git push` usually suffices, otherwise use `attachmentLinkCreate` / `attachmentLinkGitHubPR` via GraphQL.
 - **GitHub**: `gh` CLI is authenticated. `gh pr edit --add-label` currently 500s with a Projects-classic GraphQL deprecation — the `push` skill applies the `symphony` label via REST.
-- **Workspace**: already `cd`'d into `$TMPDIR/symphony-workspaces/<IDENTIFIER>/`; branch is checked out; `npm ci` already ran via `after_create`. The `.symphony-workspace-ready` file at the workspace root is the init sentinel — ignore it in `git status` and never `git add` it.
+- **Workspace**: already `cd`'d into `$TMPDIR/symphony-workspaces/<IDENTIFIER>/`; branch is checked out; `pnpm install --frozen-lockfile` already ran via `after_create`. The `.symphony-workspace-ready` file at the workspace root is the init sentinel — ignore it in `git status` and never `git add` it.
 - **Deferred tools you will likely need**: load in a single call — `ToolSearch("select:TodoWrite,WebFetch")`. Do not make multiple discovery queries.
 
 ## Attempt N > 1 fast-path
@@ -180,16 +181,16 @@ If this is a retry (attempt number > 1 or the workpad already exists), do these 
 
 Route on the issue's current state. Before routing, check whether the branch PR exists and its status (affects pre-merge states only).
 
-| State | Action |
-|---|---|
-| `Backlog` | Do not modify. Shut down. |
-| `Todo` | Move to `In Progress`, bootstrap workpad (`workpad` skill), run Step 1. If a PR is already attached: check `gh pr view --json mergeable,mergeStateStatus` first — a `CONFLICTING`/`DIRTY` PR is the most common reason for a Todo redispatch and the conflicts MUST be resolved (`pull` skill) before anything else. Then run the `pr-feedback` sweep before new work. |
-| `In Progress` | Continue Step 1 from existing workpad. |
-| `In Review` | Do not change code or content. Wait/poll for review decision. |
-| `Merging` (PR already `MERGED`) | Skip land procedure; record merge SHA in workpad; move to `Done`. |
-| `Merging` (any other PR state) | Run the `land` skill. |
-| `Rework` | Run Step 3 (full reset). |
-| `Done` | Shut down. |
+| State                           | Action                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Backlog`                       | Do not modify. Shut down.                                                                                                                                                                                                                                                                                                                                              |
+| `Todo`                          | Move to `In Progress`, bootstrap workpad (`workpad` skill), run Step 1. If a PR is already attached: check `gh pr view --json mergeable,mergeStateStatus` first — a `CONFLICTING`/`DIRTY` PR is the most common reason for a Todo redispatch and the conflicts MUST be resolved (`pull` skill) before anything else. Then run the `pr-feedback` sweep before new work. |
+| `In Progress`                   | Continue Step 1 from existing workpad.                                                                                                                                                                                                                                                                                                                                 |
+| `In Review`                     | Do not change code or content. Wait/poll for review decision.                                                                                                                                                                                                                                                                                                          |
+| `Merging` (PR already `MERGED`) | Skip land procedure; record merge SHA in workpad; move to `Done`.                                                                                                                                                                                                                                                                                                      |
+| `Merging` (any other PR state)  | Run the `land` skill.                                                                                                                                                                                                                                                                                                                                                  |
+| `Rework`                        | Run Step 3 (full reset).                                                                                                                                                                                                                                                                                                                                               |
+| `Done`                          | Shut down.                                                                                                                                                                                                                                                                                                                                                             |
 
 **Branch-PR-closed guard** (pre-merge states only — `Todo`/`In Progress`/`Rework`): if the branch's PR is `CLOSED` or `MERGED`, prior branch work is non-reusable. Fresh branch from `origin/main`, restart from Step 1.
 
