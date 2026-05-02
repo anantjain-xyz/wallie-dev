@@ -43,7 +43,9 @@ function makeOctokitWithSequence(responses: Array<unknown | Error>) {
   return { calls, request };
 }
 
-type GithubAppFactory = NonNullable<Parameters<typeof openSessionPullRequest>[0]["githubAppFactory"]>;
+type GithubAppFactory = NonNullable<
+  Parameters<typeof openSessionPullRequest>[0]["githubAppFactory"]
+>;
 
 function makeAppFactory(octokit: { request: unknown }): GithubAppFactory {
   return () =>
@@ -59,10 +61,7 @@ function scriptHappyPathSandbox(sandbox: FakeSandbox) {
     [{ stream: "stdout", data: "1\n" }],
   );
   // git push --force-with-lease origin <branch> → exit 0.
-  sandbox.scriptExec(
-    (call) => call.cmd === "bash" && call.args.join(" ").includes("git push"),
-    [],
-  );
+  sandbox.scriptExec((call) => call.cmd === "bash" && call.args.join(" ").includes("git push"), []);
 }
 
 const baseInput = {

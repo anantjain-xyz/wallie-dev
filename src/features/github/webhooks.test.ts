@@ -101,7 +101,15 @@ const env = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
 };
 
-function payload(action: string, overrides: Partial<{ ref: string; merged: boolean; state: "open" | "closed"; draft: boolean }> = {}) {
+function payload(
+  action: string,
+  overrides: Partial<{
+    ref: string;
+    merged: boolean;
+    state: "open" | "closed";
+    draft: boolean;
+  }> = {},
+) {
   return {
     action,
     installation: { id: 999 },

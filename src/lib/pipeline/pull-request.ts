@@ -10,10 +10,7 @@ import type { SandboxHandle } from "@/lib/sandbox/types";
 type AdminClient = SupabaseClient<Database>;
 
 type InstallationOctokit = {
-  request: <T = unknown>(
-    route: string,
-    params?: Record<string, unknown>,
-  ) => Promise<{ data: T }>;
+  request: <T = unknown>(route: string, params?: Record<string, unknown>) => Promise<{ data: T }>;
 };
 
 type GitHubAppLike = {
@@ -126,10 +123,7 @@ export async function openSessionPullRequest(
   };
 }
 
-async function branchHasCommitsAhead(
-  sandbox: SandboxHandle,
-  baseBranch: string,
-): Promise<boolean> {
+async function branchHasCommitsAhead(sandbox: SandboxHandle, baseBranch: string): Promise<boolean> {
   // `git rev-list base..HEAD --count` prints the number of commits on HEAD
   // that aren't on base. Output is a single line with a non-negative integer.
   const proc = await sandbox.exec("bash", [
@@ -148,10 +142,7 @@ async function branchHasCommitsAhead(
   return Number.isFinite(count) && count > 0;
 }
 
-async function pushSandboxBranch(
-  sandbox: SandboxHandle,
-  branch: string,
-): Promise<string | null> {
+async function pushSandboxBranch(sandbox: SandboxHandle, branch: string): Promise<string | null> {
   // --force-with-lease is safe both ways: on a fresh branch the upstream is
   // empty so the lease is trivially satisfied; on a stage retry the prior
   // run's commits get cleanly overwritten by this run's commits without
