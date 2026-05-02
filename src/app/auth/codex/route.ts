@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { normalizeNextPath, resolveAuthenticatedSettingsPath } from "@/lib/auth";
-import { isLocalDev } from "@/env/deploy";
 import {
   CODEX_OAUTH_COOKIE,
   CODEX_OAUTH_COOKIE_MAX_AGE,
   buildCodexAuthorizeUrl,
   generatePkcePair,
   generateState,
+  shouldUseSecureCookies,
 } from "@/lib/codex/oauth";
 import { loginPath } from "@/lib/routes";
 import { encryptSecretValue } from "@/lib/secrets/crypto";
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
   response.cookies.set(CODEX_OAUTH_COOKIE, cookieValue, {
     httpOnly: true,
     sameSite: "lax",
-    secure: !isLocalDev(),
+    secure: shouldUseSecureCookies(),
     path: "/",
     maxAge: CODEX_OAUTH_COOKIE_MAX_AGE,
   });

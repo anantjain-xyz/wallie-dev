@@ -1,11 +1,32 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 
 const algorithm = "aes-256-gcm";
 const ivByteLength = 12;
-const version = "v1";
+const keyByteLength = 32;
+const currentVersion = "v2";
 
-function deriveEncryptionKey(secret: string) {
+// HKDF parameters are part of the v2 ciphertext contract — changing either
+// value would make every existing v2 row undecryptable. Add a v3 instead.
+const hkdfSalt = Buffer.from("wallie/secret-encryption/v2/salt");
+const hkdfInfo = Buffer.from("wallie/secret-encryption/aes-256-gcm/v2");
+
+function deriveV1Key(secret: string) {
   return createHash("sha256").update(secret).digest();
+}
+
+function deriveV2Key(secret: string) {
+  return Buffer.from(hkdfSync("sha256", secret, hkdfSalt, hkdfInfo, keyByteLength));
+}
+
+function deriveKeyForVersion(version: string, secret: string) {
+  switch (version) {
+    case "v1":
+      return deriveV1Key(secret);
+    case "v2":
+      return deriveV2Key(secret);
+    default:
+      throw new Error("Encrypted secret payload is invalid.");
+  }
 }
 
 function encodePart(value: Buffer) {
@@ -40,13 +61,13 @@ export function encryptSecretValue(
   plaintext: string,
   input: Record<string, string | undefined> = process.env,
 ) {
-  const key = deriveEncryptionKey(getEncryptionSecret(input));
+  const key = deriveKeyForVersion(currentVersion, getEncryptionSecret(input));
   const iv = randomBytes(ivByteLength);
   const cipher = createCipheriv(algorithm, key, iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
 
-  return [version, encodePart(iv), encodePart(ciphertext), encodePart(authTag)].join(".");
+  return [currentVersion, encodePart(iv), encodePart(ciphertext), encodePart(authTag)].join(".");
 }
 
 export function decryptSecretValue(
@@ -55,11 +76,11 @@ export function decryptSecretValue(
 ) {
   const [encodedVersion, encodedIv, encodedCiphertext, encodedAuthTag] = encrypted.split(".");
 
-  if (encodedVersion !== version || !encodedIv || !encodedCiphertext || !encodedAuthTag) {
+  if (!encodedVersion || !encodedIv || !encodedCiphertext || !encodedAuthTag) {
     throw new Error("Encrypted secret payload is invalid.");
   }
 
-  const key = deriveEncryptionKey(getEncryptionSecret(input));
+  const key = deriveKeyForVersion(encodedVersion, getEncryptionSecret(input));
   const decipher = createDecipheriv(algorithm, key, decodePart(encodedIv));
   decipher.setAuthTag(decodePart(encodedAuthTag));
 
