@@ -7,7 +7,7 @@ const validEnv = {
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "publishable-key",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SECRET_KEY: "secret-key",
-  WALLIE_ENCRYPTION_KEY: "12345678901234567890123456789012",
+  WALLIE_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 };
 
 describe("parseServerEnv", () => {
@@ -37,5 +37,32 @@ describe("parseServerEnv", () => {
         WALLIE_ENCRYPTION_KEY: "short",
       }),
     ).toThrow();
+  });
+
+  it("rejects 32-character human-typed phrases that are not hex or base64", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validEnv,
+        WALLIE_ENCRYPTION_KEY: "this is my super secret pass!!!!",
+      }),
+    ).toThrow(/hex-encoded|base64-encoded/);
+  });
+
+  it("rejects 32-hex-char keys (only 16 bytes of entropy)", () => {
+    expect(() =>
+      parseServerEnv({
+        ...validEnv,
+        WALLIE_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef",
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a base64-encoded 32-byte key", () => {
+    expect(
+      parseServerEnv({
+        ...validEnv,
+        WALLIE_ENCRYPTION_KEY: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      }).WALLIE_ENCRYPTION_KEY,
+    ).toBe("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
   });
 });
