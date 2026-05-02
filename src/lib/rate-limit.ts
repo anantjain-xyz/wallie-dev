@@ -143,8 +143,24 @@ function buildUpstashLimiter(url: string, token: string): RateLimiter {
           ["PEXPIRE", redisKey, String(config.windowMs * 2)],
         ]);
 
+        // Upstash returns HTTP 200 even when individual pipeline commands fail
+        // (e.g. WRONGTYPE on a stale key). Surface those as a backend error so
+        // the catch below logs and fails open explicitly instead of treating
+        // the missing result as a count of 0, which would silently bypass the
+        // limiter for every subsequent request.
+        for (const [index, entry] of results.entries()) {
+          if (entry?.error) {
+            throw new Error(`Upstash pipeline command ${index} failed: ${entry.error}`);
+          }
+        }
+
         const cardResult = results[2]?.result;
-        const count = typeof cardResult === "number" ? cardResult : Number(cardResult ?? 0);
+        if (typeof cardResult !== "number") {
+          throw new Error(
+            `Upstash ZCARD returned unexpected ${typeof cardResult}: ${JSON.stringify(cardResult)}`,
+          );
+        }
+        const count = cardResult;
 
         if (count <= config.max) {
           return {
