@@ -26,10 +26,15 @@ export const AGENT_CONFIG_LIMITS = {
  * that a new model release like `claude-sonnet-4-7` works without a code
  * change. The Verify button (which actually hits the provider) is the
  * authoritative reachability check.
+ *
+ * Lowercase-only: provider model IDs are always lowercase in practice, and
+ * the matching DB CHECK uses case-sensitive `LIKE`. Rejecting uppercase here
+ * keeps UI / API / DB validation aligned so a value can't pass the UI gate
+ * and then fail the DB constraint with a 500.
  */
 const ANTHROPIC_MODEL_PREFIX = "claude-";
 const CODEX_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"] as const;
-const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/i;
+const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
 const intInRange = (label: string, min: number, max: number) =>
   z
@@ -70,7 +75,7 @@ const agentModelSchema = z
   .max(100, "Model must be 100 characters or fewer.")
   .regex(
     AGENT_MODEL_BODY_PATTERN,
-    "Model may only contain letters, numbers, dots, dashes, and underscores.",
+    "Model may only contain lowercase letters, numbers, dots, dashes, and underscores.",
   )
   .refine(
     (model) => modelMatchesAnyProvider(model),
@@ -78,9 +83,9 @@ const agentModelSchema = z
   );
 
 function modelMatchesAnyProvider(model: string): boolean {
-  const lowered = model.trim().toLowerCase();
-  if (lowered.startsWith(ANTHROPIC_MODEL_PREFIX)) return true;
-  return CODEX_MODEL_PREFIXES.some((prefix) => lowered.startsWith(prefix));
+  const trimmed = model.trim();
+  if (trimmed.startsWith(ANTHROPIC_MODEL_PREFIX)) return true;
+  return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
 export const agentConfigValueSchemas = {
@@ -128,7 +133,7 @@ export function isAgentProvider(value: unknown): value is AgentProvider {
  * it to surface a helpful inline warning.
  */
 export function modelMatchesProvider(provider: AgentProvider, model: string): boolean {
-  const trimmed = model.trim().toLowerCase();
+  const trimmed = model.trim();
   if (!trimmed) return false;
   switch (provider) {
     case "anthropic_api":

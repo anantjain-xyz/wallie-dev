@@ -181,7 +181,10 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
   }
 }
 
-type AgentConfigVerifyResult = { kind: "ok" } | { kind: "error"; message: string };
+type AgentConfigVerifyResult =
+  | { kind: "ok" }
+  | { kind: "error"; message: string }
+  | { kind: "skipped"; reason: string };
 
 function parseDraftForKey(
   configKey: AgentConfigKey,
@@ -307,11 +310,19 @@ function AgentConfigField({
       {verifyResult ? (
         <p
           className={`text-xs leading-5 ${
-            verifyResult.kind === "ok" ? "text-success" : "text-danger"
+            verifyResult.kind === "ok"
+              ? "text-success"
+              : verifyResult.kind === "skipped"
+                ? "text-muted"
+                : "text-danger"
           }`}
           role="status"
         >
-          {verifyResult.kind === "ok" ? "✓ Reachable" : `✗ ${verifyResult.message}`}
+          {verifyResult.kind === "ok"
+            ? "✓ Reachable"
+            : verifyResult.kind === "skipped"
+              ? `ⓘ ${verifyResult.reason}`
+              : `✗ ${verifyResult.message}`}
         </p>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
@@ -832,8 +843,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         return { kind: "error", message: "Empty response from verify endpoint." };
       }
 
-      if (payload.ok) {
+      if (payload.ok === true) {
         return { kind: "ok" };
+      }
+
+      if (payload.ok === "skipped") {
+        return { kind: "skipped", reason: payload.reason };
       }
 
       return { kind: "error", message: payload.error };

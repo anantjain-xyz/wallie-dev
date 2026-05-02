@@ -170,6 +170,17 @@ describe("parseAgentConfigValue — agent_model", () => {
       error: expect.stringContaining("letters, numbers"),
     });
   });
+
+  it("rejects uppercase model ids so the DB CHECK can't desync from the schema", () => {
+    expect(parseAgentConfigValue("agent_model", "GPT-5-codex")).toEqual({
+      ok: false,
+      error: expect.stringContaining("lowercase"),
+    });
+    expect(parseAgentConfigValue("agent_model", "Claude-Sonnet-4-5")).toEqual({
+      ok: false,
+      error: expect.stringContaining("lowercase"),
+    });
+  });
 });
 
 describe("modelMatchesProvider", () => {
@@ -183,6 +194,11 @@ describe("modelMatchesProvider", () => {
     expect(modelMatchesProvider("codex", "gpt-5-codex")).toBe(true);
     expect(modelMatchesProvider("codex", "o3-mini")).toBe(true);
     expect(modelMatchesProvider("codex", "claude-sonnet-4-5")).toBe(false);
+  });
+
+  it("does not match uppercase-prefixed model ids — schema and DB CHECK both require lowercase", () => {
+    expect(modelMatchesProvider("anthropic_api", "Claude-Sonnet-4-5")).toBe(false);
+    expect(modelMatchesProvider("codex", "GPT-5-codex")).toBe(false);
   });
 });
 

@@ -188,6 +188,39 @@ describe("POST /api/agent-config/verify — anthropic", () => {
   });
 });
 
+describe("POST /api/agent-config/verify — claude_code (sandbox CLI)", () => {
+  it("returns ok:'skipped' without touching ANTHROPIC_API_KEY or the access check", async () => {
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+
+    const response = await POST(
+      postWith({
+        workspaceId: WORKSPACE_ID,
+        provider: "claude_code",
+        model: "claude-sonnet-4-5",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { ok: unknown; reason?: string };
+    expect(payload.ok).toBe("skipped");
+    expect(payload.reason).toMatch(/sandbox/i);
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("still rejects model/provider mismatches before skipping", async () => {
+    const response = await POST(
+      postWith({ workspaceId: WORKSPACE_ID, provider: "claude_code", model: "gpt-5-codex" }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { ok: unknown; error?: string };
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatch(/claude-/);
+  });
+});
+
 describe("POST /api/agent-config/verify — codex", () => {
   it("explains when Codex isn't connected", async () => {
     grantAccess();

@@ -23,7 +23,20 @@ const requestSchema = z.object({
     .max(100, "Model must be 100 characters or fewer."),
 });
 
-export type VerifyAgentConfigResponse = { ok: true } | { ok: false; error: string };
+/**
+ * Verify supports three outcomes:
+ *   - `{ ok: true }`              — provider accepted a 1-token call.
+ *   - `{ ok: false, error }`      — provider rejected, secrets missing, etc.
+ *   - `{ ok: "skipped", reason }` — reachability is not checkable here. Used
+ *     for `claude_code`, which runs the `claude` CLI in a per-session sandbox
+ *     at pipeline time and does NOT use workspace ANTHROPIC_API_KEY. Routing
+ *     it through verifyAnthropic gave false negatives that told users to add
+ *     credentials the runtime never reads.
+ */
+export type VerifyAgentConfigResponse =
+  | { ok: true }
+  | { ok: false; error: string }
+  | { ok: "skipped"; reason: string };
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -53,6 +66,20 @@ export async function POST(request: Request) {
     );
   }
 
+  // claude_code runs the `claude` CLI in a sandbox; it does not use the
+  // workspace ANTHROPIC_API_KEY. Short-circuit before the access check so we
+  // don't pretend we verified anything we can't actually verify here.
+  if (provider === "claude_code") {
+    return NextResponse.json(
+      {
+        ok: "skipped",
+        reason:
+          "Claude Code runs the `claude` CLI inside a per-session sandbox. The model name is checked against the schema, and the CLI is exercised when the pipeline actually runs.",
+      } satisfies VerifyAgentConfigResponse,
+      { status: 200 },
+    );
+  }
+
   const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
   if (!access.ok) {
     return NextResponse.json({ error: access.error }, { status: access.status });
@@ -60,7 +87,6 @@ export async function POST(request: Request) {
 
   switch (provider) {
     case "anthropic_api":
-    case "claude_code":
       return verifyAnthropic(access.context.workspace.id, model);
     case "codex":
       return verifyCodex(access.context.user.id, model);
