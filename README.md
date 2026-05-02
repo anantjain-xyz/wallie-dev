@@ -350,7 +350,7 @@ Fill in the required values. Integration variables can be left blank until you c
 | `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                          |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                       |
 | `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                             |
-| `WALLIE_ENCRYPTION_KEY`                | Yes      | 32+ character secret used for AES-256 at-rest encryption of workspace secrets         |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption      |
 | `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it  |
 | `SLACK_CLIENT_ID`                      | Slack    | Slack app "Basic Information" -> "App Credentials"                                    |
 | `SLACK_CLIENT_SECRET`                  | Slack    | Same panel                                                                            |

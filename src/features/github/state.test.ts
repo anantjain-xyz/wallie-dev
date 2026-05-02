@@ -13,7 +13,7 @@ const testEnv = {
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "supabase-publishable-key",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SECRET_KEY: "secret-key",
-  WALLIE_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef",
+  WALLIE_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 };
 
 describe("github install state", () => {
