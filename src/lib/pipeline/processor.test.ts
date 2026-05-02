@@ -593,7 +593,7 @@ describe("handleApproval", () => {
 describe("handleRejection", () => {
   function buildRejectionAdmin(opts: {
     session: Tables<"sessions">;
-    feedbackInsertError?: { message: string } | null;
+    feedbackInsertError?: { message: string; code?: string } | null;
   }) {
     const insertedFeedback: Array<Record<string, unknown>> = [];
     const updatedSessions: Array<Record<string, unknown>> = [];
@@ -691,7 +691,7 @@ describe("handleRejection", () => {
     expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeDefined();
   });
 
-  it("aborts the rejection when the feedback insert fails (e.g., duplicate-key from a concurrent rejection)", async () => {
+  it("treats a 23505 feedback insert as idempotent so a retry after a prior enqueue failure can still flip phase_status and recover the session", async () => {
     const session = baseSession({
       phase_status: "awaiting_review",
       current_artifact_version: 1,
@@ -699,7 +699,10 @@ describe("handleRejection", () => {
     });
     const { admin, updatedSessions } = buildRejectionAdmin({
       session,
-      feedbackInsertError: { message: "duplicate key value violates unique constraint" },
+      feedbackInsertError: {
+        code: "23505",
+        message: "duplicate key value violates unique constraint",
+      },
     });
 
     const result = await handleRejection({
@@ -710,9 +713,34 @@ describe("handleRejection", () => {
       version: 1,
     });
 
+    expect(result.success).toBe(true);
+    expect(result.escalated).toBe(false);
+    // Existing feedback row is canonical; the retry must still advance the
+    // session — otherwise rejection_count is bumped with nothing queued.
+    expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeDefined();
+  });
+
+  it("aborts the rejection when the feedback insert fails with a non-23505 error", async () => {
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+      rejection_count: 0,
+    });
+    const { admin, updatedSessions } = buildRejectionAdmin({
+      session,
+      feedbackInsertError: { code: "23503", message: "foreign key violation" },
+    });
+
+    const result = await handleRejection({
+      admin: admin as never,
+      expectedWorkspaceId: session.workspace_id,
+      feedbackText: "boom",
+      sessionId: session.id,
+      version: 1,
+    });
+
     expect(result.success).toBe(false);
-    expect(result.error).toContain("duplicate key");
-    // No phase flip after a failed feedback insert.
+    expect(result.error).toContain("foreign key");
     expect(updatedSessions.find((u) => u.phase_status === "rejected")).toBeUndefined();
   });
 });

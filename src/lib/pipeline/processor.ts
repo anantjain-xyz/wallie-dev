@@ -447,10 +447,10 @@ export async function handleRejection(input: {
 
   // Feedback lives in its own table keyed on (session_id, stage_id,
   // target_version). Stage_id is the immutable FK so a stage rename between
-  // generation and review does not orphan the row. The unique constraint on
-  // the key prevents a concurrent second rejection from silently overwriting
-  // the first — the loser hits a duplicate-key error and the CAS guard above
-  // already short-circuits the rest of its work.
+  // generation and review does not orphan the row. The unique constraint
+  // makes the row a first-write-wins record of "why was this version
+  // rejected" — the loser of a truly concurrent rejection is caught by the
+  // CAS guard above; this insert is a defense-in-depth check.
   const { error: feedbackInsertError } = await admin.from("session_artifact_feedback").insert({
     feedback_text: input.feedbackText,
     session_id: input.sessionId,
@@ -460,7 +460,12 @@ export async function handleRejection(input: {
     workspace_id: session.workspace_id,
   });
 
-  if (feedbackInsertError) {
+  // 23505 = unique_violation: feedback already exists for this target_version,
+  // which means a prior attempt inserted it but a later step (e.g., agent_jobs
+  // enqueue) failed and the session never advanced. Treat as idempotent
+  // success and proceed to enqueue/escalation rather than wedging the session
+  // in awaiting_review with rejection_count bumped but nothing queued.
+  if (feedbackInsertError && feedbackInsertError.code !== "23505") {
     return { escalated: false, error: feedbackInsertError.message, success: false };
   }
 
