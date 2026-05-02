@@ -59,10 +59,11 @@ async function main() {
   // --- Reconciliation interval ---
   const reconcileTimer = setInterval(() => {
     void reconcileLinearState(admin).then((result) => {
-      if (result.canceled > 0) {
+      if (result.canceled > 0 || result.rateLimited) {
         console.log("[worker] reconciliation results", {
           canceled: result.canceled,
           checked: result.checked,
+          rateLimited: result.rateLimited,
         });
       }
     });
