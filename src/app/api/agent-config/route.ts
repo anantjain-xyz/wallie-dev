@@ -2,25 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { z } from "zod";
 
+import { ALLOWED_AGENT_CONFIG_KEYS, parseAgentConfigValue } from "@/lib/agent-config/contracts";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
-
-const ALLOWED_KEYS = [
-  "concurrency_limit",
-  "stall_timeout_ms",
-  "max_retries",
-  "agent_provider",
-  "agent_model",
-] as const;
 
 const listQuerySchema = z.object({
   workspaceId: z.string().uuid("Workspace id is invalid."),
 });
 
-const upsertSchema = z.object({
-  key: z.enum(ALLOWED_KEYS, {
-    errorMap: () => ({ message: `key must be one of: ${ALLOWED_KEYS.join(", ")}` }),
+const upsertEnvelopeSchema = z.object({
+  key: z.enum(ALLOWED_AGENT_CONFIG_KEYS, {
+    errorMap: () => ({ message: `key must be one of: ${ALLOWED_AGENT_CONFIG_KEYS.join(", ")}` }),
   }),
   value: z.unknown(),
   workspaceId: z.string().uuid("Workspace id is invalid."),
@@ -85,16 +78,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const parsed = upsertSchema.safeParse(body);
+  const envelope = upsertEnvelopeSchema.safeParse(body);
 
-  if (!parsed.success) {
+  if (!envelope.success) {
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid request." },
+      { error: envelope.error.issues[0]?.message ?? "Invalid request." },
       { status: 400 },
     );
   }
 
-  const access = await requireWorkspaceAccessById(parsed.data.workspaceId, {
+  const valueResult = parseAgentConfigValue(envelope.data.key, envelope.data.value);
+  if (!valueResult.ok) {
+    return NextResponse.json({ error: valueResult.error }, { status: 400 });
+  }
+
+  const access = await requireWorkspaceAccessById(envelope.data.workspaceId, {
     requireManager: true,
   });
 
@@ -105,8 +103,8 @@ export async function POST(request: Request) {
   const admin = createSupabaseAdminClient();
   const { error } = await admin.from("workspace_agent_config").upsert(
     {
-      key: parsed.data.key,
-      value_json: parsed.data.value as Json,
+      key: envelope.data.key,
+      value_json: valueResult.value as Json,
       workspace_id: access.context.workspace.id,
     },
     { onConflict: "workspace_id,key" },
@@ -117,7 +115,7 @@ export async function POST(request: Request) {
   }
 
   const response: UpsertAgentConfigResponse = {
-    entry: { key: parsed.data.key, value: parsed.data.value },
+    entry: { key: envelope.data.key, value: valueResult.value },
   };
 
   return NextResponse.json(response, { status: 200 });
