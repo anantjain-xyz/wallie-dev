@@ -650,6 +650,7 @@ interface RejectionMockOptions {
 function buildRejectionMock(opts: RejectionMockOptions) {
   const sessionUpdates: Array<Record<string, unknown>> = [];
   const artifactUpdates: Array<{ patch: Record<string, unknown> }> = [];
+  const insertedFeedback: Array<Record<string, unknown>> = [];
   const enqueuedJobs: Array<Record<string, unknown>> = [];
 
   const sessionsTable = {
@@ -695,16 +696,6 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     }),
   };
 
-  // WAL-14 split rejection feedback into its own table; capture the
-  // feedback_text from the insert row so existing assertions on
-  // `artifactUpdates` keep matching the contract they were written for.
-  const artifactFeedbackTable = {
-    insert: async (row: Record<string, unknown>) => {
-      artifactUpdates.push({ patch: { feedback_text: row.feedback_text } });
-      return { error: null };
-    },
-  };
-
   const slackTable = {
     select: () => ({
       eq: () => ({ maybeSingle: async () => ({ data: opts.slackInstall ?? null, error: null }) }),
@@ -745,10 +736,17 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     },
   };
 
+  const feedbackTable = {
+    insert: async (row: Record<string, unknown>) => {
+      insertedFeedback.push(row);
+      return { error: null };
+    },
+  };
+
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
-    session_artifact_feedback: artifactFeedbackTable,
+    session_artifact_feedback: feedbackTable,
     slack_installations: slackTable,
     workspace_secrets: workspaceSecretsTable,
     workspace_members: workspaceMembersTable,
@@ -759,6 +757,7 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     admin: { from: (name: string) => tables[name] ?? {} } as never,
     sessionUpdates,
     artifactUpdates,
+    insertedFeedback,
     enqueuedJobs,
   };
 }
@@ -836,7 +835,7 @@ describe("handleRejection", () => {
       current_artifact_version: 1,
       rejection_count: 0,
     });
-    const { admin, sessionUpdates, artifactUpdates, enqueuedJobs } = buildRejectionMock({
+    const { admin, sessionUpdates, insertedFeedback, enqueuedJobs } = buildRejectionMock({
       session,
       workspaceMember: { id: "mem-wallie" },
     });
@@ -851,8 +850,13 @@ describe("handleRejection", () => {
 
     expect(result.success).toBe(true);
     expect(result.escalated).toBe(false);
-    // Artifact feedback recorded.
-    expect(artifactUpdates).toEqual([{ patch: { feedback_text: "tighten the spec" } }]);
+    // Feedback row recorded in session_artifact_feedback (post-WAL-14 split).
+    expect(insertedFeedback).toHaveLength(1);
+    expect(insertedFeedback[0]).toMatchObject({
+      feedback_text: "tighten the spec",
+      session_id: "sess-1",
+      target_version: 1,
+    });
     // Retry enqueued before flipping to rejected.
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.session_id).toBe("sess-1");

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
 
 import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import { isLocalDev } from "@/env/deploy";
 import { loginPath, signupPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -17,7 +18,7 @@ function getEntryPath(mode: "login" | "signup", next: string, params: Record<str
 }
 
 export async function POST(request: NextRequest) {
-  if (process.env.NODE_ENV !== "development") {
+  if (!isLocalDev()) {
     return NextResponse.json(null, { status: 404 });
   }
 
