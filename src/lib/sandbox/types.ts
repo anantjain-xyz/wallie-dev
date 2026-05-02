@@ -69,6 +69,18 @@ export type SandboxCheckoutMode =
   /** Clone and check out an existing PR branch (review phase). */
   | { kind: "checkout-pr"; prBranch: string };
 
+/**
+ * Summary of a running sandbox returned by `listRunningSandboxes`. The
+ * reaper uses these fields to decide whether a sandbox is an orphan worth
+ * stopping (id for cross-reference, createdAt for the grace window).
+ */
+export interface RunningSandboxSummary {
+  id: string;
+  status: "pending" | "running";
+  /** Unix epoch milliseconds — provider-native. */
+  createdAt: number;
+}
+
 export interface CreateSessionSandboxInput {
   sessionId: string;
   /** "owner/name" */

@@ -9,6 +9,8 @@ const workerConfigSchema = z.object({
   stallSweepIntervalMs: z.number().int().min(5_000).default(30_000),
   /** How often the reconciliation sweep runs (milliseconds). */
   reconcileIntervalMs: z.number().int().min(10_000).default(60_000),
+  /** How often the sandbox reaper runs (milliseconds). */
+  sandboxReapIntervalMs: z.number().int().min(10_000).default(60_000),
   /** Default stall timeout if not configured per-workspace (milliseconds). */
   defaultStallTimeoutMs: z.number().int().min(10_000).default(300_000), // 5 minutes
   /** Default per-workspace concurrency limit if not configured. */
@@ -30,6 +32,7 @@ export function parseWorkerConfig(
     heartbeatIntervalMs: intOrUndefined(env.WALLIE_WORKER_HEARTBEAT_INTERVAL_MS),
     stallSweepIntervalMs: intOrUndefined(env.WALLIE_WORKER_STALL_SWEEP_INTERVAL_MS),
     reconcileIntervalMs: intOrUndefined(env.WALLIE_WORKER_RECONCILE_INTERVAL_MS),
+    sandboxReapIntervalMs: intOrUndefined(env.WALLIE_WORKER_SANDBOX_REAP_INTERVAL_MS),
     defaultStallTimeoutMs: intOrUndefined(env.WALLIE_WORKER_DEFAULT_STALL_TIMEOUT_MS),
     defaultConcurrencyLimit: intOrUndefined(env.WALLIE_WORKER_DEFAULT_CONCURRENCY_LIMIT),
     workerId: env.WALLIE_WORKER_ID || `worker-${process.pid}-${Date.now()}`,

@@ -51,7 +51,7 @@ const repositorySelect =
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, created_at, updated_at";
 
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;

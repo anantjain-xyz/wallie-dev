@@ -2,6 +2,7 @@ import { Sandbox } from "@vercel/sandbox";
 
 import type {
   CreateSessionSandboxInput,
+  RunningSandboxSummary,
   SandboxExecHandle,
   SandboxExecOptions,
   SandboxHandle,
@@ -189,6 +190,65 @@ function resolveVercelCredentials():
   if (token && teamId && projectId) return { token, teamId, projectId };
   // Fall back to OIDC (expected when running on Vercel infra).
   return {};
+}
+
+/**
+ * Best-effort stop of a sandbox by ID. Used by the stall sweep and the
+ * sandbox reaper to terminate orphans whose owning run is no longer active.
+ *
+ * Errors are swallowed: the sandbox may already be stopped, the ID may be
+ * stale, or the network may be flaky. Stop is supposed to be idempotent;
+ * losing one cleanup is far better than crashing the sweep timer.
+ */
+export async function stopVercelSandboxById(sandboxId: string): Promise<void> {
+  try {
+    const sandbox = await Sandbox.get({
+      ...resolveVercelCredentials(),
+      sandboxId,
+    });
+    await sandbox.stop();
+  } catch (error) {
+    console.error("[sandbox] failed to stop sandbox", {
+      error: error instanceof Error ? error.message : String(error),
+      sandboxId,
+    });
+  }
+}
+
+/**
+ * List sandboxes in the current Vercel project. Used by the reaper to find
+ * orphans. Returns only sandboxes in active states (`pending` or `running`)
+ * — terminal states do not need cleanup.
+ */
+export async function listRunningVercelSandboxes(): Promise<RunningSandboxSummary[]> {
+  const projectId = process.env.VERCEL_PROJECT_ID;
+  if (!projectId) {
+    // Without a project ID we cannot list. Caller treats this as "nothing to
+    // reap" rather than an error so the worker doesn't hard-fail on dev/test
+    // environments without Vercel creds.
+    return [];
+  }
+
+  try {
+    const result = await Sandbox.list({
+      ...resolveVercelCredentials(),
+      projectId,
+      limit: 100,
+    });
+    const sandboxes = result.json.sandboxes;
+    return sandboxes
+      .filter((s) => s.status === "pending" || s.status === "running")
+      .map((s) => ({
+        id: s.id,
+        status: s.status as "pending" | "running",
+        createdAt: s.createdAt,
+      }));
+  } catch (error) {
+    console.error("[sandbox] failed to list sandboxes", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 }
 
 function shellQuote(s: string): string {

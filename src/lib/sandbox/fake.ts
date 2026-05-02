@@ -1,9 +1,55 @@
 import type {
+  RunningSandboxSummary,
   SandboxExecHandle,
   SandboxExecOptions,
   SandboxHandle,
   SandboxLogEntry,
 } from "./types";
+
+// In-memory registry shared by FakeSandbox + the listing/stop helpers, so
+// tests can simulate "the provider knows about these sandboxes" without
+// holding a SandboxHandle reference.
+interface FakeRegistryEntry {
+  id: string;
+  status: "pending" | "running" | "stopped";
+  createdAt: number;
+}
+
+const fakeRegistry = new Map<string, FakeRegistryEntry>();
+
+/** Register a fake sandbox as if the provider had created it. Test-only. */
+export function registerFakeSandbox(
+  id: string,
+  opts: { status?: "pending" | "running"; createdAt?: number } = {},
+): void {
+  fakeRegistry.set(id, {
+    id,
+    status: opts.status ?? "running",
+    createdAt: opts.createdAt ?? Date.now(),
+  });
+}
+
+/** Reset the in-memory fake registry. Test-only. */
+export function resetFakeSandboxes(): void {
+  fakeRegistry.clear();
+}
+
+/** Mirrors stopVercelSandboxById; flips the registry entry to `stopped`. */
+export async function stopFakeSandboxById(sandboxId: string): Promise<void> {
+  const entry = fakeRegistry.get(sandboxId);
+  if (entry) entry.status = "stopped";
+}
+
+/** Mirrors listRunningVercelSandboxes; returns active entries. */
+export async function listRunningFakeSandboxes(): Promise<RunningSandboxSummary[]> {
+  const result: RunningSandboxSummary[] = [];
+  for (const e of fakeRegistry.values()) {
+    if (e.status === "pending" || e.status === "running") {
+      result.push({ id: e.id, status: e.status, createdAt: e.createdAt });
+    }
+  }
+  return result;
+}
 
 /**
  * In-memory FakeSandbox for unit tests. Lets tests script the output of each
@@ -25,8 +71,10 @@ interface ExecScript {
   exitCode: number;
 }
 
+let fakeSandboxCounter = 0;
+
 export class FakeSandbox implements SandboxHandle {
-  readonly id = "fake-sandbox";
+  readonly id: string;
   readonly repoPath = "/vercel/sandbox";
 
   readonly calls: FakeExecCall[] = [];
@@ -34,6 +82,15 @@ export class FakeSandbox implements SandboxHandle {
 
   private scripts: ExecScript[] = [];
   private stopped = false;
+
+  constructor(id?: string) {
+    this.id = id ?? `fake-sandbox-${++fakeSandboxCounter}`;
+    fakeRegistry.set(this.id, {
+      id: this.id,
+      status: "running",
+      createdAt: Date.now(),
+    });
+  }
 
   /** Queue the next matching exec to produce `logs` and exit with `exitCode`. */
   scriptExec(
@@ -95,5 +152,7 @@ export class FakeSandbox implements SandboxHandle {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    const entry = fakeRegistry.get(this.id);
+    if (entry) entry.status = "stopped";
   }
 }

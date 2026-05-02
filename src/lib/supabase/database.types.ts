@@ -139,6 +139,7 @@ export type Database = {
           model_provider: string
           output_tokens: number | null
           run_type: string
+          sandbox_id: string | null
           session_id: string
           started_at: string | null
           status: Database["public"]["Enums"]["agent_run_status"]
@@ -158,6 +159,7 @@ export type Database = {
           model_provider: string
           output_tokens?: number | null
           run_type: string
+          sandbox_id?: string | null
           session_id: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
@@ -177,6 +179,7 @@ export type Database = {
           model_provider?: string
           output_tokens?: number | null
           run_type?: string
+          sandbox_id?: string | null
           session_id?: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
