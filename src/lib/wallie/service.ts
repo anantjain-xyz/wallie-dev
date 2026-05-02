@@ -6,7 +6,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { processPipelineJob } from "@/lib/pipeline/processor";
-import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
@@ -554,27 +553,6 @@ export async function retryWallieRun(input: {
   });
 }
 
-async function markJobTerminal(input: {
-  admin: AdminClient;
-  errorMessage?: string | null;
-  job: AgentJobRow;
-  status: Enums<"agent_job_status">;
-}) {
-  const { error } = await input.admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: input.status === "error" ? (input.errorMessage ?? "Wallie run failed.") : null,
-      status: input.status,
-    })
-    .eq("id", input.job.id)
-    .neq("status", input.status);
-
-  if (error) {
-    throw error;
-  }
-}
-
 async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
   if (job.status === "running") {
     return job;
@@ -632,16 +610,11 @@ async function loadProcessTargetJob(input: {
     }
 
     if (job.status === "running") {
-      // Wallie jobs can resume a running row (long-running codegen pauses and
-      // a later trigger picks up where it left off). Pipeline jobs are one-
-      // shot and not designed to be re-entered concurrently — the processor
-      // would regenerate the spec and double-post to Slack. Refuse to re-
-      // dispatch a running pipeline job. Stuck rows (processor crash mid-
-      // flight) are recovered manually for now.
-      if (job.job_type === PIPELINE_JOB_TYPE) {
-        return null;
-      }
-      return job;
+      // Pipeline jobs are one-shot and not designed to be re-entered
+      // concurrently — the processor would regenerate the spec and double-
+      // post to Slack. Refuse to re-dispatch a running job. Stuck rows
+      // (processor crash mid-flight) are recovered manually for now.
+      return null;
     }
 
     return claimJobIfQueued(input.admin, job);
@@ -671,38 +644,7 @@ async function loadProcessTargetJob(input: {
 }
 
 async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }) {
-  // Dispatch pipeline jobs to the pipeline processor.
-  if (input.job.job_type === PIPELINE_JOB_TYPE) {
-    return processPipelineJob({ admin: input.admin, job: input.job });
-  }
-
-  // Legacy wallie stub executor was removed in Phase 0. Non-pipeline jobs
-  // are not supported until a real agent runner is wired up in Phase 2.
-  const errorMessage =
-    "Legacy wallie executor removed. Non-pipeline jobs will be supported after the agent runner is wired up.";
-
-  await input.admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "error" as const,
-    })
-    .eq("agent_job_id", input.job.id)
-    .in("status", ["queued", "started", "running"]);
-
-  await markJobTerminal({
-    admin: input.admin,
-    errorMessage,
-    job: input.job,
-    status: "error",
-  });
-
-  return {
-    jobId: input.job.id,
-    processed: true,
-    result: "error",
-    runId: null,
-  } satisfies ProcessQueuedJobsResult;
+  return processPipelineJob({ admin: input.admin, job: input.job });
 }
 
 export async function processQueuedAgentJobs(input?: {
