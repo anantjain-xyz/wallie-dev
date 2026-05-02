@@ -7,6 +7,7 @@ import {
   buildCodexAuthorizeUrl,
   generatePkcePair,
   generateState,
+  shouldUseSecureCookies,
 } from "@/lib/codex/oauth";
 import { loginPath } from "@/lib/routes";
 import { encryptSecretValue } from "@/lib/secrets/crypto";
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
   response.cookies.set(CODEX_OAUTH_COOKIE, cookieValue, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureCookies(),
     path: "/",
     maxAge: CODEX_OAUTH_COOKIE_MAX_AGE,
   });
