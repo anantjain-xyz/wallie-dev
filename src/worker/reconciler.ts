@@ -142,8 +142,18 @@ export async function reconcileLinearState(
           if (!state) continue;
           if (!TERMINAL_LINEAR_STATES.has(state.toLowerCase())) continue;
 
-          await cancelSessionForTerminalIssue(admin, session, state);
-          result.canceled++;
+          try {
+            await cancelSessionForTerminalIssue(admin, session, state);
+            result.canceled++;
+          } catch (error) {
+            // A transient Supabase write failure must not abort the sweep —
+            // log and move on so the remaining sessions still get checked.
+            console.error("[reconciler] failed to cancel session for terminal issue", {
+              error: error instanceof Error ? error.message : String(error),
+              linearIssueId: session.linear_issue_id,
+              sessionId: session.id,
+            });
+          }
         }
       }
     }

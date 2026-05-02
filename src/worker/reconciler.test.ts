@@ -23,6 +23,8 @@ type SecretRow = { workspace_id: string; encrypted_value: string };
 interface Fixture {
   sessions: SessionRow[];
   secrets: SecretRow[];
+  /** Session ids whose `agent_jobs` cancel write should reject. */
+  failCancelForSessionIds?: Set<string>;
 }
 
 /**
@@ -100,6 +102,15 @@ function buildAdmin(fixture: Fixture) {
         // The reconciler only selects job ids when canceling — return empty.
         const data = single ? null : [];
         return Promise.resolve({ data, error: null });
+      }
+
+      if (
+        op === "update" &&
+        table === "agent_jobs" &&
+        fixture.failCancelForSessionIds &&
+        fixture.failCancelForSessionIds.has(filters["eq.session_id"] as string)
+      ) {
+        return Promise.reject(new Error("simulated supabase write failure"));
       }
 
       // For update / unhandled selects — return empty success.
@@ -338,6 +349,58 @@ describe("reconcileLinearState", () => {
     // First workspace: initial 429 + retry 429 = 2 fetches, then abort.
     // The second workspace must NOT be fetched.
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("continues the sweep when a single session's cancel write fails", async () => {
+    const fixture: Fixture = {
+      sessions: [
+        {
+          id: "sFail",
+          workspace_id: "wA",
+          linear_issue_id: "iDoneFail",
+          phase_status: "agent_generating",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+        {
+          id: "sOk",
+          workspace_id: "wA",
+          linear_issue_id: "iDoneOk",
+          phase_status: "agent_generating",
+          created_at: "2026-05-01T00:00:01Z",
+        },
+      ],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      failCancelForSessionIds: new Set(["sFail"]),
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: {
+          issues: {
+            nodes: [
+              { id: "iDoneFail", state: { type: "canceled" } },
+              { id: "iDoneOk", state: { type: "canceled" } },
+            ],
+          },
+        },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(2);
+    // Only the second session gets fully canceled — the first throws mid-cancel.
+    expect(result.canceled).toBe(1);
+
+    const okSessionRejection = calls.find(
+      (c) =>
+        c.table === "sessions" &&
+        c.op === "update" &&
+        c.update?.phase_status === "rejected" &&
+        c.filters["eq.id"] === "sOk",
+    );
+    expect(okSessionRejection).toBeDefined();
   });
 
   it("treats GraphQL RATELIMITED envelope the same as a 429", async () => {
