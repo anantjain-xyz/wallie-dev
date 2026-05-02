@@ -128,7 +128,7 @@ export async function loadSessionListPageData(
   const prCountBySession = new Map<string, number>();
   if (sessionIds.length > 0) {
     const { data: prRows, error: prError } = await context.supabase
-      .from("github_issue_branches")
+      .from("session_pull_requests")
       .select("session_id")
       .eq("workspace_id", context.workspace.id)
       .in("session_id", sessionIds);

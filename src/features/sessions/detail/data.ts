@@ -104,7 +104,7 @@ export async function loadSessionDetailPageData(
       .select("completed_at, stage_slug")
       .eq("session_id", sessionRow.id),
     context.supabase
-      .from("github_issue_branches")
+      .from("session_pull_requests")
       .select(
         "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at, created_at",
       )
@@ -167,7 +167,7 @@ export async function loadSessionDetailPageData(
 
   const prRowsTyped = (prRows ?? []) as Array<
     Pick<
-      Tables<"github_issue_branches">,
+      Tables<"session_pull_requests">,
       | "branch_name"
       | "github_repository_id"
       | "id"

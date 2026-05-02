@@ -22,6 +22,7 @@ import {
   openSlackDm,
   postSlackMessage,
 } from "./slack-format";
+import { openSessionPullRequest } from "./pull-request";
 import { loadCompletedStageArtifacts, loadPipelineWithStages, loadStageById } from "./stages";
 import { shouldEscalate } from "./state-machine";
 import { PIPELINE_JOB_TYPE } from "./types";
@@ -218,6 +219,32 @@ async function runStage(input: {
       workspaceId: session.workspace_id,
     });
     artifactInserted = true;
+
+    const prOutcome = await openSessionPullRequest({
+      admin,
+      baseBranch: github.repo.default_branch ?? "main",
+      body: artifactMarkdown.slice(0, 60000),
+      branch,
+      installationId: github.installationId,
+      repoFullName: github.repo.full_name,
+      repoId: github.repo.id,
+      sandbox,
+      sessionId: session.id,
+      title: `${stage.name}: ${session.title}`,
+      workspaceId: session.workspace_id,
+    });
+
+    if (prOutcome.kind !== "success" && prOutcome.kind !== "no_commits") {
+      // PR plumbing is recoverable — the artifact is durable and the reviewer
+      // can approve the artifact directly. Surface the failure for ops without
+      // blocking the stage.
+      console.error("Failed to open session pull request", {
+        kind: prOutcome.kind,
+        reason: prOutcome.reason,
+        sessionId: session.id,
+        stageSlug: stage.slug,
+      });
+    }
 
     const { error: pointerError } = await admin
       .from("sessions")
@@ -647,6 +674,7 @@ interface GitHubContext {
   repo: {
     default_branch: string | null;
     full_name: string;
+    id: string;
   };
 }
 
@@ -664,7 +692,7 @@ async function loadGitHubContext(
 
   const { data: repo } = await admin
     .from("github_repositories")
-    .select("full_name, default_branch")
+    .select("id, full_name, default_branch")
     .eq("github_installation_id", installation.id)
     .eq("is_archived", false)
     .order("full_name", { ascending: true })
@@ -678,6 +706,7 @@ async function loadGitHubContext(
     repo: {
       default_branch: repo.default_branch,
       full_name: repo.full_name,
+      id: repo.id,
     },
   };
 }
