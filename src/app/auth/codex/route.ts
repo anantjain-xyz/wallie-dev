@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { normalizeNextPath, resolveAuthenticatedSettingsPath } from "@/lib/auth";
+import { isLocalDev } from "@/env/deploy";
 import {
   CODEX_OAUTH_COOKIE,
   CODEX_OAUTH_COOKIE_MAX_AGE,
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
   response.cookies.set(CODEX_OAUTH_COOKIE, cookieValue, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: !isLocalDev(),
     path: "/",
     maxAge: CODEX_OAUTH_COOKIE_MAX_AGE,
   });
