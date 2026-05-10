@@ -8,6 +8,14 @@ type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
 
+type PipelineRewriteRpcResult = {
+  blocking_session_numbers?: number[];
+  duplicate_stage_slugs?: string[];
+  error_code?: string;
+  invalid_approver_member_ids?: string[];
+  ok?: boolean;
+};
+
 const stageInputSchema = z.object({
   // id is optional — present for existing stages that should be updated,
   // absent for newly added stages.
@@ -39,164 +47,62 @@ export async function PUT(request: Request, context: RouteContext) {
   let parsed;
   try {
     parsed = pipelineUpdateSchema.parse(await request.json());
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      const message = err.issues[0]?.message ?? "Invalid pipeline payload.";
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const message = error.issues[0]?.message ?? "Invalid pipeline payload.";
       return NextResponse.json({ error: message }, { status: 400 });
     }
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Slugs must be unique within the pipeline.
-  const slugs = new Set<string>();
-  for (const stage of parsed.stages) {
-    if (slugs.has(stage.slug)) {
-      return NextResponse.json({ error: `Duplicate stage slug: ${stage.slug}` }, { status: 400 });
-    }
-    slugs.add(stage.slug);
-  }
-
   const admin = createSupabaseAdminClient();
 
-  const { data: pipelineRow, error: pipelineError } = await admin
-    .from("pipelines")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("is_default", true)
-    .maybeSingle();
+  const { data, error } = await admin.rpc("rewrite_default_pipeline", {
+    pipeline_name: parsed.name,
+    stage_payload: parsed.stages,
+    target_workspace_id: workspaceId,
+  });
 
-  if (pipelineError) {
-    return NextResponse.json({ error: pipelineError.message }, { status: 500 });
-  }
-  if (!pipelineRow) {
-    return NextResponse.json({ error: "Workspace has no default pipeline." }, { status: 404 });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Validate approver IDs belong to this workspace; silently drop unknowns.
-  const allMemberIds = Array.from(new Set(parsed.stages.flatMap((s) => s.approverMemberIds)));
-  if (allMemberIds.length > 0) {
-    const { data: existingMembers } = await admin
-      .from("workspace_members")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .in("id", allMemberIds);
-    const validIds = new Set((existingMembers ?? []).map((m) => m.id));
-    for (const stage of parsed.stages) {
-      stage.approverMemberIds = stage.approverMemberIds.filter((id) => validIds.has(id));
-    }
-  }
+  const result = data as PipelineRewriteRpcResult | null;
 
-  // Load existing stages so we know what's safe to delete.
-  const { data: existingStages, error: stagesError } = await admin
-    .from("pipeline_stages")
-    .select("id, slug")
-    .eq("pipeline_id", pipelineRow.id);
-  if (stagesError) {
-    return NextResponse.json({ error: stagesError.message }, { status: 500 });
-  }
-
-  const incomingIds = new Set(
-    parsed.stages.map((s) => s.id).filter((id): id is string => Boolean(id)),
-  );
-  const stagesToDelete = (existingStages ?? []).filter((s) => !incomingIds.has(s.id));
-
-  // Block deletion of any stage that's the current_stage_id of an active session.
-  if (stagesToDelete.length > 0) {
-    const deleteIds = stagesToDelete.map((s) => s.id);
-    const { data: blockingSessions, error: blockingError } = await admin
-      .from("sessions")
-      .select("id, number, current_stage_id")
-      .eq("workspace_id", workspaceId)
-      .is("archived_at", null)
-      .in("current_stage_id", deleteIds);
-    if (blockingError) {
-      return NextResponse.json({ error: blockingError.message }, { status: 500 });
-    }
-    if (blockingSessions && blockingSessions.length > 0) {
-      const numbers = blockingSessions.map((s) => `#${s.number}`).join(", ");
-      return NextResponse.json(
-        {
-          error: `Cannot remove a stage that is the current stage of active sessions (${numbers}). Approve or archive them first.`,
-        },
-        { status: 409 },
-      );
-    }
-  }
-
-  // Apply: rename pipeline if needed, then upsert stages, then delete the
-  // ones not present in the payload. The unique constraint on
-  // (pipeline_id, position) makes naive in-place reorders collide, so we
-  // park existing rows at large unused positions first and then write the
-  // final positions in step 2. Large positive values (vs. negative) satisfy
-  // the `position > 0` check constraint.
-  if (parsed.name) {
-    await admin.from("pipelines").update({ name: parsed.name }).eq("id", pipelineRow.id);
-  }
-
-  // Step 1: shift existing stages to a high position range so step 2 can
-  // assign final positions without colliding on (pipeline_id, position).
-  // PARK_OFFSET is well above any plausible stage count.
-  const PARK_OFFSET = 100000;
-  if (existingStages && existingStages.length > 0) {
-    for (let i = 0; i < existingStages.length; i++) {
-      const { error: parkError } = await admin
-        .from("pipeline_stages")
-        .update({ position: PARK_OFFSET + i + 1 })
-        .eq("id", existingStages[i]!.id);
-      if (parkError) {
-        return NextResponse.json({ error: parkError.message }, { status: 500 });
+  if (!result?.ok) {
+    switch (result?.error_code) {
+      case "pipeline_not_found":
+        return NextResponse.json({ error: "Workspace has no default pipeline." }, { status: 404 });
+      case "duplicate_stage_slug": {
+        const slugs = result.duplicate_stage_slugs ?? [];
+        return NextResponse.json(
+          { error: `Duplicate stage slug: ${slugs.join(", ")}` },
+          { status: 400 },
+        );
       }
-    }
-  }
-
-  // Step 2: upsert each incoming stage.
-  for (let i = 0; i < parsed.stages.length; i++) {
-    const stage = parsed.stages[i]!;
-    const position = i + 1;
-    if (stage.id && existingStages?.some((e) => e.id === stage.id)) {
-      const { error: updateError } = await admin
-        .from("pipeline_stages")
-        .update({
-          approver_member_ids: stage.approverMemberIds,
-          description: stage.description,
-          name: stage.name,
-          position,
-          prompt_template_md: stage.promptTemplateMd,
-          slug: stage.slug,
-        })
-        .eq("id", stage.id);
-      if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      case "unknown_approver_member_ids": {
+        const invalidIds = result.invalid_approver_member_ids ?? [];
+        return NextResponse.json(
+          {
+            error: `Unknown approver member IDs: ${invalidIds.join(", ")}`,
+            invalidApproverMemberIds: invalidIds,
+          },
+          { status: 400 },
+        );
       }
-    } else {
-      const { error: insertError } = await admin.from("pipeline_stages").insert({
-        approver_member_ids: stage.approverMemberIds,
-        description: stage.description,
-        name: stage.name,
-        pipeline_id: pipelineRow.id,
-        position,
-        prompt_template_md: stage.promptTemplateMd,
-        slug: stage.slug,
-        // workspace_id gets set by the enforce_pipeline_stage_refs trigger.
-        workspace_id: workspaceId,
-      });
-      if (insertError) {
-        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      case "stage_delete_blocked": {
+        const numbers = (result.blocking_session_numbers ?? []).map((number) => `#${number}`);
+        return NextResponse.json(
+          {
+            error: `Cannot remove a stage that is the current stage of active sessions (${numbers.join(", ")}). Approve or archive them first.`,
+          },
+          { status: 409 },
+        );
       }
-    }
-  }
-
-  // Step 3: delete stages that weren't in the payload.
-  if (stagesToDelete.length > 0) {
-    const { error: deleteError } = await admin
-      .from("pipeline_stages")
-      .delete()
-      .in(
-        "id",
-        stagesToDelete.map((s) => s.id),
-      );
-    if (deleteError) {
-      return NextResponse.json({ error: deleteError.message }, { status: 500 });
+      case "invalid_stage_payload":
+        return NextResponse.json({ error: "Invalid pipeline payload." }, { status: 400 });
+      default:
+        return NextResponse.json({ error: "Failed to save pipeline." }, { status: 500 });
     }
   }
 

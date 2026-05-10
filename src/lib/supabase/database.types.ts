@@ -1199,6 +1199,14 @@ export type Database = {
         Args: { target_workspace_id: string }
         Returns: number
       }
+      rewrite_default_pipeline: {
+        Args: {
+          pipeline_name: string
+          stage_payload: Json
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
       schedule_job_retry: {
         Args: {
           base_delay_ms?: number
@@ -1408,4 +1416,3 @@ export const Constants = {
     },
   },
 } as const
-
