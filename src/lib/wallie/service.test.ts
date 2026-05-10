@@ -1,10 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import type { PostgrestError } from "@supabase/supabase-js";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { Tables } from "@/lib/supabase/database.types";
 import { claimQueuedJobCandidate, enqueueWallieRun } from "@/lib/wallie/service";
 
 vi.mock("@/lib/pipeline/processor", () => ({
   processPipelineJob: vi.fn(),
 }));
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("wallie service helpers", () => {
   it("claims the first candidate that wins the race", async () => {
@@ -42,9 +49,101 @@ interface AgentConfigRow {
   value_json: unknown;
 }
 
+type AgentJobRow = Tables<"agent_jobs">;
+type AgentRunRow = Tables<"agent_runs">;
+type QueryResult = Promise<{ data: unknown; error: PostgrestError | null }>;
+type QueryBuilder = {
+  eq: (column: string, value: unknown) => QueryBuilder;
+  in: (column: string, value: unknown) => QueryBuilder;
+  limit: (count: number) => QueryBuilder;
+  maybeSingle: () => QueryResult;
+  order: (column: string, options?: unknown) => QueryBuilder;
+};
+
+const baseTimestamp = "2026-01-01T00:00:00.000Z";
+
+const uniqueViolationError = {
+  code: "23505",
+  details: "",
+  hint: "",
+  message: "duplicate key value violates unique constraint",
+  name: "PostgrestError",
+} satisfies PostgrestError;
+
+function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
+  return {
+    attempt_count: 0,
+    created_at: baseTimestamp,
+    dedupe_key: "session:sess-1:active",
+    finished_at: null,
+    id: "job-1",
+    job_type: "session",
+    last_error: null,
+    requested_by_member_id: "mem-1",
+    scheduled_at: null,
+    session_id: "sess-1",
+    started_at: null,
+    status: "queued",
+    trigger_type: "manual_run",
+    updated_at: baseTimestamp,
+    workspace_id: "ws-1",
+    ...overrides,
+  };
+}
+
+function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
+  return {
+    agent_job_id: "job-1",
+    created_at: baseTimestamp,
+    finished_at: null,
+    id: "run-1",
+    input_tokens: null,
+    last_activity_at: null,
+    model_name: "claude-sonnet-4-20250514",
+    model_provider: "claude-code",
+    output_tokens: null,
+    run_type: "project",
+    sandbox_id: null,
+    session_id: "sess-1",
+    started_at: null,
+    status: "queued",
+    total_cost_usd: null,
+    triggered_by_member_id: "mem-1",
+    updated_at: baseTimestamp,
+    workspace_id: "ws-1",
+    ...overrides,
+  };
+}
+
+function createMaybeSingleQuery(
+  resolve: (filters: Map<string, unknown>) => QueryResult,
+): QueryBuilder {
+  const filters = new Map<string, unknown>();
+  const builder: QueryBuilder = {
+    eq: (column, value) => {
+      filters.set(column, value);
+      return builder;
+    },
+    in: (column, value) => {
+      filters.set(column, value);
+      return builder;
+    },
+    limit: () => builder,
+    maybeSingle: () => resolve(filters),
+    order: () => builder,
+  };
+
+  return builder;
+}
+
 function buildSupabaseMocks(opts: {
   agentConfig: AgentConfigRow[];
+  activeJobRow?: AgentJobRow | null;
+  activeRunForSession?: AgentRunRow | null;
+  insertedJobRow?: AgentJobRow;
   insertedRunRows: Array<Record<string, unknown>>;
+  jobInsertError?: PostgrestError | null;
+  loadRunByJobId?: () => Promise<AgentRunRow | null> | AgentRunRow | null;
 }) {
   const sessionRow = {
     id: "sess-1",
@@ -52,7 +151,7 @@ function buildSupabaseMocks(opts: {
     number: 1,
     title: "Add SSO",
     prompt_md: "Add SSO via Google Workspace",
-    created_at: new Date().toISOString(),
+    created_at: baseTimestamp,
   };
 
   const supabase = {
@@ -87,23 +186,7 @@ function buildSupabaseMocks(opts: {
     },
   };
 
-  const insertedJobRow = {
-    id: "job-1",
-    workspace_id: "ws-1",
-    session_id: "sess-1",
-    requested_by_member_id: "mem-1",
-    trigger_type: "manual",
-    status: "queued",
-    attempt_count: 0,
-    last_error: null,
-    dedupe_key: "session:sess-1:active",
-    job_type: "session",
-    scheduled_at: null,
-    started_at: null,
-    finished_at: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  const insertedJobRow = opts.insertedJobRow ?? buildAgentJobRow();
 
   const admin = {
     from: (table: string) => {
@@ -122,23 +205,26 @@ function buildSupabaseMocks(opts: {
       }
       if (table === "agent_runs") {
         return {
-          select: () => ({
-            eq: () => ({
-              in: () => ({
-                order: () => ({
-                  limit: () => ({
-                    maybeSingle: async () => ({ data: null, error: null }),
-                  }),
-                }),
-              }),
+          select: () =>
+            createMaybeSingleQuery(async (filters) => {
+              if (filters.has("agent_job_id")) {
+                return {
+                  data: opts.loadRunByJobId ? await opts.loadRunByJobId() : null,
+                  error: null,
+                };
+              }
+
+              return { data: opts.activeRunForSession ?? null, error: null };
             }),
-          }),
           insert: (row: Record<string, unknown>) => {
             opts.insertedRunRows.push(row);
             return {
               select: () => ({
                 single: async () => ({
-                  data: { id: "run-1", ...row },
+                  data: buildAgentRunRow({
+                    ...(row as Partial<AgentRunRow>),
+                    id: "run-1",
+                  }),
                   error: null,
                 }),
               }),
@@ -150,9 +236,17 @@ function buildSupabaseMocks(opts: {
         return {
           insert: () => ({
             select: () => ({
-              single: async () => ({ data: insertedJobRow, error: null }),
+              single: async () => ({
+                data: opts.jobInsertError ? null : insertedJobRow,
+                error: opts.jobInsertError ?? null,
+              }),
             }),
           }),
+          select: () =>
+            createMaybeSingleQuery(async () => ({
+              data: opts.activeJobRow ?? insertedJobRow,
+              error: null,
+            })),
         };
       }
       if (table === "workspace_agent_config") {
@@ -226,5 +320,91 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect((inserted.model_name as string).length).toBeGreaterThan(0);
     expect(typeof inserted.model_provider).toBe("string");
     expect((inserted.model_provider as string).length).toBeGreaterThan(0);
+  });
+});
+
+describe("enqueueWallieRun duplicate job dedupe", () => {
+  it("returns the existing run when run visibility is delayed beyond the old 200 ms window", async () => {
+    vi.useFakeTimers();
+    const startTime = Date.parse(baseTimestamp);
+    vi.setSystemTime(startTime);
+
+    const lookupOffsets: number[] = [];
+    const delayedRun = buildAgentRunRow({ agent_job_id: "job-existing", id: "run-existing" });
+    const { admin, supabase } = buildSupabaseMocks({
+      activeJobRow: buildAgentJobRow({ id: "job-existing" }),
+      agentConfig: [],
+      insertedRunRows: [],
+      jobInsertError: uniqueViolationError,
+      loadRunByJobId: () => {
+        const offset = Date.now() - startTime;
+        lookupOffsets.push(offset);
+
+        return offset > 200 ? delayedRun : null;
+      },
+    });
+
+    const resultPromise = enqueueWallieRun({
+      admin,
+      sessionId: "sess-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      triggerType: "manual_run",
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    await vi.advanceTimersByTimeAsync(40);
+    await vi.advanceTimersByTimeAsync(80);
+    await vi.advanceTimersByTimeAsync(160);
+
+    const result = await resultPromise;
+
+    expect(result.created).toBe(false);
+    expect(result.jobId).toBe("job-existing");
+    expect(result.run.id).toBe("run-existing");
+    expect(lookupOffsets.some((offset) => offset > 200)).toBe(true);
+  });
+
+  it("throws a typed retryable error and logs when the run lookup budget is exhausted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(baseTimestamp);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { admin, supabase } = buildSupabaseMocks({
+      activeJobRow: buildAgentJobRow({ id: "job-existing" }),
+      agentConfig: [],
+      insertedRunRows: [],
+      jobInsertError: uniqueViolationError,
+      loadRunByJobId: () => null,
+    });
+
+    const resultPromise = enqueueWallieRun({
+      admin,
+      runLookupRetry: {
+        initialDelayMs: 40,
+        maxDelayMs: 80,
+        maxElapsedMs: 120,
+      },
+      sessionId: "sess-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      triggerType: "manual_run",
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+    const rejection = expect(resultPromise).rejects.toMatchObject({
+      code: "run_lookup_timeout",
+      statusCode: 503,
+    });
+
+    await vi.advanceTimersByTimeAsync(40);
+    await vi.advanceTimersByTimeAsync(80);
+
+    await rejection;
+    expect(consoleError).toHaveBeenCalledWith(
+      "Wallie run lookup exhausted after duplicate enqueue",
+      expect.objectContaining({
+        jobId: "job-existing",
+        maxElapsedMs: 120,
+      }),
+    );
   });
 });

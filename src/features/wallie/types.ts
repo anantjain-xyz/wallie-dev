@@ -14,6 +14,7 @@ export type WallieBlockingCode =
 export type WallieActionErrorCode =
   | WallieBlockingCode
   | "issue_not_found"
+  | "run_lookup_timeout"
   | "run_not_found"
   | "run_not_retryable";
 

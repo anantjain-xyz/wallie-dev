@@ -42,6 +42,18 @@ const validBody = {
   workspaceId: "22222222-2222-2222-2222-222222222222",
 };
 
+const existingRunRow = {
+  created_at: "2026-01-01T00:00:00.000Z",
+  finished_at: null,
+  id: "run-existing",
+  model_name: "claude-sonnet-4-20250514",
+  model_provider: "claude-code",
+  run_type: "project",
+  started_at: null,
+  status: "queued",
+  triggered_by_member_id: "member-1",
+};
+
 describe("POST /api/agent-runs rate limiting", () => {
   beforeEach(() => {
     clearRateLimitsForTesting();
@@ -110,5 +122,27 @@ describe("POST /api/agent-runs rate limiting", () => {
 
     const response = await POST(makeRequest(validBody));
     expect(response.status).toBe(201);
+  });
+
+  it("returns 200 when duplicate-enqueue dedupe resolves an existing run", async () => {
+    mocked.enqueueWallieRun.mockResolvedValueOnce({
+      created: false,
+      jobId: "job-existing",
+      run: existingRunRow,
+    });
+
+    const response = await POST(makeRequest(validBody));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      code?: string;
+      created: boolean;
+      processScheduled: boolean;
+      run: { id: string };
+    };
+    expect(body.code).toBe("active_run");
+    expect(body.created).toBe(false);
+    expect(body.processScheduled).toBe(false);
+    expect(body.run.id).toBe("run-existing");
   });
 });
