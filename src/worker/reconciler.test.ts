@@ -268,7 +268,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "s2",
-          "eq.phase_status": "agent_generating",
+          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -326,7 +326,10 @@ describe("reconcileLinearState", () => {
         },
       ],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
-      agentJobs: [{ id: "jobReview", session_id: "sReview" }],
+      agentJobs: [
+        { id: "jobReview", session_id: "sReview" },
+        { id: "jobRejected", session_id: "sRejected" },
+      ],
     };
     const { admin, calls } = buildAdmin(fixture);
 
@@ -373,6 +376,18 @@ describe("reconcileLinearState", () => {
         "awaiting_review",
         "rejected",
       ]);
+    }
+
+    for (const sessionId of ["sGenerating", "sReview", "sRejected"]) {
+      const jobCancel = calls.find(
+        (c) =>
+          c.table === "agent_jobs" &&
+          c.op === "update" &&
+          c.update?.status === "canceled" &&
+          c.filters["eq.session_id"] === sessionId,
+      );
+      expect(jobCancel).toBeDefined();
+      expect(jobCancel?.filters["in.status"]).toEqual(["queued", "running"]);
     }
 
     const runCancel = calls.find(
@@ -544,7 +559,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sOk",
-          "eq.phase_status": "agent_generating",
+          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
         }),
         op: "update",
         table: "sessions",
