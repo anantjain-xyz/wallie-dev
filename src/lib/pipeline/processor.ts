@@ -8,6 +8,7 @@ import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
+import { AGENT_PROVIDERS, normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { CodexNotConnectedError, getCodexAccessTokenForSession } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
@@ -119,7 +120,12 @@ async function runStage(input: {
   const newVersion = session.current_artifact_version + 1;
 
   const config = await loadWorkspaceAgentConfig(admin, session.workspace_id);
-  const provider = narrowAgentProvider(config.provider);
+  const provider = normalizeAgentProviderName(config.provider);
+  if (!provider) {
+    throw new Error(
+      `Unknown agent provider: "${config.provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
+    );
+  }
 
   // Pull artifacts from completed prior stages so the prompt can reference
   // them via {{artifact.previousStages.<slug>}}.
@@ -633,15 +639,6 @@ async function insertArtifact(
   if (error) throw error;
 }
 
-function narrowAgentProvider(provider: string): AgentProvider {
-  if (provider === "codex" || provider === "claude-code" || provider === "anthropic-api") {
-    return provider;
-  }
-  throw new Error(
-    `Unknown agent provider: "${provider}". Supported: codex, claude-code, claude_code, anthropic-api, anthropic_api`,
-  );
-}
-
 async function loadAnthropicApiKey(
   admin: AdminClient,
   workspaceId: string,
@@ -758,7 +755,7 @@ async function createAgentRun(
     jobId: string;
     sessionId: string;
     model: string;
-    provider: string;
+    provider: AgentProvider;
     runType: string;
     sandboxId: string | null;
     workspaceId: string;

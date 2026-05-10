@@ -82,9 +82,9 @@ afterEach(() => {
 });
 
 describe("POST /api/agent-config/verify — provider/model mismatches", () => {
-  it("rejects gpt-* models when provider is anthropic_api before any network call", async () => {
+  it("rejects gpt-* models when provider is anthropic-api before any network call", async () => {
     const response = await POST(
-      postWith({ workspaceId: WORKSPACE_ID, provider: "anthropic_api", model: "gpt-5-codex" }),
+      postWith({ workspaceId: WORKSPACE_ID, provider: "anthropic-api", model: "gpt-5-codex" }),
     );
 
     expect(response.status).toBe(200);
@@ -124,7 +124,7 @@ describe("POST /api/agent-config/verify — anthropic", () => {
     const response = await POST(
       postWith({
         workspaceId: WORKSPACE_ID,
-        provider: "anthropic_api",
+        provider: "anthropic-api",
         model: "claude-sonnet-4-5",
       }),
     );
@@ -146,7 +146,7 @@ describe("POST /api/agent-config/verify — anthropic", () => {
     const response = await POST(
       postWith({
         workspaceId: WORKSPACE_ID,
-        provider: "anthropic_api",
+        provider: "anthropic-api",
         model: "claude-sonnet-4-5",
       }),
     );
@@ -177,7 +177,7 @@ describe("POST /api/agent-config/verify — anthropic", () => {
     const response = await POST(
       postWith({
         workspaceId: WORKSPACE_ID,
-        provider: "anthropic_api",
+        provider: "anthropic-api",
         model: "claude-sonnet-4-5",
       }),
     );
@@ -188,14 +188,14 @@ describe("POST /api/agent-config/verify — anthropic", () => {
   });
 });
 
-describe("POST /api/agent-config/verify — claude_code (sandbox CLI)", () => {
+describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
   it("returns ok:'skipped' without touching ANTHROPIC_API_KEY or the access check", async () => {
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
 
     const response = await POST(
       postWith({
         workspaceId: WORKSPACE_ID,
-        provider: "claude_code",
+        provider: "claude-code",
         model: "claude-sonnet-4-5",
       }),
     );
@@ -211,13 +211,31 @@ describe("POST /api/agent-config/verify — claude_code (sandbox CLI)", () => {
 
   it("still rejects model/provider mismatches before skipping", async () => {
     const response = await POST(
-      postWith({ workspaceId: WORKSPACE_ID, provider: "claude_code", model: "gpt-5-codex" }),
+      postWith({ workspaceId: WORKSPACE_ID, provider: "claude-code", model: "gpt-5-codex" }),
     );
 
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { ok: unknown; error?: string };
     expect(payload.ok).toBe(false);
     expect(payload.error).toMatch(/claude-/);
+  });
+
+  it("normalizes the legacy claude_code alias before dispatch", async () => {
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+
+    const response = await POST(
+      postWith({
+        workspaceId: WORKSPACE_ID,
+        provider: "claude_code",
+        model: "claude-sonnet-4-5",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { ok: unknown; reason?: string };
+    expect(payload.ok).toBe("skipped");
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 

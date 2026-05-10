@@ -4,7 +4,7 @@
  * to the caller for persistence and real-time UI.
  */
 
-import type { SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
 // Agent Events
@@ -64,7 +64,7 @@ export interface AgentRunnerStartInput {
 }
 
 export interface AgentRunner {
-  readonly provider: string;
+  readonly provider: AgentProvider;
 
   /**
    * Whether this runner needs a per-session sandbox. CLI runners do; runners
@@ -85,8 +85,8 @@ export interface AgentRunner {
 // ---------------------------------------------------------------------------
 
 export interface AgentRunnerConfig {
-  /** Which provider to use: "codex" | "claude-code" */
-  provider: string;
+  /** Which provider to use: "codex" | "claude-code" | "anthropic-api". */
+  provider: AgentProvider;
   /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-6"). */
   model?: string;
   /** Maximum turns per agent invocation. */
