@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import {
-  AGENT_PROVIDERS,
+  agentConfigValueSchemas,
   type AgentProvider,
   modelMatchesProvider,
 } from "@/lib/agent-config/contracts";
@@ -13,9 +13,7 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 const requestSchema = z.object({
   workspaceId: z.string().uuid("Workspace id is invalid."),
-  provider: z.enum(AGENT_PROVIDERS, {
-    errorMap: () => ({ message: `provider must be one of: ${AGENT_PROVIDERS.join(", ")}` }),
-  }),
+  provider: agentConfigValueSchemas.agent_provider,
   model: z
     .string()
     .trim()
@@ -28,7 +26,7 @@ const requestSchema = z.object({
  *   - `{ ok: true }`              — provider accepted a 1-token call.
  *   - `{ ok: false, error }`      — provider rejected, secrets missing, etc.
  *   - `{ ok: "skipped", reason }` — reachability is not checkable here. Used
- *     for `claude_code`, which runs the `claude` CLI in a per-session sandbox
+ *     for `claude-code`, which runs the `claude` CLI in a per-session sandbox
  *     at pipeline time and does NOT use workspace ANTHROPIC_API_KEY. Routing
  *     it through verifyAnthropic gave false negatives that told users to add
  *     credentials the runtime never reads.
@@ -67,10 +65,10 @@ export async function POST(request: Request) {
     );
   }
 
-  // claude_code runs the `claude` CLI in a sandbox; it does not use the
+  // claude-code runs the `claude` CLI in a sandbox; it does not use the
   // workspace ANTHROPIC_API_KEY. Short-circuit before the access check so we
   // don't pretend we verified anything we can't actually verify here.
-  if (provider === "claude_code") {
+  if (provider === "claude-code") {
     return NextResponse.json(
       {
         ok: "skipped",
@@ -87,7 +85,7 @@ export async function POST(request: Request) {
   }
 
   switch (provider) {
-    case "anthropic_api":
+    case "anthropic-api":
       return verifyAnthropic(access.context.workspace.id, model);
     case "codex":
       return verifyCodex(access.context.user.id, model);
@@ -96,8 +94,8 @@ export async function POST(request: Request) {
 
 function providerModelMismatchMessage(provider: AgentProvider) {
   switch (provider) {
-    case "anthropic_api":
-    case "claude_code":
+    case "anthropic-api":
+    case "claude-code":
       return 'Model must start with "claude-" for this provider.';
     case "codex":
       return 'Model must start with "gpt-", "o1", "o3", or "o4" for the Codex provider.';

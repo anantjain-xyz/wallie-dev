@@ -12,7 +12,8 @@ import {
   type AgentConfigKey,
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
-  isAgentProvider,
+  AGENT_PROVIDERS,
+  normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
 
@@ -85,7 +86,7 @@ function AgentConfigField({
   label: string;
   onSave: (key: AgentConfigKey, value: unknown) => Promise<void>;
   onVerify?: (rawDraft: string) => Promise<AgentConfigVerifyResult>;
-  options?: string[];
+  options?: readonly string[];
   placeholder?: string;
   type: "number" | "select" | "text";
   value: unknown;
@@ -222,8 +223,8 @@ export function AgentConfigSection({
         method: "POST",
       }),
     errorText: "Agent config save failed.",
-    onSuccess: (_payload, [key, value]) => {
-      setAgentConfig((current) => ({ ...current, [key]: value }));
+    onSuccess: (payload) => {
+      setAgentConfig((current) => ({ ...current, [payload.entry.key]: payload.entry.value }));
     },
     setFlashMessage,
     successText: (_payload, [key]) => `Saved ${key}.`,
@@ -256,17 +257,18 @@ export function AgentConfigSection({
   }
 
   async function handleVerifyAgentModel(rawDraft: string): Promise<AgentConfigVerifyResult> {
-    const provider = isAgentProvider(agentConfig.agent_provider)
-      ? (agentConfig.agent_provider as AgentProvider)
-      : "codex";
-
     return (
-      (await verifyAgentModel.run(rawDraft, provider)) ?? {
+      (await verifyAgentModel.run(rawDraft, selectedAgentProvider)) ?? {
         kind: "error",
         message: "Verify call failed.",
       }
     );
   }
+
+  const selectedAgentProvider: AgentProvider =
+    typeof agentConfig.agent_provider === "string"
+      ? (normalizeAgentProviderName(agentConfig.agent_provider) ?? "codex")
+      : "codex";
 
   return (
     <Section title="Coding Agent">
@@ -284,17 +286,17 @@ export function AgentConfigSection({
               disabled={saveAgentConfig.isBusy}
               label="Agent Provider"
               onSave={handleSaveAgentConfig}
-              options={["codex", "claude_code", "anthropic_api"]}
+              options={AGENT_PROVIDERS}
               type="select"
-              value={agentConfig.agent_provider}
+              value={selectedAgentProvider}
             />
-            {(agentConfig.agent_provider ?? "codex") === "codex" ? (
+            {selectedAgentProvider === "codex" ? (
               <p className="text-xs leading-5 text-muted">
                 Each session runs with its creator&apos;s Codex account. Connect yours below under
                 &ldquo;Your Codex account&rdquo;.
               </p>
             ) : null}
-            {agentConfig.agent_provider === "anthropic_api" ? (
+            {selectedAgentProvider === "anthropic-api" ? (
               <p className="text-xs leading-5 text-muted">
                 Calls Anthropic&apos;s Messages API directly — no sandbox spawn, no GitHub repo
                 required. Add your <code>ANTHROPIC_API_KEY</code> under Integrations above.

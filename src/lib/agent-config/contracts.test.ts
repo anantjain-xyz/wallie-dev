@@ -6,6 +6,7 @@ import {
   isAgentConfigKey,
   isAgentProvider,
   modelMatchesProvider,
+  normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "./contracts";
 
@@ -100,7 +101,7 @@ describe("parseAgentConfigValue — max_retries", () => {
 });
 
 describe("parseAgentConfigValue — agent_provider", () => {
-  it("accepts each known provider", () => {
+  it("accepts each canonical provider", () => {
     for (const provider of AGENT_PROVIDERS) {
       expect(parseAgentConfigValue("agent_provider", provider)).toEqual({
         ok: true,
@@ -109,10 +110,21 @@ describe("parseAgentConfigValue — agent_provider", () => {
     }
   });
 
+  it("normalizes legacy underscore aliases to canonical providers", () => {
+    expect(parseAgentConfigValue("agent_provider", "claude_code")).toEqual({
+      ok: true,
+      value: "claude-code",
+    });
+    expect(parseAgentConfigValue("agent_provider", "anthropic_api")).toEqual({
+      ok: true,
+      value: "anthropic-api",
+    });
+  });
+
   it("rejects unknown providers", () => {
     expect(parseAgentConfigValue("agent_provider", "lol")).toEqual({
       ok: false,
-      error: expect.stringContaining("must be one of"),
+      error: "Provider must be one of: codex, claude-code, anthropic-api.",
     });
   });
 });
@@ -185,9 +197,9 @@ describe("parseAgentConfigValue — agent_model", () => {
 
 describe("modelMatchesProvider", () => {
   it("matches Anthropic-family providers to claude- prefix", () => {
-    expect(modelMatchesProvider("anthropic_api", "claude-sonnet-4-5")).toBe(true);
-    expect(modelMatchesProvider("claude_code", "claude-haiku-4-5")).toBe(true);
-    expect(modelMatchesProvider("anthropic_api", "gpt-5-codex")).toBe(false);
+    expect(modelMatchesProvider("anthropic-api", "claude-sonnet-4-5")).toBe(true);
+    expect(modelMatchesProvider("claude-code", "claude-haiku-4-5")).toBe(true);
+    expect(modelMatchesProvider("anthropic-api", "gpt-5-codex")).toBe(false);
   });
 
   it("matches Codex to gpt-/o-family prefixes", () => {
@@ -197,8 +209,26 @@ describe("modelMatchesProvider", () => {
   });
 
   it("does not match uppercase-prefixed model ids — schema and DB CHECK both require lowercase", () => {
-    expect(modelMatchesProvider("anthropic_api", "Claude-Sonnet-4-5")).toBe(false);
+    expect(modelMatchesProvider("anthropic-api", "Claude-Sonnet-4-5")).toBe(false);
     expect(modelMatchesProvider("codex", "GPT-5-codex")).toBe(false);
+  });
+});
+
+describe("normalizeAgentProviderName", () => {
+  it("rewrites underscore aliases to canonical dashed providers", () => {
+    expect(normalizeAgentProviderName("claude_code")).toBe("claude-code");
+    expect(normalizeAgentProviderName("anthropic_api")).toBe("anthropic-api");
+  });
+
+  it("passes canonical providers through unchanged", () => {
+    expect(normalizeAgentProviderName("codex")).toBe("codex");
+    expect(normalizeAgentProviderName("claude-code")).toBe("claude-code");
+    expect(normalizeAgentProviderName("anthropic-api")).toBe("anthropic-api");
+  });
+
+  it("returns null for unset or unknown providers", () => {
+    expect(normalizeAgentProviderName(undefined)).toBeNull();
+    expect(normalizeAgentProviderName("openai")).toBeNull();
   });
 });
 
@@ -212,6 +242,7 @@ describe("isAgentConfigKey / isAgentProvider", () => {
   it("recognises declared providers", () => {
     expect(isAgentProvider("codex")).toBe(true);
     expect(isAgentProvider("claude_code")).toBe(true);
+    expect(isAgentProvider("claude-code")).toBe(true);
     expect(isAgentProvider("openai")).toBe(false);
   });
 });

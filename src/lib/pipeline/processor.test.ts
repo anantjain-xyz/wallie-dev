@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
@@ -206,10 +207,11 @@ function buildAdminMock(opts: MockOptions) {
   }
   const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
   const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
+  const resolvedProvider = rawProvider ? normalizeAgentProviderName(rawProvider) : "codex";
   const resolvedConfig = {
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
     model: rawModel ?? "gpt-5-codex",
-    provider: (rawProvider ?? "codex").replace(/_/g, "-"),
+    provider: resolvedProvider ?? "codex",
   };
   mocked.loadWorkspaceAgentConfig.mockResolvedValue(resolvedConfig);
 
@@ -393,7 +395,7 @@ function buildAdminMock(opts: MockOptions) {
 
 function makeRunner(
   events: AgentEvent[],
-  opts: { provider?: string; requiresSandbox?: boolean } = {},
+  opts: { provider?: AgentProvider; requiresSandbox?: boolean } = {},
 ): AgentRunner {
   return {
     provider: opts.provider ?? "claude-code",

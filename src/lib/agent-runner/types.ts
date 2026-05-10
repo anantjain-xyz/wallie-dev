@@ -4,7 +4,7 @@
  * to the caller for persistence and real-time UI.
  */
 
-import type { SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
 // Agent Events
@@ -64,7 +64,7 @@ export interface AgentRunnerStartInput {
 }
 
 export interface AgentRunner {
-  readonly provider: string;
+  readonly provider: AgentProvider;
 
   /**
    * Whether this runner needs a per-session sandbox. CLI runners do; runners
@@ -85,15 +85,22 @@ export interface AgentRunner {
 // ---------------------------------------------------------------------------
 
 export interface AgentRunnerConfig {
-  /** Which provider to use: "codex" | "claude-code" */
-  provider: string;
-  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-20250514"). */
+  /** Which provider to use: "codex" | "claude-code" | "anthropic-api". */
+  provider: AgentProvider;
+  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-6"). */
   model?: string;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
 export const DEFAULT_CODEX_MODEL = "gpt-5-codex";
+export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
+
+export function getDefaultAnthropicModel(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return env.WALLIE_DEFAULT_ANTHROPIC_MODEL?.trim() || DEFAULT_ANTHROPIC_MODEL;
+}
 
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
   provider: "codex",

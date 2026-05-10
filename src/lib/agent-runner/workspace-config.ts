@@ -2,6 +2,11 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  AGENT_PROVIDERS,
+  normalizeAgentProviderName,
+  type AgentProvider,
+} from "@/lib/agent-config/contracts";
 import type { Database } from "@/lib/supabase/database.types";
 
 import { DEFAULT_AGENT_RUNNER_CONFIG } from "./types";
@@ -12,14 +17,9 @@ export interface ResolvedWorkspaceAgentConfig {
   /** Workspace-configured model, or the runner default. Always set. */
   model: string;
   /** Canonical provider id ("codex" | "claude-code" | "anthropic-api"), normalized from the underscore form persisted by the settings UI. Always set. */
-  provider: string;
+  provider: AgentProvider;
   /** Workspace-configured max turns, or undefined if unset. */
   maxTurns?: number;
-}
-
-/** Underscore aliases (e.g. "claude_code") are persisted by the settings UI; canonicalize to the dashed form runners expect. */
-export function normalizeAgentProviderName(provider: string | undefined): string {
-  return (provider ?? DEFAULT_AGENT_RUNNER_CONFIG.provider).replace(/_/g, "-");
 }
 
 /**
@@ -49,13 +49,21 @@ export async function loadWorkspaceAgentConfig(
   const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
   const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
   const defaultModel = DEFAULT_AGENT_RUNNER_CONFIG.model;
+  const provider = rawProvider
+    ? normalizeAgentProviderName(rawProvider)
+    : DEFAULT_AGENT_RUNNER_CONFIG.provider;
   if (!defaultModel) {
     throw new Error("DEFAULT_AGENT_RUNNER_CONFIG.model must be set.");
+  }
+  if (!provider) {
+    throw new Error(
+      `Unknown agent provider: "${rawProvider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
+    );
   }
 
   return {
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
     model: rawModel ?? defaultModel,
-    provider: normalizeAgentProviderName(rawProvider),
+    provider,
   };
 }
