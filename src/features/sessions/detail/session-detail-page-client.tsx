@@ -19,7 +19,7 @@ import {
   type SessionRun,
 } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
-import { IssueWalliePanel } from "@/features/wallie/issue-wallie-panel";
+import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
@@ -321,7 +321,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
               Wallie agent
             </h2>
             <div className="mt-3">
-              <IssueWalliePanel
+              <SessionWalliePanel
                 initialData={initialData.wallie}
                 session={{
                   githubRepositoryId: initialData.sessionGithubRepositoryId,
