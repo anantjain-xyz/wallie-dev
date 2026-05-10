@@ -3,17 +3,17 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables } from "@/lib/supabase/database.types";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
-import { buildWallieIssueData } from "@/features/wallie/data";
-import type { WallieIssueRepository } from "@/features/wallie/types";
+import { buildWallieSessionData } from "@/features/wallie/data";
+import type { WallieSessionRepository } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
-export async function loadWallieIssueData(input: {
+export async function loadWallieSessionData(input: {
   session: { githubRepositoryId: string | null; id: string };
   memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  repository: WallieIssueRepository | null;
+  repository: WallieSessionRepository | null;
   supabase: SupabaseServerClient;
   workspaceId: string;
 }) {
@@ -64,7 +64,7 @@ export async function loadWallieIssueData(input: {
     (secretKey) => !availableSecretKeys.has(secretKey),
   );
 
-  return buildWallieIssueData({
+  return buildWallieSessionData({
     sessionGithubRepositoryId: input.session.githubRepositoryId,
     memberIndex: input.memberIndex,
     messages: messageRows,
