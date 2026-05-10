@@ -201,9 +201,11 @@ type TestAdminClient = Pick<AdminClient, "from" | "rpc">;
 /**
  * Keep processor admin mocks structurally tied to the Supabase admin surface
  * the code under test uses. `createTestAdminClient` returns the typed
- * Pick<AdminClient, "from" | "rpc"> surface for future mocks; the adapter
- * below centralizes the cast needed by production function signatures so test
- * bodies do not hide incomplete mocks behind opaque per-call casts.
+ * Pick<AdminClient, "from" | "rpc"> surface for future mocks. Table-only
+ * tests get a throwing `rpc` implementation by default so accidental RPC calls
+ * fail loudly, while RPC-specific tests pass their own mock. The adapter below
+ * centralizes the cast needed by production function signatures so test bodies
+ * do not hide incomplete mocks behind opaque per-call casts.
  */
 function createTestAdminClient(input: {
   from: (name: string) => unknown;
@@ -212,7 +214,9 @@ function createTestAdminClient(input: {
   return {
     from: input.from as AdminClient["from"],
     rpc: (input.rpc ??
-      vi.fn().mockResolvedValue({ data: null, error: null })) as AdminClient["rpc"],
+      vi.fn(() => {
+        throw new Error("Unexpected admin.rpc call in processor test admin mock");
+      })) as AdminClient["rpc"],
   };
 }
 
