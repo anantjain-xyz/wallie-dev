@@ -264,4 +264,26 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "Duplicate stage slug: product" });
   });
+
+  it("maps duplicate incoming stage IDs from SQL validation to 400", async () => {
+    grantAccess();
+    setupRpc({
+      data: {
+        duplicate_stage_ids: [PRODUCT_STAGE_ID],
+        error_code: "duplicate_stage_id",
+        ok: false,
+      },
+    });
+
+    const response = await putPipeline({
+      name: "Default",
+      stages: [baseStage(), baseStage({ name: "Product copy", slug: "product-copy" })],
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      duplicateStageIds: [PRODUCT_STAGE_ID],
+      error: `Duplicate stage IDs: ${PRODUCT_STAGE_ID}`,
+    });
+  });
 });

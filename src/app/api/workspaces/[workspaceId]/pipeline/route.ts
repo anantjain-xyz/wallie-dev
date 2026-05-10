@@ -10,6 +10,7 @@ type RouteContext = {
 
 type PipelineRewriteRpcResult = {
   blocking_session_numbers?: number[];
+  duplicate_stage_ids?: string[];
   duplicate_stage_slugs?: string[];
   error_code?: string;
   invalid_approver_member_ids?: string[];
@@ -73,6 +74,16 @@ export async function PUT(request: Request, context: RouteContext) {
     switch (result?.error_code) {
       case "pipeline_not_found":
         return NextResponse.json({ error: "Workspace has no default pipeline." }, { status: 404 });
+      case "duplicate_stage_id": {
+        const ids = result.duplicate_stage_ids ?? [];
+        return NextResponse.json(
+          {
+            duplicateStageIds: ids,
+            error: `Duplicate stage IDs: ${ids.join(", ")}`,
+          },
+          { status: 400 },
+        );
+      }
       case "duplicate_stage_slug": {
         const slugs = result.duplicate_stage_slugs ?? [];
         return NextResponse.json(

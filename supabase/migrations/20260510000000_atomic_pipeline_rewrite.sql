@@ -26,6 +26,7 @@ set search_path = ''
 as $$
 declare
   target_pipeline_id uuid;
+  duplicate_stage_ids uuid[];
   duplicate_stage_slugs text[];
   invalid_member_ids uuid[];
   delete_stage_ids uuid[];
@@ -89,6 +90,24 @@ begin
       order by ids.member_ordinality
     )::uuid[]
   from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality);
+
+  select coalesce(array_agg(duplicate_ids.id order by duplicate_ids.id), '{}'::uuid[])
+  into duplicate_stage_ids
+  from (
+    select i.id
+    from pg_temp.pipeline_rewrite_stages i
+    where i.id is not null
+    group by i.id
+    having count(*) > 1
+  ) duplicate_ids;
+
+  if cardinality(duplicate_stage_ids) > 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'duplicate_stage_id',
+      'duplicate_stage_ids', to_jsonb(duplicate_stage_ids)
+    );
+  end if;
 
   select coalesce(array_agg(duplicate_slugs.slug order by duplicate_slugs.slug), '{}'::text[])
   into duplicate_stage_slugs
