@@ -17,6 +17,12 @@ const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 /** Linear states that indicate the issue is no longer active. */
 const TERMINAL_LINEAR_STATES = new Set(["canceled", "done", "duplicate"]);
 
+/** Session phase states where Wallie may still do more work. */
+const RECONCILABLE_PHASE_STATUSES = ["agent_generating", "awaiting_review", "rejected"] as const;
+
+/** Agent job states that are not yet terminal and may still consume work. */
+const ACTIVE_AGENT_JOB_STATUSES = ["queued", "running"] as const;
+
 /** Page size for the reconciliation cursor. */
 const RECONCILE_PAGE_SIZE = 50;
 
@@ -46,11 +52,10 @@ class RateLimitedError extends Error {
 }
 
 /**
- * Reconciliation sweep: for every running session that was triggered from a
+ * Reconciliation sweep: for every active session that was triggered from a
  * Linear issue, check whether the Linear issue is still in an active state.
  * If the issue has been canceled/done/duplicate, stop the Wallie session by
- * marking the running job as canceled and transitioning the session to
- * rejected.
+ * marking active jobs as canceled and transitioning the session to rejected.
  *
  * Sessions are grouped by workspace and queried in a single GraphQL `issues`
  * batch per workspace, so a workspace with N active sessions costs one
@@ -73,7 +78,7 @@ export async function reconcileLinearState(
       .from("sessions")
       .select("id, workspace_id, linear_issue_id, phase_status, created_at")
       .not("linear_issue_id", "is", null)
-      .eq("phase_status", "agent_generating")
+      .in("phase_status", RECONCILABLE_PHASE_STATUSES)
       .order("created_at", { ascending: true })
       .limit(RECONCILE_PAGE_SIZE);
 
@@ -187,7 +192,7 @@ async function cancelSessionForTerminalIssue(
       status: "canceled",
     })
     .eq("session_id", session.id)
-    .eq("status", "running");
+    .in("status", ACTIVE_AGENT_JOB_STATUSES);
 
   const { data: jobIds } = await admin.from("agent_jobs").select("id").eq("session_id", session.id);
 
@@ -209,7 +214,7 @@ async function cancelSessionForTerminalIssue(
     .from("sessions")
     .update({ phase_status: "rejected" })
     .eq("id", session.id)
-    .eq("phase_status", "agent_generating");
+    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
 }
 
 // --- helpers ---
