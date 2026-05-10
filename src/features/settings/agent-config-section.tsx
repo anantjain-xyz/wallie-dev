@@ -1,0 +1,353 @@
+"use client";
+
+import { useState } from "react";
+
+import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
+import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
+import type { AgentConfigMap } from "@/features/settings/data";
+import type { FlashMessage } from "@/features/settings/settings-types";
+import { Section } from "@/features/settings/settings-ui";
+import { useApiAction } from "@/features/settings/use-api-action";
+import {
+  type AgentConfigKey,
+  type AgentProvider,
+  AGENT_CONFIG_LIMITS,
+  isAgentProvider,
+  parseAgentConfigValue,
+} from "@/lib/agent-config/contracts";
+
+type AgentConfigVerifyResult =
+  | { kind: "ok" }
+  | { kind: "error"; message: string }
+  | { kind: "skipped"; reason: string };
+
+type AgentConfigSectionProps = {
+  canManage: boolean;
+  initialAgentConfig: AgentConfigMap;
+  setFlashMessage: (message: FlashMessage) => void;
+  workspaceId: string;
+};
+
+function parseDraftForKey(
+  configKey: AgentConfigKey,
+  type: "number" | "select" | "text",
+  draft: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const trimmed = draft.trim();
+
+  if (type === "number") {
+    if (trimmed === "") {
+      return { ok: false, error: "Enter a number." };
+    }
+    const numeric = Number(trimmed);
+    if (Number.isNaN(numeric)) {
+      return { ok: false, error: "Must be a number." };
+    }
+    return parseAgentConfigValue(configKey, numeric);
+  }
+
+  if (type === "select") {
+    if (trimmed === "") {
+      return { ok: false, error: "Pick a value." };
+    }
+    return parseAgentConfigValue(configKey, trimmed);
+  }
+
+  return parseAgentConfigValue(configKey, trimmed);
+}
+
+function mapVerifyResponse(payload: VerifyAgentConfigResponse): AgentConfigVerifyResult {
+  switch (payload.ok) {
+    case true:
+      return { kind: "ok" };
+    case "skipped":
+      return { kind: "skipped", reason: payload.reason };
+    case false:
+      return { kind: "error", message: payload.error };
+  }
+}
+
+function AgentConfigField({
+  configKey,
+  description,
+  disabled,
+  label,
+  onSave,
+  onVerify,
+  options,
+  placeholder,
+  type,
+  value,
+}: {
+  configKey: AgentConfigKey;
+  description: string;
+  disabled: boolean;
+  label: string;
+  onSave: (key: AgentConfigKey, value: unknown) => Promise<void>;
+  onVerify?: (rawDraft: string) => Promise<AgentConfigVerifyResult>;
+  options?: string[];
+  placeholder?: string;
+  type: "number" | "select" | "text";
+  value: unknown;
+}) {
+  const currentValue = typeof value === "string" || typeof value === "number" ? String(value) : "";
+  const [draft, setDraft] = useState(currentValue);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<AgentConfigVerifyResult | null>(null);
+  const isDirty = draft !== currentValue;
+
+  const draftIsEmpty = draft.trim() === "";
+  const validation = draftIsEmpty ? null : parseDraftForKey(configKey, type, draft);
+  const validationError = validation && !validation.ok ? validation.error : null;
+  const canSave = !disabled && isDirty && validation?.ok === true;
+  const canVerify = Boolean(onVerify) && !disabled && !isVerifying && draft.trim() !== "";
+
+  function handleDraftChange(next: string) {
+    setDraft(next);
+    setVerifyResult(null);
+  }
+
+  function handleSave() {
+    if (!validation?.ok) return;
+    void onSave(configKey, validation.value);
+  }
+
+  async function handleVerify() {
+    if (!onVerify) return;
+    setIsVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await onVerify(draft);
+      setVerifyResult(result);
+    } finally {
+      setIsVerifying(false);
+    }
+  }
+
+  return (
+    <div className="ui-subpanel space-y-4 p-4">
+      <label className="space-y-2 text-sm font-semibold text-foreground">
+        <span>{label}</span>
+        {type === "select" && options ? (
+          <select
+            className="ui-input"
+            disabled={disabled}
+            onChange={(event) => handleDraftChange(event.target.value)}
+            value={draft}
+          >
+            <option value="">Not configured</option>
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            autoComplete="off"
+            className="ui-input"
+            disabled={disabled}
+            onChange={(event) => handleDraftChange(event.target.value)}
+            placeholder={placeholder}
+            type={type === "number" ? "number" : "text"}
+            value={draft}
+          />
+        )}
+      </label>
+      {validationError ? (
+        <p className="text-xs leading-5 text-danger" role="alert">
+          {validationError}
+        </p>
+      ) : null}
+      <p className="text-xs leading-5 text-muted">{description}</p>
+      {verifyResult ? (
+        <p
+          className={`text-xs leading-5 ${
+            verifyResult.kind === "ok"
+              ? "text-success"
+              : verifyResult.kind === "skipped"
+                ? "text-muted"
+                : "text-danger"
+          }`}
+          role="status"
+        >
+          {verifyResult.kind === "ok"
+            ? "✓ Reachable"
+            : verifyResult.kind === "skipped"
+              ? `ⓘ ${verifyResult.reason}`
+              : `✗ ${verifyResult.message}`}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap justify-end gap-2">
+        {onVerify ? (
+          <button
+            className="ui-button"
+            disabled={!canVerify}
+            onClick={() => void handleVerify()}
+            type="button"
+          >
+            {isVerifying ? "Verifying…" : "Verify"}
+          </button>
+        ) : null}
+        <button
+          className="ui-button-primary"
+          disabled={!canSave}
+          onClick={handleSave}
+          type="button"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function AgentConfigSection({
+  canManage,
+  initialAgentConfig,
+  setFlashMessage,
+  workspaceId,
+}: AgentConfigSectionProps) {
+  const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialAgentConfig);
+
+  const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown]>({
+    call: (key, value) =>
+      fetch("/api/agent-config", {
+        body: JSON.stringify({
+          key,
+          value,
+          workspaceId,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      }),
+    errorText: "Agent config save failed.",
+    onSuccess: (_payload, [key, value]) => {
+      setAgentConfig((current) => ({ ...current, [key]: value }));
+    },
+    setFlashMessage,
+    successText: (_payload, [key]) => `Saved ${key}.`,
+  });
+
+  const verifyAgentModel = useApiAction<
+    VerifyAgentConfigResponse,
+    [rawDraft: string, provider: AgentProvider],
+    AgentConfigVerifyResult
+  >({
+    call: (rawDraft, provider) =>
+      fetch("/api/agent-config/verify", {
+        body: JSON.stringify({
+          model: rawDraft.trim(),
+          provider,
+          workspaceId,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      }),
+    errorText: "Verify call failed.",
+    onError: (message) => ({ kind: "error", message }),
+    onSuccess: mapVerifyResponse,
+    setFlashMessage,
+    successText: null,
+  });
+
+  async function handleSaveAgentConfig(key: AgentConfigKey, value: unknown) {
+    await saveAgentConfig.run(key, value);
+  }
+
+  async function handleVerifyAgentModel(rawDraft: string): Promise<AgentConfigVerifyResult> {
+    const provider = isAgentProvider(agentConfig.agent_provider)
+      ? (agentConfig.agent_provider as AgentProvider)
+      : "codex";
+
+    return (
+      (await verifyAgentModel.run(rawDraft, provider)) ?? {
+        kind: "error",
+        message: "Verify call failed.",
+      }
+    );
+  }
+
+  return (
+    <Section title="Coding Agent">
+      <div className="space-y-4">
+        <p className="text-sm leading-7 text-muted">
+          Configure how Wallie runs coding agents in this workspace. These settings apply to all
+          sessions that trigger agent execution.
+        </p>
+
+        {canManage ? (
+          <div className="space-y-4">
+            <AgentConfigField
+              configKey="agent_provider"
+              description="Which agent CLI or API to use for coding tasks. Anthropic API skips the sandbox (faster for text-only stages)."
+              disabled={saveAgentConfig.isBusy}
+              label="Agent Provider"
+              onSave={handleSaveAgentConfig}
+              options={["codex", "claude_code", "anthropic_api"]}
+              type="select"
+              value={agentConfig.agent_provider}
+            />
+            {(agentConfig.agent_provider ?? "codex") === "codex" ? (
+              <p className="text-xs leading-5 text-muted">
+                Each session runs with its creator&apos;s Codex account. Connect yours below under
+                &ldquo;Your Codex account&rdquo;.
+              </p>
+            ) : null}
+            {agentConfig.agent_provider === "anthropic_api" ? (
+              <p className="text-xs leading-5 text-muted">
+                Calls Anthropic&apos;s Messages API directly — no sandbox spawn, no GitHub repo
+                required. Add your <code>ANTHROPIC_API_KEY</code> under Integrations above.
+              </p>
+            ) : null}
+            <AgentConfigField
+              configKey="agent_model"
+              description="Model identifier passed to the agent provider. Use Verify to send a 1-token test call with this workspace's stored credentials."
+              disabled={saveAgentConfig.isBusy || verifyAgentModel.isBusy}
+              label="Agent Model"
+              onSave={handleSaveAgentConfig}
+              onVerify={handleVerifyAgentModel}
+              placeholder="claude-sonnet-4-20250514"
+              type="text"
+              value={agentConfig.agent_model}
+            />
+            <AgentConfigField
+              configKey="concurrency_limit"
+              description={`Max number of agent jobs that can run simultaneously (${AGENT_CONFIG_LIMITS.concurrency_limit.min}–${AGENT_CONFIG_LIMITS.concurrency_limit.max}).`}
+              disabled={saveAgentConfig.isBusy}
+              label="Concurrency Limit"
+              onSave={handleSaveAgentConfig}
+              placeholder="1"
+              type="number"
+              value={agentConfig.concurrency_limit}
+            />
+            <AgentConfigField
+              configKey="stall_timeout_ms"
+              description={`Time in milliseconds before a run with no activity is considered stalled (${AGENT_CONFIG_LIMITS.stall_timeout_ms.min.toLocaleString()}–${AGENT_CONFIG_LIMITS.stall_timeout_ms.max.toLocaleString()} ms).`}
+              disabled={saveAgentConfig.isBusy}
+              label="Stall Timeout (ms)"
+              onSave={handleSaveAgentConfig}
+              placeholder="300000"
+              type="number"
+              value={agentConfig.stall_timeout_ms}
+            />
+            <AgentConfigField
+              configKey="max_retries"
+              description={`Maximum automatic retries for failed agent runs (${AGENT_CONFIG_LIMITS.max_retries.min}–${AGENT_CONFIG_LIMITS.max_retries.max}).`}
+              disabled={saveAgentConfig.isBusy}
+              label="Max Retries"
+              onSave={handleSaveAgentConfig}
+              placeholder="3"
+              type="number"
+              value={agentConfig.max_retries}
+            />
+          </div>
+        ) : (
+          <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
+            Workspace admins can configure coding agent settings from this page.
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
