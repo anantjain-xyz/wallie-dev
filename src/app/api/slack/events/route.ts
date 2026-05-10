@@ -1,4 +1,5 @@
 import { after, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { fetchLinearIssue } from "@/lib/linear/client";
 import { PIPELINE_JOB_TYPE, buildPipelineDedupeKey } from "@/lib/pipeline/types";
@@ -9,6 +10,48 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { processQueuedAgentJobs } from "@/lib/wallie/service";
 
 const LINEAR_URL_REGEX = /https:\/\/linear\.app\/[a-zA-Z0-9-]+\/issue\/([A-Z]+-\d+)/;
+
+const slackUrlVerificationPayloadSchema = z
+  .object({
+    challenge: z.string(),
+    type: z.literal("url_verification"),
+  })
+  .passthrough();
+
+const slackEventPayloadSchema = z
+  .object({
+    enterprise_id: z.string().optional(),
+    event: z
+      .object({
+        bot_id: z.string().optional(),
+        channel: z.string().optional(),
+        text: z.string().optional(),
+        thread_ts: z.string().optional(),
+        ts: z.string().optional(),
+        type: z.string(),
+      })
+      .passthrough()
+      .optional(),
+    team_id: z.string().optional(),
+  })
+  .passthrough();
+
+const slackAppMentionPayloadSchema = z
+  .object({
+    enterprise_id: z.string().optional(),
+    event: z
+      .object({
+        bot_id: z.string().optional(),
+        channel: z.string(),
+        text: z.string(),
+        thread_ts: z.string().optional(),
+        ts: z.string(),
+        type: z.literal("app_mention"),
+      })
+      .passthrough(),
+    team_id: z.string().optional(),
+  })
+  .passthrough();
 
 function extractLinearUrl(text: string): { issueId: string; url: string } | null {
   const match = text.match(LINEAR_URL_REGEX);
@@ -29,28 +72,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  // Slack URL verification challenge — respond after signature verification.
+  let rawPayload: unknown;
   try {
-    const payload = JSON.parse(rawBody);
-    if (payload.type === "url_verification") {
-      return NextResponse.json({ challenge: payload.challenge });
-    }
+    rawPayload = JSON.parse(rawBody);
   } catch {
-    // Not JSON, continue
+    return NextResponse.json({ ok: true });
+  }
+
+  // Slack URL verification challenge — respond after signature verification.
+  const urlVerificationPayload = slackUrlVerificationPayloadSchema.safeParse(rawPayload);
+  if (urlVerificationPayload.success) {
+    return NextResponse.json({ challenge: urlVerificationPayload.data.challenge });
   }
 
   // A signed-but-malformed body should NOT throw 500, because Slack would
   // retry up to 3x on non-2xx responses. Ack with ok:true and drop.
-  let payload: {
-    enterprise_id?: string;
-    event?: Record<string, unknown>;
-    team_id?: string;
-  };
-  try {
-    payload = JSON.parse(rawBody);
-  } catch {
+  const payloadResult = slackEventPayloadSchema.safeParse(rawPayload);
+  if (!payloadResult.success) {
+    console.error("Malformed Slack event payload", { error: payloadResult.error.flatten() });
     return NextResponse.json({ ok: true });
   }
+  const payload = payloadResult.data;
   const event = payload.event;
 
   if (!event) {
@@ -67,18 +109,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  const appMentionPayloadResult = slackAppMentionPayloadSchema.safeParse(payload);
+  if (!appMentionPayloadResult.success) {
+    console.error("Malformed Slack app_mention event", {
+      error: appMentionPayloadResult.error.flatten(),
+    });
+    return NextResponse.json({ ok: true });
+  }
+  const appMentionPayload = appMentionPayloadResult.data;
+  const appMentionEvent = appMentionPayload.event;
+
   // Enterprise Grid fallback: top-level events from a Grid org may omit
   // team_id and only carry enterprise_id. Without this fallback the
   // installation lookup would fail and Grid customers would silently lose
   // their mentions.
-  const teamId = (payload.team_id as string | undefined) ?? payload.enterprise_id;
+  const teamId = appMentionPayload.team_id ?? appMentionPayload.enterprise_id;
   if (!teamId) {
     return NextResponse.json({ ok: true });
   }
-  const channelId = event.channel as string;
-  const messageTs = event.ts as string;
-  const threadTs = (event.thread_ts as string) ?? messageTs;
-  const text = event.text as string;
+  const channelId = appMentionEvent.channel;
+  const messageTs = appMentionEvent.ts;
+  const threadTs = appMentionEvent.thread_ts ?? messageTs;
+  const text = appMentionEvent.text;
 
   // Extract Linear URL from mention text
   const linearInfo = extractLinearUrl(text);
@@ -140,10 +192,11 @@ async function handleAppMention(ctx: {
   }
 
   const workspaceId = slackInstall.workspace_id;
+  const botTokenEncrypted = slackInstall.bot_token_encrypted;
 
   async function postSlackReply(message: string) {
     try {
-      const botToken = decryptSecretValue(slackInstall!.bot_token_encrypted);
+      const botToken = decryptSecretValue(botTokenEncrypted);
       await fetch("https://slack.com/api/chat.postMessage", {
         body: JSON.stringify({
           channel: channelId,
@@ -251,10 +304,14 @@ async function handleAppMention(ctx: {
     : { data: null as { id: string } | null };
 
   if (!defaultPipeline || !firstStage) {
-    return NextResponse.json(
-      { error: "Workspace has no default pipeline configured." },
-      { status: 500 },
+    console.error("Slack workspace has no default pipeline configured", {
+      event: "no_default_pipeline",
+      workspaceId,
+    });
+    await postSlackReply(
+      ":warning: Wallie isn't fully configured for this workspace yet (no default pipeline). Ask an admin to set one up in Settings > Pipeline.",
     );
+    return;
   }
 
   const { data: sessionRow, error: sessionError } = await admin

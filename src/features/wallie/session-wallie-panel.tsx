@@ -15,7 +15,11 @@ import {
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import type { WallieIssueData, WallieIssueRepository, WallieRun } from "@/features/wallie/types";
+import type {
+  WallieSessionData,
+  WallieSessionRepository,
+  WallieRun,
+} from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import {
   buildWallieBlockingReasons,
@@ -36,11 +40,11 @@ export type WalliePanelSession = {
   workspaceId: string;
 };
 
-type IssueWalliePanelProps = {
-  initialData: WallieIssueData;
+type SessionWalliePanelProps = {
+  initialData: WallieSessionData;
   session: WalliePanelSession;
   memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  repositories: WallieIssueRepository[];
+  repositories: WallieSessionRepository[];
   supabase: SupabaseClient<Database>;
   workspaceSlug: string;
 };
@@ -111,14 +115,14 @@ function actionErrorMessage(payload: AgentRunActionErrorResponse | null) {
   return payload.error;
 }
 
-export function IssueWalliePanel({
+export function SessionWalliePanel({
   initialData,
   session,
   memberIndex,
   repositories,
   supabase,
   workspaceSlug,
-}: IssueWalliePanelProps) {
+}: SessionWalliePanelProps) {
   const [runs, setRuns] = useState(initialData.runs);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
@@ -313,7 +317,7 @@ export function IssueWalliePanel({
             }
           : {
               kind: "info",
-              text: "Wallie already has an active run on this issue.",
+              text: "Wallie already has an active run on this session.",
             },
       );
     } catch (error) {
@@ -352,7 +356,7 @@ export function IssueWalliePanel({
             }
           : {
               kind: "info",
-              text: "Wallie already has an active run on this issue.",
+              text: "Wallie already has an active run on this session.",
             },
       );
     } catch (error) {
@@ -388,8 +392,8 @@ export function IssueWalliePanel({
           </div>
 
           <p className="text-sm leading-6 text-muted">
-            Queue Wallie from this issue to inspect persisted run messages and retry completed runs
-            without exposing privileged queue writes in the browser.
+            Queue Wallie from this session to inspect persisted run messages and retry completed
+            runs without exposing privileged queue writes in the browser.
           </p>
         </div>
 
@@ -447,7 +451,7 @@ export function IssueWalliePanel({
       <div className="space-y-4">
         {runs.length === 0 ? (
           <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-            No Wallie runs yet. Queue one from this issue to create the first persisted timeline
+            No Wallie runs yet. Queue one from this session to create the first persisted timeline
             entry.
           </div>
         ) : (

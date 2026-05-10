@@ -13,8 +13,8 @@ export type WallieBlockingCode =
 
 export type WallieActionErrorCode =
   | WallieBlockingCode
-  | "issue_not_found"
   | "run_lookup_timeout"
+  | "session_not_found"
   | "run_not_found"
   | "run_not_retryable";
 
@@ -23,7 +23,7 @@ export type WallieBlockingReason = {
   message: string;
 };
 
-export type WallieIssueRepository = {
+export type WallieSessionRepository = {
   defaultBranch: string | null;
   defaultProgrammingLanguage: string | null;
   fullName: string;
@@ -57,12 +57,12 @@ export type WallieRun = {
   triggeredByMemberId: string | null;
 };
 
-export type WallieIssueData = {
+export type WallieSessionData = {
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
   missingSecretKeys: string[];
   mode: WallieRunMode;
-  repository: WallieIssueRepository | null;
+  repository: WallieSessionRepository | null;
   requiredSecretKeys: string[];
   runs: WallieRun[];
 };

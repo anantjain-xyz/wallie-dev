@@ -10,8 +10,8 @@ import {
 } from "@/features/wallie/utils";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import type {
-  WallieIssueData,
-  WallieIssueRepository,
+  WallieSessionData,
+  WallieSessionRepository,
   WallieRun,
   WallieRunMessage,
 } from "@/features/wallie/types";
@@ -112,7 +112,7 @@ export function upsertWallieRunMessage(
   return normalizeWallieRuns(nextRuns);
 }
 
-export function buildWallieIssueData(input: {
+export function buildWallieSessionData(input: {
   sessionGithubRepositoryId: string | null;
   memberIndex: ReadonlyMap<string, WorkspaceMember>;
   messages: readonly Pick<
@@ -120,7 +120,7 @@ export function buildWallieIssueData(input: {
     "agent_run_id" | "created_at" | "id" | "kind" | "message_md"
   >[];
   missingSecretKeys: string[];
-  repository: WallieIssueRepository | null;
+  repository: WallieSessionRepository | null;
   runs: readonly Pick<
     Tables<"agent_runs">,
     | "created_at"
@@ -164,5 +164,5 @@ export function buildWallieIssueData(input: {
     repository: input.repository,
     requiredSecretKeys: [...WALLIE_REQUIRED_SECRET_KEYS],
     runs,
-  } satisfies WallieIssueData;
+  } satisfies WallieSessionData;
 }

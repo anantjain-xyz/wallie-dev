@@ -2,7 +2,11 @@
 // These are used by the wallie panel UI and the service layer.
 
 import type { Enums } from "@/lib/supabase/database.types";
-import type { WallieBlockingReason, WallieRunMode } from "@/features/wallie/types";
+import type {
+  WallieBlockingReason,
+  WallieIssueRepository,
+  WallieRunMode,
+} from "@/features/wallie/types";
 
 export function inferWallieRunMode(githubRepositoryId: string | null | undefined): WallieRunMode {
   return githubRepositoryId ? "code" : "project";
@@ -35,20 +39,16 @@ export function buildWallieBlockingReasons(input: {
   hasActiveRun: boolean;
   missingSecretKeys: string[];
   mode: WallieRunMode;
-  repository: {
-    isArchived?: boolean;
-    is_archived?: boolean;
-  } | null;
+  repository: WallieIssueRepository | null;
 }) {
   const reasons: WallieBlockingReason[] = [];
-  const repositoryIsArchived =
-    input.repository?.isArchived ?? input.repository?.is_archived ?? false;
+  const repositoryIsArchived = input.repository ? input.repository.isArchived : false;
 
   if (input.hasActiveRun) {
     reasons.push({
       code: "active_run",
       message:
-        "A Wallie run is already queued or running for this issue. Wait for it to finish before starting another run.",
+        "A Wallie run is already queued or running for this session. Wait for it to finish before starting another run.",
     });
   }
 
@@ -56,7 +56,7 @@ export function buildWallieBlockingReasons(input: {
     reasons.push({
       code: "repository_unavailable",
       message:
-        "Code mode requires a linked repository. Link a GitHub repository on this issue before running Wallie.",
+        "Code mode requires a linked repository. Link a GitHub repository on this session before running Wallie.",
     });
   }
 
