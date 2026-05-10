@@ -14,6 +14,7 @@ import {
 import type {
   WallieActionErrorCode,
   WallieBlockingReason,
+  WallieIssueRepository,
   WallieRunMode,
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
@@ -103,6 +104,18 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
     missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
     statusCode: 422,
   });
+}
+
+function mapRepositoryForRun(repository: RepositoryForRun): WallieIssueRepository {
+  return {
+    defaultBranch: repository.default_branch,
+    defaultProgrammingLanguage: repository.default_programming_language,
+    fullName: repository.full_name,
+    htmlUrl: repository.html_url,
+    id: repository.id,
+    isArchived: repository.is_archived,
+    isPrivate: repository.private,
+  };
 }
 
 function createRunInsert(input: {
@@ -208,7 +221,7 @@ async function loadRepositoryForRun(
     throw error;
   }
 
-  return data as RepositoryForRun | null;
+  return data ? mapRepositoryForRun(data as RepositoryForRun) : null;
 }
 
 async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
