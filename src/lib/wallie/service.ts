@@ -14,7 +14,7 @@ import {
 import type {
   WallieActionErrorCode,
   WallieBlockingReason,
-  WallieIssueRepository,
+  WallieSessionRepository,
   WallieRunMode,
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
@@ -198,7 +198,7 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
   });
 }
 
-function mapRepositoryForRun(repository: RepositoryForRun): WallieIssueRepository {
+function mapRepositoryForRun(repository: RepositoryForRun): WallieSessionRepository {
   return {
     defaultBranch: repository.default_branch,
     defaultProgrammingLanguage: repository.default_programming_language,
