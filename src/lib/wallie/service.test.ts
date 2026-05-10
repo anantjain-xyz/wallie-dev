@@ -53,6 +53,7 @@ type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 type QueryResult = Promise<{ data: unknown; error: PostgrestError | null }>;
 type QueryBuilder = {
+  abortSignal: (signal: AbortSignal) => QueryBuilder;
   eq: (column: string, value: unknown) => QueryBuilder;
   in: (column: string, value: unknown) => QueryBuilder;
   limit: (count: number) => QueryBuilder;
@@ -116,10 +117,15 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
 }
 
 function createMaybeSingleQuery(
-  resolve: (filters: Map<string, unknown>) => QueryResult,
+  resolve: (filters: Map<string, unknown>, signal: AbortSignal | undefined) => QueryResult,
 ): QueryBuilder {
   const filters = new Map<string, unknown>();
+  let signal: AbortSignal | undefined;
   const builder: QueryBuilder = {
+    abortSignal: (nextSignal) => {
+      signal = nextSignal;
+      return builder;
+    },
     eq: (column, value) => {
       filters.set(column, value);
       return builder;
@@ -129,7 +135,7 @@ function createMaybeSingleQuery(
       return builder;
     },
     limit: () => builder,
-    maybeSingle: () => resolve(filters),
+    maybeSingle: () => resolve(filters, signal),
     order: () => builder,
   };
 
@@ -143,7 +149,9 @@ function buildSupabaseMocks(opts: {
   insertedJobRow?: AgentJobRow;
   insertedRunRows: Array<Record<string, unknown>>;
   jobInsertError?: PostgrestError | null;
-  loadRunByJobId?: () => Promise<AgentRunRow | null> | AgentRunRow | null;
+  loadRunByJobId?: (
+    signal: AbortSignal | undefined,
+  ) => Promise<AgentRunRow | null> | AgentRunRow | null;
 }) {
   const sessionRow = {
     id: "sess-1",
@@ -206,10 +214,10 @@ function buildSupabaseMocks(opts: {
       if (table === "agent_runs") {
         return {
           select: () =>
-            createMaybeSingleQuery(async (filters) => {
+            createMaybeSingleQuery(async (filters, signal) => {
               if (filters.has("agent_job_id")) {
                 return {
-                  data: opts.loadRunByJobId ? await opts.loadRunByJobId() : null,
+                  data: opts.loadRunByJobId ? await opts.loadRunByJobId(signal) : null,
                   error: null,
                 };
               }
@@ -402,6 +410,63 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
     expect(consoleError).toHaveBeenCalledWith(
       "Wallie run lookup exhausted after duplicate enqueue",
       expect.objectContaining({
+        jobId: "job-existing",
+        maxElapsedMs: 120,
+      }),
+    );
+  });
+
+  it("aborts an in-flight run lookup when the deadline expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(baseTimestamp);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    let lookupCount = 0;
+    const { admin, supabase } = buildSupabaseMocks({
+      activeJobRow: buildAgentJobRow({ id: "job-existing" }),
+      agentConfig: [],
+      insertedRunRows: [],
+      jobInsertError: uniqueViolationError,
+      loadRunByJobId: (signal) => {
+        lookupCount += 1;
+
+        return new Promise((_, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              reject(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+            },
+            { once: true },
+          );
+        });
+      },
+    });
+
+    const resultPromise = enqueueWallieRun({
+      admin,
+      runLookupRetry: {
+        initialDelayMs: 40,
+        maxDelayMs: 80,
+        maxElapsedMs: 120,
+      },
+      sessionId: "sess-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      triggerType: "manual_run",
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+    const rejection = expect(resultPromise).rejects.toMatchObject({
+      code: "run_lookup_timeout",
+      statusCode: 503,
+    });
+
+    await vi.advanceTimersByTimeAsync(120);
+
+    await rejection;
+    expect(lookupCount).toBe(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      "Wallie run lookup exhausted after duplicate enqueue",
+      expect.objectContaining({
+        attempts: 1,
         jobId: "job-existing",
         maxElapsedMs: 120,
       }),

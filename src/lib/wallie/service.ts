@@ -135,6 +135,49 @@ function delay(milliseconds: number, signal?: AbortSignal) {
   });
 }
 
+function createRunLookupSignal(input: { parentSignal?: AbortSignal; timeoutMs: number }) {
+  const controller = new AbortController();
+  const abortFromParent = () => {
+    if (input.parentSignal) {
+      controller.abort(toAbortError(input.parentSignal));
+    }
+  };
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("Wallie run lookup deadline exceeded."));
+  }, input.timeoutMs);
+
+  if (input.parentSignal?.aborted) {
+    abortFromParent();
+    clearTimeout(timeout);
+  } else {
+    input.parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    dispose: () => {
+      clearTimeout(timeout);
+      input.parentSignal?.removeEventListener("abort", abortFromParent);
+    },
+    signal: controller.signal,
+  };
+}
+
+function throwRunLookupTimeout(input: {
+  attempts: number;
+  elapsedMs: number;
+  jobId: string;
+  maxElapsedMs: number;
+}): never {
+  console.error("Wallie run lookup exhausted after duplicate enqueue", {
+    attempts: input.attempts,
+    elapsedMs: input.elapsedMs,
+    jobId: input.jobId,
+    maxElapsedMs: input.maxElapsedMs,
+  });
+
+  throw new WallieRunLookupTimeoutError(input);
+}
+
 function isUniqueViolation(error: PostgrestError | null) {
   return error?.code === "23505";
 }
@@ -343,14 +386,14 @@ async function loadRunById(admin: AdminClient, runId: string) {
   return data as AgentRunRow | null;
 }
 
-async function loadRunByJobId(admin: AdminClient, jobId: string) {
-  const { data, error } = await admin
+async function loadRunByJobId(admin: AdminClient, jobId: string, signal?: AbortSignal) {
+  const query = admin
     .from("agent_runs")
     .select(runSelect)
     .eq("agent_job_id", jobId)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
 
   if (error) {
     throw error;
@@ -376,8 +419,44 @@ async function waitForRunByJobId(
       throw toAbortError(options.signal);
     }
 
+    const elapsedBeforeLookupMs = Date.now() - startedAt;
+
+    if (elapsedBeforeLookupMs >= maxElapsedMs) {
+      throwRunLookupTimeout({
+        attempts,
+        elapsedMs: elapsedBeforeLookupMs,
+        jobId,
+        maxElapsedMs,
+      });
+    }
+
     attempts += 1;
-    const run = await loadRunByJobId(admin, jobId);
+    const lookupSignal = createRunLookupSignal({
+      parentSignal: options.signal,
+      timeoutMs: maxElapsedMs - elapsedBeforeLookupMs,
+    });
+    let run: AgentRunRow | null;
+
+    try {
+      run = await loadRunByJobId(admin, jobId, lookupSignal.signal);
+    } catch (error) {
+      if (lookupSignal.signal.aborted) {
+        if (options.signal?.aborted) {
+          throw toAbortError(options.signal);
+        }
+
+        throwRunLookupTimeout({
+          attempts,
+          elapsedMs: Date.now() - startedAt,
+          jobId,
+          maxElapsedMs,
+        });
+      }
+
+      throw error;
+    } finally {
+      lookupSignal.dispose();
+    }
 
     if (run) {
       return run;
@@ -386,14 +465,7 @@ async function waitForRunByJobId(
     const elapsedMs = Date.now() - startedAt;
 
     if (elapsedMs >= maxElapsedMs) {
-      console.error("Wallie run lookup exhausted after duplicate enqueue", {
-        attempts,
-        elapsedMs,
-        jobId,
-        maxElapsedMs,
-      });
-
-      throw new WallieRunLookupTimeoutError({
+      throwRunLookupTimeout({
         attempts,
         elapsedMs,
         jobId,
