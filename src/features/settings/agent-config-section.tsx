@@ -93,19 +93,22 @@ function AgentConfigField({
 }) {
   const currentValue = typeof value === "string" || typeof value === "number" ? String(value) : "";
   const [draft, setDraft] = useState(currentValue);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [verifyResult, setVerifyResult] = useState<AgentConfigVerifyResult | null>(null);
+  const [verifyState, setVerifyState] = useState<{
+    isVerifying: boolean;
+    result: AgentConfigVerifyResult | null;
+  }>({ isVerifying: false, result: null });
   const isDirty = draft !== currentValue;
 
   const draftIsEmpty = draft.trim() === "";
   const validation = draftIsEmpty ? null : parseDraftForKey(configKey, type, draft);
   const validationError = validation && !validation.ok ? validation.error : null;
   const canSave = !disabled && isDirty && validation?.ok === true;
-  const canVerify = Boolean(onVerify) && !disabled && !isVerifying && draft.trim() !== "";
+  const canVerify =
+    Boolean(onVerify) && !disabled && !verifyState.isVerifying && draft.trim() !== "";
 
   function handleDraftChange(next: string) {
     setDraft(next);
-    setVerifyResult(null);
+    setVerifyState({ isVerifying: false, result: null });
   }
 
   function handleSave() {
@@ -115,13 +118,18 @@ function AgentConfigField({
 
   async function handleVerify() {
     if (!onVerify) return;
-    setIsVerifying(true);
-    setVerifyResult(null);
+    setVerifyState({ isVerifying: true, result: null });
     try {
       const result = await onVerify(draft);
-      setVerifyResult(result);
-    } finally {
-      setIsVerifying(false);
+      setVerifyState({ isVerifying: false, result });
+    } catch (error) {
+      setVerifyState({
+        isVerifying: false,
+        result: {
+          kind: "error",
+          message: error instanceof Error ? error.message : "Verify call failed.",
+        },
+      });
     }
   }
 
@@ -161,22 +169,22 @@ function AgentConfigField({
         </p>
       ) : null}
       <p className="text-xs leading-5 text-muted">{description}</p>
-      {verifyResult ? (
+      {verifyState.result ? (
         <p
           className={`text-xs leading-5 ${
-            verifyResult.kind === "ok"
+            verifyState.result.kind === "ok"
               ? "text-success"
-              : verifyResult.kind === "skipped"
+              : verifyState.result.kind === "skipped"
                 ? "text-muted"
                 : "text-danger"
           }`}
           role="status"
         >
-          {verifyResult.kind === "ok"
+          {verifyState.result.kind === "ok"
             ? "✓ Reachable"
-            : verifyResult.kind === "skipped"
-              ? `ⓘ ${verifyResult.reason}`
-              : `✗ ${verifyResult.message}`}
+            : verifyState.result.kind === "skipped"
+              ? `ⓘ ${verifyState.result.reason}`
+              : `✗ ${verifyState.result.message}`}
         </p>
       ) : null}
       <div className="flex flex-wrap justify-end gap-2">
@@ -187,7 +195,7 @@ function AgentConfigField({
             onClick={() => void handleVerify()}
             type="button"
           >
-            {isVerifying ? "Verifying…" : "Verify"}
+            {verifyState.isVerifying ? "Verifying…" : "Verify"}
           </button>
         ) : null}
         <button
