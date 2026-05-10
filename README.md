@@ -352,6 +352,7 @@ Fill in the required values. Integration variables can be left blank until you c
 | `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                             |
 | `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption      |
 | `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it  |
+| `WALLIE_DEFAULT_ANTHROPIC_MODEL`       | No       | Emergency override for the Anthropic runner default                                   |
 | `SLACK_CLIENT_ID`                      | Slack    | Slack app "Basic Information" -> "App Credentials"                                    |
 | `SLACK_CLIENT_SECRET`                  | Slack    | Same panel                                                                            |
 | `SLACK_SIGNING_SECRET`                 | Slack    | Same panel; used to verify `/api/slack/events` + `/api/slack/interactions` signatures |
@@ -362,6 +363,10 @@ Fill in the required values. Integration variables can be left blank until you c
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
 Workspace-scoped secrets (`ANTHROPIC_API_KEY`, `LINEAR_API_KEY`) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`.
+
+### Configure agent provider
+
+Workspaces choose the agent provider and model in **Settings -> Integrations**. The Codex runner defaults to `gpt-5-codex`. The Anthropic API runner defaults to `claude-sonnet-4-6`; set `WALLIE_DEFAULT_ANTHROPIC_MODEL` only when you need to override that default before a code change can ship.
 
 ### 5. Create a Slack app
 
