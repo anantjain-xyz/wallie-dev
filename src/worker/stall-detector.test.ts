@@ -262,13 +262,22 @@ describe("sweepStalledRuns", () => {
     // Sandbox stop call.
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1");
 
-    // schedule_job_retry RPC was invoked.
-    const retryCall = state.rpcCalls.find((c) => c.name === "schedule_job_retry");
-    expect(retryCall).toBeDefined();
+    expect(state.rpcCalls).toContainEqual({
+      args: {
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+        target_job_id: "job-1",
+      },
+      name: "schedule_job_retry",
+    });
 
-    // Session was flipped from agent_generating to rejected.
-    const flip = sessionUpdates.find((u) => u.expected === "agent_generating");
-    expect(flip?.patch.phase_status).toBe("rejected");
+    expect(sessionUpdates).toEqual([
+      {
+        expected: "agent_generating",
+        id: "sess-1",
+        patch: { phase_status: "rejected" },
+      },
+    ]);
   });
 
   it("marks a stalled run terminally errored when the job has no retries left", async () => {
@@ -288,9 +297,15 @@ describe("sweepStalledRuns", () => {
     // schedule_job_retry should NOT have been called.
     expect(state.rpcCalls.some((c) => c.name === "schedule_job_retry")).toBe(false);
 
-    // Terminal job patch carries status=error.
-    const terminal = jobUpdates.find((u) => u.patch.status === "error");
-    expect(terminal).toBeDefined();
+    expect(jobUpdates).toContainEqual({
+      id: "job-1",
+      patch: {
+        finished_at: expect.any(String),
+        last_error: expect.stringContaining("Stalled: no activity"),
+        status: "error",
+      },
+      status: "running",
+    });
   });
 
   it("respects the per-workspace stall_timeout_ms override", async () => {
@@ -368,8 +383,14 @@ describe("sweepStalledRuns", () => {
     const run = state.runs.find((r) => r.id === "run-crash")!;
     expect(run.status).toBe("error");
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-crash");
-    const reSchedule = state.rpcCalls.find((c) => c.name === "schedule_job_retry");
-    expect(reSchedule).toBeDefined();
+    expect(state.rpcCalls).toContainEqual({
+      args: {
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+        target_job_id: "job-1",
+      },
+      name: "schedule_job_retry",
+    });
     expect(state.sessions.get("sess-1")?.phase_status).toBe("rejected");
 
     // A second sweep tick is a no-op — no active rows remain.

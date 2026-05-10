@@ -199,21 +199,17 @@ describe("reconcileLinearState", () => {
     const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
-    const wACall = fetchSpy.mock.calls.find(([, init]) => {
-      const auth = (init?.headers as Record<string, string>)?.Authorization;
-      return auth === "decrypted:keyA";
+    const batchedRequests = fetchSpy.mock.calls.map(([, init]) => {
+      const requestInit = init as RequestInit;
+      return {
+        auth: (requestInit.headers as Record<string, string>).Authorization,
+        ids: JSON.parse(requestInit.body as string).variables.ids,
+      };
     });
-    const wBCall = fetchSpy.mock.calls.find(([, init]) => {
-      const auth = (init?.headers as Record<string, string>)?.Authorization;
-      return auth === "decrypted:keyB";
-    });
-    expect(wACall).toBeDefined();
-    expect(wBCall).toBeDefined();
-
-    const wABody = JSON.parse((wACall![1] as RequestInit).body as string);
-    expect(wABody.variables.ids).toEqual(["i1", "i2", "i3"]);
-    const wBBody = JSON.parse((wBCall![1] as RequestInit).body as string);
-    expect(wBBody.variables.ids).toEqual(["i4"]);
+    expect(batchedRequests).toEqual([
+      { auth: "decrypted:keyA", ids: ["i1", "i2", "i3"] },
+      { auth: "decrypted:keyB", ids: ["i4"] },
+    ]);
 
     expect(result.checked).toBe(4);
     expect(result.canceled).toBe(0);
@@ -260,23 +256,26 @@ describe("reconcileLinearState", () => {
     expect(result.checked).toBe(2);
     expect(result.canceled).toBe(1);
 
-    const sessionRejection = calls.find(
-      (c) =>
-        c.table === "sessions" &&
-        c.op === "update" &&
-        c.update?.phase_status === "rejected" &&
-        c.filters["eq.id"] === "s2",
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          "eq.id": "s2",
+          "eq.phase_status": "agent_generating",
+        }),
+        op: "update",
+        table: "sessions",
+        update: { phase_status: "rejected" },
+      }),
     );
-    expect(sessionRejection).toBeDefined();
 
-    const noActiveCancel = calls.find(
-      (c) =>
-        c.table === "sessions" &&
-        c.op === "update" &&
-        c.update?.phase_status === "rejected" &&
-        c.filters["eq.id"] === "s1",
+    expect(calls).not.toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({ "eq.id": "s1" }),
+        op: "update",
+        table: "sessions",
+        update: { phase_status: "rejected" },
+      }),
     );
-    expect(noActiveCancel).toBeUndefined();
   });
 
   it("retries once after a 429 with Retry-After", async () => {
@@ -393,14 +392,17 @@ describe("reconcileLinearState", () => {
     // Only the second session gets fully canceled — the first throws mid-cancel.
     expect(result.canceled).toBe(1);
 
-    const okSessionRejection = calls.find(
-      (c) =>
-        c.table === "sessions" &&
-        c.op === "update" &&
-        c.update?.phase_status === "rejected" &&
-        c.filters["eq.id"] === "sOk",
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          "eq.id": "sOk",
+          "eq.phase_status": "agent_generating",
+        }),
+        op: "update",
+        table: "sessions",
+        update: { phase_status: "rejected" },
+      }),
     );
-    expect(okSessionRejection).toBeDefined();
   });
 
   it("treats GraphQL RATELIMITED envelope the same as a 429", async () => {
