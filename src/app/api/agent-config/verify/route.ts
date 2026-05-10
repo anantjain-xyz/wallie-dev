@@ -36,20 +36,21 @@ export type VerifyAgentConfigResponse =
   | { ok: false; error: string }
   | { ok: "skipped"; reason: string };
 
+function verifyError(error: string, status = 200) {
+  return NextResponse.json({ ok: false, error } satisfies VerifyAgentConfigResponse, { status });
+}
+
 export async function POST(request: Request) {
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    return verifyError("Invalid JSON body.", 400);
   }
 
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid request." },
-      { status: 400 },
-    );
+    return verifyError(parsed.error.issues[0]?.message ?? "Invalid request.", 400);
   }
 
   const { workspaceId, provider, model } = parsed.data;
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
 
   const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
   if (!access.ok) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
+    return verifyError(access.error, access.status);
   }
 
   switch (provider) {
