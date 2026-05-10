@@ -1,13 +1,17 @@
 import type { Message, RawMessageStreamEvent } from "@anthropic-ai/sdk/resources/messages/messages";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AnthropicApiRunner,
   type AnthropicClientLike,
-  DEFAULT_ANTHROPIC_MODEL,
   parseStreamEvent,
   resolveAnthropicModel,
 } from "./anthropic-api";
+import { DEFAULT_ANTHROPIC_MODEL, getDefaultAnthropicModel } from "./types";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 interface FakeStreamSpec {
   events: RawMessageStreamEvent[];
@@ -53,7 +57,7 @@ const baseFinal = (overrides: Partial<Message> = {}): Message =>
     type: "message",
     role: "assistant",
     content: [],
-    model: "claude-sonnet-4-5",
+    model: DEFAULT_ANTHROPIC_MODEL,
     stop_reason: "end_turn",
     stop_sequence: null,
     usage: {
@@ -99,7 +103,7 @@ describe("AnthropicApiRunner", () => {
       finalMessage: baseFinal(),
     });
 
-    const runner = new AnthropicApiRunner({ apiKey: "k", model: "claude-sonnet-4-5", client });
+    const runner = new AnthropicApiRunner({ apiKey: "k", model: DEFAULT_ANTHROPIC_MODEL, client });
 
     const events = [];
     for await (const ev of runner.start({ sessionId: "s1", prompt: "Say hi" })) {
@@ -119,7 +123,7 @@ describe("AnthropicApiRunner", () => {
 
     expect(calls).toEqual([
       {
-        model: "claude-sonnet-4-5",
+        model: DEFAULT_ANTHROPIC_MODEL,
         max_tokens: 4096,
         messages: [{ role: "user", content: "Say hi" }],
       },
@@ -191,6 +195,7 @@ describe("AnthropicApiRunner", () => {
   });
 
   it("falls back to the default model when configured with a non-Anthropic model id", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { client, calls } = fakeClient({ events: [], finalMessage: baseFinal() });
     const runner = new AnthropicApiRunner({ apiKey: "k", model: "gpt-5-codex", client });
 
@@ -199,6 +204,7 @@ describe("AnthropicApiRunner", () => {
     }
 
     expect(calls[0]?.model).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(warn).toHaveBeenCalledOnce();
   });
 
   it("forwards maxTokens override when supplied", async () => {
@@ -215,19 +221,49 @@ describe("AnthropicApiRunner", () => {
 
 describe("resolveAnthropicModel", () => {
   it("passes through Anthropic model ids unchanged", () => {
-    expect(resolveAnthropicModel("claude-sonnet-4-5")).toBe("claude-sonnet-4-5");
+    expect(resolveAnthropicModel(DEFAULT_ANTHROPIC_MODEL)).toBe(DEFAULT_ANTHROPIC_MODEL);
     expect(resolveAnthropicModel("claude-opus-4-1")).toBe("claude-opus-4-1");
   });
 
   it("falls back to the default when the model is undefined or empty", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
     expect(resolveAnthropicModel(undefined)).toBe(DEFAULT_ANTHROPIC_MODEL);
     expect(resolveAnthropicModel("")).toBe(DEFAULT_ANTHROPIC_MODEL);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it("falls back to the default for non-Anthropic providers' model ids", () => {
-    expect(resolveAnthropicModel("gpt-5-codex")).toBe(DEFAULT_ANTHROPIC_MODEL);
-    expect(resolveAnthropicModel("gpt-4o")).toBe(DEFAULT_ANTHROPIC_MODEL);
-    expect(resolveAnthropicModel("o1-preview")).toBe(DEFAULT_ANTHROPIC_MODEL);
+  it("warns and falls back to the default for non-Anthropic providers' model ids", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const model = `gpt-${"x".repeat(80)}`;
+
+    expect(resolveAnthropicModel(model)).toBe(DEFAULT_ANTHROPIC_MODEL);
+
+    expect(warn).toHaveBeenCalledWith(
+      "Anthropic API model is not Claude-compatible; using default Anthropic model.",
+      {
+        configuredModel: expect.any(String),
+        defaultModel: DEFAULT_ANTHROPIC_MODEL,
+      },
+    );
+    const payload = warn.mock.calls[0]?.[1] as { configuredModel: string };
+    expect(payload.configuredModel).toContain("...");
+    expect(payload.configuredModel).not.toBe(model);
+    expect(payload.configuredModel.length).toBeLessThan(model.length);
+  });
+});
+
+describe("getDefaultAnthropicModel", () => {
+  it("uses the built-in default when no env override is set", () => {
+    expect(getDefaultAnthropicModel({})).toBe(DEFAULT_ANTHROPIC_MODEL);
+  });
+
+  it("uses a trimmed env override when present", () => {
+    expect(
+      getDefaultAnthropicModel({
+        WALLIE_DEFAULT_ANTHROPIC_MODEL: " claude-opus-4-6 ",
+      }),
+    ).toBe("claude-opus-4-6");
   });
 });
 

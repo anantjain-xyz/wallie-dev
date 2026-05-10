@@ -6,6 +6,7 @@ import {
   CodexRunner,
   createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG,
+  DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_CODEX_MODEL,
 } from "./index";
 
@@ -52,8 +53,8 @@ describe("createAgentRunner", () => {
   });
 
   it("throws for unknown provider", () => {
-    expect(() => createAgentRunner("unknown-provider")).toThrow(
-      'Unknown agent provider: "unknown-provider"',
+    expect(() => createAgentRunner("unknown-provider" as never)).toThrow(
+      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, anthropic-api',
     );
   });
 });
@@ -63,5 +64,9 @@ describe("DEFAULT_AGENT_RUNNER_CONFIG", () => {
     expect(DEFAULT_AGENT_RUNNER_CONFIG.provider).toBe("codex");
     expect(DEFAULT_AGENT_RUNNER_CONFIG.model).toBe(DEFAULT_CODEX_MODEL);
     expect(DEFAULT_AGENT_RUNNER_CONFIG.maxTurns).toBe(5);
+  });
+
+  it("exports the Anthropic runner default from the shared defaults module", () => {
+    expect(DEFAULT_ANTHROPIC_MODEL).toBe("claude-sonnet-4-6");
   });
 });

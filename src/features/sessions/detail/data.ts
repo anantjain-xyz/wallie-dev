@@ -15,8 +15,8 @@ import {
   type SessionPullRequest,
   type SessionRun,
 } from "@/features/sessions/types";
-import { loadWallieIssueData } from "@/features/wallie/server";
-import type { WallieIssueData } from "@/features/wallie/types";
+import { loadWallieSessionData } from "@/features/wallie/server";
+import type { WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 
 export type SessionDetailPageData = {
@@ -26,7 +26,7 @@ export type SessionDetailPageData = {
   session: SessionDetail;
   sessionGithubRepositoryId: string | null;
   sessionCreator: WorkspaceMember | null;
-  wallie: WallieIssueData;
+  wallie: WallieSessionData;
   workspace: WorkspaceSummary;
 };
 
@@ -296,7 +296,7 @@ export async function loadSessionDetailPageData(
     ? (repositoryIndex.get(sessionGithubRepositoryId) ?? null)
     : null;
 
-  const wallie = await loadWallieIssueData({
+  const wallie = await loadWallieSessionData({
     memberIndex: context.memberIndex,
     repository: repository
       ? {

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  loadWorkspaceAgentConfig,
-  normalizeAgentProviderName,
-} from "@/lib/agent-runner/workspace-config";
+import { loadWorkspaceAgentConfig } from "@/lib/agent-runner/workspace-config";
 import { DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner/types";
 
 type ConfigRow = { key: string; value_json: unknown };
@@ -24,22 +21,6 @@ function buildAdmin(rows: ConfigRow[]) {
     },
   } as unknown as Parameters<typeof loadWorkspaceAgentConfig>[0];
 }
-
-describe("normalizeAgentProviderName", () => {
-  it("rewrites underscore aliases the settings UI persists", () => {
-    expect(normalizeAgentProviderName("claude_code")).toBe("claude-code");
-    expect(normalizeAgentProviderName("anthropic_api")).toBe("anthropic-api");
-  });
-
-  it("returns the runner default when unset", () => {
-    expect(normalizeAgentProviderName(undefined)).toBe(DEFAULT_AGENT_RUNNER_CONFIG.provider);
-  });
-
-  it("passes canonical providers through unchanged", () => {
-    expect(normalizeAgentProviderName("codex")).toBe("codex");
-    expect(normalizeAgentProviderName("claude-code")).toBe("claude-code");
-  });
-});
 
 describe("loadWorkspaceAgentConfig", () => {
   it("returns the workspace's configured model and provider", async () => {
@@ -88,5 +69,13 @@ describe("loadWorkspaceAgentConfig", () => {
     const config = await loadWorkspaceAgentConfig(admin, "ws-1");
 
     expect(config.provider).toBe("claude-code");
+  });
+
+  it("throws a canonical supported-provider message for unknown configured providers", async () => {
+    const admin = buildAdmin([{ key: "agent_provider", value_json: "unknown-provider" }]);
+
+    await expect(loadWorkspaceAgentConfig(admin, "ws-1")).rejects.toThrow(
+      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, anthropic-api',
+    );
   });
 });

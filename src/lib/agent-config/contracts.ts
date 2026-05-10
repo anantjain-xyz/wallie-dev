@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { AgentProvider } from "@/lib/sandbox/types";
+
 export const ALLOWED_AGENT_CONFIG_KEYS = [
   "concurrency_limit",
   "stall_timeout_ms",
@@ -10,9 +12,26 @@ export const ALLOWED_AGENT_CONFIG_KEYS = [
 
 export type AgentConfigKey = (typeof ALLOWED_AGENT_CONFIG_KEYS)[number];
 
-export const AGENT_PROVIDERS = ["codex", "claude_code", "anthropic_api"] as const;
+export const AGENT_PROVIDERS = [
+  "codex",
+  "claude-code",
+  "anthropic-api",
+] as const satisfies readonly AgentProvider[];
 
-export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
+export type { AgentProvider };
+
+const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
+  anthropic_api: "anthropic-api",
+  "anthropic-api": "anthropic-api",
+  claude_code: "claude-code",
+  "claude-code": "claude-code",
+  codex: "codex",
+};
+
+export function normalizeAgentProviderName(provider: string | undefined): AgentProvider | null {
+  if (!provider) return null;
+  return AGENT_PROVIDER_ALIASES[provider] ?? null;
+}
 
 export const AGENT_CONFIG_LIMITS = {
   concurrency_limit: { min: 1, max: 20 },
@@ -64,9 +83,18 @@ const maxRetriesSchema = intInRange(
   AGENT_CONFIG_LIMITS.max_retries.max,
 );
 
-const agentProviderSchema = z.enum(AGENT_PROVIDERS, {
-  errorMap: () => ({ message: `Provider must be one of: ${AGENT_PROVIDERS.join(", ")}.` }),
-});
+const agentProviderSchema = z
+  .string({ invalid_type_error: "Provider must be a string." })
+  .trim()
+  .transform((provider, ctx) => {
+    const normalized = normalizeAgentProviderName(provider);
+    if (normalized) return normalized;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Provider must be one of: ${AGENT_PROVIDERS.join(", ")}.`,
+    });
+    return z.NEVER;
+  });
 
 const agentModelSchema = z
   .string({ invalid_type_error: "Model must be a string." })
@@ -123,7 +151,7 @@ export function isAgentConfigKey(value: unknown): value is AgentConfigKey {
 }
 
 export function isAgentProvider(value: unknown): value is AgentProvider {
-  return typeof value === "string" && (AGENT_PROVIDERS as readonly string[]).includes(value);
+  return typeof value === "string" && normalizeAgentProviderName(value) !== null;
 }
 
 /**
@@ -136,8 +164,8 @@ export function modelMatchesProvider(provider: AgentProvider, model: string): bo
   const trimmed = model.trim();
   if (!trimmed) return false;
   switch (provider) {
-    case "anthropic_api":
-    case "claude_code":
+    case "anthropic-api":
+    case "claude-code":
       return trimmed.startsWith(ANTHROPIC_MODEL_PREFIX);
     case "codex":
       return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));

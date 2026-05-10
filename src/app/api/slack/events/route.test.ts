@@ -115,6 +115,60 @@ function slackInstallHandler(workspaceId: string = "ws-1"): TableHandler {
   };
 }
 
+function linearApiKeyHandler(encryptedValue: string = "enc-linear-key"): TableHandler {
+  return () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({
+      data: { encrypted_value: encryptedValue },
+      error: null,
+    });
+    return chain;
+  };
+}
+
+function wallieMemberHandler(id: string = "wallie-member-id"): TableHandler {
+  return () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({
+      data: { id },
+      error: null,
+    });
+    return chain;
+  };
+}
+
+function defaultPipelineHandler(id: string = "pipe-default"): TableHandler {
+  return () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({
+      data: { id },
+      error: null,
+    });
+    return chain;
+  };
+}
+
+function firstPipelineStageHandler(id: string = "stage-product"): TableHandler {
+  return () => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.order = vi.fn().mockReturnValue(chain);
+    chain.limit = vi.fn().mockReturnValue(chain);
+    chain.maybeSingle = vi.fn().mockResolvedValue({
+      data: { id },
+      error: null,
+    });
+    return chain;
+  };
+}
+
 // A sessions handler that returns no dedup match (fresh mention path).
 function freshSessionsHandler(): TableHandler {
   return () => {
@@ -199,6 +253,27 @@ describe("POST /api/slack/events", () => {
 
     expect(json.ok).toBe(true);
     expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("returns ok and logs malformed app_mention events", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const body = JSON.stringify({
+      event: { channel: "C1", text: "<@U> hi", type: "app_mention" },
+      team_id: "T1",
+    });
+
+    const response = await POST(makeRequest(body));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Malformed Slack app_mention event",
+      expect.objectContaining({ error: expect.any(Object) }),
+    );
+
+    errorSpy.mockRestore();
   });
 
   it("falls back to enterprise_id for Enterprise Grid mentions", async () => {
@@ -366,6 +441,68 @@ describe("POST /api/slack/events", () => {
     vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
   });
 
+  it("posts a Slack error and logs when the workspace has no default pipeline", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ json: () => ({ ok: true }), ok: true });
+    vi.stubGlobal("fetch", mockFetch);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocked.decryptSecretValue.mockReturnValue("plain-token");
+    mocked.fetchLinearIssue.mockResolvedValue({
+      description: "needs a pipeline",
+      id: "linear-uuid",
+      identifier: "TEAM-404",
+      title: "Missing pipeline",
+      url: "https://linear.app/team/issue/TEAM-404",
+    });
+
+    const { client, fromMock } = makeAdmin({
+      pipelines: () => {
+        const chain: Record<string, unknown> = {};
+        chain.select = vi.fn().mockReturnValue(chain);
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+        return chain;
+      },
+      sessions: freshSessionsHandler(),
+      slack_installations: slackInstallHandler("ws-no-pipeline"),
+      workspace_members: wallieMemberHandler(),
+      workspace_secrets: linearApiKeyHandler(),
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(client);
+
+    const body = JSON.stringify({
+      event: {
+        channel: "C1",
+        text: "<@U> https://linear.app/team/issue/TEAM-404",
+        ts: "1.1",
+        type: "app_mention",
+      },
+      team_id: "T1",
+    });
+
+    const response = await POST(makeRequest(body));
+    await flushAfterCallbacks();
+    const json = await response.json();
+
+    expect(json.ok).toBe(true);
+    expect(errorSpy).toHaveBeenCalledWith("Slack workspace has no default pipeline configured", {
+      event: "no_default_pipeline",
+      workspaceId: "ws-no-pipeline",
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://slack.com/api/chat.postMessage",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const callBody = JSON.parse(mockFetch.mock.calls[0]![1].body as string);
+    expect(callBody.channel).toBe("C1");
+    expect(callBody.thread_ts).toBe("1.1");
+    expect(callBody.text).toContain("no default pipeline");
+    expect(fromMock).not.toHaveBeenCalledWith("agent_jobs");
+
+    errorSpy.mockRestore();
+    vi.unstubAllGlobals();
+    vi.stubEnv("SLACK_SIGNING_SECRET", SIGNING_SECRET);
+  });
+
   it("creates a session row and enqueues a pipeline job from a Linear mention", async () => {
     mocked.decryptSecretValue.mockReturnValue("plain-linear-key");
     mocked.fetchLinearIssue.mockResolvedValue({
@@ -521,6 +658,8 @@ describe("POST /api/slack/events", () => {
           });
           return chain;
         },
+        pipelines: defaultPipelineHandler(),
+        pipeline_stages: firstPipelineStageHandler(),
         slack_installations: slackInstallHandler(),
         workspace_members: () => {
           const chain: Record<string, unknown> = {};
@@ -729,6 +868,8 @@ describe("POST /api/slack/events", () => {
           });
           return chain;
         },
+        pipelines: defaultPipelineHandler(),
+        pipeline_stages: firstPipelineStageHandler(),
         slack_installations: slackInstallHandler(),
         workspace_members: () => {
           const chain: Record<string, unknown> = {};

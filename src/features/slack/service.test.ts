@@ -276,15 +276,18 @@ describe("upsertSlackInstallationForWorkspace", () => {
       slackEnv,
     );
 
-    const insertCall = calls.find((c) => c.type === "insert");
-    expect(insertCall).toBeDefined();
     expect(mocked.encryptSecretValue).toHaveBeenCalledWith("xoxb-fresh", slackEnv);
-    expect(insertCall!.payload).toMatchObject({
-      bot_token_encrypted: "enc:xoxb-fresh",
-      team_id: "T-1",
-      team_name: "Acme",
-      workspace_id: "ws-1",
-    });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          bot_token_encrypted: "enc:xoxb-fresh",
+          team_id: "T-1",
+          team_name: "Acme",
+          workspace_id: "ws-1",
+        }),
+        type: "insert",
+      }),
+    );
     expect(rows).toHaveLength(1);
     expect(summary.teamId).toBe("T-1");
     expect(summary.teamName).toBe("Acme");
@@ -310,19 +313,19 @@ describe("upsertSlackInstallationForWorkspace", () => {
       slackEnv,
     );
 
-    const updateCall = calls.find((c) => c.type === "update");
-    expect(updateCall).toBeDefined();
-    expect(updateCall!.payload).toMatchObject({
-      bot_token_encrypted: "enc:xoxb-rotated",
-      team_id: "T-new",
-      team_name: "NewName",
-      workspace_id: "ws-1",
+    expect(calls).toContainEqual({
+      filters: { id: "ins-existing" },
+      payload: {
+        bot_token_encrypted: "enc:xoxb-rotated",
+        team_id: "T-new",
+        team_name: "NewName",
+        workspace_id: "ws-1",
+      },
+      type: "update",
     });
-    expect(updateCall!.filters).toEqual({ id: "ins-existing" });
     expect(summary.id).toBe("ins-existing");
     // No insert and no delete should have happened — only an update.
-    expect(calls.find((c) => c.type === "insert")).toBeUndefined();
-    expect(calls.find((c) => c.type === "delete")).toBeUndefined();
+    expect(calls.filter((c) => c.type === "insert" || c.type === "delete")).toEqual([]);
   });
 
   it("collapses a duplicate row when the same team is linked to a different workspace's row", async () => {
@@ -353,14 +356,18 @@ describe("upsertSlackInstallationForWorkspace", () => {
       slackEnv,
     );
 
-    const deleteCall = calls.find((c) => c.type === "delete");
-    expect(deleteCall).toBeDefined();
-    expect(deleteCall!.filters).toEqual({ id: "ins-other" });
+    expect(calls).toContainEqual({
+      filters: { id: "ins-other" },
+      type: "delete",
+    });
 
-    const updateCall = calls.find((c) => c.type === "update");
-    expect(updateCall).toBeDefined();
-    expect(updateCall!.filters).toEqual({ id: "ins-ws1" });
-    expect(updateCall!.payload).toMatchObject({ team_id: "T-new", workspace_id: "ws-1" });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: { id: "ins-ws1" },
+        payload: expect.objectContaining({ team_id: "T-new", workspace_id: "ws-1" }),
+        type: "update",
+      }),
+    );
 
     // Only ws-1's row should remain after collapse.
     expect(rows.map((r) => r.id).sort()).toEqual(["ins-ws1"]);
@@ -443,9 +450,10 @@ describe("deleteSlackInstallationForWorkspace", () => {
       slackEnv,
     );
 
-    const del = calls.find((c) => c.type === "delete");
-    expect(del).toBeDefined();
-    expect(del!.filters).toEqual({ id: "ins-1", workspace_id: "ws-1" });
+    expect(calls).toContainEqual({
+      filters: { id: "ins-1", workspace_id: "ws-1" },
+      type: "delete",
+    });
   });
 
   it("propagates the delete error", async () => {
