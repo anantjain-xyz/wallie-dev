@@ -335,7 +335,7 @@ async function validateQueuedRunRequest(input: {
 
   if (!session) {
     throw new WallieActionError({
-      code: "issue_not_found",
+      code: "session_not_found",
       message: "Session not found.",
       statusCode: 404,
     });

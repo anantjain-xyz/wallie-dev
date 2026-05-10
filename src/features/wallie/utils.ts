@@ -48,7 +48,7 @@ export function buildWallieBlockingReasons(input: {
     reasons.push({
       code: "active_run",
       message:
-        "A Wallie run is already queued or running for this issue. Wait for it to finish before starting another run.",
+        "A Wallie run is already queued or running for this session. Wait for it to finish before starting another run.",
     });
   }
 
@@ -56,7 +56,7 @@ export function buildWallieBlockingReasons(input: {
     reasons.push({
       code: "repository_unavailable",
       message:
-        "Code mode requires a linked repository. Link a GitHub repository on this issue before running Wallie.",
+        "Code mode requires a linked repository. Link a GitHub repository on this session before running Wallie.",
     });
   }
 
