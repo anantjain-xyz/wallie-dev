@@ -6,6 +6,7 @@ import { getGitHubConfigStatus } from "@/features/github/config";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import { getSlackConfigStatus } from "@/features/slack/config";
 import { getSlackInstallationForWorkspace } from "@/features/slack/service";
+import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
@@ -170,7 +171,10 @@ export async function loadSettingsPageData(workspaceSlug: string) {
 
   const agentConfig: AgentConfigMap = {};
   for (const row of agentConfigRows ?? []) {
-    agentConfig[row.key] = row.value_json;
+    agentConfig[row.key] =
+      row.key === "agent_provider" && typeof row.value_json === "string"
+        ? (normalizeAgentProviderName(row.value_json) ?? row.value_json)
+        : row.value_json;
   }
 
   // Load aggregate token usage for the workspace.

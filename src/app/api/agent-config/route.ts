@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { z } from "zod";
 
-import { ALLOWED_AGENT_CONFIG_KEYS, parseAgentConfigValue } from "@/lib/agent-config/contracts";
+import {
+  ALLOWED_AGENT_CONFIG_KEYS,
+  normalizeAgentProviderName,
+  parseAgentConfigValue,
+} from "@/lib/agent-config/contracts";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -64,7 +68,13 @@ export async function GET(request: NextRequest) {
   }
 
   const response: ListAgentConfigResponse = {
-    config: (data ?? []).map((row) => ({ key: row.key, value: row.value_json })),
+    config: (data ?? []).map((row) => ({
+      key: row.key,
+      value:
+        row.key === "agent_provider" && typeof row.value_json === "string"
+          ? (normalizeAgentProviderName(row.value_json) ?? row.value_json)
+          : row.value_json,
+    })),
   };
 
   return NextResponse.json(response, { status: 200 });

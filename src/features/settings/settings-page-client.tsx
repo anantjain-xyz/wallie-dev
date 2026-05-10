@@ -33,7 +33,7 @@ import {
   type AgentConfigKey,
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
-  isAgentProvider,
+  normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
@@ -423,6 +423,10 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   const hasSlackAppConfig = initialData.slack.missingAppKeys.length === 0;
   const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
   const otherSecrets = secrets.filter((secret) => secret.key !== "LINEAR_API_KEY");
+  const selectedAgentProvider: AgentProvider =
+    typeof agentConfig.agent_provider === "string"
+      ? (normalizeAgentProviderName(agentConfig.agent_provider) ?? "codex")
+      : "codex";
 
   useEffect(() => {
     if (!isManager) {
@@ -816,15 +820,11 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   }
 
   async function handleVerifyAgentModel(rawDraft: string): Promise<AgentConfigVerifyResult> {
-    const provider = isAgentProvider(agentConfig.agent_provider)
-      ? (agentConfig.agent_provider as AgentProvider)
-      : "codex";
-
     try {
       const response = await fetch("/api/agent-config/verify", {
         body: JSON.stringify({
           model: rawDraft.trim(),
-          provider,
+          provider: selectedAgentProvider,
           workspaceId: initialData.workspace.id,
         }),
         headers: { "Content-Type": "application/json" },
@@ -1341,17 +1341,17 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                   disabled={isSavingAgentConfig}
                   label="Agent Provider"
                   onSave={handleSaveAgentConfig}
-                  options={["codex", "claude_code", "anthropic_api"]}
+                  options={["codex", "claude-code", "anthropic-api"]}
                   type="select"
-                  value={agentConfig.agent_provider}
+                  value={selectedAgentProvider}
                 />
-                {(agentConfig.agent_provider ?? "codex") === "codex" ? (
+                {selectedAgentProvider === "codex" ? (
                   <p className="text-xs leading-5 text-muted">
                     Each session runs with its creator&apos;s Codex account. Connect yours below
                     under &ldquo;Your Codex account&rdquo;.
                   </p>
                 ) : null}
-                {agentConfig.agent_provider === "anthropic_api" ? (
+                {selectedAgentProvider === "anthropic-api" ? (
                   <p className="text-xs leading-5 text-muted">
                     Calls Anthropic&apos;s Messages API directly — no sandbox spawn, no GitHub repo
                     required. Add your <code>ANTHROPIC_API_KEY</code> under Integrations above.

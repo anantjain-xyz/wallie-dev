@@ -52,8 +52,8 @@ describe("createAgentRunner", () => {
   });
 
   it("throws for unknown provider", () => {
-    expect(() => createAgentRunner("unknown-provider")).toThrow(
-      'Unknown agent provider: "unknown-provider"',
+    expect(() => createAgentRunner("unknown-provider" as never)).toThrow(
+      'Unknown agent provider: "unknown-provider". Supported: codex, claude-code, anthropic-api',
     );
   });
 });
