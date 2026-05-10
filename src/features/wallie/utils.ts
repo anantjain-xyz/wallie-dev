@@ -4,7 +4,7 @@
 import type { Enums } from "@/lib/supabase/database.types";
 import type {
   WallieBlockingReason,
-  WallieIssueRepository,
+  WallieSessionRepository,
   WallieRunMode,
 } from "@/features/wallie/types";
 
@@ -39,7 +39,7 @@ export function buildWallieBlockingReasons(input: {
   hasActiveRun: boolean;
   missingSecretKeys: string[];
   mode: WallieRunMode;
-  repository: WallieIssueRepository | null;
+  repository: WallieSessionRepository | null;
 }) {
   const reasons: WallieBlockingReason[] = [];
   const repositoryIsArchived = input.repository ? input.repository.isArchived : false;
