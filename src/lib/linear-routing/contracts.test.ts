@@ -26,6 +26,7 @@ describe("linear routing contracts", () => {
     });
     expect(classifyLinearStatus("Done").action).toBe("archive");
     expect(classifyLinearStatus("Canceled").action).toBe("archive");
+    expect(classifyLinearStatus("Duplicate").action).toBe("archive");
   });
 
   it("supports custom status names and stage targets", () => {

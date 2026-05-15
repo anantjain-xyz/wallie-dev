@@ -36,7 +36,7 @@ create table public.workspace_linear_routing (
     "rework": ["rework"],
     "merging": ["merging"],
     "done": ["done"],
-    "canceled": ["canceled", "cancelled"]
+    "canceled": ["canceled", "cancelled", "duplicate"]
   }'::jsonb,
   rework_stage_slug text not null default 'engineering',
   land_stage_slug text not null default 'land',

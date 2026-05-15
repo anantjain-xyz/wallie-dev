@@ -448,7 +448,7 @@ describe("reconcileLinearState", () => {
           c.filters["eq.session_id"] === sessionId,
       );
       expect(jobCancel).toBeDefined();
-      expect(jobCancel?.filters["in.status"]).toEqual(["queued", "running"]);
+      expect(jobCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
     }
 
     const runCancel = calls.find(
@@ -658,6 +658,77 @@ describe("reconcileLinearState", () => {
         }),
       }),
     );
+  });
+
+  it("requeues awaiting_review sessions when Linear moves back to Todo", async () => {
+    const fixture: Fixture = {
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sReview",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iTodo",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iTodo", state: { name: "Todo" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+        update: expect.objectContaining({
+          dedupe_key: "pipeline:iTodo:active",
+          session_id: "sReview",
+          trigger_type: "assignment",
+        }),
+      }),
+    );
+  });
+
+  it("treats started pipeline jobs as active before queueing new work", async () => {
+    const fixture: Fixture = {
+      agentJobs: [
+        { id: "jobStarted", job_type: "session", session_id: "sStarted", status: "started" },
+      ],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sStarted",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iTodo",
+          phase_status: "rejected",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iTodo", state: { name: "Todo" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
   });
 
   it("does not touch approved sessions even if their Linear issue would be terminal", async () => {

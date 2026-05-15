@@ -37,6 +37,7 @@ create type public.agent_run_status as enum (
 
 create type public.agent_job_status as enum (
   'queued',
+  'started',
   'running',
   'success',
   'error',

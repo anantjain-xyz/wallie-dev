@@ -212,23 +212,50 @@ async function updateRepositoryOnboardingFromSetupPr(
     workspaceId: string;
   },
 ): Promise<boolean> {
-  const status = input.merged ? "ready" : input.pullRequestState === "open" ? "pr_open" : "error";
-  const patch = {
+  const loose = asLooseSupabaseClient(admin);
+  const { data: row, error: rowError } = await loose
+    .from("repository_onboarding_status")
+    .select("id, status, conflict_report")
+    .eq("workspace_id", input.workspaceId)
+    .eq("github_repository_id", input.repositoryId)
+    .eq("setup_branch_name", input.branchName)
+    .maybeSingle();
+
+  if (rowError) throw rowError;
+  if (!row) return false;
+
+  const onboardingRow = row as {
+    conflict_report: unknown;
+    id: string;
+    status: "not_set_up" | "pr_open" | "ready" | "conflict" | "error";
+  };
+  const hasUnresolvedConflicts =
+    onboardingRow.status === "conflict" ||
+    (Array.isArray(onboardingRow.conflict_report) && onboardingRow.conflict_report.length > 0);
+  const status =
+    !input.merged && input.pullRequestState === "closed"
+      ? "error"
+      : hasUnresolvedConflicts
+        ? "conflict"
+        : input.merged
+          ? "ready"
+          : "pr_open";
+  const patch: Record<string, unknown> = {
     last_error: status === "error" ? "Setup PR was closed without merging." : null,
     setup_pr_number: input.pullRequestNumber,
     setup_pr_url: input.pullRequestUrl,
     status,
-    ...(input.merged ? { conflict_report: [] } : {}),
+    ...(input.merged && !hasUnresolvedConflicts ? { conflict_report: [] } : {}),
   };
-  const loose = asLooseSupabaseClient(admin);
-  const { data, error } = await loose
+
+  const { error } = await loose
     .from("repository_onboarding_status")
     .update(patch)
+    .eq("id", onboardingRow.id)
     .eq("workspace_id", input.workspaceId)
     .eq("github_repository_id", input.repositoryId)
-    .eq("setup_branch_name", input.branchName)
-    .select("id");
+    .eq("setup_branch_name", input.branchName);
 
   if (error) throw error;
-  return (data ?? []).length > 0;
+  return true;
 }

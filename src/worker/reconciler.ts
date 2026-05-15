@@ -23,7 +23,7 @@ const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 const RECONCILABLE_PHASE_STATUSES = ["agent_generating", "awaiting_review", "rejected"] as const;
 
 /** Agent job states that are not yet terminal and may still consume work. */
-const ACTIVE_AGENT_JOB_STATUSES = ["queued", "running"] as const;
+const ACTIVE_AGENT_JOB_STATUSES = ["queued", "started", "running"] as const;
 
 /** Page size for the reconciliation cursor. */
 const RECONCILE_PAGE_SIZE = 50;
@@ -333,7 +333,6 @@ async function ensureCurrentStageQueued(
   session: SessionRow,
   statusName: string,
 ): Promise<void> {
-  if (session.phase_status === "awaiting_review") return;
   if (await hasActivePipelineJob(admin, session.id)) return;
   await ensurePipelineJobQueued(admin, session, statusName);
 }

@@ -163,6 +163,15 @@ export async function getRepositoryOnboardingState(input: {
   repositoryId: string;
   workspaceId: string;
 }): Promise<RepositoryOnboardingState> {
+  const row = await loadOnboardingRow(input);
+  return mapOnboardingRow(row, input.repositoryId);
+}
+
+async function loadOnboardingRow(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<OnboardingRow | null> {
   const loose = asLooseSupabaseClient(input.admin);
   const { data, error } = await loose
     .from("repository_onboarding_status")
@@ -174,7 +183,17 @@ export async function getRepositoryOnboardingState(input: {
     .maybeSingle();
 
   if (error) throw error;
-  return mapOnboardingRow(data as OnboardingRow | null, input.repositoryId);
+  return data as OnboardingRow | null;
+}
+
+function hasInFlightSetupPullRequest(row: OnboardingRow | null): boolean {
+  return Boolean(
+    row &&
+    (row.status === "pr_open" || row.status === "conflict") &&
+    row.setup_branch_name &&
+    row.setup_pr_number &&
+    row.setup_pr_url,
+  );
 }
 
 async function upsertOnboardingState(input: {
@@ -361,6 +380,13 @@ export async function startRepositoryOnboarding(input: {
     existingFiles,
     skillVersion: WALLIE_SKILL_VERSION,
   });
+  const existingOnboarding = await loadOnboardingRow(input);
+
+  if (plan.filesToCreate.length > 0 && hasInFlightSetupPullRequest(existingOnboarding)) {
+    return {
+      onboarding: mapOnboardingRow(existingOnboarding, input.repositoryId),
+    };
+  }
 
   if (plan.conflicts.length > 0 && plan.filesToCreate.length === 0) {
     const onboarding = await upsertOnboardingState({

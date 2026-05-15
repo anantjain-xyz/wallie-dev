@@ -1193,7 +1193,13 @@ export type Database = {
       }
     }
     Enums: {
-      agent_job_status: "queued" | "running" | "success" | "error" | "canceled"
+      agent_job_status:
+        | "queued"
+        | "started"
+        | "running"
+        | "success"
+        | "error"
+        | "canceled"
       agent_run_status:
         | "queued"
         | "started"
@@ -1340,7 +1346,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      agent_job_status: ["queued", "running", "success", "error", "canceled"],
+      agent_job_status: ["queued", "started", "running", "success", "error", "canceled"],
       agent_run_status: [
         "queued",
         "started",

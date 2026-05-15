@@ -26,7 +26,7 @@ export const LINEAR_ROUTE_LABELS: Record<LinearRouteKey, string> = {
 
 export const DEFAULT_LINEAR_STATUS_MAPPINGS: Record<LinearRouteKey, string[]> = {
   backlog: ["Backlog"],
-  canceled: ["Canceled", "Cancelled"],
+  canceled: ["Canceled", "Cancelled", "Duplicate"],
   done: ["Done"],
   in_progress: ["In Progress"],
   in_review: ["In Review"],
