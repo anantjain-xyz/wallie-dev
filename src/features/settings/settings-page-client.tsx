@@ -5,7 +5,9 @@ import { useState } from "react";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
+import { LinearRoutingEditor } from "@/features/settings/linear-routing-editor";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
+import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
@@ -124,12 +126,32 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           </div>
         </Section>
 
+        <Section title="Linear Routing">
+          <LinearRoutingEditor
+            canManage={isManager}
+            routing={initialData.linearRouting}
+            setFlashMessage={setFlashMessage}
+            stages={initialData.pipeline?.stages ?? []}
+            workspaceId={initialData.workspace.id}
+          />
+        </Section>
+
         <AgentConfigSection
           canManage={isManager}
           initialAgentConfig={initialData.agentConfig}
           setFlashMessage={setFlashMessage}
           workspaceId={initialData.workspace.id}
         />
+
+        <Section title="Cloud Execution">
+          <SandboxCapabilitySection
+            canManage={isManager}
+            initialCheck={initialData.latestSandboxCapabilityCheck}
+            repositories={initialData.github.repositories}
+            setFlashMessage={setFlashMessage}
+            workspaceId={initialData.workspace.id}
+          />
+        </Section>
 
         <Section title="Your Codex account">
           <CodexConnectionPanel connectFlash={searchState.codexStatus} />

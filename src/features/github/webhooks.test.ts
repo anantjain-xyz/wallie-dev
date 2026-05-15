@@ -31,6 +31,11 @@ interface AdminMockOptions {
   repository?: { id: string } | null;
   matchingRowsByPr?: Array<{ id: string }>;
   matchingRowsByBranch?: Array<{ id: string }>;
+  onboardingRow?: {
+    conflict_report: unknown;
+    id: string;
+    status: "not_set_up" | "pr_open" | "ready" | "conflict" | "error";
+  } | null;
 }
 
 function buildAdminMock(opts: AdminMockOptions) {
@@ -84,6 +89,25 @@ function buildAdminMock(opts: AdminMockOptions) {
         const isPrMatch = filters.some((f) => f.column === "pull_request_number");
         if (isPrMatch) return opts.matchingRowsByPr ?? [];
         return opts.matchingRowsByBranch ?? [];
+      }),
+    },
+    repository_onboarding_status: {
+      select: () => {
+        const filters: UpdateCall["filters"] = [];
+        const chain = {
+          eq(column: string, value: unknown) {
+            filters.push({ column, value });
+            return chain;
+          },
+          maybeSingle: async () => ({ data: opts.onboardingRow ?? null, error: null }),
+        };
+        return chain;
+      },
+      update: makeUpdate("repository_onboarding_status", (filters) => {
+        const id = filters.find((f) => f.column === "id")?.value;
+        return opts.onboardingRow && id === opts.onboardingRow.id
+          ? [{ id: opts.onboardingRow.id }]
+          : [];
       }),
     },
   };
@@ -229,6 +253,130 @@ describe("handleGitHubPullRequestEvent", () => {
       workspace_id: "ws-1",
       branch_name: "wallie/product-sess-1",
     });
+  });
+
+  it("marks Wallie setup PR onboarding ready when the setup PR merges", async () => {
+    const { admin, updates } = buildAdminMock({
+      installation: { id: "ghi-1", workspace_id: "ws-1" },
+      onboardingRow: { conflict_report: [], id: "onboarding-1", status: "pr_open" },
+      repository: { id: "repo-1" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubPullRequestEvent(
+      payload("closed", { merged: true, ref: "wallie/setup-app-abc", state: "closed" }),
+      env,
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.table).toBe("repository_onboarding_status");
+    expect(updates[0]!.patch).toEqual({
+      conflict_report: [],
+      last_error: null,
+      setup_pr_number: 42,
+      setup_pr_url: "https://github.com/acme/app/pull/42",
+      status: "ready",
+    });
+    const filterMap = Object.fromEntries(updates[0]!.filters.map((f) => [f.column, f.value]));
+    expect(filterMap).toEqual({
+      id: "onboarding-1",
+      workspace_id: "ws-1",
+      github_repository_id: "repo-1",
+      setup_branch_name: "wallie/setup-app-abc",
+    });
+  });
+
+  it("marks Wallie setup PR onboarding errored when the setup PR closes unmerged", async () => {
+    const { admin, updates } = buildAdminMock({
+      installation: { id: "ghi-1", workspace_id: "ws-1" },
+      onboardingRow: { conflict_report: [], id: "onboarding-1", status: "pr_open" },
+      repository: { id: "repo-1" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubPullRequestEvent(
+      payload("closed", { merged: false, ref: "wallie/setup-app-abc", state: "closed" }),
+      env,
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.table).toBe("repository_onboarding_status");
+    expect(updates[0]!.patch).toEqual({
+      last_error: "Setup PR was closed without merging.",
+      setup_pr_number: 42,
+      setup_pr_url: "https://github.com/acme/app/pull/42",
+      status: "error",
+    });
+  });
+
+  it("keeps setup onboarding in conflict when a conflicted setup PR merges", async () => {
+    const { admin, updates } = buildAdminMock({
+      installation: { id: "ghi-1", workspace_id: "ws-1" },
+      onboardingRow: {
+        conflict_report: [{ path: ".agents/skills/push/SKILL.md" }],
+        id: "onboarding-1",
+        status: "conflict",
+      },
+      repository: { id: "repo-1" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubPullRequestEvent(
+      payload("closed", { merged: true, ref: "wallie/setup-app-abc", state: "closed" }),
+      env,
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.patch).toEqual({
+      last_error: null,
+      setup_pr_number: 42,
+      setup_pr_url: "https://github.com/acme/app/pull/42",
+      status: "conflict",
+    });
+  });
+
+  it("keeps setup onboarding in conflict on open setup PR events", async () => {
+    const { admin, updates } = buildAdminMock({
+      installation: { id: "ghi-1", workspace_id: "ws-1" },
+      onboardingRow: {
+        conflict_report: [{ path: ".agents/skills/push/SKILL.md" }],
+        id: "onboarding-1",
+        status: "conflict",
+      },
+      repository: { id: "repo-1" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubPullRequestEvent(
+      payload("synchronize", { ref: "wallie/setup-app-abc", state: "open" }),
+      env,
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.patch.status).toBe("conflict");
+    expect(updates[0]!.patch).not.toHaveProperty("conflict_report");
+  });
+
+  it("falls through to session PR handling when no setup onboarding row matches", async () => {
+    const { admin, updates } = buildAdminMock({
+      installation: { id: "ghi-1", workspace_id: "ws-1" },
+      matchingRowsByBranch: [{ id: "spr-1" }],
+      onboardingRow: null,
+      matchingRowsByPr: [],
+      repository: { id: "repo-1" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+
+    await handleGitHubPullRequestEvent(payload("opened", { ref: "wallie/setup-sess-1" }), env);
+
+    expect(updates.map((update) => update.table)).toEqual([
+      "session_pull_requests",
+      "session_pull_requests",
+    ]);
+    expect(updates[1]!.filters).toEqual([
+      { column: "workspace_id", value: "ws-1" },
+      { column: "branch_name", value: "wallie/setup-sess-1" },
+    ]);
   });
 });
 
