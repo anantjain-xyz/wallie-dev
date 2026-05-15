@@ -35,10 +35,6 @@ export const RATE_LIMITS = {
   agentRuns: { windowMs: 60_000, max: 10 },
   /** POST /api/sessions/:id/phase-action — approve/reject. */
   phaseAction: { windowMs: 60_000, max: 30 },
-  /** POST /api/slack/events — per workspace (Slack team). */
-  slackPerWorkspace: { windowMs: 60_000, max: 30 },
-  /** POST /api/slack/events — per channel within a workspace. */
-  slackPerChannel: { windowMs: 60_000, max: 10 },
 } as const satisfies Record<string, RateLimitConfig>;
 
 export type RateLimiter = {
@@ -295,18 +291,6 @@ export function describeRateLimits(): Array<{
       scope: "phaseAction",
       description: "Per workspace member — caps approve/reject churn.",
       ...RATE_LIMITS.phaseAction,
-    },
-    {
-      endpoint: "POST /api/slack/events (workspace)",
-      scope: "slackPerWorkspace",
-      description: "Per Slack workspace — caps mention-driven session creation.",
-      ...RATE_LIMITS.slackPerWorkspace,
-    },
-    {
-      endpoint: "POST /api/slack/events (channel)",
-      scope: "slackPerChannel",
-      description: "Per Slack channel — extra protection against a noisy channel.",
-      ...RATE_LIMITS.slackPerChannel,
     },
   ];
 }

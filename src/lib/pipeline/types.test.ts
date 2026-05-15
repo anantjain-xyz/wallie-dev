@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPipelineDedupeKey, PIPELINE_ESCALATION_THRESHOLD, PIPELINE_JOB_TYPE } from "./types";
+import { buildPipelineDedupeKey, PIPELINE_JOB_TYPE } from "./types";
 
 describe("pipeline types", () => {
   describe("buildPipelineDedupeKey", () => {
@@ -17,10 +17,6 @@ describe("pipeline types", () => {
   describe("constants", () => {
     it("has the expected job type", () => {
       expect(PIPELINE_JOB_TYPE).toBe("session");
-    });
-
-    it("has an escalation threshold of 3", () => {
-      expect(PIPELINE_ESCALATION_THRESHOLD).toBe(3);
     });
   });
 });

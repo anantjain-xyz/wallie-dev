@@ -4,8 +4,6 @@ import { notFound } from "next/navigation";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
-import { getSlackConfigStatus } from "@/features/slack/config";
-import { getSlackInstallationForWorkspace } from "@/features/slack/service";
 import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
@@ -70,16 +68,6 @@ export type SettingsPageData = {
       name: string;
       repoId: number;
     }>;
-  };
-  slack: {
-    installation: {
-      id: string;
-      installedAt: string;
-      teamId: string;
-      teamName: string | null;
-      updatedAt: string;
-    } | null;
-    missingAppKeys: string[];
   };
   workspace: {
     avatarPath: string | null;
@@ -160,7 +148,6 @@ export async function loadSettingsPageData(workspaceSlug: string) {
   }
 
   const installation = installationRows?.[0] ?? null;
-  const slackInstallation = await getSlackInstallationForWorkspace(workspace.id);
 
   // Load agent config (visible to managers only, but load for everyone to
   // populate read-only display if needed).
@@ -302,10 +289,6 @@ export async function loadSettingsPageData(workspaceSlug: string) {
         name: repository.name,
         repoId: repository.repo_id,
       })),
-    },
-    slack: {
-      installation: slackInstallation,
-      ...getSlackConfigStatus(),
     },
     workspace: {
       avatarPath: workspace.avatar_path,

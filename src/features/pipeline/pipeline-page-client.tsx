@@ -102,8 +102,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
               number: row.number,
               phaseStatus: row.phase_status as SessionPhaseStatus,
               rejectionCount: row.rejection_count,
-              slackChannelId: row.slack_channel_id,
-              slackThreadTs: row.slack_thread_ts,
               title: row.title,
               updatedAt: row.updated_at,
               workspaceId: row.workspace_id,
@@ -209,7 +207,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                       className={cn(
                         "rounded-[6px] border border-border bg-background p-3 shadow-sm",
                         card.phaseStatus === "rejected" && "border-danger/30",
-                        card.phaseStatus === "escalated" && "border-danger/30",
                       )}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -235,8 +232,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                           linearIssueId={card.linearIssueId}
                           linearIssueUrl={card.linearIssueUrl}
                           pullRequestCount={0}
-                          slackChannelId={card.slackChannelId}
-                          slackThreadTs={card.slackThreadTs}
                         />
                       </div>
 

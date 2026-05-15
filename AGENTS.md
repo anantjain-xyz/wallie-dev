@@ -45,7 +45,7 @@ Use Vercel route handlers for privileged and third-party integrations.
 - Prefer small, reviewable commits.
 - Prefer direct and typed data contracts.
 - Keep DB naming stable once feature agents begin.
-- Treat schema, auth, GitHub, Slack, secrets, and Wallie orchestration as separate domains.
+- Treat schema, auth, GitHub, secrets, and Wallie orchestration as separate domains.
 
 ## Glossary
 

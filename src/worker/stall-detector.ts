@@ -98,10 +98,9 @@ export async function sweepStalledRuns(
     }
 
     // Resolve the parent job: retry if attempts remain, otherwise mark
-    // terminally errored. Pipeline jobs are one-shot (re-entering would
-    // double-post to Slack) — but `schedule_job_retry` only re-queues the
-    // job row; it doesn't re-enter the in-flight processor. The next worker
-    // poll picks it up cleanly.
+    // terminally errored. `schedule_job_retry` only re-queues the job row; it
+    // doesn't re-enter the in-flight processor. The next worker poll picks it
+    // up cleanly.
     if (run.agent_job_id) {
       await resolveStalledJob({
         admin,

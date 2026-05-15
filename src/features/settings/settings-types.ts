@@ -4,7 +4,6 @@ export type SettingsPageClientProps = {
   initialData: SettingsPageData;
   searchState: {
     githubStatus: string | null;
-    slackStatus: string | null;
     codexStatus: string | null;
   };
 };

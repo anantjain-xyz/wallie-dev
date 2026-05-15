@@ -165,8 +165,6 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                 linearIssueUrl={session.linearIssueUrl}
                 pullRequestCount={session.pullRequestCount}
                 pullRequests={session.pullRequests}
-                slackChannelId={session.slackChannelId}
-                slackThreadTs={session.slackThreadTs}
               />
             </div>
           </div>
@@ -415,7 +413,7 @@ function StageDot({ entry }: { entry: StageRailEntry }) {
     className = cn(className, "bg-success");
   } else if (entry.status === "upcoming") {
     className = cn(className, "bg-surface-muted border border-border");
-  } else if (entry.phaseStatus === "rejected" || entry.phaseStatus === "escalated") {
+  } else if (entry.phaseStatus === "rejected") {
     className = cn(className, "bg-danger");
   } else if (entry.phaseStatus === "approved") {
     className = cn(className, "bg-success");

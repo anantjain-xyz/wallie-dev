@@ -273,8 +273,6 @@ function SessionRow({
           linearIssueId={session.linearIssueId}
           linearIssueUrl={session.linearIssueUrl}
           pullRequestCount={session.pullRequestCount}
-          slackChannelId={session.slackChannelId}
-          slackThreadTs={session.slackThreadTs}
         />
       </div>
     </li>

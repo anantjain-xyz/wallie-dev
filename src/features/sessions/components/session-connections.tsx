@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { type ReactNode } from "react";
 
-import { buildSlackThreadHref } from "@/features/sessions/slack";
 import type { SessionPullRequest } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
 
@@ -14,8 +13,6 @@ type SessionConnectionsProps = {
   onRequestLinkLinear?: () => void;
   pullRequestCount: number;
   pullRequests?: SessionPullRequest[];
-  slackChannelId: string | null;
-  slackThreadTs: string | null;
 };
 
 type BadgeState = "linked" | "empty";
@@ -46,13 +43,9 @@ export function SessionConnections({
   onRequestLinkLinear,
   pullRequestCount,
   pullRequests,
-  slackChannelId,
-  slackThreadTs,
 }: SessionConnectionsProps) {
-  const slackHref = buildSlackThreadHref(slackChannelId, slackThreadTs);
   const linearState: BadgeState = linearIssueId || linearIssueUrl ? "linked" : "empty";
   const prState: BadgeState = pullRequestCount > 0 ? "linked" : "empty";
-  const slackState: BadgeState = slackHref ? "linked" : "empty";
 
   const prDetails = pullRequests ? mergedPullRequestState(pullRequests) : null;
   const prLabel = prDetails
@@ -96,18 +89,6 @@ export function SessionConnections({
         label={prState === "linked" ? prLabel : "No PRs"}
         tone={prState}
       />
-
-      {slackState === "linked" && slackHref ? (
-        <ConnectionBadge
-          compact={compact}
-          href={slackHref}
-          icon={<SlackGlyph />}
-          label="Slack thread"
-          tone="linked"
-        />
-      ) : (
-        <ConnectionBadge compact={compact} icon={<SlackGlyph />} label="Not linked" tone="empty" />
-      )}
     </div>
   );
 }
@@ -175,14 +156,6 @@ function GithubGlyph() {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
       <path d="M8 .2a8 8 0 0 0-2.53 15.59c.4.08.55-.17.55-.39v-1.36c-2.23.48-2.7-1.08-2.7-1.08-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.89.87 2.35.67.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.97 0-.88.31-1.6.83-2.16-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.83a7.63 7.63 0 0 1 4 0c1.53-1.05 2.2-.83 2.2-.83.44 1.11.16 1.93.08 2.13.52.56.83 1.28.83 2.16 0 3.08-1.86 3.76-3.64 3.97.29.25.54.73.54 1.48v2.19c0 .22.15.47.55.39A8 8 0 0 0 8 .2z" />
-    </svg>
-  );
-}
-
-function SlackGlyph() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M3.4 10.1a1.6 1.6 0 1 1-1.6-1.6h1.6v1.6zm.8 0a1.6 1.6 0 0 1 3.2 0v4a1.6 1.6 0 0 1-3.2 0v-4zM5.8 3.5A1.6 1.6 0 1 1 7.4 1.9v1.6H5.8zm0 .8a1.6 1.6 0 1 1 0 3.2h-4a1.6 1.6 0 1 1 0-3.2h4zm6.6 1.6a1.6 1.6 0 1 1 1.6 1.6h-1.6V5.9zm-.8 0a1.6 1.6 0 0 1-3.2 0v-4a1.6 1.6 0 0 1 3.2 0v4zm-1.6 6.6a1.6 1.6 0 1 1-1.6 1.6v-1.6h1.6zm0-.8a1.6 1.6 0 1 1 0-3.2h4a1.6 1.6 0 1 1 0 3.2h-4z" />
     </svg>
   );
 }

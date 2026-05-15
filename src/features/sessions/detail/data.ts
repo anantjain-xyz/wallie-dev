@@ -59,8 +59,6 @@ export async function loadSessionDetailPageData(
         current_artifact_version,
         prompt_md,
         rejection_count,
-        slack_channel_id,
-        slack_thread_ts,
         title,
         workspace_id
       `,
@@ -284,8 +282,6 @@ export async function loadSessionDetailPageData(
     pullRequests,
     rejectionCount: sessionRow.rejection_count,
     runHistory,
-    slackChannelId: sessionRow.slack_channel_id,
-    slackThreadTs: sessionRow.slack_thread_ts,
     title: sessionRow.title,
     updatedAt: sessionRow.updated_at,
     workspaceId: sessionRow.workspace_id,

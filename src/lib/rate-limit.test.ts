@@ -128,7 +128,7 @@ describe("rate-limit memory backend", () => {
   it("describeRateLimits surfaces every configured bucket", () => {
     const summary = describeRateLimits();
     const scopes = summary.map((s) => s.scope).sort();
-    expect(scopes).toEqual(["agentRuns", "phaseAction", "slackPerChannel", "slackPerWorkspace"]);
+    expect(scopes).toEqual(["agentRuns", "phaseAction"]);
     for (const entry of summary) {
       const config = RATE_LIMITS[entry.scope];
       expect(entry.windowMs).toBe(config.windowMs);

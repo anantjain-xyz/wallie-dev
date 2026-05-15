@@ -766,8 +766,6 @@ export type Database = {
           pipeline_id: string
           prompt_md: string
           rejection_count: number
-          slack_channel_id: string | null
-          slack_thread_ts: string | null
           title: string
           updated_at: string
           workspace_id: string
@@ -786,8 +784,6 @@ export type Database = {
           pipeline_id: string
           prompt_md?: string
           rejection_count?: number
-          slack_channel_id?: string | null
-          slack_thread_ts?: string | null
           title: string
           updated_at?: string
           workspace_id: string
@@ -806,8 +802,6 @@ export type Database = {
           pipeline_id?: string
           prompt_md?: string
           rejection_count?: number
-          slack_channel_id?: string | null
-          slack_thread_ts?: string | null
           title?: string
           updated_at?: string
           workspace_id?: string
@@ -836,44 +830,6 @@ export type Database = {
           },
           {
             foreignKeyName: "sessions_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      slack_installations: {
-        Row: {
-          bot_token_encrypted: string
-          id: string
-          installed_at: string
-          team_id: string
-          team_name: string | null
-          updated_at: string
-          workspace_id: string
-        }
-        Insert: {
-          bot_token_encrypted: string
-          id?: string
-          installed_at?: string
-          team_id: string
-          team_name?: string | null
-          updated_at?: string
-          workspace_id: string
-        }
-        Update: {
-          bot_token_encrypted?: string
-          id?: string
-          installed_at?: string
-          team_id?: string
-          team_name?: string | null
-          updated_at?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "slack_installations_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -1141,8 +1097,6 @@ export type Database = {
           linear_issue_url: string
           phase_status: Database["public"]["Enums"]["pipeline_phase_status"]
           pipeline_id: string
-          slack_channel_id: string
-          slack_thread_ts: string
           workspace_id: string
         }[]
       }
@@ -1252,7 +1206,6 @@ export type Database = {
         | "manual_retry"
         | "assignment"
         | "comment_retry"
-        | "slack_mention"
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
@@ -1260,7 +1213,6 @@ export type Database = {
         | "awaiting_review"
         | "approved"
         | "rejected"
-        | "escalated"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1402,7 +1354,6 @@ export const Constants = {
         "manual_retry",
         "assignment",
         "comment_retry",
-        "slack_mention",
       ],
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
@@ -1411,7 +1362,6 @@ export const Constants = {
         "awaiting_review",
         "approved",
         "rejected",
-        "escalated",
       ],
     },
   },
