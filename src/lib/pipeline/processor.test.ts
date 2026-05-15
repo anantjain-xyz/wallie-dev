@@ -9,12 +9,6 @@ import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-conf
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   decryptSecretValue: vi.fn((v: string) => v),
-  postSlackMessage: vi.fn().mockResolvedValue({ ts: "1234567890.123456" }),
-  openSlackDm: vi.fn().mockResolvedValue("D-dm-channel"),
-  formatStageReviewBlocks: vi.fn(() => [{ type: "section" }]),
-  formatGenerationFailureBlocks: vi.fn(() => [{ type: "section" }]),
-  formatEscalationDmBlocks: vi.fn(() => [{ type: "section" }]),
-  escapeMrkdwn: vi.fn((s: string) => s),
   createAgentRunner: vi.fn(),
   createSessionSandbox: vi.fn().mockResolvedValue({
     id: "sandbox-1",
@@ -27,7 +21,6 @@ const mocked = vi.hoisted(() => ({
   getCodexAccessTokenForSession: vi.fn().mockResolvedValue("codex-token"),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
-  loadPipelineWithStages: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   loadWorkspaceAgentConfig: vi.fn(),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
@@ -48,18 +41,8 @@ vi.mock("@/lib/secrets/crypto", () => ({
   decryptSecretValue: mocked.decryptSecretValue,
 }));
 
-vi.mock("./slack-format", () => ({
-  escapeMrkdwn: mocked.escapeMrkdwn,
-  formatEscalationDmBlocks: mocked.formatEscalationDmBlocks,
-  formatGenerationFailureBlocks: mocked.formatGenerationFailureBlocks,
-  formatStageReviewBlocks: mocked.formatStageReviewBlocks,
-  openSlackDm: mocked.openSlackDm,
-  postSlackMessage: mocked.postSlackMessage,
-}));
-
 vi.mock("./stages", () => ({
   loadStageById: mocked.loadStageById,
-  loadPipelineWithStages: mocked.loadPipelineWithStages,
   loadCompletedStageArtifacts: mocked.loadCompletedStageArtifacts,
 }));
 
@@ -124,7 +107,7 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     last_error: null,
     requested_by_member_id: null,
     started_at: null,
-    trigger_type: "slack_mention",
+    trigger_type: "manual_run",
     updated_at: new Date().toISOString(),
     attempt_count: 0,
     scheduled_at: null,
@@ -142,8 +125,6 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     creator_member_id: null,
     linear_issue_id: "TEAM-1",
     linear_issue_url: "https://linear.app/team/issue/TEAM-1",
-    slack_channel_id: "C-test",
-    slack_thread_ts: "1234567890.123456",
     pipeline_id: "pipe-1",
     current_stage_id: "stage-product",
     phase_status: "agent_generating",
@@ -167,47 +148,23 @@ const productStage = {
   slug: "product",
 };
 
-const designStage = {
-  approverMemberIds: [],
-  description: "Resolve design",
-  id: "stage-design",
-  name: "Design",
-  pipelineId: "pipe-1",
-  position: 2,
-  promptTemplateMd: "design",
-  slug: "design",
-};
-
 // ---- supabase mock builder ---------------------------------------------
 
 interface MockOptions {
   session: Tables<"sessions"> | null;
-  slackInstall?: { bot_token_encrypted: string } | null;
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   claimSucceeds?: boolean;
   artifactInsertError?: { message: string } | null;
   pointerUpdateError?: { message: string } | null;
   feedbackInsertError?: { message: string } | null;
-  /** Latest-feedback row returned to `loadLatestFeedback`. */
   latestFeedback?: { feedback_text: string } | null;
-  /** Map of `key` → encrypted_value returned from `workspace_secrets`. */
   workspaceSecrets?: Record<string, string>;
-  /** When set, github_installations.maybeSingle returns this row. Default: a row exists. */
   githubInstallation?: { id: string; installation_id: number } | null;
 }
 
 type AdminClient = SupabaseClient<Database>;
 type TestAdminClient = Pick<AdminClient, "from" | "rpc">;
 
-/**
- * Keep processor admin mocks structurally tied to the Supabase admin surface
- * the code under test uses. `createTestAdminClient` returns the typed
- * Pick<AdminClient, "from" | "rpc"> surface for future mocks. Table-only
- * tests get a throwing `rpc` implementation by default so accidental RPC calls
- * fail loudly, while RPC-specific tests pass their own mock. The adapter below
- * centralizes the cast needed by production function signatures so test bodies
- * do not hide incomplete mocks behind opaque per-call casts.
- */
 function createTestAdminClient(input: {
   from: (name: string) => unknown;
   rpc?: (fn: string, args?: unknown) => unknown;
@@ -231,8 +188,6 @@ function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
 
-  // Mirror the resolution logic in `loadWorkspaceAgentConfig` so tests can
-  // continue to drive behavior via the existing `agentConfig` option.
   const lookup: Record<string, unknown> = {};
   for (const row of opts.agentConfig ?? []) {
     lookup[row.key] = row.value_json;
@@ -309,12 +264,6 @@ function buildAdminMock(opts: MockOptions) {
           }),
         }),
       }),
-    }),
-  } as const;
-
-  const slackTable = {
-    select: () => ({
-      eq: () => ({ maybeSingle: async () => ({ data: opts.slackInstall ?? null, error: null }) }),
     }),
   } as const;
 
@@ -401,7 +350,6 @@ function buildAdminMock(opts: MockOptions) {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
     session_artifact_feedback: feedbackTable,
-    slack_installations: slackTable,
     workspace_agent_config: agentConfigTable,
     agent_runs: agentRunsTable,
     agent_run_messages: agentRunMessagesTable,
@@ -444,12 +392,6 @@ describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.loadStageById.mockResolvedValue(productStage);
-    mocked.loadPipelineWithStages.mockResolvedValue({
-      id: "pipe-1",
-      isDefault: true,
-      name: "Default",
-      stages: [productStage, designStage],
-    });
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
         { type: "text", text: "Drafted spec body" },
@@ -463,15 +405,12 @@ describe("processPipelineJob (generic stage runner)", () => {
     const job = baseJob();
     const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
       session,
-      slackInstall: { bot_token_encrypted: "tok" },
       agentConfig: [],
     });
 
     const result = await processPipelineJob({ admin, job });
 
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
-    expect(mocked.formatStageReviewBlocks).toHaveBeenCalledTimes(1);
-    expect(mocked.postSlackMessage).toHaveBeenCalledTimes(1);
     expect(insertedArtifacts).toHaveLength(1);
     const artifact = insertedArtifacts[0]!;
     expect(artifact.stage_slug).toBe("product");
@@ -487,10 +426,7 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("opens a session pull request after the artifact is persisted", async () => {
     const session = baseSession();
     const job = baseJob();
-    const { admin } = buildAdminMock({
-      session,
-      slackInstall: { bot_token_encrypted: "tok" },
-    });
+    const { admin } = buildAdminMock({ session });
 
     await processPipelineJob({ admin, job });
 
@@ -517,10 +453,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
-      session,
-      slackInstall: { bot_token_encrypted: "tok" },
-    });
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
@@ -529,7 +462,6 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "agent_generating" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
-    expect(mocked.postSlackMessage).toHaveBeenCalledTimes(1);
     expect(result.result).toBe("success");
     consoleError.mockRestore();
   });
@@ -538,7 +470,6 @@ describe("processPipelineJob (generic stage runner)", () => {
     const session = baseSession({ phase_status: "approved" });
     const { admin } = buildAdminMock({
       session,
-      slackInstall: { bot_token_encrypted: "tok" },
       claimSucceeds: false,
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
@@ -551,10 +482,8 @@ describe("processPipelineJob (generic stage runner)", () => {
     const job = baseJob();
     const { admin, insertedArtifacts } = buildAdminMock({
       session,
-      slackInstall: { bot_token_encrypted: "tok" },
       agentConfig: [{ key: "agent_provider", value_json: "anthropic_api" }],
       workspaceSecrets: { ANTHROPIC_API_KEY: "sk-ant-…" },
-      // Even with no GitHub install, anthropic-api should still run.
       githubInstallation: null,
     });
 
@@ -587,7 +516,6 @@ describe("processPipelineJob (generic stage runner)", () => {
     const session = baseSession();
     const { admin } = buildAdminMock({
       session,
-      slackInstall: { bot_token_encrypted: "tok" },
       agentConfig: [{ key: "agent_provider", value_json: "anthropic_api" }],
       workspaceSecrets: {},
     });
@@ -596,25 +524,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
   });
 
-  it("errors out cleanly when the workspace has no Slack installation", async () => {
-    const session = baseSession();
-    const { admin } = buildAdminMock({
-      session,
-      slackInstall: null,
-    });
-    const result = await processPipelineJob({ admin, job: baseJob() });
-    expect(result.result).toBe("error");
-    expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
-  });
-
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {
     const session = baseSession();
-    // Default runner is claude-code (requiresSandbox: true). With no github
-    // install the processor must error out — without this branch the run would
-    // try to mint a token for installation_id=undefined and crash later.
     const { admin } = buildAdminMock({
       session,
-      slackInstall: { bot_token_encrypted: "tok" },
       githubInstallation: null,
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
@@ -627,24 +540,17 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {
     mocked.createSessionSandbox.mockRejectedValueOnce(new Error("vercel sandbox unavailable"));
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
-      session,
-      slackInstall: { bot_token_encrypted: "tok" },
-    });
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    // Sandbox failed before run row got created, so no orphan artifact, no PR.
     expect(insertedArtifacts).toHaveLength(0);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
       { phase_status: "rejected" },
     ]);
-    // Slack failure message posted (not the review one).
-    expect(mocked.formatGenerationFailureBlocks).toHaveBeenCalledTimes(1);
-    expect(mocked.formatStageReviewBlocks).not.toHaveBeenCalled();
   });
 
   it("treats an agent error event as a stage failure and deletes the orphan artifact", async () => {
@@ -655,25 +561,56 @@ describe("processPipelineJob (generic stage runner)", () => {
       ]),
     );
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
-      session,
-      slackInstall: { bot_token_encrypted: "tok" },
-    });
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
-    // Error fires *before* artifact insert (the for-await throws when type === "error"),
-    // so no orphan should exist. The artifact-insert branch is guarded by
-    // `artifactInserted` and never runs.
     expect(insertedArtifacts).toHaveLength(0);
-    // No PR opened.
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
       { phase_status: "rejected" },
     ]);
-    expect(mocked.formatGenerationFailureBlocks).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---- handleApproval -----------------------------------------------------
+
+describe("handleApproval", () => {
+  it("calls approve_session_stage with the approver id and returns success on a non-empty result", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ id: "sess-1", current_stage_id: "stage-design" }],
+      error: null,
+    });
+    const admin = createProcessorTestAdminClient({ from: () => ({}), rpc });
+    const result = await handleApproval({
+      admin,
+      approverMemberId: "mem-1",
+      expectedWorkspaceId: "ws-1",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(rpc).toHaveBeenCalledWith("approve_session_stage", {
+      approver_member_id: "mem-1",
+      expected_version: 1,
+      expected_workspace_id: "ws-1",
+      target_session_id: "sess-1",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("returns an authorization error when the RPC returns an empty result", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const result = await handleApproval({
+      admin: createProcessorTestAdminClient({ from: () => ({}), rpc }),
+      approverMemberId: null,
+      expectedWorkspaceId: "ws-1",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("not authorized");
   });
 });
 
@@ -683,10 +620,9 @@ interface RejectionMockOptions {
   session: Tables<"sessions"> | null;
   rejectionClaim?: { id: string } | null;
   rejectionClaimError?: { message: string } | null;
-  slackInstall?: { bot_token_encrypted: string } | null;
-  workspaceSecrets?: Record<string, string>;
   enqueueError?: { code?: string; message: string } | null;
   workspaceMember?: { id: string } | null;
+  feedbackInsertError?: { message: string; code?: string } | null;
 }
 
 function buildRejectionMock(opts: RejectionMockOptions) {
@@ -701,9 +637,6 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     }),
     update: (patch: Record<string, unknown>) => {
       sessionUpdates.push(patch);
-      // If this is the CAS rejection_count update, it has 5 .eq() calls
-      // followed by .select().maybeSingle(). All other updates are plain.
-      const builder: Record<string, unknown> = {};
       const eqChain = {
         eq() {
           return eqChain;
@@ -720,6 +653,7 @@ function buildRejectionMock(opts: RejectionMockOptions) {
           resolve({ data: null, error: null });
         },
       };
+      const builder: Record<string, unknown> = {};
       builder.eq = () => eqChain;
       return builder;
     },
@@ -733,27 +667,6 @@ function buildRejectionMock(opts: RejectionMockOptions) {
             artifactUpdates.push({ patch });
             return { error: null };
           },
-        }),
-      }),
-    }),
-  };
-
-  const slackTable = {
-    select: () => ({
-      eq: () => ({ maybeSingle: async () => ({ data: opts.slackInstall ?? null, error: null }) }),
-    }),
-  };
-
-  const workspaceSecretsTable = {
-    select: () => ({
-      eq: () => ({
-        eq: (_col: string, key: string) => ({
-          maybeSingle: async () => ({
-            data: opts.workspaceSecrets?.[key]
-              ? { encrypted_value: opts.workspaceSecrets[key] }
-              : null,
-            error: null,
-          }),
         }),
       }),
     }),
@@ -781,7 +694,7 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   const feedbackTable = {
     insert: async (row: Record<string, unknown>) => {
       insertedFeedback.push(row);
-      return { error: null };
+      return { error: opts.feedbackInsertError ?? null };
     },
   };
 
@@ -789,8 +702,6 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
     session_artifact_feedback: feedbackTable,
-    slack_installations: slackTable,
-    workspace_secrets: workspaceSecretsTable,
     workspace_members: workspaceMembersTable,
     agent_jobs: agentJobsTable,
   };
@@ -871,7 +782,7 @@ describe("handleRejection", () => {
     expect(result.error).toContain("raced");
   });
 
-  it("on a non-escalating rejection, writes feedback, enqueues a retry, then flips status to rejected", async () => {
+  it("writes feedback, enqueues a retry, then flips status to rejected", async () => {
     const session = baseSession({
       phase_status: "awaiting_review",
       current_artifact_version: 1,
@@ -891,23 +802,18 @@ describe("handleRejection", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.escalated).toBe(false);
-    // Feedback row recorded in session_artifact_feedback (post-WAL-14 split).
     expect(insertedFeedback).toHaveLength(1);
     expect(insertedFeedback[0]).toMatchObject({
       feedback_text: "tighten the spec",
       session_id: "sess-1",
       target_version: 1,
     });
-    // Retry enqueued before flipping to rejected.
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.session_id).toBe("sess-1");
     expect(enqueuedJobs[0]!.requested_by_member_id).toBe("mem-wallie");
-    // Session updates: rejection_count CAS first, then phase_status=rejected.
+    expect(enqueuedJobs[0]!.trigger_type).toBe("comment_retry");
     expect(sessionUpdates[0]).toEqual({ rejection_count: 1 });
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
-    // Crucially we don't escalate when below threshold.
-    expect(sessionUpdates).not.toContainEqual({ phase_status: "escalated" });
   });
 
   it("treats a unique_violation on enqueue (23505) as silent success — the existing queued job will pick up the feedback", async () => {
@@ -928,14 +834,10 @@ describe("handleRejection", () => {
       version: 1,
     });
     expect(result.success).toBe(true);
-    // Status flip still happens.
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
   });
 
   it("returns the enqueue error and stops *before* flipping to rejected when the retry can't be queued", async () => {
-    // Rationale captured in processor.ts: a 'rejected' state with no queued
-    // worker is a wedged state the UI can't recover from. We must not flip if
-    // the enqueue failed for any reason other than a duplicate.
     const session = baseSession({
       phase_status: "awaiting_review",
       current_artifact_version: 1,
@@ -957,209 +859,15 @@ describe("handleRejection", () => {
     expect(sessionUpdates).toEqual([{ rejection_count: 1 }]);
   });
 
-  it("escalates when the rejection_count crosses the threshold (3) and DM payload is built from session + stage", async () => {
-    // shouldEscalate returns true at >= 3; rejection_count was 2, so this
-    // becomes the third rejection. With slack install + EM_SLACK_USER_ID set,
-    // an escalation DM is dispatched.
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 2,
-    });
-    const { admin, sessionUpdates, enqueuedJobs } = buildRejectionMock({
-      session,
-      slackInstall: { bot_token_encrypted: "tok" },
-      workspaceSecrets: { EM_SLACK_USER_ID: "U-em" },
-    });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "still wrong",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(true);
-    expect(result.escalated).toBe(true);
-    expect(sessionUpdates).toEqual([{ rejection_count: 3 }, { phase_status: "escalated" }]);
-    // Escalation does NOT enqueue a retry — that's only for non-escalating rejections.
-    expect(enqueuedJobs).toHaveLength(0);
-    expect(mocked.openSlackDm).toHaveBeenCalledTimes(1);
-    expect(mocked.formatEscalationDmBlocks).toHaveBeenCalledTimes(1);
-    const dmBlocksArgs = (
-      mocked.formatEscalationDmBlocks.mock.calls as unknown as Array<[Record<string, unknown>]>
-    )[0]![0];
-    expect(dmBlocksArgs.rejectionCount).toBe(3);
-    expect(dmBlocksArgs.stageName).toBe(productStage.name);
-  });
-
-  it("escalates without crashing even when no Slack install or EM user id is configured", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 1,
-      rejection_count: 2,
-    });
-    const { admin } = buildRejectionMock({
-      session,
-      slackInstall: null,
-      workspaceSecrets: {},
-    });
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: "ws-1",
-      feedbackText: "still wrong",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(true);
-    expect(result.escalated).toBe(true);
-    expect(mocked.openSlackDm).not.toHaveBeenCalled();
-  });
-});
-
-describe("handleApproval", () => {
-  it("calls approve_session_stage with the approver id and returns success on a non-empty result", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: [{ id: "sess-1", current_stage_id: "stage-design" }],
-      error: null,
-    });
-    const admin = createProcessorTestAdminClient({ from: () => ({}), rpc });
-    const result = await handleApproval({
-      admin,
-      approverMemberId: "mem-1",
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(rpc).toHaveBeenCalledWith("approve_session_stage", {
-      approver_member_id: "mem-1",
-      expected_version: 1,
-      expected_workspace_id: "ws-1",
-      target_session_id: "sess-1",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("returns an authorization error when the RPC returns an empty result", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
-    const result = await handleApproval({
-      admin: createProcessorTestAdminClient({ from: () => ({}), rpc }),
-      approverMemberId: null,
-      expectedWorkspaceId: "ws-1",
-      sessionId: "sess-1",
-      version: 1,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("not authorized");
-  });
-});
-
-describe("handleRejection", () => {
-  function buildRejectionAdmin(opts: {
-    session: Tables<"sessions">;
-    feedbackInsertError?: { message: string; code?: string } | null;
-  }) {
-    const insertedFeedback: Array<Record<string, unknown>> = [];
-    const updatedSessions: Array<Record<string, unknown>> = [];
-
-    // Five-deep `.eq()` chain matches the rejection_count CAS in handleRejection.
-    const eqChain = (terminal: () => unknown): unknown => {
-      const node: Record<string, unknown> = {
-        select: () => ({ maybeSingle: terminal }),
-      };
-      node.eq = () => node;
-      return node;
-    };
-
-    const sessionsTable = {
-      select: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({ data: opts.session, error: null }),
-        }),
-      }),
-      update: (patch: Record<string, unknown>) => {
-        updatedSessions.push(patch);
-        return eqChain(async () => ({ data: { id: opts.session.id }, error: null }));
-      },
-    };
-
-    const feedbackTable = {
-      insert: async (row: Record<string, unknown>) => {
-        insertedFeedback.push(row);
-        return { error: opts.feedbackInsertError ?? null };
-      },
-    };
-
-    const workspaceMembersTable = {
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            eq: () => ({ maybeSingle: async () => ({ data: { id: "mem-wallie" }, error: null }) }),
-          }),
-        }),
-      }),
-    };
-
-    const agentJobsTable = {
-      insert: async () => ({ error: null }),
-    };
-
-    const tables: Record<string, unknown> = {
-      sessions: sessionsTable,
-      session_artifact_feedback: feedbackTable,
-      workspace_members: workspaceMembersTable,
-      agent_jobs: agentJobsTable,
-    };
-
-    return {
-      admin: createProcessorTestAdminClient({ from: (name: string) => tables[name] ?? {} }),
-      insertedFeedback,
-      updatedSessions,
-    };
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocked.loadStageById.mockResolvedValue(productStage);
-  });
-
-  it("inserts a feedback row keyed on (session, stage, target_version) and does not write to session_artifacts", async () => {
-    const session = baseSession({
-      phase_status: "awaiting_review",
-      current_artifact_version: 2,
-      rejection_count: 0,
-    });
-    const { admin, insertedFeedback, updatedSessions } = buildRejectionAdmin({ session });
-
-    const result = await handleRejection({
-      admin,
-      expectedWorkspaceId: session.workspace_id,
-      feedbackText: "Add error handling section",
-      sessionId: session.id,
-      version: 2,
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.escalated).toBe(false);
-    expect(insertedFeedback).toHaveLength(1);
-    expect(insertedFeedback[0]).toEqual({
-      feedback_text: "Add error handling section",
-      session_id: session.id,
-      stage_id: productStage.id,
-      stage_slug: productStage.slug,
-      target_version: 2,
-      workspace_id: session.workspace_id,
-    });
-    expect(updatedSessions).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
-  });
-
-  it("treats a 23505 feedback insert as idempotent so a retry after a prior enqueue failure can still flip phase_status and recover the session", async () => {
+  it("treats a 23505 feedback insert as idempotent so a retry after a prior enqueue failure can still flip phase_status", async () => {
     const session = baseSession({
       phase_status: "awaiting_review",
       current_artifact_version: 1,
       rejection_count: 0,
     });
-    const { admin, updatedSessions } = buildRejectionAdmin({
+    const { admin, sessionUpdates } = buildRejectionMock({
       session,
+      workspaceMember: { id: "mem-wallie" },
       feedbackInsertError: {
         code: "23505",
         message: "duplicate key value violates unique constraint",
@@ -1175,10 +883,7 @@ describe("handleRejection", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.escalated).toBe(false);
-    // Existing feedback row is canonical; the retry must still advance the
-    // session — otherwise rejection_count is bumped with nothing queued.
-    expect(updatedSessions).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
+    expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
   });
 
   it("aborts the rejection when the feedback insert fails with a non-23505 error", async () => {
@@ -1187,7 +892,7 @@ describe("handleRejection", () => {
       current_artifact_version: 1,
       rejection_count: 0,
     });
-    const { admin, updatedSessions } = buildRejectionAdmin({
+    const { admin, sessionUpdates } = buildRejectionMock({
       session,
       feedbackInsertError: { code: "23503", message: "foreign key violation" },
     });
@@ -1202,6 +907,6 @@ describe("handleRejection", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("foreign key");
-    expect(updatedSessions).toEqual([{ rejection_count: 1 }]);
+    expect(sessionUpdates).toEqual([{ rejection_count: 1 }]);
   });
 });

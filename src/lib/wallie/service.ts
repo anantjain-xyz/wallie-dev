@@ -785,9 +785,9 @@ async function loadProcessTargetJob(input: {
 
     if (job.status === "running") {
       // Pipeline jobs are one-shot and not designed to be re-entered
-      // concurrently — the processor would regenerate the spec and double-
-      // post to Slack. Refuse to re-dispatch a running job. Stuck rows
-      // (processor crash mid-flight) are recovered manually for now.
+      // concurrently — the processor would regenerate the artifact. Refuse to
+      // re-dispatch a running job. Stuck rows (processor crash mid-flight) are
+      // recovered manually for now.
       return null;
     }
 

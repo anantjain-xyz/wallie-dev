@@ -54,9 +54,9 @@ export type OpenSessionPullRequestOutcome =
  *   4. Upsert a `session_pull_requests` row keyed on (workspace, branch).
  *
  * Failures at steps 2-3 are recoverable — the artifact is already persisted
- * and Slack review still goes out — so this function never throws on remote
- * errors. It returns a tagged outcome so the caller can log without aborting
- * the stage.
+ * and the reviewer can approve it from the dashboard — so this function never
+ * throws on remote errors. It returns a tagged outcome so the caller can log
+ * without aborting the stage.
  */
 export async function openSessionPullRequest(
   input: OpenSessionPullRequestInput,

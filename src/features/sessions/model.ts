@@ -22,8 +22,6 @@ type SessionRow = Pick<
   | "pipeline_id"
   | "prompt_md"
   | "rejection_count"
-  | "slack_channel_id"
-  | "slack_thread_ts"
   | "title"
   | "updated_at"
   | "workspace_id"
@@ -55,8 +53,6 @@ export function mapSessionRow(
     promptMd: row.prompt_md,
     pullRequestCount,
     rejectionCount: row.rejection_count,
-    slackChannelId: row.slack_channel_id,
-    slackThreadTs: row.slack_thread_ts,
     title: row.title,
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,

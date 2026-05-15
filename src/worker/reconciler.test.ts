@@ -317,13 +317,6 @@ describe("reconcileLinearState", () => {
           phase_status: "approved",
           created_at: "2026-05-01T00:00:03Z",
         },
-        {
-          id: "sEscalated",
-          workspace_id: "wA",
-          linear_issue_id: "iEscalated",
-          phase_status: "escalated",
-          created_at: "2026-05-01T00:00:04Z",
-        },
       ],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
       agentJobs: [
@@ -396,7 +389,7 @@ describe("reconcileLinearState", () => {
     expect(runCancel?.filters["in.agent_job_id"]).toEqual(["jobReview"]);
     expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
 
-    for (const sessionId of ["sApproved", "sEscalated"]) {
+    for (const sessionId of ["sApproved"]) {
       const sessionRejection = calls.find(
         (c) =>
           c.table === "sessions" &&

@@ -12,7 +12,6 @@ export const SESSION_PHASE_STATUS_LABELS: Record<SessionPhaseStatus, string> = {
   awaiting_review: "awaiting review",
   approved: "approved",
   rejected: "rejected",
-  escalated: "escalated",
 };
 
 export type PipelineStage = {
@@ -73,8 +72,6 @@ export type SessionSummary = {
   promptMd: string;
   pullRequestCount: number;
   rejectionCount: number;
-  slackChannelId: string | null;
-  slackThreadTs: string | null;
   title: string;
   updatedAt: string;
   workspaceId: string;
@@ -122,7 +119,7 @@ export function sessionPhaseStatusTone(
   status: SessionPhaseStatus,
 ): "blocked" | "planned" | "ready" {
   if (status === "approved") return "ready";
-  if (status === "rejected" || status === "escalated") return "blocked";
+  if (status === "rejected") return "blocked";
   return "planned";
 }
 

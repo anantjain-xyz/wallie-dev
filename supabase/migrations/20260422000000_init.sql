@@ -47,16 +47,14 @@ create type public.agent_trigger_type as enum (
   'manual_run',
   'manual_retry',
   'assignment',
-  'comment_retry',
-  'slack_mention'
+  'comment_retry'
 );
 
 create type public.pipeline_phase_status as enum (
   'agent_generating',
   'awaiting_review',
   'approved',
-  'rejected',
-  'escalated'
+  'rejected'
 );
 
 -- Pipelines and pipeline_stages replace the old hardcoded session_phase enum.
@@ -194,8 +192,6 @@ create table public.sessions (
   creator_member_id uuid references public.workspace_members(id) on delete set null,
   linear_issue_id text,
   linear_issue_url text,
-  slack_channel_id text,
-  slack_thread_ts text,
   -- Pinned at create time. Edits to the pipeline don't retroactively change a
   -- session's shape: stage_slug snapshots on artifacts/completions preserve
   -- history if a stage is renamed or removed.
@@ -335,16 +331,6 @@ create table internal.workspace_issue_counters (
     check (last_issue_number >= 0)
 );
 
-create table public.slack_installations (
-  id uuid primary key default gen_random_uuid(),
-  workspace_id uuid not null references public.workspaces(id) on delete cascade,
-  team_id text not null unique,
-  team_name text,
-  bot_token_encrypted text not null,
-  installed_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
 create table public.workspace_agent_config (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -418,10 +404,6 @@ create unique index sessions_workspace_linear_issue_idx
   on public.sessions (workspace_id, linear_issue_id)
   where linear_issue_id is not null;
 
-create unique index sessions_workspace_slack_thread_idx
-  on public.sessions (workspace_id, slack_channel_id, slack_thread_ts)
-  where slack_channel_id is not null and slack_thread_ts is not null;
-
 create index session_artifacts_session_id_idx
   on public.session_artifacts (session_id);
 
@@ -451,9 +433,6 @@ create index agent_runs_stall_sweep_idx
 
 create index agent_run_messages_agent_run_created_at_idx
   on public.agent_run_messages (agent_run_id, created_at);
-
-create index slack_installations_workspace_id_idx
-  on public.slack_installations (workspace_id);
 
 create index worker_heartbeats_last_heartbeat_idx
   on public.worker_heartbeats (last_heartbeat_at);
@@ -888,11 +867,6 @@ before update on internal.workspace_issue_counters
 for each row
 execute function internal.touch_updated_at();
 
-create trigger slack_installations_touch_updated_at
-before update on public.slack_installations
-for each row
-execute function internal.touch_updated_at();
-
 create trigger workspace_agent_config_touch_updated_at
 before update on public.workspace_agent_config
 for each row
@@ -1204,8 +1178,6 @@ returns table (
   current_stage_slug text,
   phase_status public.pipeline_phase_status,
   workspace_id uuid,
-  slack_channel_id text,
-  slack_thread_ts text,
   linear_issue_url text,
   archived_at timestamptz
 )
@@ -1328,8 +1300,6 @@ begin
       ps.slug,
       s.phase_status,
       s.workspace_id,
-      s.slack_channel_id,
-      s.slack_thread_ts,
       s.linear_issue_url,
       s.archived_at
     from public.sessions s
@@ -1462,7 +1432,6 @@ alter table public.session_pull_requests enable row level security;
 alter table public.agent_jobs enable row level security;
 alter table public.agent_runs enable row level security;
 alter table public.agent_run_messages enable row level security;
-alter table public.slack_installations enable row level security;
 alter table public.workspace_agent_config enable row level security;
 alter table public.worker_heartbeats enable row level security;
 
@@ -1489,7 +1458,6 @@ revoke all on public.session_pull_requests from anon, authenticated;
 revoke all on public.agent_jobs from anon, authenticated;
 revoke all on public.agent_runs from anon, authenticated;
 revoke all on public.agent_run_messages from anon, authenticated;
-revoke all on public.slack_installations from anon, authenticated;
 
 grant all on all tables in schema public to service_role;
 grant all on all tables in schema internal to service_role;
@@ -1620,14 +1588,6 @@ create policy session_phase_completions_select_membership
 
 create policy session_pull_requests_select_membership
   on public.session_pull_requests
-  for select
-  to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
-
--- slack_installations holds the encrypted bot token. Fully revoked above; the
--- policy is belt-and-suspenders in case a future migration re-grants select.
-create policy slack_installations_select_membership
-  on public.slack_installations
   for select
   to authenticated
   using (workspace_id in (select public.current_user_workspace_ids()));

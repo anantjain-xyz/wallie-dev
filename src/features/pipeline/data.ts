@@ -18,8 +18,6 @@ export type PipelineDashboardCard = {
   number: number;
   phaseStatus: SessionPhaseStatus;
   rejectionCount: number;
-  slackChannelId: string | null;
-  slackThreadTs: string | null;
   title: string;
   updatedAt: string;
   workspaceId: string;
@@ -93,8 +91,6 @@ export async function loadPipelineDashboardData(
         current_stage_id,
         phase_status,
         rejection_count,
-        slack_channel_id,
-        slack_thread_ts,
         title,
         workspace_id,
         archived_at
@@ -132,8 +128,6 @@ export async function loadPipelineDashboardData(
     number: row.number,
     phaseStatus: row.phase_status as SessionPhaseStatus,
     rejectionCount: row.rejection_count,
-    slackChannelId: row.slack_channel_id,
-    slackThreadTs: row.slack_thread_ts,
     title: row.title,
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,

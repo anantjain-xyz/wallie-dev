@@ -2,9 +2,8 @@
 -- Seed data for local development
 -- Runs automatically on `supabase db reset`
 --
--- `sessions` is the pipeline source of truth. Discussion lives in Slack
--- threads; upstream tracker references live on `sessions.linear_issue_id` /
--- `sessions.linear_issue_url`.
+-- `sessions` is the pipeline source of truth. Upstream tracker references
+-- live on `sessions.linear_issue_id` / `sessions.linear_issue_url`.
 --
 -- We seed eighteen sessions across the six pipeline phases (2-3 per column)
 -- with a mix of statuses so the pipeline board looks realistic.
@@ -64,9 +63,6 @@ DECLARE
   gh_br1_id   uuid := '13b2c3d4-0001-4000-8000-000000000001';
   gh_br2_id   uuid := '13b2c3d4-0002-4000-8000-000000000002';
   gh_br3_id   uuid := '13b2c3d4-0003-4000-8000-000000000003';
-
-  -- Slack installation (fake bot token — no real decryption happens in dev)
-  slack_inst_id uuid := '14b2c3d4-0001-4000-8000-000000000001';
 
   -- Agent jobs & runs (pipeline work on session #2)
   job1_id  uuid := '21b2c3d4-0001-4000-8000-000000000001';
@@ -190,7 +186,7 @@ BEGIN
   SELECT id INTO stage_monitor_id     FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'monitor';
 
   -- -------------------------------------------------------------------------
-  -- 5b. Session number counter (Slack handler and session creator share this)
+  -- 5b. Session number counter
   -- -------------------------------------------------------------------------
   INSERT INTO internal.workspace_issue_counters (workspace_id, last_issue_number)
   VALUES (ws_id, 18);
@@ -223,31 +219,19 @@ BEGIN
      'Go', 'main', false, now() - interval '13 days');
 
   -- -------------------------------------------------------------------------
-  -- 7. Slack installation (placeholder bot token; real Slack calls are gated
-  --    by env/config and won't be made against dev seed data).
-  -- -------------------------------------------------------------------------
-  INSERT INTO public.slack_installations
-    (id, workspace_id, team_id, team_name, bot_token_encrypted, installed_at)
-  VALUES
-    (slack_inst_id, ws_id, 'T0ACMECORP', 'Acme Corp',
-     'seed-placeholder-not-a-real-token',
-     now() - interval '13 days');
-
-  -- -------------------------------------------------------------------------
-  -- 8. Sessions (one per phase for a realistic tour of the pipeline)
+  -- 7. Sessions (one per phase for a realistic tour of the pipeline)
   -- -------------------------------------------------------------------------
 
   -- Session 1: product / awaiting_review — agent just finished the spec
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess1_id, ws_id, 1,
      'Add SSO login via Google Workspace',
-     E'@wallie we need SSO for the Business plan — Google Workspace first, Okta later. IT asked for this on the call Monday.',
-     mem1_id, 'C0ACME001', '1712822400.000100',
+     E'We need SSO for the Business plan — Google Workspace first, Okta later. IT asked for this on the call Monday.',
+     mem1_id,
      default_pipeline_id, stage_product_id, 'awaiting_review', 1,
      now() - interval '2 hours', now() - interval '90 minutes');
 
@@ -261,14 +245,13 @@ BEGIN
   -- Session 2: design / agent_generating — product approved, design agent running
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess2_id, ws_id, 2,
      'Self-serve workspace creation flow',
-     E'@wallie onboarding is dropping off at workspace creation. Let''s build a proper guided flow.',
-     mem1_id, 'C0ACME001', '1712822400.000200',
+     E'Onboarding is dropping off at workspace creation. Let''s build a proper guided flow.',
+     mem1_id,
      default_pipeline_id, stage_design_id, 'agent_generating', 0,
      now() - interval '1 day', now() - interval '30 minutes');
 
@@ -287,14 +270,13 @@ BEGIN
   -- Session 3: engineering / awaiting_review — product + design approved
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess3_id, ws_id, 3,
      'Real-time session updates via Supabase Realtime',
-     E'@wallie the board feels stale when two people are triaging at once. Can we wire up realtime?',
-     mem2_id, 'C0ACME001', '1712822400.000300',
+     E'The board feels stale when two people are triaging at once. Can we wire up realtime?',
+     mem2_id,
      default_pipeline_id, stage_engineering_id, 'awaiting_review', 1,
      now() - interval '3 days', now() - interval '5 hours');
 
@@ -320,14 +302,13 @@ BEGIN
   -- Session 4: review / agent_generating — code written, reviewing PR
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess4_id, ws_id, 4,
      'Rich-text editor for session prompts',
-     E'@wallie the plain textarea is rough. Let''s replace it with Tiptap and support image paste.',
-     mem1_id, 'C0ACME001', '1712822400.000400',
+     E'The plain textarea is rough. Let''s replace it with Tiptap and support image paste.',
+     mem1_id,
      default_pipeline_id, stage_review_id, 'agent_generating', 0,
      now() - interval '6 days', now() - interval '4 hours');
 
@@ -354,14 +335,13 @@ BEGIN
   -- Session 5: land / awaiting_review — approved, ready to merge
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess5_id, ws_id, 5,
      'Keyboard shortcuts for session triage',
-     E'@wallie power users are asking for j/k navigation and hotkeys for status/priority.',
-     mem2_id, 'C0ACME001', '1712822400.000500',
+     E'Power users are asking for j/k navigation and hotkeys for status/priority.',
+     mem2_id,
      default_pipeline_id, stage_land_id, 'awaiting_review', 1,
      now() - interval '8 days', now() - interval '3 hours');
 
@@ -395,14 +375,13 @@ BEGIN
   -- Session 6: monitor / approved, archived — shipped & watching metrics
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      archived_at, created_at, updated_at)
   VALUES
     (sess6_id, ws_id, 6,
      'CI/CD pipeline with GitHub Actions',
-     E'@wallie we need CI — tests + lint on PRs, staging deploy on merge, production gated.',
-     mem1_id, 'C0ACME001', '1712822400.000600',
+     E'We need CI — tests + lint on PRs, staging deploy on merge, production gated.',
+     mem1_id,
      default_pipeline_id, stage_monitor_id, 'approved', 1,
      now() - interval '10 days',
      now() - interval '13 days', now() - interval '10 days');
@@ -440,20 +419,19 @@ BEGIN
     (sess6_id, ws_id, stage_monitor_id, 'monitor',     now() - interval '10 days',          mem1_id);
 
   -- -------------------------------------------------------------------------
-  -- 8b. Additional sessions (multiple cards per pipeline column)
+  -- 7b. Additional sessions (multiple cards per pipeline column)
   -- -------------------------------------------------------------------------
 
   -- Session 7: product / awaiting_review
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess7_id, ws_id, 7,
      'Dark mode and theme customization',
-     E'@wallie users keep asking for dark mode. Let''s add a theme toggle in settings with system preference detection.',
-     mem2_id, 'C0ACME001', '1712822400.000700',
+     E'Users keep asking for dark mode. Let''s add a theme toggle in settings with system preference detection.',
+     mem2_id,
      default_pipeline_id, stage_product_id, 'awaiting_review', 1,
      now() - interval '1 hour', now() - interval '45 minutes');
 
@@ -467,28 +445,26 @@ BEGIN
   -- Session 8: product / agent_generating (rejected once, re-generating)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
     (sess8_id, ws_id, 8,
-     'Slack digest for daily pipeline summary',
-     E'@wallie we need a daily Slack message summarizing pipeline activity — sessions that moved, stuck items, escalations.',
-     mem1_id, 'C0ACME001', '1712822400.000800',
+     'Weekly email digest of pipeline activity',
+     E'We need a weekly email summarizing pipeline activity — sessions that moved, stuck items, and PRs awaiting review.',
+     mem1_id,
      default_pipeline_id, stage_product_id, 'agent_generating', 0, 1,
      now() - interval '4 hours', now() - interval '20 minutes');
 
   -- Session 9: design / awaiting_review
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess9_id, ws_id, 9,
      'Role-based access control for workspaces',
-     E'@wallie we need granular permissions — viewer, editor, admin roles with controls over phase approvals and integrations.',
-     mem1_id, 'C0ACME001', '1712822400.000900',
+     E'We need granular permissions — viewer, editor, admin roles with controls over phase approvals and integrations.',
+     mem1_id,
      default_pipeline_id, stage_design_id, 'awaiting_review', 1,
      now() - interval '2 days', now() - interval '4 hours');
 
@@ -510,14 +486,13 @@ BEGIN
   -- Session 10: design / rejected
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
     (sess10_id, ws_id, 10,
      'Bulk session import from CSV and JSON',
-     E'@wallie teams migrating from Jira need bulk import. Accept CSV and JSON, validate, create sessions.',
-     mem2_id, 'C0ACME001', '1712822400.001000',
+     E'Teams migrating from Jira need bulk import. Accept CSV and JSON, validate, create sessions.',
+     mem2_id,
      default_pipeline_id, stage_design_id, 'rejected', 1, 1,
      now() - interval '3 days', now() - interval '2 hours');
 
@@ -539,14 +514,13 @@ BEGIN
   -- Session 11: engineering / agent_generating
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess11_id, ws_id, 11,
      'Webhook notifications for pipeline events',
-     E'@wallie external systems need to react to phase transitions. Add webhook registration and signed POST delivery.',
-     mem1_id, 'C0ACME001', '1712822400.001100',
+     E'External systems need to react to phase transitions. Add webhook registration and signed POST delivery.',
+     mem1_id,
      default_pipeline_id, stage_engineering_id, 'agent_generating', 0,
      now() - interval '4 days', now() - interval '1 hour');
 
@@ -569,14 +543,13 @@ BEGIN
   -- Session 12: review / awaiting_review
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess12_id, ws_id, 12,
      'Two-factor authentication via TOTP',
-     E'@wallie security teams want TOTP 2FA. QR code setup, backup codes, and admin enforcement toggle.',
-     mem2_id, 'C0ACME001', '1712822400.001200',
+     E'Security teams want TOTP 2FA. QR code setup, backup codes, and admin enforcement toggle.',
+     mem2_id,
      default_pipeline_id, stage_review_id, 'awaiting_review', 1,
      now() - interval '5 days', now() - interval '2 hours');
 
@@ -606,14 +579,13 @@ BEGIN
   -- Session 13: review / rejected (2 rejections)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
     (sess13_id, ws_id, 13,
      'API rate limiting and usage dashboard',
-     E'@wallie we need per-workspace rate limits and a usage dashboard showing request counts over time.',
-     mem1_id, 'C0ACME001', '1712822400.001300',
+     E'We need per-workspace rate limits and a usage dashboard showing request counts over time.',
+     mem1_id,
      default_pipeline_id, stage_review_id, 'rejected', 1, 2,
      now() - interval '5 days', now() - interval '1 hour');
 
@@ -643,14 +615,13 @@ BEGIN
   -- Session 14: land / agent_generating
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess14_id, ws_id, 14,
      'Email notification preferences',
-     E'@wallie users get too many emails. Add per-user preferences: immediate, daily digest, or off per event category.',
-     mem2_id, 'C0ACME001', '1712822400.001400',
+     E'Users get too many emails. Add per-user preferences: immediate, daily digest, or off per event category.',
+     mem2_id,
      default_pipeline_id, stage_land_id, 'agent_generating', 0,
      now() - interval '7 days', now() - interval '2 hours');
 
@@ -678,18 +649,17 @@ BEGIN
     (sess14_id, ws_id, stage_engineering_id, 'engineering', now() - interval '5 hours',         mem2_id),
     (sess14_id, ws_id, stage_review_id, 'review',      now() - interval '3 hours',         mem1_id);
 
-  -- Session 15: land / escalated (3 rejections)
+  -- Session 15: land / rejected (3 rejections)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
     (sess15_id, ws_id, 15,
      'Audit log for workspace admin actions',
-     E'@wallie compliance needs a tamper-evident log of admin actions — invites, role changes, integration connects.',
-     mem1_id, 'C0ACME001', '1712822400.001500',
-     default_pipeline_id, stage_land_id, 'escalated', 1, 3,
+     E'Compliance needs a tamper-evident log of admin actions — invites, role changes, integration connects.',
+     mem1_id,
+     default_pipeline_id, stage_land_id, 'rejected', 1, 3,
      now() - interval '9 days', now() - interval '1 day');
 
   INSERT INTO public.session_artifacts
@@ -708,7 +678,7 @@ BEGIN
      to_jsonb(E'# Review\n\nPR reviewed; event schema and immutability constraints verified.'::text),
      now() - interval '4 days'),
     (sess15_id, ws_id, stage_land_id, 'land', 1,
-     to_jsonb(E'# Land\n\nEscalated — deploy script failed 3 times due to migration conflict. Needs manual intervention.'::text),
+     to_jsonb(E'# Land\n\nDeploy script failed three times due to migration conflict. Needs manual intervention.'::text),
      now() - interval '1 day');
 
   INSERT INTO public.session_phase_completions
@@ -722,14 +692,13 @@ BEGIN
   -- Session 16: monitor / awaiting_review
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess16_id, ws_id, 16,
      'Search and filter across all sessions',
-     E'@wallie with dozens of sessions it is hard to find things. Add full-text search and phase/status filters.',
-     mem2_id, 'C0ACME001', '1712822400.001600',
+     E'With dozens of sessions it is hard to find things. Add full-text search and phase/status filters.',
+     mem2_id,
      default_pipeline_id, stage_monitor_id, 'awaiting_review', 1,
      now() - interval '11 days', now() - interval '7 days');
 
@@ -767,14 +736,13 @@ BEGIN
   -- Session 17: monitor / agent_generating
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
      created_at, updated_at)
   VALUES
     (sess17_id, ws_id, 17,
      'GitHub PR auto-link from branch naming convention',
-     E'@wallie when a branch matches wallie-{number}, auto-associate the PR with the session and show it on the card.',
-     mem1_id, 'C0ACME001', '1712822400.001700',
+     E'When a branch matches wallie-{number}, auto-associate the PR with the session and show it on the card.',
+     mem1_id,
      default_pipeline_id, stage_monitor_id, 'agent_generating', 0,
      now() - interval '12 days', now() - interval '8 days');
 
@@ -809,14 +777,13 @@ BEGIN
   -- Session 18: monitor / awaiting_review (1 rejection)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
-     slack_channel_id, slack_thread_ts,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
      created_at, updated_at)
   VALUES
     (sess18_id, ws_id, 18,
      'Custom workspace branding and logo upload',
-     E'@wallie enterprise customers want their logo in the sidebar and on shared links. Upload to Storage, display in shell.',
-     mem1_id, 'C0ACME001', '1712822400.001800',
+     E'Enterprise customers want their logo in the sidebar and on shared links. Upload to Storage, display in shell.',
+     mem1_id,
      default_pipeline_id, stage_monitor_id, 'awaiting_review', 1, 1,
      now() - interval '12 days', now() - interval '6 days');
 
@@ -852,7 +819,7 @@ BEGIN
     (sess18_id, ws_id, stage_land_id, 'land',        now() - interval '6 days 12 hours',  mem1_id);
 
   -- -------------------------------------------------------------------------
-  -- 9. GitHub branches / PRs (linked to sessions)
+  -- 8. GitHub branches / PRs (linked to sessions)
   -- -------------------------------------------------------------------------
   INSERT INTO public.github_issue_branches
     (id, workspace_id, session_id, github_repository_id, branch_name,
@@ -872,7 +839,7 @@ BEGIN
      now() - interval '1 day');
 
   -- -------------------------------------------------------------------------
-  -- 10. Agent jobs + runs (pipeline work on sessions #4 and #2)
+  -- 9. Agent jobs + runs (pipeline work on sessions #4 and #2)
   -- -------------------------------------------------------------------------
 
   -- Job 1: successful run on session #4
@@ -880,7 +847,7 @@ BEGIN
     (id, workspace_id, session_id, requested_by_member_id, trigger_type, job_type,
      status, attempt_count, started_at, finished_at, created_at)
   VALUES
-    (job1_id, ws_id, sess4_id, mem1_id, 'slack_mention', 'session',
+    (job1_id, ws_id, sess4_id, mem1_id, 'manual_run', 'session',
      'success', 1, now() - interval '6 days', now() - interval '5 days 23 hours',
      now() - interval '6 days');
 
@@ -912,7 +879,7 @@ BEGIN
     (id, workspace_id, session_id, requested_by_member_id, trigger_type, job_type,
      status, attempt_count, started_at, created_at)
   VALUES
-    (job2_id, ws_id, sess2_id, mem1_id, 'slack_mention', 'session',
+    (job2_id, ws_id, sess2_id, mem1_id, 'manual_run', 'session',
      'running', 1, now() - interval '30 minutes',
      now() - interval '30 minutes');
 

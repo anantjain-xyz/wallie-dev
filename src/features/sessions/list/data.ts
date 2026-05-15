@@ -92,8 +92,6 @@ export async function loadSessionListPageData(
         current_artifact_version,
         prompt_md,
         rejection_count,
-        slack_channel_id,
-        slack_thread_ts,
         title,
         workspace_id
       `,

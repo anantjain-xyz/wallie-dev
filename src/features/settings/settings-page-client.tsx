@@ -8,7 +8,6 @@ import { GitHubInstallSection } from "@/features/settings/github-install-section
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
-import { SlackInstallSection } from "@/features/settings/slack-install-section";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
 import { WorkspaceSecretsSections } from "@/features/settings/workspace-secrets-sections";
 
@@ -35,31 +34,6 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
         text: "GitHub installation state expired or could not be verified. Start the install flow again from settings.",
       } satisfies FlashMessage;
     default:
-      break;
-  }
-
-  switch (searchState.slackStatus) {
-    case "connected":
-      return {
-        kind: "success",
-        text: "Slack workspace connected. Wallie can now respond to mentions on Linear issues.",
-      } satisfies FlashMessage;
-    case "config_missing":
-      return {
-        kind: "error",
-        text: "Slack install completed, but Wallie is missing server config needed to finish the sync.",
-      } satisfies FlashMessage;
-    case "failed":
-      return {
-        kind: "error",
-        text: "Slack OAuth callback failed. Try the install flow again after checking server config.",
-      } satisfies FlashMessage;
-    case "invalid_state":
-      return {
-        kind: "error",
-        text: "Slack installation state expired or could not be verified. Start the install flow again from settings.",
-      } satisfies FlashMessage;
-    default:
       return null;
   }
 }
@@ -79,8 +53,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             Settings
           </h1>
           <p className="max-w-3xl text-sm leading-6 text-muted">
-            Manage workspace identity, GitHub sync, Slack installation, and encrypted secrets from
-            one route.
+            Manage workspace identity, GitHub sync, and encrypted secrets from one route.
           </p>
         </header>
 
@@ -105,12 +78,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           setFlashMessage={setFlashMessage}
           workspaceId={initialData.workspace.id}
         />
-        <SlackInstallSection
-          canManage={isManager}
-          setFlashMessage={setFlashMessage}
-          slack={initialData.slack}
-          workspaceId={initialData.workspace.id}
-        />
         <WorkspaceSecretsSections
           canManage={isManager}
           setFlashMessage={setFlashMessage}
@@ -124,10 +91,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         <Section title="Rate limits">
           <div className="space-y-3">
             <p className="text-sm leading-7 text-muted">
-              Per-endpoint caps protecting sandbox spawns, paid LLM calls, and Slack-triggered
-              session creation. Excess requests return <code>429 Too Many Requests</code> with a{" "}
-              <code>Retry-After</code> header. Contact an administrator to raise these limits for a
-              trusted workspace.
+              Per-endpoint caps protecting sandbox spawns and paid LLM calls. Excess requests return{" "}
+              <code>429 Too Many Requests</code> with a <code>Retry-After</code> header. Contact an
+              administrator to raise these limits for a trusted workspace.
             </p>
             <ul className="ui-subpanel divide-y divide-border-soft text-sm">
               {initialData.rateLimits.map((limit) => (
