@@ -99,8 +99,8 @@ export function LinearKeySection({
     <Section title="Linear">
       <div className="space-y-4">
         <p className="text-sm leading-7 text-muted">
-          Paste a Linear personal API key so Wallie can read issues referenced in sessions.
-          Generate one at{" "}
+          Paste a Linear personal API key so Wallie can read issues referenced in sessions. Generate
+          one at{" "}
           <a
             className={interactiveLinkClass}
             href="https://linear.app/settings/account/security"

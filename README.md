@@ -105,13 +105,13 @@ Worker polls --> [POST /api/agent-jobs/process]
 
 If you read only five files to understand Wallie, read these:
 
-| #   | File                                                                                                                | Role                                                                                                                              |
-| --- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)                                                      | Generic stage runner. CAS claim, render prompt, run agent in sandbox, write artifact. Approve/reject handlers.                    |
-| 2   | [src/lib/pipeline/stages.ts](src/lib/pipeline/stages.ts)                                                            | Pipeline + stage loaders. Maps `pipeline_stages` rows into the runtime stage shape and gathers prior artifacts.                   |
-| 3   | [src/app/api/sessions/[sessionId]/phase-action/route.ts](src/app/api/sessions/[sessionId]/phase-action/route.ts)    | In-app approve/reject handler. Workspace membership + RLS, calls handleApproval / handleRejection.                                |
-| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                                                              | Job enqueue + run tracking. Dedup keys, secret loading, agent_runs lifecycle.                                                     |
-| 5   | [src/worker/index.ts](src/worker/index.ts)                                                                          | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler.                                                       |
+| #   | File                                                                                                             | Role                                                                                                            |
+| --- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)                                                   | Generic stage runner. CAS claim, render prompt, run agent in sandbox, write artifact. Approve/reject handlers.  |
+| 2   | [src/lib/pipeline/stages.ts](src/lib/pipeline/stages.ts)                                                         | Pipeline + stage loaders. Maps `pipeline_stages` rows into the runtime stage shape and gathers prior artifacts. |
+| 3   | [src/app/api/sessions/[sessionId]/phase-action/route.ts](src/app/api/sessions/[sessionId]/phase-action/route.ts) | In-app approve/reject handler. Workspace membership + RLS, calls handleApproval / handleRejection.              |
+| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                                                           | Job enqueue + run tracking. Dedup keys, secret loading, agent_runs lifecycle.                                   |
+| 5   | [src/worker/index.ts](src/worker/index.ts)                                                                       | Background daemon. Heartbeat, poll loop, stall detector, Linear reconciler.                                     |
 
 ### Walkthrough by Domain
 
@@ -202,20 +202,20 @@ Everything else is UI glue or integration plumbing.
 
 ## Tech Stack
 
-| Layer           | Technology                                          |
-| --------------- | --------------------------------------------------- |
-| Framework       | Next.js 16 (App Router) on Vercel                   |
-| Language        | TypeScript (strict mode)                            |
-| UI              | React 19, Tailwind CSS 4                            |
-| Database        | Supabase PostgreSQL 17 with Row-Level Security      |
-| Auth            | Supabase Auth (email + OAuth)                       |
-| Realtime        | Supabase Realtime (live session updates)            |
-| Storage         | Supabase Storage (workspace avatars)                |
-| AI              | Claude Sonnet 4 via Anthropic SDK                   |
-| Integrations    | GitHub App (Octokit), Linear GraphQL                |
-| Testing         | Vitest, ESLint, Prettier                            |
-| Package manager | pnpm 10                                             |
-| Node            | >= 22.13                                            |
+| Layer           | Technology                                     |
+| --------------- | ---------------------------------------------- |
+| Framework       | Next.js 16 (App Router) on Vercel              |
+| Language        | TypeScript (strict mode)                       |
+| UI              | React 19, Tailwind CSS 4                       |
+| Database        | Supabase PostgreSQL 17 with Row-Level Security |
+| Auth            | Supabase Auth (email + OAuth)                  |
+| Realtime        | Supabase Realtime (live session updates)       |
+| Storage         | Supabase Storage (workspace avatars)           |
+| AI              | Claude Sonnet 4 via Anthropic SDK              |
+| Integrations    | GitHub App (Octokit), Linear GraphQL           |
+| Testing         | Vitest, ESLint, Prettier                       |
+| Package manager | pnpm 10                                        |
+| Node            | >= 22.13                                       |
 
 ## Project Structure
 
@@ -313,18 +313,18 @@ cp .env.example .env.local
 
 Fill in the required values. Integration variables can be left blank until you complete the GitHub app setup below.
 
-| Variable                               | Required | Description                                                                           |
-| -------------------------------------- | -------- | ------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)   |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                          |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                       |
-| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                             |
-| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption      |
-| `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it  |
-| `WALLIE_DEFAULT_ANTHROPIC_MODEL`       | No       | Emergency override for the Anthropic runner default                                   |
-| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                      |
-| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)        |
-| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                               |
+| Variable                               | Required | Description                                                                          |
+| -------------------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)  |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                         |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                      |
+| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                            |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption     |
+| `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it |
+| `WALLIE_DEFAULT_ANTHROPIC_MODEL`       | No       | Emergency override for the Anthropic runner default                                  |
+| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                     |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)       |
+| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                              |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
@@ -394,12 +394,12 @@ The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS cla
 
 ### Tunnel: what must be publicly reachable
 
-| Integration | Endpoint                                                 | Why                                   |
-| ----------- | -------------------------------------------------------- | ------------------------------------- |
-| GitHub      | `POST /api/github/webhooks`                              | App install and PR event deliveries   |
-| GitHub App  | `GET  /api/github/callback`                              | Browser redirect from github.com      |
-| Linear      | -- (pull only)                                           | Wallie calls Linear, never vice versa |
-| Supabase    | -- (local Docker)                                        | App and worker connect to localhost   |
+| Integration | Endpoint                    | Why                                   |
+| ----------- | --------------------------- | ------------------------------------- |
+| GitHub      | `POST /api/github/webhooks` | App install and PR event deliveries   |
+| GitHub App  | `GET  /api/github/callback` | Browser redirect from github.com      |
+| Linear      | -- (pull only)              | Wallie calls Linear, never vice versa |
+| Supabase    | -- (local Docker)           | App and worker connect to localhost   |
 
 ### Troubleshooting
 
