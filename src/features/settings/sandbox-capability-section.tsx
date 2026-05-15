@@ -22,7 +22,10 @@ export function SandboxCapabilitySection({
   setFlashMessage,
   workspaceId,
 }: SandboxCapabilitySectionProps) {
-  const [selectedRepositoryId, setSelectedRepositoryId] = useState(repositories[0]?.id ?? "");
+  const selectableRepositories = repositories.filter((repository) => !repository.isArchived);
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState(
+    selectableRepositories[0]?.id ?? "",
+  );
   const [check, setCheck] = useState(initialCheck);
 
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
@@ -38,9 +41,11 @@ export function SandboxCapabilitySection({
     onSuccess: (payload) => setCheck(payload.check),
     setFlashMessage,
     successText: (payload) =>
-      payload.check.status === "success"
-        ? "Sandbox capability check passed."
-        : "Sandbox capability check finished with failures.",
+      payload.check.status === "running"
+        ? "Sandbox capability check started."
+        : payload.check.status === "success"
+          ? "Sandbox capability check passed."
+          : "Sandbox capability check finished with failures.",
   });
 
   return (
@@ -50,11 +55,11 @@ export function SandboxCapabilitySection({
           <span>Repository</span>
           <select
             className="ui-input"
-            disabled={!canManage || repositories.length === 0}
+            disabled={!canManage || selectableRepositories.length === 0}
             onChange={(event) => setSelectedRepositoryId(event.target.value)}
             value={selectedRepositoryId}
           >
-            {repositories.map((repository) => (
+            {selectableRepositories.map((repository) => (
               <option key={repository.id} value={repository.id}>
                 {repository.fullName}
               </option>
@@ -63,7 +68,7 @@ export function SandboxCapabilitySection({
         </label>
         <button
           className="ui-button-primary"
-          disabled={!canManage || repositories.length === 0 || runCheck.isBusy}
+          disabled={!canManage || selectableRepositories.length === 0 || runCheck.isBusy}
           onClick={() => void runCheck.run()}
           type="button"
         >

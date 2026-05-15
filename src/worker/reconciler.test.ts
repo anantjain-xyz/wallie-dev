@@ -660,6 +660,50 @@ describe("reconcileLinearState", () => {
     );
   });
 
+  it("queues rework when the session is awaiting review on the target stage", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-review", pipeline_id: "pipe-1", position: 2, slug: "review" },
+      ],
+      routingRows: [routingRow({ rework_stage_slug: "engineering" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sReworkCurrent",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iReworkCurrent",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iReworkCurrent", state: { name: "Rework" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+        update: expect.objectContaining({
+          dedupe_key: "pipeline:iReworkCurrent:active",
+          session_id: "sReworkCurrent",
+          trigger_type: "assignment",
+        }),
+      }),
+    );
+  });
+
   it("requeues awaiting_review sessions when Linear moves back to Todo", async () => {
     const fixture: Fixture = {
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],

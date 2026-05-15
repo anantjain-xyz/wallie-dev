@@ -28,6 +28,11 @@ type RepositoryRow = {
   workspace_id: string;
 };
 
+type StartedSandboxCapabilityCheck = {
+  check: SandboxCapabilityCheckState;
+  repository: RepositoryRow;
+};
+
 function mapCheckRow(row: Record<string, unknown>): SandboxCapabilityCheckState {
   return {
     capabilities:
@@ -162,19 +167,44 @@ export async function runAndRecordSandboxCapabilityCheck(input: {
   userId: string;
   workspaceId: string;
 }): Promise<SandboxCapabilityCheckState> {
+  const started = await startSandboxCapabilityCheck(input);
+  return completeSandboxCapabilityCheck({
+    admin: input.admin,
+    checkId: started.check.id,
+    repository: started.repository,
+    userId: input.userId,
+    workspaceId: input.workspaceId,
+  });
+}
+
+export async function startSandboxCapabilityCheck(input: {
+  admin: AdminClient;
+  repositoryId?: string;
+  workspaceId: string;
+}): Promise<StartedSandboxCapabilityCheck> {
   const repository = await loadRepositoryForCapabilityCheck(input);
-  const running = await insertRunningCheck({
+  const check = await insertRunningCheck({
     admin: input.admin,
     repositoryId: repository.id,
     workspaceId: input.workspaceId,
   });
 
+  return { check, repository };
+}
+
+export async function completeSandboxCapabilityCheck(input: {
+  admin: AdminClient;
+  checkId: string | null;
+  repository: RepositoryRow;
+  userId: string;
+  workspaceId: string;
+}): Promise<SandboxCapabilityCheckState> {
   let sandbox = null as Awaited<ReturnType<typeof createSessionSandbox>> | null;
 
   try {
     const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspaceId);
     const provider = agentConfig.provider as AgentProvider;
-    const installationToken = await mintInstallationToken(input.admin, repository);
+    const installationToken = await mintInstallationToken(input.admin, input.repository);
     const codexAccessToken =
       provider === "codex"
         ? await getCodexAccessTokenForUser(input.admin, input.userId)
@@ -182,11 +212,11 @@ export async function runAndRecordSandboxCapabilityCheck(input: {
 
     sandbox = await createSessionSandbox({
       agentProvider: provider,
-      baseBranch: repository.default_branch ?? "main",
+      baseBranch: input.repository.default_branch ?? "main",
       branch: `wallie/capability-check-${randomUUID().slice(0, 8)}`,
       codexAccessToken,
       installationToken,
-      repoFullName: repository.full_name,
+      repoFullName: input.repository.full_name,
       sessionId: randomUUID(),
       timeoutMs: 30 * 60_000,
     });
@@ -199,7 +229,7 @@ export async function runAndRecordSandboxCapabilityCheck(input: {
     return await updateCheck({
       admin: input.admin,
       capabilities,
-      checkId: running.id,
+      checkId: input.checkId,
       errorText: success ? null : "One or more sandbox capabilities failed.",
       status: success ? "success" : "error",
     });
@@ -207,7 +237,7 @@ export async function runAndRecordSandboxCapabilityCheck(input: {
     return await updateCheck({
       admin: input.admin,
       capabilities: {},
-      checkId: running.id,
+      checkId: input.checkId,
       errorText: error instanceof Error ? error.message : String(error),
       status: "error",
     });

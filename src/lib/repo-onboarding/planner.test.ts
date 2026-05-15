@@ -55,4 +55,30 @@ describe("repository onboarding planner", () => {
     expect(plan.filesToCreate).toEqual([]);
     expect(plan.missingSkillCount).toBe(0);
   });
+
+  it("surfaces AGENTS.md read failures as onboarding conflicts", () => {
+    const skill = DEFAULT_WALLIE_SKILLS[0]!;
+    const plan = buildRepositoryOnboardingPlan({
+      existingFiles: [
+        { content: skill.content, exists: true, path: skill.path },
+        {
+          content: null,
+          error: "GitHub read failed",
+          exists: false,
+          path: WALLIE_AGENTS_INSTRUCTIONS_PATH,
+        },
+      ],
+      skillVersion: WALLIE_SKILL_VERSION,
+      skills: [skill],
+    });
+
+    expect(plan.filesToCreate).toEqual([]);
+    expect(plan.conflicts).toEqual([
+      {
+        message: "GitHub read failed",
+        path: WALLIE_AGENTS_INSTRUCTIONS_PATH,
+        reason: "github_read_failed",
+      },
+    ]);
+  });
 });

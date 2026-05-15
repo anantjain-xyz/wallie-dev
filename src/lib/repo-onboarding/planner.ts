@@ -70,6 +70,14 @@ export function buildRepositoryOnboardingPlan(input: {
   }
 
   const instructions = existing.get(WALLIE_AGENTS_INSTRUCTIONS_PATH);
+  if (instructions?.error) {
+    conflicts.push({
+      message: instructions.error,
+      path: WALLIE_AGENTS_INSTRUCTIONS_PATH,
+      reason: "github_read_failed",
+    });
+  }
+
   if (!instructions?.exists && !instructions?.error) {
     filesToCreate.push({
       content: WALLIE_AGENTS_INSTRUCTIONS,

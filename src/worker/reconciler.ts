@@ -276,7 +276,7 @@ async function routeSessionToStage(
 
   const hasActiveJob = await hasActivePipelineJob(admin, session.id);
   if (session.current_stage_id === targetStage.id) {
-    if (hasActiveJob || session.phase_status === "awaiting_review") return;
+    if (hasActiveJob) return;
     await ensurePipelineJobQueued(admin, session, route.statusName);
     return;
   }

@@ -1,7 +1,10 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { sandboxCapabilityCheckRequestSchema } from "@/lib/sandbox-capabilities/contracts";
-import { runAndRecordSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/server";
+import {
+  completeSandboxCapabilityCheck,
+  startSandboxCapabilityCheck,
+} from "@/lib/sandbox-capabilities/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -26,12 +29,29 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  const check = await runAndRecordSandboxCapabilityCheck({
+  const started = await startSandboxCapabilityCheck({
     admin,
     repositoryId: parsed.data.repositoryId,
-    userId: access.context.user.id,
     workspaceId: access.context.workspace.id,
   });
 
-  return NextResponse.json({ check }, { status: 200 });
+  after(async () => {
+    try {
+      await completeSandboxCapabilityCheck({
+        admin,
+        checkId: started.check.id,
+        repository: started.repository,
+        userId: access.context.user.id,
+        workspaceId: access.context.workspace.id,
+      });
+    } catch (error) {
+      console.error("[sandbox-capability-check] background probe failed", {
+        error: error instanceof Error ? error.message : String(error),
+        checkId: started.check.id,
+        workspaceId: access.context.workspace.id,
+      });
+    }
+  });
+
+  return NextResponse.json({ check: started.check }, { status: 202 });
 }
