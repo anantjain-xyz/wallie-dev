@@ -5,10 +5,15 @@ import { useState } from "react";
 
 import type {
   GitHubInstallResponse,
+  GitHubRepositorySummary,
   GitHubRepositorySyncResponse,
 } from "@/features/github/contracts";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import type {
+  RepositoryOnboardingResponse,
+  RepositoryOnboardingState,
+} from "@/lib/repo-onboarding/contracts";
 import {
   ConfigState,
   dateFormatter,
@@ -23,6 +28,49 @@ type GitHubInstallSectionProps = {
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
+
+type RepositoryWithOnboarding = SettingsPageData["github"]["repositories"][number];
+
+function defaultOnboarding(repositoryId: string): RepositoryOnboardingState {
+  return {
+    conflictReport: [],
+    githubRepositoryId: repositoryId,
+    installedSkillHash: null,
+    installedSkillVersion: null,
+    lastError: null,
+    setupBranchName: null,
+    setupPrNumber: null,
+    setupPrUrl: null,
+    status: "not_set_up",
+    updatedAt: null,
+  };
+}
+
+function attachOnboarding(
+  repository: GitHubRepositorySummary,
+  currentRepositories: readonly RepositoryWithOnboarding[],
+): RepositoryWithOnboarding {
+  const current = currentRepositories.find((candidate) => candidate.id === repository.id);
+  return {
+    ...repository,
+    onboarding: current?.onboarding ?? defaultOnboarding(repository.id),
+  };
+}
+
+function onboardingLabel(status: RepositoryOnboardingState["status"]): string {
+  switch (status) {
+    case "pr_open":
+      return "Setup PR open";
+    case "ready":
+      return "Ready";
+    case "conflict":
+      return "Conflict";
+    case "error":
+      return "Error";
+    default:
+      return "Not set up";
+  }
+}
 
 export function GitHubInstallSection({
   canManage,
@@ -59,10 +107,36 @@ export function GitHubInstallSection({
     errorText: "GitHub repository sync failed.",
     onSuccess: (payload) => {
       setGithubInstallation(payload.installation);
-      setRepositories(payload.repositories);
+      setRepositories((current) =>
+        payload.repositories.map((repository) => attachOnboarding(repository, current)),
+      );
     },
     setFlashMessage,
     successText: "GitHub repositories refreshed.",
+  });
+
+  const startOnboarding = useApiAction<RepositoryOnboardingResponse, [repositoryId: string]>({
+    call: (repositoryId) =>
+      fetch(`/api/workspaces/${workspaceId}/repositories/${repositoryId}/onboarding`, {
+        method: "POST",
+      }),
+    errorText: "Wallie setup failed.",
+    onSuccess: (payload, [repositoryId]) => {
+      setRepositories((current) =>
+        current.map((repository) =>
+          repository.id === repositoryId
+            ? { ...repository, onboarding: payload.onboarding }
+            : repository,
+        ),
+      );
+    },
+    setFlashMessage,
+    successText: (payload) =>
+      payload.onboarding.status === "conflict"
+        ? "Wallie setup found existing skill conflicts."
+        : payload.onboarding.status === "ready"
+          ? "Repository already has the current Wallie skills."
+          : "Wallie setup PR created.",
   });
 
   return (
@@ -140,11 +214,54 @@ export function GitHubInstallSection({
                           <span>{repository.defaultBranch ?? "no default branch"}</span>
                           {repository.isPrivate ? <span>private</span> : <span>public</span>}
                           {repository.isArchived ? <span>archived</span> : null}
+                          <span>{onboardingLabel(repository.onboarding.status)}</span>
                         </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {repository.onboarding.setupPrUrl ? (
+                          <a
+                            className="ui-button"
+                            href={repository.onboarding.setupPrUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            View Setup PR
+                          </a>
+                        ) : null}
+                        <button
+                          className="ui-button-primary"
+                          disabled={
+                            !canManage ||
+                            repository.isArchived ||
+                            startOnboarding.isBusy ||
+                            repository.onboarding.status === "ready"
+                          }
+                          onClick={() => void startOnboarding.run(repository.id)}
+                          type="button"
+                        >
+                          {startOnboarding.isBusy ? "Setting up…" : "Set up Wallie"}
+                        </button>
                       </div>
                     </div>
                     {repository.description ? (
                       <p className="text-sm leading-6 text-muted">{repository.description}</p>
+                    ) : null}
+                    {repository.onboarding.status === "conflict" ? (
+                      <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
+                        <p className="font-semibold">Existing skill files need review.</p>
+                        <ul className="mt-1 space-y-1">
+                          {repository.onboarding.conflictReport.map((conflict) => (
+                            <li key={conflict.path}>
+                              <span className="font-mono">{conflict.path}</span>: {conflict.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {repository.onboarding.lastError ? (
+                      <p className="text-xs leading-5 text-danger">
+                        {repository.onboarding.lastError}
+                      </p>
                     ) : null}
                   </div>
                 ))

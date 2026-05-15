@@ -149,6 +149,7 @@ async function runSetup(
       : `checkout ${shellQuote(input.branch)}`;
 
   const installCmd = resolveAgentCliInstall(input.agentProvider);
+  const browserBootstrapCmd = resolveBrowserBootstrap();
 
   // Single shell invocation: configure git identity + credential helper + CLI install.
   // Credentials: the clone URL already embeds `x-access-token:$GH_TOKEN`, so
@@ -163,6 +164,7 @@ async function runSetup(
     `chmod 600 $HOME/.git-credentials`,
     `git config --global credential.helper store`,
     installCmd,
+    browserBootstrapCmd,
   ].join(" && ");
 
   const proc = await handle.exec("bash", ["-lc", script]);
@@ -176,6 +178,17 @@ async function runSetup(
       `Sandbox setup failed (exit ${code}): ${stderr.join("").slice(0, 500) || "(no stderr)"}`,
     );
   }
+}
+
+function resolveBrowserBootstrap(): string {
+  if (process.env.WALLIE_SANDBOX_BOOTSTRAP_PLAYWRIGHT === "0") {
+    return "true";
+  }
+
+  // Best-effort: code-only stages should not fail if browser bootstrap is
+  // unavailable, but screenshot-capable sandboxes should have Playwright and
+  // Chromium ready whenever the base image allows it.
+  return "(npm install -g playwright@^1.56.0 && playwright install chromium) || true";
 }
 
 function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvider"]): string {

@@ -6,6 +6,7 @@ export type LinearIssue = {
   description: string;
   id: string;
   identifier: string;
+  stateName: string;
   title: string;
   url: string;
 };
@@ -16,6 +17,9 @@ type LinearIssueResponse = {
       description: string | null;
       id: string;
       identifier: string;
+      state: {
+        name: string;
+      };
       title: string;
       url: string;
     } | null;
@@ -28,6 +32,9 @@ const issueQuery = /* GraphQL */ `
     issue(id: $id) {
       id
       identifier
+      state {
+        name
+      }
       title
       description
       url
@@ -71,6 +78,7 @@ export async function fetchLinearIssue(
     description: issue.description ?? "",
     id: issue.id,
     identifier: issue.identifier,
+    stateName: issue.state.name,
     title: issue.title,
     url: issue.url,
   };

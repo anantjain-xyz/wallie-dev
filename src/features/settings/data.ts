@@ -4,10 +4,16 @@ import { notFound } from "next/navigation";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
+import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
+import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
+import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
+import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { asLooseSupabaseClient } from "@/lib/supabase/loose";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const workspaceSelect = "id, name, slug, avatar_path";
@@ -66,9 +72,12 @@ export type SettingsPageData = {
       isArchived: boolean;
       isPrivate: boolean;
       name: string;
+      onboarding: RepositoryOnboardingState;
       repoId: number;
     }>;
   };
+  latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+  linearRouting: LinearRoutingConfig;
   workspace: {
     avatarPath: string | null;
     avatarUrl: string | null;
@@ -85,8 +94,60 @@ export type SettingsPageData = {
   }>;
 };
 
+function mapRepositoryOnboardingState(
+  row: Record<string, unknown> | undefined,
+  repositoryId: string,
+): RepositoryOnboardingState {
+  const conflictReport = Array.isArray(row?.conflict_report) ? row.conflict_report : [];
+  const status = row?.status;
+  return {
+    conflictReport: conflictReport as RepositoryOnboardingState["conflictReport"],
+    githubRepositoryId: repositoryId,
+    installedSkillHash:
+      typeof row?.installed_skill_hash === "string" ? row.installed_skill_hash : null,
+    installedSkillVersion:
+      typeof row?.installed_skill_version === "number" ? row.installed_skill_version : null,
+    lastError: typeof row?.last_error === "string" ? row.last_error : null,
+    setupBranchName: typeof row?.setup_branch_name === "string" ? row.setup_branch_name : null,
+    setupPrNumber: typeof row?.setup_pr_number === "number" ? row.setup_pr_number : null,
+    setupPrUrl: typeof row?.setup_pr_url === "string" ? row.setup_pr_url : null,
+    status:
+      status === "pr_open" ||
+      status === "ready" ||
+      status === "conflict" ||
+      status === "error" ||
+      status === "not_set_up"
+        ? status
+        : "not_set_up",
+    updatedAt: typeof row?.updated_at === "string" ? row.updated_at : null,
+  };
+}
+
+function mapSandboxCapabilityCheck(
+  row: Record<string, unknown> | null | undefined,
+): SandboxCapabilityCheckState | null {
+  if (!row) return null;
+  return {
+    capabilities:
+      typeof row.capabilities === "object" && row.capabilities !== null
+        ? (row.capabilities as SandboxCapabilityCheckState["capabilities"])
+        : {},
+    checkedAt: typeof row.checked_at === "string" ? row.checked_at : new Date().toISOString(),
+    errorText: typeof row.error_text === "string" ? row.error_text : null,
+    githubRepositoryId:
+      typeof row.github_repository_id === "string" ? row.github_repository_id : null,
+    id: typeof row.id === "string" ? row.id : null,
+    status:
+      row.status === "success" || row.status === "error" || row.status === "running"
+        ? row.status
+        : "error",
+  };
+}
+
 export async function loadSettingsPageData(workspaceSlug: string) {
   const supabase = await createSupabaseServerClient();
+  const admin = createSupabaseAdminClient();
+  const looseAdmin = asLooseSupabaseClient(admin);
   const user = await getSupabaseUserOrNull(supabase);
 
   if (!user) {
@@ -148,6 +209,38 @@ export async function loadSettingsPageData(workspaceSlug: string) {
   }
 
   const installation = installationRows?.[0] ?? null;
+  const [
+    linearRouting,
+    { data: onboardingRows, error: onboardingError },
+    { data: capabilityRows, error: capabilityError },
+  ] = await Promise.all([
+    loadLinearRoutingConfig(admin, workspace.id),
+    looseAdmin
+      .from("repository_onboarding_status")
+      .select(
+        "github_repository_id, status, setup_branch_name, setup_pr_number, setup_pr_url, installed_skill_version, installed_skill_hash, conflict_report, last_error, updated_at",
+      )
+      .eq("workspace_id", workspace.id),
+    looseAdmin
+      .from("sandbox_capability_checks")
+      .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+      .eq("workspace_id", workspace.id)
+      .order("checked_at", { ascending: false })
+      .limit(1),
+  ]);
+
+  if (onboardingError) {
+    throw onboardingError;
+  }
+
+  if (capabilityError) {
+    throw capabilityError;
+  }
+
+  const onboardingIndex = new Map(
+    (onboardingRows ?? []).map((row) => [String(row.github_repository_id), row]),
+  );
+  const latestSandboxCapabilityCheck = mapSandboxCapabilityCheck(capabilityRows?.[0]);
 
   // Load agent config (visible to managers only, but load for everyone to
   // populate read-only display if needed).
@@ -287,9 +380,12 @@ export async function loadSettingsPageData(workspaceSlug: string) {
         isArchived: repository.is_archived,
         isPrivate: repository.private,
         name: repository.name,
+        onboarding: mapRepositoryOnboardingState(onboardingIndex.get(repository.id), repository.id),
         repoId: repository.repo_id,
       })),
     },
+    latestSandboxCapabilityCheck,
+    linearRouting,
     workspace: {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),
