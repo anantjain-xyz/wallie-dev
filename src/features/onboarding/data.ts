@@ -1,6 +1,11 @@
 import "server-only";
 
+import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
+import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
+import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
+import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
+import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import {
@@ -28,12 +33,16 @@ export type WorkspaceOnboardingData = {
     role: "admin" | "agent" | "member" | "owner";
   };
   onboarding: WorkspaceOnboardingState;
+  linearRouting: LinearRoutingConfig;
+  linearSecret: WorkspaceSecretPreview | null;
+  pipeline: SessionPipeline | null;
   setupHealth: OnboardingSetupHealth;
   workspace: {
     id: string;
     name: string;
     slug: string;
   };
+  workspaceMembers: WorkspaceMemberSummary[];
 };
 
 type OnboardingDataResult =
@@ -107,8 +116,10 @@ function codexConnectionStatus(
   };
 }
 
-async function loadSetupHealth(context: WorkspaceAccessContext): Promise<OnboardingSetupHealth> {
-  const admin = createSupabaseAdminClient();
+async function loadSetupHealth(
+  context: WorkspaceAccessContext,
+  admin = createSupabaseAdminClient(),
+): Promise<OnboardingSetupHealth> {
   const workspaceId = context.workspace.id;
 
   const [
@@ -224,6 +235,94 @@ async function loadSetupHealth(context: WorkspaceAccessContext): Promise<Onboard
   };
 }
 
+async function loadDefaultPipeline(
+  context: WorkspaceAccessContext,
+): Promise<SessionPipeline | null> {
+  const { data: pipelineRow, error: pipelineError } = await context.supabase
+    .from("pipelines")
+    .select("id, name, is_default")
+    .eq("workspace_id", context.workspace.id)
+    .eq("is_default", true)
+    .maybeSingle();
+
+  if (pipelineError) throw pipelineError;
+  if (!pipelineRow) return null;
+
+  const { data: stageRows, error: stageError } = await context.supabase
+    .from("pipeline_stages")
+    .select(
+      "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
+    )
+    .eq("pipeline_id", pipelineRow.id)
+    .order("position", { ascending: true });
+
+  if (stageError) throw stageError;
+
+  const stages: PipelineStage[] = (stageRows ?? []).map((stage) => ({
+    approverMemberIds: stage.approver_member_ids ?? [],
+    description: stage.description,
+    id: stage.id,
+    name: stage.name,
+    pipelineId: stage.pipeline_id,
+    position: stage.position,
+    promptTemplateMd: stage.prompt_template_md,
+    slug: stage.slug,
+  }));
+
+  return {
+    id: pipelineRow.id,
+    isDefault: pipelineRow.is_default,
+    name: pipelineRow.name,
+    stages,
+  };
+}
+
+async function loadWorkspaceMembers(
+  context: WorkspaceAccessContext,
+): Promise<WorkspaceMemberSummary[]> {
+  const { data, error } = await context.supabase
+    .from("workspace_members")
+    .select("id, full_name, email, role, kind, is_active")
+    .eq("workspace_id", context.workspace.id)
+    .eq("kind", "human")
+    .eq("is_active", true)
+    .order("full_name", { ascending: true });
+
+  if (error) throw error;
+
+  return (data ?? []).map((member) => ({
+    email: member.email,
+    fullName: member.full_name,
+    id: member.id,
+    role: member.role as WorkspaceMemberSummary["role"],
+  }));
+}
+
+async function loadLinearSecretPreview(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+): Promise<WorkspaceSecretPreview | null> {
+  const { data, error } = await admin
+    .from("workspace_secrets")
+    .select("id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "LINEAR_API_KEY")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  return {
+    createdAt: data.created_at,
+    createdByMemberId: data.created_by_member_id,
+    id: data.id,
+    key: data.key,
+    updatedAt: data.updated_at,
+    valuePreview: data.value_preview,
+    workspaceId: data.workspace_id,
+  };
+}
+
 async function buildWorkspaceOnboardingData(
   context: WorkspaceAccessContext,
   options?: {
@@ -243,19 +342,34 @@ async function buildWorkspaceOnboardingData(
     onboardingRow = data;
   }
 
+  const canManage =
+    context.currentMember.role === "owner" || context.currentMember.role === "admin";
+  const admin = createSupabaseAdminClient();
+  const [setupHealth, pipeline, workspaceMembers, linearRouting, linearSecret] = await Promise.all([
+    loadSetupHealth(context, admin),
+    loadDefaultPipeline(context),
+    loadWorkspaceMembers(context),
+    loadLinearRoutingConfig(admin, context.workspace.id),
+    canManage ? loadLinearSecretPreview(admin, context.workspace.id) : Promise.resolve(null),
+  ]);
+
   return {
-    canManage: context.currentMember.role === "owner" || context.currentMember.role === "admin",
+    canManage,
     currentMember: {
       id: context.currentMember.id,
       role: context.currentMember.role,
     },
+    linearRouting,
+    linearSecret,
     onboarding: mapOnboardingRow(onboardingRow),
-    setupHealth: await loadSetupHealth(context),
+    pipeline,
+    setupHealth,
     workspace: {
       id: context.workspace.id,
       name: context.workspace.name,
       slug: context.workspace.slug,
     },
+    workspaceMembers,
   };
 }
 

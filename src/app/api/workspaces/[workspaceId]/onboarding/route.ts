@@ -18,9 +18,13 @@ function onboardingResponse(data: WorkspaceOnboardingData) {
   return {
     canManage: data.canManage,
     currentMember: data.currentMember,
+    linearRouting: data.linearRouting,
+    linearSecret: data.linearSecret,
     onboarding: data.onboarding,
+    pipeline: data.pipeline,
     setupHealth: data.setupHealth,
     workspace: data.workspace,
+    workspaceMembers: data.workspaceMembers,
   };
 }
 

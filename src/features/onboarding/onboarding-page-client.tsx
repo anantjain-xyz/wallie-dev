@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
@@ -16,6 +16,8 @@ import {
   ONBOARDING_STEPS,
   type OnboardingStepDisplayState,
 } from "@/features/onboarding/flow";
+import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
+import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingStep,
@@ -272,14 +274,18 @@ function settingsHref(workspaceSlug: string, anchor: string) {
 }
 
 function StepBody({
-  health,
+  data,
+  onCompleteStep,
+  onRefresh,
   step,
-  workspaceSlug,
 }: {
-  health: OnboardingSetupHealth;
+  data: WorkspaceOnboardingData;
+  onCompleteStep: (action: string) => Promise<void>;
+  onRefresh: (action: string) => Promise<void>;
   step: WorkspaceOnboardingStep;
-  workspaceSlug: string;
 }) {
+  const health = data.setupHealth;
+  const workspaceSlug = data.workspace.slug;
   const rows = stepHealthItems(step, health);
   const primaryHref =
     step === "github"
@@ -292,20 +298,33 @@ function StepBody({
             ? settingsHref(workspaceSlug, "coding-agent")
             : null;
 
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {rows.map((row) => (
-          <div
-            key={`${step}-${row.label}`}
-            className="flex min-h-12 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
-          >
-            <span className="min-w-0 text-[12px] font-medium text-muted">{row.label}</span>
-            <Badge tone={row.tone}>{row.value}</Badge>
-          </div>
-        ))}
-      </div>
+  let controls: ReactNode;
 
+  if (step === "pipeline") {
+    controls = (
+      <OnboardingPipelineEditor
+        canManage={data.canManage}
+        onCompleted={onCompleteStep}
+        pipeline={data.pipeline}
+        workspaceId={data.workspace.id}
+        workspaceMembers={data.workspaceMembers}
+      />
+    );
+  } else if (step === "linear") {
+    controls = (
+      <OnboardingLinearStep
+        canManage={data.canManage}
+        linearKeyConfigured={data.setupHealth.linearKey.configured}
+        linearRouting={data.linearRouting}
+        linearSecret={data.linearSecret}
+        onCompleted={onCompleteStep}
+        onRefresh={onRefresh}
+        pipeline={data.pipeline}
+        workspaceId={data.workspace.id}
+      />
+    );
+  } else {
+    controls = (
       <div className="rounded-[6px] border border-border bg-background p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -327,6 +346,24 @@ function StepBody({
           ) : null}
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div
+            key={`${step}-${row.label}`}
+            className="flex min-h-12 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
+          >
+            <span className="min-w-0 text-[12px] font-medium text-muted">{row.label}</span>
+            <Badge tone={row.tone}>{row.value}</Badge>
+          </div>
+        ))}
+      </div>
+
+      {controls}
     </div>
   );
 }
@@ -435,6 +472,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
+  const requiresInlineCompletion = activeStep.id === "pipeline" || activeStep.id === "linear";
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
     if (!data.canManage || saveInFlightRef.current) return null;
@@ -465,6 +503,41 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     } finally {
       saveInFlightRef.current = false;
       setSavingAction(null);
+    }
+  }
+
+  async function refreshOnboarding(action: string) {
+    if (!data.canManage) return null;
+
+    setSavingAction(action);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding`, {
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Failed to refresh onboarding state.");
+      }
+
+      const nextData = (await response.json()) as WorkspaceOnboardingData;
+      setData(nextData);
+      router.refresh();
+      return nextData;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to refresh onboarding state.");
+      return null;
+    } finally {
+      setSavingAction(null);
+    }
+  }
+
+  async function completeCurrentStep(action: string) {
+    const nextData = await persistOnboarding(buildOnboardingContinuePatch(data.onboarding), action);
+    if (!nextData) {
+      throw new Error("Failed to save onboarding state.");
     }
   }
 
@@ -601,9 +674,15 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
 
           <div className="mt-6">
             <StepBody
-              health={data.setupHealth}
+              data={data}
+              onCompleteStep={completeCurrentStep}
+              onRefresh={async (action) => {
+                const nextData = await refreshOnboarding(action);
+                if (!nextData) {
+                  throw new Error("Failed to refresh onboarding state.");
+                }
+              }}
               step={activeStep.id}
-              workspaceSlug={data.workspace.slug}
             />
           </div>
         </section>
@@ -640,16 +719,18 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             <button
               type="button"
               className="ui-button-primary"
-              disabled={!data.canManage || isCompleted || isSaving}
+              disabled={!data.canManage || isCompleted || isSaving || requiresInlineCompletion}
               onClick={() => void continueSetup()}
             >
               {isCompleted
                 ? "Setup complete"
-                : savingAction === "continue"
-                  ? "Saving..."
-                  : activeStep.id === "verify"
-                    ? "Complete setup"
-                    : "Continue"}
+                : requiresInlineCompletion
+                  ? "Complete in step"
+                  : savingAction === "continue"
+                    ? "Saving..."
+                    : activeStep.id === "verify"
+                      ? "Complete setup"
+                      : "Continue"}
             </button>
           </div>
         </div>
