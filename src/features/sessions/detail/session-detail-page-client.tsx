@@ -5,6 +5,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
@@ -142,44 +143,40 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-background">
-      <header className="border-b border-border px-6 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <Link
-              href={workspaceSessionsPath(initialData.workspace.slug)}
-              className="text-[11px] font-medium uppercase tracking-wide text-muted hover:text-foreground"
-            >
-              ← Sessions
-            </Link>
-            <div className="mt-2 flex items-center gap-3">
-              <span className="font-mono text-[12px] text-muted">#{session.number}</span>
-              <h1 className="truncate text-xl font-semibold tracking-tight text-foreground">
-                {session.title}
-              </h1>
-              {session.archivedAt ? <StatusChip tone="planned">Archived</StatusChip> : null}
-            </div>
-            <div className="mt-3">
-              <SessionConnections
-                linearIssueId={session.linearIssueId}
-                linearIssueUrl={session.linearIssueUrl}
-                pullRequestCount={session.pullRequestCount}
-                pullRequests={session.pullRequests}
-              />
-            </div>
-          </div>
-        </div>
-      </header>
+    <PageContainer>
+      <PageHeader
+        eyebrow={
+          <Link
+            href={workspaceSessionsPath(initialData.workspace.slug)}
+            className="hover:text-foreground"
+          >
+            ← Sessions
+          </Link>
+        }
+        title={session.title}
+        actions={session.archivedAt ? <StatusChip tone="planned">Archived</StatusChip> : null}
+      />
 
-      <section className="border-b border-border px-6 py-5">
+      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px] text-muted">
+        <span className="font-mono">#{session.number}</span>
+        <span aria-hidden="true">·</span>
+        <SessionConnections
+          linearIssueId={session.linearIssueId}
+          linearIssueUrl={session.linearIssueUrl}
+          pullRequestCount={session.pullRequestCount}
+          pullRequests={session.pullRequests}
+        />
+      </div>
+
+      <div className="mb-6 rounded-[10px] border border-border bg-surface px-5 py-4">
         <StageRail
           stageRail={stageRail}
           selectedStageSlug={selectedStageSlug}
           onSelect={setSelectedStageSlug}
         />
-      </section>
+      </div>
 
-      <div className="flex flex-1 flex-col gap-6 overflow-auto px-6 py-6 md:flex-row">
+      <div className="flex flex-col gap-6 md:flex-row">
         <div className="flex min-w-0 flex-[2] flex-col gap-4">
           <div className="rounded-[8px] border border-border bg-surface">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -359,7 +356,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           </section>
         </aside>
       </div>
-    </main>
+    </PageContainer>
   );
 }
 

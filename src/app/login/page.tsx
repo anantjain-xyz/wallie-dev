@@ -26,7 +26,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   return (
     <main
       id="main-content"
-      className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-4 py-8 sm:px-6 lg:px-8"
+      className="mx-auto flex min-h-screen w-full max-w-[1080px] items-center px-6 py-10 sm:px-8"
     >
       <AuthEntryPanel errorCode={errorCode} mode="login" next={next} statusCode={statusCode} />
     </main>

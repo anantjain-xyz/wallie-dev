@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
@@ -99,88 +100,89 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   }, [sessions]);
 
   return (
-    <main className="flex min-h-screen flex-col bg-background">
-      <header className="border-b border-border px-6 py-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <form onSubmit={handleSearchSubmit} className="relative flex-1 min-w-[220px] max-w-md">
-            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-            <input
-              key={initialData.queryState.query}
-              ref={searchInputRef}
-              type="search"
-              defaultValue={initialData.queryState.query}
-              placeholder="Search prompts, titles, Linear IDs"
-              className="ui-input pl-8"
-              aria-label="Search sessions"
-            />
-          </form>
+    <PageContainer>
+      <PageHeader
+        title="Sessions"
+        description="Every session in this workspace, across all pipeline stages."
+      />
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            {SCOPE_CHIPS.map((chip) => (
-              <button
-                key={chip.key}
-                type="button"
-                className={cn(
-                  "ui-filter-chip",
-                  initialData.queryState.scope === chip.key && "ui-filter-chip-active",
-                )}
-                onClick={() => updateQueryState({ scope: chip.key })}
-              >
-                {chip.label}
-              </button>
-            ))}
-          </div>
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <form onSubmit={handleSearchSubmit} className="relative min-w-[220px] flex-1 max-w-md">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+          <input
+            key={initialData.queryState.query}
+            ref={searchInputRef}
+            type="search"
+            defaultValue={initialData.queryState.query}
+            placeholder="Search prompts, titles, Linear IDs"
+            className="ui-input pl-8"
+            aria-label="Search sessions"
+          />
+        </form>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {SCOPE_CHIPS.map((chip) => (
             <button
+              key={chip.key}
               type="button"
               className={cn(
                 "ui-filter-chip",
-                initialData.queryState.stageSlug === null && "ui-filter-chip-active",
+                initialData.queryState.scope === chip.key && "ui-filter-chip-active",
               )}
-              onClick={() => updateQueryState({ stageSlug: null })}
+              onClick={() => updateQueryState({ scope: chip.key })}
             >
-              All stages
+              {chip.label}
             </button>
-            {stageGroups.order.map((stage) => (
-              <button
-                key={stage.slug}
-                type="button"
-                className={cn(
-                  "ui-filter-chip",
-                  initialData.queryState.stageSlug === stage.slug && "ui-filter-chip-active",
-                )}
-                onClick={() => updateQueryState({ stageSlug: stage.slug })}
-              >
-                {stage.name}
-                <span className="ml-1 text-[10px] text-muted">
-                  {stageGroups.counts.get(stage.slug) ?? 0}
-                </span>
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
-      </header>
 
-      <div className="flex-1 overflow-auto px-6 py-6">
-        {sessions.length === 0 ? (
-          <div className="mx-auto flex max-w-md flex-col items-center rounded-[8px] border border-dashed border-border bg-surface px-6 py-12 text-center">
-            <p className="text-sm font-semibold text-foreground">No sessions match.</p>
-            <p className="mt-2 text-[12px] text-muted">
-              {initialData.totalCount === 0
-                ? "Kick off your first session by clicking New session."
-                : "Adjust the phase, scope, or search to see more sessions."}
-            </p>
-          </div>
-        ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-[8px] border border-border bg-surface">
-            {sessions.map((session) => (
-              <SessionRow key={session.id} session={session} workspaceSlug={workspaceSlug} />
-            ))}
-          </ul>
-        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className={cn(
+              "ui-filter-chip",
+              initialData.queryState.stageSlug === null && "ui-filter-chip-active",
+            )}
+            onClick={() => updateQueryState({ stageSlug: null })}
+          >
+            All stages
+          </button>
+          {stageGroups.order.map((stage) => (
+            <button
+              key={stage.slug}
+              type="button"
+              className={cn(
+                "ui-filter-chip",
+                initialData.queryState.stageSlug === stage.slug && "ui-filter-chip-active",
+              )}
+              onClick={() => updateQueryState({ stageSlug: stage.slug })}
+            >
+              {stage.name}
+              <span className="ml-1 text-[10px] text-muted">
+                {stageGroups.counts.get(stage.slug) ?? 0}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
-    </main>
+
+      {sessions.length === 0 ? (
+        <div className="flex flex-col items-center rounded-[10px] border border-dashed border-border bg-surface-strong px-6 py-16 text-center">
+          <p className="text-[14px] font-semibold text-foreground">No sessions match.</p>
+          <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
+            {initialData.totalCount === 0
+              ? "Kick off your first session by clicking New session in the top nav."
+              : "Adjust the stage, scope, or search to see more sessions."}
+          </p>
+        </div>
+      ) : (
+        <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
+          {sessions.map((session) => (
+            <SessionRow key={session.id} session={session} workspaceSlug={workspaceSlug} />
+          ))}
+        </ul>
+      )}
+    </PageContainer>
   );
 }
 
@@ -192,7 +194,7 @@ function SessionRow({
   workspaceSlug: string;
 }) {
   return (
-    <li className="flex flex-col gap-3 px-4 py-3 hover:bg-surface-muted md:flex-row md:items-center">
+    <li className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-muted md:flex-row md:items-center">
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[11px] text-muted">#{session.number}</span>

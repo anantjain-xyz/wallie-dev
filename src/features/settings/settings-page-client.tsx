@@ -69,9 +69,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
     <div className="min-h-full">
       <div className="mx-auto max-w-[1080px] px-6 pb-24 pt-10 sm:px-8">
         <header className="mb-10 space-y-2">
-          <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">
-            Workspace Admin
-          </p>
           <h1 className="text-[28px] font-semibold tracking-tight text-foreground">Settings</h1>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">
             Manage workspace identity, integrations, pipeline, and encrypted secrets.
