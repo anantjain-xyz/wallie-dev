@@ -1,10 +1,7 @@
-import { redirect } from "next/navigation";
+import { permanentRedirect } from "next/navigation";
 
-import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
-import { SplashShell } from "@/components/auth/splash-shell";
-import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { normalizeNextPath } from "@/lib/auth";
+import { loginPath } from "@/lib/routes";
 import { readFirstValue } from "@/lib/utils";
 
 type SignupPageProps = {
@@ -14,19 +11,6 @@ type SignupPageProps = {
 export default async function SignupPage({ searchParams }: SignupPageProps) {
   const resolvedSearchParams = await searchParams;
   const next = normalizeNextPath(readFirstValue(resolvedSearchParams.next));
-  const errorCode = readFirstValue(resolvedSearchParams.error);
-  const statusCode = readFirstValue(resolvedSearchParams.status);
-  const supabase = await createSupabaseServerClient();
-  const user = await getSupabaseUserOrNull(supabase);
 
-  if (user) {
-    await ensureProfileForUser(supabase, user);
-    redirect(await resolveAuthenticatedHomePath(supabase));
-  }
-
-  return (
-    <SplashShell>
-      <AuthEntryPanel errorCode={errorCode} mode="signup" next={next} statusCode={statusCode} />
-    </SplashShell>
-  );
+  permanentRedirect(loginPath(next));
 }
