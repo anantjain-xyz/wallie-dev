@@ -7,12 +7,13 @@ import { StatusChip } from "@/components/shared/status-chip";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
+import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
 import {
   formatSessionPhaseStatus,
   sessionPhaseStatusTone,
   type SessionPhaseStatus,
 } from "@/features/sessions/types";
-import { workspaceSessionDetailPath } from "@/lib/routes";
+import { workspaceOnboardingPath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Tables } from "@/lib/supabase/database.types";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,8 @@ function relativeTime(iso: string): string {
 export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   const [cards, setCards] = useState<PipelineDashboardCard[]>(initialData.cards);
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const showResumeSetup =
+    cards.length === 0 && shouldShowOnboardingResumeCta(initialData.onboarding);
 
   // Index of stage_id → slug, built once from the default-pipeline payload.
   // Realtime updates carry stage IDs; we resolve them locally so we don't
@@ -157,6 +160,22 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
           title="Pipeline"
           description="Sessions move through these stages from product to monitor."
         />
+        {showResumeSetup ? (
+          <section className="ui-panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-[14px] font-semibold text-foreground">Setup in progress</h2>
+              <p className="mt-1 text-[13px] leading-5 text-muted">
+                Finish workspace setup before starting the first session.
+              </p>
+            </div>
+            <Link
+              className="ui-button-primary shrink-0"
+              href={workspaceOnboardingPath(initialData.workspace.slug)}
+            >
+              Resume setup
+            </Link>
+          </section>
+        ) : null}
       </PageContainer>
       <div className="overflow-x-auto px-6 pb-12 sm:px-8">
         <div className="flex min-w-max gap-4">
