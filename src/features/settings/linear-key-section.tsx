@@ -5,7 +5,12 @@ import { useState } from "react";
 
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { dateFormatter, interactiveLinkClass, Section } from "@/features/settings/settings-ui";
+import {
+  dateFormatter,
+  interactiveLinkClass,
+  Section,
+  StatusBadge,
+} from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type {
   DeleteWorkspaceSecretResponse,
@@ -95,10 +100,20 @@ export function LinearKeySection({
     void deleteLinearKey.run();
   }
 
+  const statusBadge = canManage ? (
+    linearSecret ? (
+      <StatusBadge tone="success">Connected</StatusBadge>
+    ) : (
+      <StatusBadge tone="neutral">Not connected</StatusBadge>
+    )
+  ) : null;
+
   return (
-    <Section title="Linear">
-      <div className="space-y-4">
-        <p className="text-sm leading-7 text-muted">
+    <Section
+      anchorId="linear"
+      statusBadge={statusBadge}
+      tagline={
+        <>
           Paste a Linear personal API key so Wallie can read issues referenced in sessions. Generate
           one at{" "}
           <a
@@ -110,70 +125,71 @@ export function LinearKeySection({
             linear.app/settings/account/security
           </a>
           .
+        </>
+      }
+      title="Linear"
+    >
+      {!canManage ? (
+        <p className="text-[13px] leading-6 text-muted">
+          Workspace admins can manage the Linear API key from this page.
         </p>
-
-        {!canManage ? (
-          <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
-            Workspace admins can manage the Linear API key from this page.
+      ) : isLoadingSecrets ? (
+        <p className="text-[13px] text-muted">Loading Linear API key…</p>
+      ) : linearSecret ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-[13px] font-medium text-foreground">Linear API key configured</p>
+            <p className="font-mono text-[12px] text-muted">
+              {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
+              {dateFormatter.format(new Date(linearSecret.updatedAt))}
+            </p>
           </div>
-        ) : isLoadingSecrets ? (
-          <div className="ui-subpanel p-4 text-sm text-muted">Loading Linear API key…</div>
-        ) : linearSecret ? (
-          <div className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4">
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-foreground">Linear API key configured</p>
-              <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-                {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
-                {dateFormatter.format(new Date(linearSecret.updatedAt))}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="ui-button"
-                disabled={testLinearConnection.isBusy}
-                onClick={() => void testLinearConnection.run()}
-                type="button"
-              >
-                {testLinearConnection.isBusy ? "Testing…" : "Test Connection"}
-              </button>
-              <button
-                className="ui-button-danger"
-                disabled={deleteLinearKey.isBusy}
-                onClick={handleDeleteLinearKey}
-                type="button"
-              >
-                {deleteLinearKey.isBusy ? "Removing…" : "Remove"}
-              </button>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="ui-button"
+              disabled={testLinearConnection.isBusy}
+              onClick={() => void testLinearConnection.run()}
+              type="button"
+            >
+              {testLinearConnection.isBusy ? "Testing…" : "Test connection"}
+            </button>
+            <button
+              className="ui-button-danger"
+              disabled={deleteLinearKey.isBusy}
+              onClick={handleDeleteLinearKey}
+              type="button"
+            >
+              {deleteLinearKey.isBusy ? "Removing…" : "Remove"}
+            </button>
           </div>
-        ) : (
-          <div className="ui-subpanel space-y-4 p-4">
-            <label className="space-y-2 text-sm font-semibold text-foreground">
-              <span>Linear API Key</span>
-              <input
-                autoComplete="off"
-                className="ui-input font-mono"
-                name="linearApiKey"
-                onChange={(event) => setLinearApiKeyDraft(event.target.value)}
-                placeholder="lin_api_…"
-                spellCheck={false}
-                type="password"
-                value={linearApiKeyDraft}
-              />
-            </label>
-            <div className="flex justify-end">
-              <button
-                className="ui-button-primary"
-                disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
-                onClick={handleSaveLinearKey}
-                type="button"
-              >
-                {saveLinearKey.isBusy ? "Saving…" : "Save Linear API Key"}
-              </button>
-            </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <label className="block space-y-1.5">
+            <span className="text-[13px] font-medium text-foreground">Linear API Key</span>
+            <input
+              autoComplete="off"
+              className="ui-input font-mono"
+              name="linearApiKey"
+              onChange={(event) => setLinearApiKeyDraft(event.target.value)}
+              placeholder="lin_api_…"
+              spellCheck={false}
+              type="password"
+              value={linearApiKeyDraft}
+            />
+          </label>
+          <div className="flex justify-end">
+            <button
+              className="ui-button-primary"
+              disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
+              onClick={handleSaveLinearKey}
+              type="button"
+            >
+              {saveLinearKey.isBusy ? "Saving…" : "Save key"}
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </Section>
   );
 }

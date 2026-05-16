@@ -64,34 +64,37 @@ export function CodexConnectionPanel({ returnTo, connectFlash }: CodexConnection
 
   return (
     <div className="space-y-3">
-      <p className="text-sm leading-7 text-muted">
-        Codex runs on your personal ChatGPT / Codex account. Sessions you create use the tokens
-        stored here; tokens are encrypted at rest and only decrypted inside the agent worker.
-      </p>
-
-      {flashText ? <p className="text-sm leading-7 text-muted">{flashText}</p> : null}
-      {error ? <p className="text-sm leading-7 text-red-400">{error}</p> : null}
+      {flashText ? <p className="text-[13px] leading-5 text-muted">{flashText}</p> : null}
+      {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
       {status === null ? (
-        <p className="text-sm leading-7 text-muted">Checking connection…</p>
+        <p className="text-[13px] text-muted">Checking connection…</p>
       ) : status.connected ? (
-        <div className="ui-subpanel flex items-center justify-between gap-3 p-4">
-          <div className="text-sm leading-6">
-            <div className="font-medium">Connected</div>
-            {status.accountEmail ? (
-              <div className="text-muted">{status.accountEmail}</div>
-            ) : (
-              <div className="text-muted">ChatGPT account linked</div>
-            )}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <p className="text-[13px] font-medium text-foreground">
+              {status.accountEmail ?? "ChatGPT account linked"}
+            </p>
+            <p className="text-[12px] text-muted">Connected</p>
           </div>
-          <button type="button" className="ui-button" disabled={isBusy} onClick={handleDisconnect}>
+          <button
+            type="button"
+            className="ui-button-danger"
+            disabled={isBusy}
+            onClick={handleDisconnect}
+          >
             {isBusy ? "Disconnecting…" : "Disconnect"}
           </button>
         </div>
       ) : (
-        <div className="ui-subpanel flex items-center justify-between gap-3 p-4">
-          <div className="text-sm leading-6 text-muted">Not connected</div>
-          <button type="button" className="ui-button" disabled={isBusy} onClick={handleConnect}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[13px] text-muted">No Codex account linked yet.</p>
+          <button
+            type="button"
+            className="ui-button-primary"
+            disabled={isBusy}
+            onClick={handleConnect}
+          >
             {isBusy ? "Redirecting…" : "Connect Codex"}
           </button>
         </div>

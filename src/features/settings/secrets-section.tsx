@@ -96,90 +96,85 @@ export function SecretsSection({
   }
 
   return (
-    <Section title="Secrets">
-      <div className="space-y-4">
-        <p className="text-sm leading-7 text-muted">
-          Secret values never come back to the client. Wallie shows preview-only rows and writes
-          encrypted values through route handlers.
-        </p>
-
-        {canManage ? (
-          <>
-            <div className="ui-subpanel space-y-4 p-4">
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Secret Key</span>
-                <input
-                  autoCapitalize="characters"
-                  autoComplete="off"
-                  className="ui-input"
-                  name="secretKey"
-                  onChange={(event) => setSecretKey(event.target.value)}
-                  placeholder="ANTHROPIC_API_KEY…"
-                  spellCheck={false}
-                  value={secretKey}
-                />
-              </label>
-              <label className="space-y-2 text-sm font-semibold text-foreground">
-                <span>Secret Value</span>
-                <textarea
-                  autoComplete="off"
-                  className="ui-textarea min-h-28"
-                  name="secretValue"
-                  onChange={(event) => setSecretValue(event.target.value)}
-                  placeholder="Paste the Secret Value…"
-                  value={secretValue}
-                />
-              </label>
-              <div className="flex justify-end">
-                <button
-                  className="ui-button-primary"
-                  disabled={saveSecret.isBusy}
-                  onClick={handleSaveSecret}
-                  type="button"
-                >
-                  {saveSecret.isBusy ? "Saving…" : "Save Secret"}
-                </button>
-              </div>
+    <Section
+      anchorId="secrets"
+      tagline="Secret values never come back to the client. Wallie shows preview-only rows and writes encrypted values through route handlers."
+      title="Secrets"
+    >
+      {canManage ? (
+        <div className="space-y-8">
+          <div className="space-y-4">
+            <label className="block space-y-1.5">
+              <span className="text-[13px] font-medium text-foreground">Secret key</span>
+              <input
+                autoCapitalize="characters"
+                autoComplete="off"
+                className="ui-input"
+                name="secretKey"
+                onChange={(event) => setSecretKey(event.target.value)}
+                placeholder="ANTHROPIC_API_KEY…"
+                spellCheck={false}
+                value={secretKey}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[13px] font-medium text-foreground">Secret value</span>
+              <textarea
+                autoComplete="off"
+                className="ui-textarea min-h-28"
+                name="secretValue"
+                onChange={(event) => setSecretValue(event.target.value)}
+                placeholder="Paste the secret value…"
+                value={secretValue}
+              />
+            </label>
+            <div className="flex justify-end">
+              <button
+                className="ui-button-primary"
+                disabled={saveSecret.isBusy}
+                onClick={handleSaveSecret}
+                type="button"
+              >
+                {saveSecret.isBusy ? "Saving…" : "Save secret"}
+              </button>
             </div>
-
-            <div className="space-y-3">
-              {isLoadingSecrets ? (
-                <div className="ui-subpanel p-4 text-sm text-muted">Loading Secret Previews…</div>
-              ) : otherSecrets.length === 0 ? (
-                <div className="ui-subpanel p-4 text-sm text-muted">No workspace secrets yet.</div>
-              ) : (
-                otherSecrets.map((secret) => (
-                  <div
-                    className="ui-subpanel flex flex-wrap items-center justify-between gap-3 p-4"
-                    key={secret.id}
-                  >
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-foreground">{secret.key}</p>
-                      <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
-                        {secret.valuePreview ?? "preview unavailable"}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className="ui-button-danger"
-                        disabled={deleteSecret.isBusy}
-                        onClick={() => void handleDeleteSecret(secret.key)}
-                        type="button"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="ui-subpanel p-4 text-sm leading-7 text-muted">
-            Workspace admins can manage encrypted secret previews from this surface.
           </div>
-        )}
-      </div>
+
+          {isLoadingSecrets ? (
+            <p className="text-[13px] text-muted">Loading secret previews…</p>
+          ) : otherSecrets.length === 0 ? (
+            <p className="text-[13px] text-muted">No workspace secrets yet.</p>
+          ) : (
+            <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+              {otherSecrets.map((secret) => (
+                <li
+                  className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
+                  key={secret.id}
+                >
+                  <div className="space-y-0.5">
+                    <p className="text-[13px] font-medium text-foreground">{secret.key}</p>
+                    <p className="font-mono text-[12px] text-muted">
+                      {secret.valuePreview ?? "preview unavailable"}
+                    </p>
+                  </div>
+                  <button
+                    className="ui-button-danger"
+                    disabled={deleteSecret.isBusy}
+                    onClick={() => void handleDeleteSecret(secret.key)}
+                    type="button"
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <p className="text-[13px] leading-6 text-muted">
+          Workspace admins can manage encrypted secret previews from this surface.
+        </p>
+      )}
     </Section>
   );
 }

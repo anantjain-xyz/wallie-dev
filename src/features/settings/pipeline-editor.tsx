@@ -138,51 +138,50 @@ export function PipelineEditor({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {error ? (
         <div
           role="status"
           aria-live="polite"
-          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-sm text-danger"
+          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
         >
           {error}
         </div>
       ) : null}
       {savedAt && !error ? (
-        <p className="text-xs text-muted">
+        <p className="text-[12px] text-muted">
           Saved at {savedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-          Pipeline name
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="block space-y-1.5">
+          <span className="text-[13px] font-medium text-foreground">Pipeline name</span>
           <input
             type="text"
             value={name}
             disabled={!canManage}
             onChange={(e) => setName(e.target.value)}
-            className="ui-input min-w-[200px]"
+            className="ui-input min-w-[240px]"
             maxLength={80}
           />
         </label>
+        <details className="ml-auto rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-[12px] text-muted">
+          <summary className="cursor-pointer text-foreground">Template variables</summary>
+          <ul className="mt-2 space-y-0.5 font-mono">
+            {VARIABLE_HELP.map((v) => (
+              <li key={v}>{v}</li>
+            ))}
+          </ul>
+          <p className="mt-2 leading-5">
+            Use Mustache-style syntax: <code>{"{{var}}"}</code> for substitution and{" "}
+            <code>{"{{#if var}}…{{/if}}"}</code> for conditional blocks. Replace{" "}
+            <code>&lt;slug&gt;</code> with an earlier stage&apos;s slug to reference its artifact.
+          </p>
+        </details>
       </div>
 
-      <details className="rounded-[6px] border border-border bg-surface-muted p-3 text-xs text-muted">
-        <summary className="cursor-pointer text-foreground">Available template variables</summary>
-        <ul className="mt-2 space-y-0.5 font-mono">
-          {VARIABLE_HELP.map((v) => (
-            <li key={v}>{v}</li>
-          ))}
-        </ul>
-        <p className="mt-2">
-          Use Mustache-style syntax: <code>{"{{var}}"}</code> for substitution and{" "}
-          <code>{"{{#if var}}…{{/if}}"}</code> for conditional blocks. Replace{" "}
-          <code>&lt;slug&gt;</code> with the slug of any earlier stage to reference its artifact.
-        </p>
-      </details>
-
-      <ol className="space-y-4">
+      <ol className="space-y-3">
         {stages.map((stage, index) => (
           <StageRow
             key={stage.id ?? `new-${index}`}
@@ -201,7 +200,7 @@ export function PipelineEditor({
       </ol>
 
       {canManage ? (
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
           <button type="button" className="ui-button" onClick={addStage}>
             + Add stage
           </button>
@@ -257,17 +256,19 @@ function StageRow({
   }
 
   return (
-    <li className="rounded-[8px] border border-border bg-surface px-4 py-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[11px] text-muted">{index + 1}.</span>
+    <li className="relative rounded-[10px] border border-border bg-surface p-5">
+      <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted text-[11px] font-semibold text-muted">
+        {index + 1}
+      </div>
+      <div className="space-y-4 pl-9">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <input
               type="text"
               value={stage.name}
               disabled={!canManage}
               onChange={(e) => onChange({ name: e.target.value })}
-              className="ui-input flex-1 font-semibold"
+              className="ui-input min-w-[200px] flex-1 font-medium"
               placeholder="Stage name"
               maxLength={80}
             />
@@ -276,107 +277,108 @@ function StageRow({
               value={stage.slug}
               disabled={!canManage}
               onChange={(e) => onChange({ slug: e.target.value })}
-              className="ui-input w-[160px] font-mono text-xs"
+              className="ui-input w-[160px] font-mono text-[12px]"
               placeholder="kebab-slug"
               maxLength={64}
             />
           </div>
-          <input
-            type="text"
-            value={stage.description}
-            disabled={!canManage}
-            onChange={(e) => onChange({ description: e.target.value })}
-            className="ui-input"
-            placeholder="One-line description shown in the pipeline rail"
-            maxLength={500}
-          />
+          {canManage ? (
+            <div className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                className="ui-icon-button"
+                onClick={onMoveUp}
+                disabled={isFirst}
+                aria-label="Move stage up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className="ui-icon-button"
+                onClick={onMoveDown}
+                disabled={isLast}
+                aria-label="Move stage down"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                className="ui-icon-button text-danger"
+                onClick={onRemove}
+                aria-label="Remove stage"
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
         </div>
-        {canManage ? (
-          <div className="flex shrink-0 flex-col gap-1">
-            <button
-              type="button"
-              className="ui-button px-2 text-xs"
-              onClick={onMoveUp}
-              disabled={isFirst}
-              aria-label="Move stage up"
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              className="ui-button px-2 text-xs"
-              onClick={onMoveDown}
-              disabled={isLast}
-              aria-label="Move stage down"
-            >
-              ↓
-            </button>
-            <button
-              type="button"
-              className="ui-button px-2 text-xs text-danger"
-              onClick={onRemove}
-              aria-label="Remove stage"
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
-      </div>
 
-      <div className="mt-3">
-        <label className="block text-xs font-semibold uppercase tracking-wide text-muted">
-          Prompt template
-        </label>
-        <textarea
-          value={stage.promptTemplateMd}
+        <input
+          type="text"
+          value={stage.description}
           disabled={!canManage}
-          onChange={(e) => onChange({ promptTemplateMd: e.target.value })}
-          className="ui-textarea mt-1 min-h-[160px] font-mono text-xs"
-          placeholder="The prompt to run for this stage. Use {{session.title}} etc."
-          maxLength={20000}
+          onChange={(e) => onChange({ description: e.target.value })}
+          className="ui-input"
+          placeholder="One-line description shown in the pipeline rail"
+          maxLength={500}
         />
-      </div>
 
-      <div className="mt-3">
-        <button
-          type="button"
-          className="text-xs font-medium text-foreground hover:text-accent"
-          onClick={() => setShowApprovers((v) => !v)}
-        >
-          Approvers: {approverPreview} {showApprovers ? "▾" : "▸"}
-        </button>
-        {showApprovers ? (
-          <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-[6px] border border-border bg-background p-2">
-            {workspaceMembers.length === 0 ? (
-              <li className="text-xs text-muted">No human members yet.</li>
-            ) : (
-              workspaceMembers.map((member) => {
-                const checked = stage.approverMemberIds.includes(member.id);
-                return (
-                  <li key={member.id} className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={!canManage}
-                      onChange={() => toggleApprover(member.id)}
-                      id={`approver-${stage.id ?? "new"}-${index}-${member.id}`}
-                    />
-                    <label
-                      htmlFor={`approver-${stage.id ?? "new"}-${index}-${member.id}`}
-                      className="flex-1 cursor-pointer"
-                    >
-                      <span className="font-medium text-foreground">
-                        {member.fullName ?? member.email ?? member.id}
-                      </span>{" "}
-                      <span className="text-muted">({member.role})</span>
-                    </label>
-                  </li>
-                );
-              })
-            )}
-          </ul>
-        ) : null}
-        <p className="mt-1 text-[11px] text-muted">Empty list = workspace owners and admins.</p>
+        <label className="block space-y-1.5">
+          <span className="text-[13px] font-medium text-foreground">Prompt template</span>
+          <textarea
+            value={stage.promptTemplateMd}
+            disabled={!canManage}
+            onChange={(e) => onChange({ promptTemplateMd: e.target.value })}
+            className="ui-textarea min-h-[160px] font-mono text-[12px]"
+            placeholder="The prompt to run for this stage. Use {{session.title}} etc."
+            maxLength={20000}
+          />
+        </label>
+
+        <div>
+          <button
+            type="button"
+            className="text-[12px] font-medium text-muted transition-colors hover:text-foreground"
+            onClick={() => setShowApprovers((v) => !v)}
+          >
+            Approvers: {approverPreview} {showApprovers ? "▾" : "▸"}
+          </button>
+          {showApprovers ? (
+            <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-[6px] border border-border bg-background p-2">
+              {workspaceMembers.length === 0 ? (
+                <li className="text-[12px] text-muted">No human members yet.</li>
+              ) : (
+                workspaceMembers.map((member) => {
+                  const checked = stage.approverMemberIds.includes(member.id);
+                  return (
+                    <li key={member.id} className="flex items-center gap-2 text-[12px]">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!canManage}
+                        onChange={() => toggleApprover(member.id)}
+                        id={`approver-${stage.id ?? "new"}-${index}-${member.id}`}
+                      />
+                      <label
+                        htmlFor={`approver-${stage.id ?? "new"}-${index}-${member.id}`}
+                        className="flex-1 cursor-pointer"
+                      >
+                        <span className="font-medium text-foreground">
+                          {member.fullName ?? member.email ?? member.id}
+                        </span>{" "}
+                        <span className="text-muted">({member.role})</span>
+                      </label>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          ) : null}
+          <p className="mt-1 text-[11px] text-muted">
+            Leave empty to default to workspace owners and admins.
+          </p>
+        </div>
       </div>
     </li>
   );

@@ -56,34 +56,34 @@ export function WorkspaceAvatarSection({
   }
 
   return (
-    <Section title="Workspace">
-      <div className="space-y-5">
-        <div className="flex flex-wrap items-center gap-4">
-          {workspaceAvatarUrl ? (
-            <Image
-              alt={`${workspace.name} avatar`}
-              className="h-20 w-20 rounded-[1.75rem] border border-border/70 object-cover"
-              height={80}
-              src={workspaceAvatarUrl}
-              width={80}
-            />
-          ) : (
-            <AvatarFallback name={workspace.name} />
-          )}
+    <Section
+      anchorId="workspace"
+      tagline="Workspace identity is shown across navigation, notifications, and PR descriptions."
+      title="Workspace"
+    >
+      <div className="flex flex-wrap items-center gap-4">
+        {workspaceAvatarUrl ? (
+          <Image
+            alt={`${workspace.name} avatar`}
+            className="h-16 w-16 rounded-[10px] border border-border object-cover"
+            height={64}
+            src={workspaceAvatarUrl}
+            width={64}
+          />
+        ) : (
+          <AvatarFallback name={workspace.name} />
+        )}
 
-          <div className="space-y-1">
-            <p className="text-xl font-semibold tracking-tight text-foreground">{workspace.name}</p>
-            <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">
-              /w/{workspace.slug}
-            </p>
-          </div>
+        <div className="flex-1 space-y-1">
+          <p className="text-[16px] font-semibold tracking-tight text-foreground">
+            {workspace.name}
+          </p>
+          <p className="font-mono text-[12px] text-muted">/w/{workspace.slug}</p>
         </div>
 
         {canManage ? (
-          <label className="ui-subpanel flex w-full cursor-pointer items-center justify-between px-4 py-4 text-sm font-semibold text-foreground transition-[border-color,box-shadow] duration-150 hover:border-accent/45">
-            <span>
-              {uploadAvatar.isBusy ? "Uploading Workspace Avatar…" : "Upload Workspace Avatar"}
-            </span>
+          <label className="ui-button cursor-pointer">
+            <span>{uploadAvatar.isBusy ? "Uploading…" : "Upload avatar"}</span>
             <input
               accept=".jpg,.jpeg,.png,.webp"
               className="sr-only"
@@ -93,8 +93,8 @@ export function WorkspaceAvatarSection({
             />
           </label>
         ) : (
-          <p className="text-sm leading-6 text-muted">
-            Workspace admins can change the avatar and manage integrations from this page.
+          <p className="text-[12px] leading-5 text-muted">
+            Workspace admins can change the avatar.
           </p>
         )}
       </div>
