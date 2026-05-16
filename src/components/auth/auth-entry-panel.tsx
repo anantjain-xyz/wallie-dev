@@ -1,7 +1,7 @@
 import Link from "next/link";
 
-import { StatusChip } from "@/components/shared/status-chip";
 import { isLocalDev } from "@/env/deploy";
+import type { OAuthProvider } from "@/lib/auth-providers";
 import { loginPath, signupPath } from "@/lib/routes";
 
 const authErrorMessages = {
@@ -27,7 +27,7 @@ type AuthEntryPanelProps = {
   statusCode?: string | null;
 };
 
-function buildOauthHref(provider: "github" | "google", mode: "login" | "signup", next: string) {
+function buildOauthHref(provider: OAuthProvider, mode: "login" | "signup", next: string) {
   const params = new URLSearchParams({
     mode,
     next,
@@ -37,10 +37,17 @@ function buildOauthHref(provider: "github" | "google", mode: "login" | "signup",
   return `/auth/oauth?${params.toString()}`;
 }
 
+const inputClasses =
+  "w-full rounded-[6px] border border-[#d9cfbf] bg-white/70 px-3 py-2.5 text-[14px] text-[#1a1714] placeholder:text-[#a39a8b] outline-none transition-[border-color,box-shadow] focus:border-[#2b4570] focus:ring-2 focus:ring-[#2b4570]/15";
+
+const secondaryButtonClasses =
+  "inline-flex w-full items-center justify-center gap-2 rounded-[6px] border border-[#d9cfbf] bg-white/60 px-3 py-2.5 text-[13px] font-medium text-[#1a1714] transition-colors hover:border-[#bdb19e] hover:bg-white";
+
 export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryPanelProps) {
   const isSignup = mode === "signup";
   const alternateHref = isSignup ? loginPath(next) : signupPath(next);
-  const alternateLabel = isSignup ? "Open Login" : "Create Account";
+  const alternateLabel = isSignup ? "Sign in" : "Create one";
+  const alternatePreface = isSignup ? "Already with us?" : "New to Wallie?";
   const errorMessage = errorCode
     ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
     : null;
@@ -49,152 +56,157 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
     : null;
 
   return (
-    <section className="ui-panel w-full p-6 sm:p-8">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-3">
-          <StatusChip tone="ready">{isSignup ? "Create Access" : "Sign In"}</StatusChip>
-          <div className="space-y-3">
-            <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
-              {isSignup ? "Create Your Wallie Identity" : "Enter Your Workspace"}
-            </h1>
-            <p className="max-w-2xl text-sm leading-6 text-muted">
-              {isSignup
-                ? "Choose Magic Link or OAuth, then continue into first-workspace setup under Supabase Auth."
-                : "Choose Magic Link or OAuth. Wallie routes you to your workspace or first-run onboarding."}
-            </p>
+    <div className="w-full max-w-[360px]">
+      <p className="mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-[#8a8170]">
+        {isSignup ? "Create account" : "Sign in"}
+      </p>
+
+      <div className="rounded-[10px] border border-[#d9cfbf] bg-[#fdfaf3] p-5 shadow-[0_1px_0_rgba(26,23,20,0.03),0_8px_24px_-12px_rgba(26,23,20,0.08)]">
+        {statusMessage ? (
+          <div
+            aria-live="polite"
+            role="status"
+            className="mb-4 rounded-[6px] border border-[#d9cfbf] bg-[#f3ecdb] px-3 py-2 text-[12px] leading-5 text-[#6b6358]"
+          >
+            {statusMessage}
           </div>
-        </div>
+        ) : null}
 
-        <Link href={alternateHref} className="ui-button">
-          {alternateLabel}
-        </Link>
-      </div>
+        {errorMessage ? (
+          <div
+            aria-live="polite"
+            role="status"
+            className="mb-4 rounded-[6px] border border-[#c89a8a] bg-[#f3e3da] px-3 py-2 text-[12px] leading-5 text-[#7a3320]"
+          >
+            {errorMessage}
+          </div>
+        ) : null}
 
-      {statusMessage ? (
-        <div
-          aria-live="polite"
-          role="status"
-          className="mt-6 rounded-[6px] border border-warning/20 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning"
-        >
-          {statusMessage}
-        </div>
-      ) : null}
-
-      {errorMessage ? (
-        <div
-          aria-live="polite"
-          role="status"
-          className="mt-6 rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm leading-6 text-danger"
-        >
-          {errorMessage}
-        </div>
-      ) : null}
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <form action="/auth/email" method="post" className="ui-subpanel p-5">
+        <form action="/auth/email" method="post" className="space-y-3">
           <input type="hidden" name="mode" value={mode} />
           <input type="hidden" name="next" value={next} />
 
-          <div className="space-y-2">
-            <p className="text-[11px] font-medium text-muted">Magic Link</p>
-            <h2 className="text-2xl font-semibold tracking-tight text-balance text-foreground">
-              Email First, Password Never
-            </h2>
-            <p className="text-sm leading-6 text-muted">
-              Wallie sends a single-use sign-in link and returns you to the exact workspace path you
-              came from.
-            </p>
-          </div>
-
-          <label className="mt-5 block text-sm font-semibold text-foreground">
-            Email
+          <label className="block">
+            <span className="sr-only">Email</span>
             <input
               type="email"
               name="email"
               required
               autoComplete="email"
               inputMode="email"
-              placeholder="name@company.com…"
+              placeholder="you@company.com"
               spellCheck={false}
-              className="ui-input mt-2 text-base"
+              className={inputClasses}
             />
           </label>
 
-          <button type="submit" className="ui-button-primary mt-5">
-            {isSignup ? "Send Sign-Up Link" : "Send Sign-In Link"}
+          <button
+            type="submit"
+            className="inline-flex w-full items-center justify-center rounded-[6px] bg-[#1a1714] px-3 py-2.5 text-[13px] font-medium text-[#f6f1e7] transition-colors hover:bg-[#2b4570] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2b4570]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fdfaf3]"
+          >
+            {isSignup ? "Send sign-up link" : "Send sign-in link"}
           </button>
         </form>
 
-        <div className="ui-subpanel p-5">
-          <p className="text-[11px] font-medium text-muted">OAuth</p>
-          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-balance text-foreground">
-            Continue With Your Provider
-          </h2>
-          <p className="mt-3 text-sm leading-6 text-muted">
-            Supabase Auth handles identity. Workspace access still comes from `workspace_members`
-            and RLS after the session is established.
-          </p>
-
-          <div className="mt-5 grid gap-3">
-            <Link href={buildOauthHref("google", mode, next)} className="ui-button">
-              Continue with Google
-            </Link>
-            <Link href={buildOauthHref("github", mode, next)} className="ui-button">
-              Continue with GitHub
-            </Link>
-          </div>
-
-          <p className="mt-5 text-xs leading-6 text-muted">
-            If your session already exists, Wallie will skip this screen and send you straight to
-            the correct workspace entry route.
-          </p>
+        <div className="my-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-[#d9cfbf]" />
+          <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#8a8170]">
+            or
+          </span>
+          <div className="h-px flex-1 bg-[#d9cfbf]" />
         </div>
-      </div>
 
-      {isLocalDev() && (
-        <form action="/auth/password" method="post" className="ui-subpanel mt-6 p-5">
-          <input type="hidden" name="mode" value={mode} />
-          <input type="hidden" name="next" value={next} />
+        <div className="grid gap-2">
+          <Link href={buildOauthHref("google", mode, next)} className={secondaryButtonClasses}>
+            <GoogleGlyph />
+            <span>Continue with Google</span>
+          </Link>
+          <Link href={buildOauthHref("github", mode, next)} className={secondaryButtonClasses}>
+            <GitHubGlyph />
+            <span>Continue with GitHub</span>
+          </Link>
+        </div>
 
-          <div className="space-y-2">
-            <p className="text-[11px] font-medium text-muted">Dev Only</p>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Password Auth</h2>
-            <p className="text-sm leading-6 text-muted">
-              Development-only email + password sign-in. Not available in production.
-            </p>
-          </div>
-
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-semibold text-foreground">
-              Email
+        {isLocalDev() && (
+          <details className="mt-4 border-t border-[#d9cfbf]/70 pt-3">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-[#8a8170] transition-colors hover:text-[#1a1714]">
+              <span aria-hidden="true">›</span>
+              Dev password
+            </summary>
+            <form action="/auth/password" method="post" className="mt-3 space-y-2">
+              <input type="hidden" name="mode" value={mode} />
+              <input type="hidden" name="next" value={next} />
               <input
                 type="email"
                 name="email"
                 required
                 autoComplete="email"
-                placeholder="dev@localhost.com…"
-                className="ui-input mt-2 text-base"
+                placeholder="dev@localhost.com"
+                className={inputClasses}
               />
-            </label>
-            <label className="block text-sm font-semibold text-foreground">
-              Password
               <input
                 type="password"
                 name="password"
                 required
                 minLength={6}
                 autoComplete="current-password"
-                placeholder="Min 6 characters…"
-                className="ui-input mt-2 text-base"
+                placeholder="Password (min 6)"
+                className={inputClasses}
               />
-            </label>
-          </div>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center rounded-[6px] border border-[#d9cfbf] bg-white/60 px-3 py-2 text-[12px] font-medium text-[#1a1714] transition-colors hover:bg-white"
+              >
+                {isSignup ? "Dev sign up" : "Dev sign in"}
+              </button>
+            </form>
+          </details>
+        )}
+      </div>
 
-          <button type="submit" className="ui-button-primary mt-5">
-            {isSignup ? "Dev Sign Up" : "Dev Sign In"}
-          </button>
-        </form>
-      )}
-    </section>
+      <p className="mt-4 text-[12px] text-[#6b6358]">
+        {alternatePreface}{" "}
+        <Link
+          href={alternateHref}
+          className="text-[#2b4570] underline decoration-[#2b4570]/30 underline-offset-2 transition-colors hover:decoration-[#2b4570]"
+        >
+          {alternateLabel}
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+function GoogleGlyph() {
+  return (
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 18 18" focusable="false">
+      <path
+        fill="#4285F4"
+        d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615Z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A9 9 0 0 0 9 18Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M3.964 10.706a5.412 5.412 0 0 1 0-3.412V4.962H.957a9 9 0 0 0 0 8.076l3.007-2.332Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A9 9 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z"
+      />
+    </svg>
+  );
+}
+
+function GitHubGlyph() {
+  return (
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" focusable="false">
+      <path
+        fill="#1a1714"
+        d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+      />
+    </svg>
   );
 }

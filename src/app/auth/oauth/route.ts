@@ -2,10 +2,11 @@ import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
 
 import { normalizeNextPath } from "@/lib/auth";
+import { OAUTH_PROVIDERS } from "@/lib/auth-providers";
 import { loginPath, signupPath } from "@/lib/routes";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-const oauthProviderSchema = z.enum(["github", "google"]);
+const oauthProviderSchema = z.enum(OAUTH_PROVIDERS);
 const authModeSchema = z.enum(["login", "signup"]);
 
 function getEntryPath(mode: "login" | "signup", next: string, error: string) {

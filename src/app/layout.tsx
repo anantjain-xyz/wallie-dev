@@ -1,7 +1,15 @@
 import type { Metadata } from "next";
+import { Newsreader } from "next/font/google";
 
 import { siteConfig } from "@/lib/site-config";
 import "./globals.css";
+
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  display: "swap",
+  weight: ["400"],
+  variable: "--font-newsreader",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://wallie.cc"),
@@ -18,7 +26,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className={`h-full antialiased ${newsreader.variable}`}>
       <body className="min-h-full font-sans">
         <a href="#main-content" className="ui-skip-link">
           Skip to Main Content
