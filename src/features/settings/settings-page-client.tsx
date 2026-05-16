@@ -131,7 +131,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                     className="flex flex-col gap-1.5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="space-y-1">
-                      <code className="font-mono text-[12px] text-foreground">{limit.endpoint}</code>
+                      <code className="font-mono text-[12px] text-foreground">
+                        {limit.endpoint}
+                      </code>
                       <p className="text-[12px] leading-5 text-muted">{limit.description}</p>
                     </div>
                     <span className="ui-pill shrink-0">

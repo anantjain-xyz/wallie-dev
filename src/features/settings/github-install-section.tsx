@@ -242,9 +242,7 @@ export function GitHubInstallSection({
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
                           {repository.defaultProgrammingLanguage ? (
-                            <span className="ui-pill">
-                              {repository.defaultProgrammingLanguage}
-                            </span>
+                            <span className="ui-pill">{repository.defaultProgrammingLanguage}</span>
                           ) : null}
                           {repository.defaultBranch ? (
                             <span className="ui-pill font-mono">{repository.defaultBranch}</span>
@@ -252,9 +250,7 @@ export function GitHubInstallSection({
                           <span className="ui-pill">
                             {repository.isPrivate ? "Private" : "Public"}
                           </span>
-                          {repository.isArchived ? (
-                            <span className="ui-pill">Archived</span>
-                          ) : null}
+                          {repository.isArchived ? <span className="ui-pill">Archived</span> : null}
                         </div>
                         {repository.description ? (
                           <p className="text-[13px] leading-5 text-muted">
