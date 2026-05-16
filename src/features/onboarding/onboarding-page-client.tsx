@@ -4,13 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 
-import {
-  StatusBacklogIcon,
-  StatusCanceledIcon,
-  StatusDoneIcon,
-  StatusInProgressIcon,
-  StatusTodoIcon,
-} from "@/components/shared/icons";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
   buildOnboardingContinuePatch,
@@ -75,18 +68,16 @@ const railStateClasses: Record<OnboardingStepDisplayState, string> = {
 };
 
 function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
-  switch (state) {
-    case "active":
-      return <StatusInProgressIcon className="h-3.5 w-3.5" />;
-    case "completed":
-      return <StatusDoneIcon className="h-3.5 w-3.5" />;
-    case "skipped":
-      return <StatusCanceledIcon className="h-3.5 w-3.5" />;
-    case "blocked":
-      return <StatusBacklogIcon className="h-3.5 w-3.5" />;
-    case "available":
-      return <StatusTodoIcon className="h-3.5 w-3.5" />;
-  }
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "h-2 w-2 rounded-full",
+        state === "active" ? "bg-foreground" : "bg-muted/60",
+        state === "blocked" && "bg-border-strong",
+      )}
+    />
+  );
 }
 
 function Badge({ children, tone }: { children: string; tone: HealthTone }) {
