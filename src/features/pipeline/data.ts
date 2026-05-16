@@ -11,7 +11,21 @@ import {
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { PipelineStage, SessionPhaseStatus } from "@/features/sessions/types";
+import type {
+  PipelineStage,
+  SessionPhaseStatus,
+  SessionPullRequest,
+} from "@/features/sessions/types";
+
+export type PipelineDashboardPullRequest = Pick<
+  SessionPullRequest,
+  | "id"
+  | "isDraft"
+  | "pullRequestNumber"
+  | "pullRequestState"
+  | "pullRequestUrl"
+  | "repositoryFullName"
+>;
 
 export type PipelineDashboardCard = {
   createdAt: string;
@@ -22,6 +36,7 @@ export type PipelineDashboardCard = {
   linearIssueUrl: string | null;
   number: number;
   phaseStatus: SessionPhaseStatus;
+  pullRequests?: PipelineDashboardPullRequest[];
   rejectionCount: number;
   title: string;
   updatedAt: string;
@@ -129,6 +144,7 @@ export async function loadPipelineDashboardData(
   }
 
   const rows = data ?? [];
+  const sessionIds = rows.map((row) => row.id);
   const stageIds = Array.from(new Set(rows.map((r) => r.current_stage_id))).filter(Boolean);
   const stageSlugMap = new Map<string, string>();
   if (stageIds.length > 0) {
@@ -142,6 +158,34 @@ export async function loadPipelineDashboardData(
     }
   }
 
+  const pullRequestsBySession = new Map<string, PipelineDashboardPullRequest[]>();
+  if (sessionIds.length > 0) {
+    const { data: prRows, error: prError } = await supabase
+      .from("session_pull_requests")
+      .select("id, session_id, is_draft, pull_request_number, pull_request_state, pull_request_url")
+      .eq("workspace_id", workspace.id)
+      .in("session_id", sessionIds)
+      .not("pull_request_url", "is", null)
+      .order("created_at", { ascending: false });
+
+    if (prError) {
+      throw prError;
+    }
+
+    for (const row of prRows ?? []) {
+      const list = pullRequestsBySession.get(row.session_id) ?? [];
+      list.push({
+        id: row.id,
+        isDraft: row.is_draft,
+        pullRequestNumber: row.pull_request_number,
+        pullRequestState: row.pull_request_state,
+        pullRequestUrl: row.pull_request_url,
+        repositoryFullName: null,
+      });
+      pullRequestsBySession.set(row.session_id, list);
+    }
+  }
+
   const cards: PipelineDashboardCard[] = rows.map((row) => ({
     createdAt: row.created_at,
     currentStageId: row.current_stage_id,
@@ -151,6 +195,7 @@ export async function loadPipelineDashboardData(
     linearIssueUrl: row.linear_issue_url,
     number: row.number,
     phaseStatus: row.phase_status as SessionPhaseStatus,
+    pullRequests: pullRequestsBySession.get(row.id) ?? [],
     rejectionCount: row.rejection_count,
     title: row.title,
     updatedAt: row.updated_at,

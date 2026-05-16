@@ -6,34 +6,42 @@ import { type ReactNode } from "react";
 import type { SessionPullRequest } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
 
+export type SessionConnectionPullRequest = Pick<
+  SessionPullRequest,
+  | "id"
+  | "isDraft"
+  | "pullRequestNumber"
+  | "pullRequestState"
+  | "pullRequestUrl"
+  | "repositoryFullName"
+>;
+
 type SessionConnectionsProps = {
   compact?: boolean;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   onRequestLinkLinear?: () => void;
   pullRequestCount: number;
-  pullRequests?: SessionPullRequest[];
+  pullRequests?: SessionConnectionPullRequest[];
+  quiet?: boolean;
 };
 
-type BadgeState = "linked" | "empty";
+type LinkedPullRequest = SessionConnectionPullRequest & {
+  pullRequestUrl: string;
+};
 
-function mergedPullRequestState(pullRequests: SessionPullRequest[]): {
-  label: string;
-  mergedCount: number;
-  openCount: number;
-} {
-  let mergedCount = 0;
-  let openCount = 0;
-  for (const pr of pullRequests) {
-    const state = (pr.pullRequestState ?? "").toLowerCase();
-    if (state === "merged") mergedCount += 1;
-    else openCount += 1;
+function isLinkedPullRequest(
+  pullRequest: SessionConnectionPullRequest,
+): pullRequest is LinkedPullRequest {
+  return !!pullRequest.pullRequestUrl;
+}
+
+function pullRequestLabel(pullRequest: LinkedPullRequest, index: number, total: number): string {
+  if (pullRequest.pullRequestNumber) {
+    return `PR #${pullRequest.pullRequestNumber}`;
   }
-  const parts: string[] = [];
-  parts.push(`${pullRequests.length} PR${pullRequests.length === 1 ? "" : "s"}`);
-  if (mergedCount > 0) parts.push(`${mergedCount} merged`);
-  else if (openCount > 0 && pullRequests.length > 0) parts.push("open");
-  return { label: parts.join(" · "), mergedCount, openCount };
+
+  return total === 1 ? "PR" : `PR ${index + 1}`;
 }
 
 export function SessionConnections({
@@ -41,54 +49,52 @@ export function SessionConnections({
   linearIssueId,
   linearIssueUrl,
   onRequestLinkLinear,
-  pullRequestCount,
   pullRequests,
+  quiet = false,
 }: SessionConnectionsProps) {
-  const linearState: BadgeState = linearIssueId || linearIssueUrl ? "linked" : "empty";
-  const prState: BadgeState = pullRequestCount > 0 ? "linked" : "empty";
+  const linkedPullRequests = (pullRequests ?? []).filter(isLinkedPullRequest);
+  const showLinearLink = !!linearIssueUrl;
+  const showLinearAction = !showLinearLink && !!onRequestLinkLinear;
 
-  const prDetails = pullRequests ? mergedPullRequestState(pullRequests) : null;
-  const prLabel = prDetails
-    ? prDetails.label
-    : `${pullRequestCount} PR${pullRequestCount === 1 ? "" : "s"}`;
+  if (!showLinearLink && !showLinearAction && linkedPullRequests.length === 0) {
+    return null;
+  }
 
   return (
     <div
       className={cn("flex flex-wrap items-center gap-1.5", compact ? "text-[11px]" : "text-[12px]")}
     >
-      {linearState === "linked" && linearIssueUrl ? (
+      {showLinearLink ? (
         <ConnectionBadge
           compact={compact}
           href={linearIssueUrl}
           icon={<LinearGlyph />}
           label={linearIssueId ?? "Linear"}
+          quiet={quiet}
           tone="linked"
         />
-      ) : linearState === "linked" ? (
-        <ConnectionBadge
-          compact={compact}
-          icon={<LinearGlyph />}
-          label={linearIssueId ?? "Linear"}
-          tone="linked"
-        />
-      ) : onRequestLinkLinear ? (
+      ) : showLinearAction ? (
         <ConnectionBadge
           compact={compact}
           icon={<LinearGlyph />}
           label="Link Linear…"
           onClick={onRequestLinkLinear}
+          quiet={quiet}
           tone="empty"
         />
-      ) : (
-        <ConnectionBadge compact={compact} icon={<LinearGlyph />} label="Linear" tone="empty" />
-      )}
+      ) : null}
 
-      <ConnectionBadge
-        compact={compact}
-        icon={<GithubGlyph />}
-        label={prState === "linked" ? prLabel : "No PRs"}
-        tone={prState}
-      />
+      {linkedPullRequests.map((pullRequest, index) => (
+        <ConnectionBadge
+          key={pullRequest.id}
+          compact={compact}
+          href={pullRequest.pullRequestUrl}
+          icon={<GithubGlyph />}
+          label={pullRequestLabel(pullRequest, index, linkedPullRequests.length)}
+          quiet={quiet}
+          tone="linked"
+        />
+      ))}
     </div>
   );
 }
@@ -99,17 +105,28 @@ type ConnectionBadgeProps = {
   icon: ReactNode;
   label: string;
   onClick?: () => void;
+  quiet: boolean;
   tone: "empty" | "linked";
 };
 
-function ConnectionBadge({ compact, href, icon, label, onClick, tone }: ConnectionBadgeProps) {
+function ConnectionBadge({
+  compact,
+  href,
+  icon,
+  label,
+  onClick,
+  quiet,
+  tone,
+}: ConnectionBadgeProps) {
   const isInteractive = !!(href || onClick);
   const classes = cn(
-    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-medium transition-colors",
+    "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
     compact ? "h-5 text-[11px]" : "h-6 text-[12px]",
-    tone === "linked"
-      ? "border-border bg-surface text-foreground hover:bg-surface-muted"
-      : "border-dashed border-border bg-transparent text-muted hover:text-foreground",
+    quiet ? "text-muted hover:text-foreground" : "rounded-full border px-2.5 py-0.5",
+    !quiet &&
+      (tone === "linked"
+        ? "border-border bg-surface text-foreground hover:bg-surface-muted"
+        : "border-dashed border-border bg-transparent text-muted hover:text-foreground"),
     isInteractive && "cursor-pointer",
   );
 

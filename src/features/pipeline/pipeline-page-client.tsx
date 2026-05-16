@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { StatusChip } from "@/components/shared/status-chip";
-import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
-import { SessionConnections } from "@/features/sessions/components/session-connections";
+import type {
+  PipelineDashboardCard,
+  PipelineDashboardData,
+  PipelineDashboardPullRequest,
+} from "@/features/pipeline/data";
 import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
+import { SessionConnections } from "@/features/sessions/components/session-connections";
 import {
   formatSessionPhaseStatus,
   sessionPhaseStatusTone,
@@ -23,6 +25,12 @@ type PipelinePageClientProps = {
 };
 
 const OTHER_LANE = { name: "Other", slug: "__other__" };
+
+const phaseStatusTextClasses: Record<ReturnType<typeof sessionPhaseStatusTone>, string> = {
+  blocked: "text-danger",
+  planned: "text-muted",
+  ready: "text-accent",
+};
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -55,6 +63,33 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   }, [initialData.defaultPipelineStages]);
 
   useEffect(() => {
+    async function refreshSessionPullRequests(sessionId: string) {
+      const { data, error } = await supabase
+        .from("session_pull_requests")
+        .select("id, is_draft, pull_request_number, pull_request_state, pull_request_url")
+        .eq("workspace_id", initialData.workspace.id)
+        .eq("session_id", sessionId)
+        .not("pull_request_url", "is", null)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        return;
+      }
+
+      const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
+        id: row.id,
+        isDraft: row.is_draft,
+        pullRequestNumber: row.pull_request_number,
+        pullRequestState: row.pull_request_state,
+        pullRequestUrl: row.pull_request_url,
+        repositoryFullName: null,
+      }));
+
+      setCards((prev) =>
+        prev.map((card) => (card.id === sessionId ? { ...card, pullRequests } : card)),
+      );
+    }
+
     const channel = supabase
       .channel(`sessions:${initialData.workspace.id}`)
       .on(
@@ -103,6 +138,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
               number: row.number,
               phaseStatus: row.phase_status as SessionPhaseStatus,
               rejectionCount: row.rejection_count,
+              pullRequests: existing?.pullRequests ?? [],
               title: row.title,
               updatedAt: row.updated_at,
               workspaceId: row.workspace_id,
@@ -112,6 +148,23 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
             copy[idx] = next;
             return copy;
           });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `workspace_id=eq.${initialData.workspace.id}`,
+          schema: "public",
+          table: "session_pull_requests",
+        },
+        (payload) => {
+          const row =
+            payload.eventType === "DELETE"
+              ? (payload.old as { session_id?: string } | null)
+              : (payload.new as { session_id?: string } | null);
+          if (!row?.session_id) return;
+          void refreshSessionPullRequests(row.session_id);
         },
       )
       .subscribe();
@@ -154,105 +207,128 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   }, [cards, initialData.defaultPipelineStages]);
 
   return (
-    <div className="min-h-full">
-      <PageContainer className="pb-6">
-        <PageHeader
-          title="Pipeline"
-          description="Sessions move through these stages from product to monitor."
-        />
-        {showResumeSetup ? (
-          <section className="ui-panel flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h2 className="text-[14px] font-semibold text-foreground">Setup in progress</h2>
-              <p className="mt-1 text-[13px] leading-5 text-muted">
-                Finish workspace setup before starting the first session.
-              </p>
-            </div>
-            <Link
-              className="ui-button-primary shrink-0"
-              href={workspaceOnboardingPath(initialData.workspace.slug)}
-            >
-              Resume setup
-            </Link>
-          </section>
-        ) : null}
-      </PageContainer>
-      <div className="overflow-x-auto px-6 pb-12 sm:px-8">
-        <div className="flex min-w-max gap-4">
+    <div className="min-h-full bg-surface">
+      <header className="px-6 pb-10 pt-14 sm:px-8">
+        <div className="max-w-2xl space-y-2">
+          <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
+            Pipeline
+          </h1>
+          <p className="text-[14px] leading-6 text-muted">
+            Sessions move through these stages from product to monitor.
+          </p>
+          {showResumeSetup ? (
+            <section className="mt-5 flex flex-col gap-3 rounded-[8px] border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-[14px] font-semibold text-foreground">Setup in progress</h2>
+                <p className="mt-1 text-[13px] leading-5 text-muted">
+                  Finish workspace setup before starting the first session.
+                </p>
+              </div>
+              <Link
+                className="ui-button-primary shrink-0"
+                href={workspaceOnboardingPath(initialData.workspace.slug)}
+              >
+                Resume setup
+              </Link>
+            </section>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8">
+        <div className="flex min-w-max">
           {lanes.order.map((lane) => {
             const items = lanes.buckets.get(lane.slug) ?? [];
             return (
               <section
                 key={lane.slug}
-                className="flex min-h-[200px] w-[240px] shrink-0 flex-col rounded-[10px] border border-border bg-surface"
+                className="flex min-h-[calc(100vh-230px)] w-[260px] shrink-0 flex-col border-l border-border/70 px-3 first:border-l-0 first:pl-0 last:pr-0"
               >
-                <header className="flex items-baseline justify-between gap-2 border-b border-border px-3 py-2.5">
-                  <div className="min-w-0">
-                    <h2 className="text-[14px] font-semibold text-foreground">{lane.name}</h2>
-                    <p className="mt-0.5 text-[11px] leading-4 text-muted">{lane.description}</p>
+                <header className="pb-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h2 className="truncate text-[14px] font-semibold text-foreground">
+                      {lane.name}
+                    </h2>
+                    <span className="font-mono text-[11px] tabular-nums text-muted">
+                      {items.length}
+                    </span>
                   </div>
-                  <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-muted">
-                    {items.length}
-                  </span>
+                  <div className="min-w-0">
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted">
+                      {lane.description}
+                    </p>
+                  </div>
                 </header>
 
-                <div className="flex flex-1 flex-col gap-2 p-2">
+                <div className="flex flex-1 flex-col gap-2">
                   {items.length === 0 ? (
-                    <p className="px-2 py-6 text-center text-[12px] text-muted">No sessions.</p>
+                    <p className="py-8 text-[12px] text-muted">No sessions</p>
                   ) : null}
 
-                  {items.map((card) => (
-                    <article
-                      key={card.id}
-                      className={cn(
-                        "rounded-[6px] border border-border bg-background p-3 shadow-sm",
-                        card.phaseStatus === "rejected" && "border-danger/30",
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="text-[13px] font-medium leading-5 text-foreground">
-                          <Link
-                            href={workspaceSessionDetailPath(
-                              initialData.workspace.slug,
-                              card.number,
+                  {items.map((card) => {
+                    const pullRequests = card.pullRequests ?? [];
+
+                    return (
+                      <article
+                        key={card.id}
+                        className={cn(
+                          "rounded-[8px] border border-border/80 bg-surface p-3 transition-[border-color,box-shadow] duration-150 hover:border-border-strong hover:shadow-[var(--shadow-ambient)]",
+                          card.phaseStatus === "rejected" &&
+                            "border-danger/30 border-l-2 border-l-danger",
+                        )}
+                      >
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">
+                            <Link
+                              href={workspaceSessionDetailPath(
+                                initialData.workspace.slug,
+                                card.number,
+                              )}
+                              className="line-clamp-3 break-words rounded-[3px] hover:text-accent"
+                            >
+                              {card.title}
+                            </Link>
+                          </h3>
+                          <span
+                            className={cn(
+                              "mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4",
+                              phaseStatusTextClasses[sessionPhaseStatusTone(card.phaseStatus)],
                             )}
-                            className="hover:underline"
                           >
-                            {card.title}
-                          </Link>
-                        </h3>
-                        <StatusChip tone={sessionPhaseStatusTone(card.phaseStatus)}>
-                          {formatSessionPhaseStatus(card.phaseStatus)}
-                        </StatusChip>
-                      </div>
-
-                      <div className="mt-2">
-                        <SessionConnections
-                          compact
-                          linearIssueId={card.linearIssueId}
-                          linearIssueUrl={card.linearIssueUrl}
-                          pullRequestCount={0}
-                        />
-                      </div>
-
-                      <dl className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-                        {card.rejectionCount > 0 ? (
-                          <div className="flex items-center gap-1 text-danger">
-                            <dt className="sr-only">Rejections</dt>
-                            <dd>
-                              {card.rejectionCount} rejection
-                              {card.rejectionCount === 1 ? "" : "s"}
-                            </dd>
-                          </div>
-                        ) : null}
-
-                        <div className="flex items-center gap-1">
-                          <dt className="sr-only">Updated</dt>
-                          <dd>{relativeTime(card.updatedAt)}</dd>
+                            {formatSessionPhaseStatus(card.phaseStatus)}
+                          </span>
                         </div>
-                      </dl>
-                    </article>
-                  ))}
+
+                        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
+                          <SessionConnections
+                            compact
+                            quiet
+                            linearIssueId={card.linearIssueId}
+                            linearIssueUrl={card.linearIssueUrl}
+                            pullRequestCount={pullRequests.length}
+                            pullRequests={pullRequests}
+                          />
+
+                          <dl className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            {card.rejectionCount > 0 ? (
+                              <div className="flex items-center gap-1 text-danger">
+                                <dt className="sr-only">Rejections</dt>
+                                <dd>
+                                  {card.rejectionCount} rejection
+                                  {card.rejectionCount === 1 ? "" : "s"}
+                                </dd>
+                              </div>
+                            ) : null}
+
+                            <div className="flex items-center gap-1">
+                              <dt className="sr-only">Updated</dt>
+                              <dd>{relativeTime(card.updatedAt)}</dd>
+                            </div>
+                          </dl>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             );

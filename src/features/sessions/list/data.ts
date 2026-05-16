@@ -123,25 +123,41 @@ export async function loadSessionListPageData(
 
   const sessionIds = rows.map((row) => row.id);
 
-  const prCountBySession = new Map<string, number>();
+  const pullRequestsBySession = new Map<string, SessionSummary["pullRequests"]>();
   if (sessionIds.length > 0) {
     const { data: prRows, error: prError } = await context.supabase
       .from("session_pull_requests")
-      .select("session_id")
+      .select(
+        "id, session_id, branch_name, is_draft, pull_request_number, pull_request_state, pull_request_url, updated_at",
+      )
       .eq("workspace_id", context.workspace.id)
-      .in("session_id", sessionIds);
+      .in("session_id", sessionIds)
+      .order("created_at", { ascending: false });
     if (prError) {
       throw prError;
     }
-    for (const row of (prRows ?? []) as Array<{ session_id: string }>) {
-      prCountBySession.set(row.session_id, (prCountBySession.get(row.session_id) ?? 0) + 1);
+    for (const row of prRows ?? []) {
+      const list = pullRequestsBySession.get(row.session_id) ?? [];
+      list.push({
+        branchName: row.branch_name,
+        id: row.id,
+        isDraft: row.is_draft,
+        pullRequestNumber: row.pull_request_number,
+        pullRequestState: row.pull_request_state,
+        pullRequestUrl: row.pull_request_url,
+        repositoryFullName: null,
+        repositoryHtmlUrl: null,
+        updatedAt: row.updated_at,
+      });
+      pullRequestsBySession.set(row.session_id, list);
     }
   }
 
   const sessions = rows
     .map((row) => {
       const stage = stageMap.get(row.current_stage_id) ?? { name: "Unknown", slug: "unknown" };
-      return mapSessionRow(row, stage, prCountBySession.get(row.id) ?? 0);
+      const pullRequests = pullRequestsBySession.get(row.id) ?? [];
+      return mapSessionRow(row, stage, pullRequests.length, pullRequests);
     })
     .filter((session) => session.number > 0);
 
