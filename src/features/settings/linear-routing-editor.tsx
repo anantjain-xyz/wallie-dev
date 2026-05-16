@@ -90,11 +90,13 @@ export function LinearRoutingEditor({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-2">
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2">
         {LINEAR_ROUTE_KEYS.map((key) => (
-          <label className="space-y-2 text-sm font-semibold text-foreground" key={key}>
-            <span>{LINEAR_ROUTE_LABELS[key]}</span>
+          <label className="block space-y-1.5" key={key}>
+            <span className="text-[13px] font-medium text-foreground">
+              {LINEAR_ROUTE_LABELS[key]}
+            </span>
             <input
               className="ui-input"
               disabled={!canManage}
@@ -105,7 +107,7 @@ export function LinearRoutingEditor({
         ))}
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3">
         <StageSelect
           disabled={!canManage}
           label="Rework stage"
@@ -131,14 +133,14 @@ export function LinearRoutingEditor({
       </div>
 
       {canManage ? (
-        <div className="flex justify-end">
+        <div className="flex justify-end border-t border-border pt-4">
           <button
             className="ui-button-primary"
             disabled={saveRouting.isBusy || stages.length === 0}
             onClick={() => void saveRouting.run()}
             type="button"
           >
-            {saveRouting.isBusy ? "Saving…" : "Save Linear routing"}
+            {saveRouting.isBusy ? "Saving…" : "Save routing"}
           </button>
         </div>
       ) : null}
@@ -162,8 +164,8 @@ function StageSelect({
   value: string;
 }) {
   return (
-    <label className="space-y-2 text-sm font-semibold text-foreground">
-      <span>{label}</span>
+    <label className="block space-y-1.5">
+      <span className="text-[13px] font-medium text-foreground">{label}</span>
       <select
         className="ui-input"
         disabled={disabled}

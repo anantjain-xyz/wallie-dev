@@ -158,13 +158,14 @@
   }
 
   .ui-button-primary {
-    border-color: var(--foreground);
-    background: var(--foreground);
+    border-color: var(--accent);
+    background: var(--accent);
     color: var(--accent-foreground);
   }
 
   .ui-button-primary:hover {
-    background: color-mix(in srgb, var(--foreground) 90%, white);
+    background: color-mix(in srgb, var(--accent) 88%, white);
+    border-color: color-mix(in srgb, var(--accent) 88%, white);
   }
 
   .ui-button-danger {
@@ -193,6 +194,63 @@
 
   .ui-pill {
     @apply inline-flex items-center rounded-full border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-medium text-foreground;
+  }
+
+  .ui-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium;
+  }
+
+  .ui-badge-success {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+
+  .ui-badge-warning {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .ui-badge-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .ui-badge-neutral {
+    background: var(--surface-muted);
+    color: var(--muted);
+  }
+
+  .ui-badge-accent {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .ui-badge-dot {
+    @apply inline-block h-1.5 w-1.5 rounded-full;
+    background: currentColor;
+  }
+
+  .settings-anchor {
+    @apply flex items-center justify-between gap-2 rounded-[6px] px-3 py-1.5 text-[13px] font-medium text-muted transition-colors duration-100;
+  }
+
+  .settings-anchor:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--foreground);
+  }
+
+  .settings-anchor-active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .settings-anchor-active:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .settings-section-header {
+    @apply flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 border-b border-border pb-3;
   }
 
   .ui-tab {

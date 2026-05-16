@@ -19,6 +19,7 @@ import {
   dateFormatter,
   interactiveLinkClass,
   Section,
+  StatusBadge,
 } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 
@@ -69,6 +70,23 @@ function onboardingLabel(status: RepositoryOnboardingState["status"]): string {
       return "Error";
     default:
       return "Not set up";
+  }
+}
+
+function onboardingBadgeTone(
+  status: RepositoryOnboardingState["status"],
+): "success" | "warning" | "danger" | "neutral" | "accent" {
+  switch (status) {
+    case "ready":
+      return "success";
+    case "pr_open":
+      return "accent";
+    case "conflict":
+      return "warning";
+    case "error":
+      return "danger";
+    default:
+      return "neutral";
   }
 }
 
@@ -139,9 +157,24 @@ export function GitHubInstallSection({
           : "Wallie setup PR created.",
   });
 
+  const statusBadge = githubInstallation ? (
+    githubInstallation.suspended ? (
+      <StatusBadge tone="warning">Suspended</StatusBadge>
+    ) : (
+      <StatusBadge tone="success">Connected</StatusBadge>
+    )
+  ) : (
+    <StatusBadge tone="neutral">Not connected</StatusBadge>
+  );
+
   return (
-    <Section title="GitHub">
-      <div className="space-y-4">
+    <Section
+      anchorId="github"
+      statusBadge={statusBadge}
+      tagline="Install the workspace GitHub App so PR status appears on each session and Wallie can open PRs from agent runs."
+      title="GitHub"
+    >
+      <div className="space-y-6">
         <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
         <ConfigState
           missingKeys={github.missingWebhookKeys.filter(
@@ -151,34 +184,29 @@ export function GitHubInstallSection({
         />
 
         {githubInstallation ? (
-          <div className="ui-subpanel space-y-4 p-4">
+          <div className="space-y-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
-                <p className="text-sm font-semibold text-foreground">
+                <p className="text-[14px] font-medium text-foreground">
                   Connected to{" "}
                   {githubInstallation.targetType.charAt(0).toUpperCase() +
                     githubInstallation.targetType.slice(1).toLowerCase()}{" "}
                   <span className="font-mono">{githubInstallation.targetName}</span>
                 </p>
-                <p className="text-sm text-muted">
+                <p className="text-[12px] leading-5 text-muted">
                   Installation #{githubInstallation.installationId} · last synced{" "}
                   {dateFormatter.format(new Date(githubInstallation.updatedAt))}
                 </p>
-                {githubInstallation.suspended ? (
-                  <p className="text-sm font-semibold text-amber-950">
-                    GitHub marked this installation as suspended.
-                  </p>
-                ) : null}
               </div>
 
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-2">
                 <button
                   className="ui-button"
                   disabled={!canManage || refreshRepositories.isBusy}
                   onClick={() => void refreshRepositories.run()}
                   type="button"
                 >
-                  {refreshRepositories.isBusy ? "Refreshing…" : "Refresh Repositories"}
+                  {refreshRepositories.isBusy ? "Refreshing…" : "Refresh repositories"}
                 </button>
                 <Link
                   className="ui-button"
@@ -191,33 +219,50 @@ export function GitHubInstallSection({
               </div>
             </div>
 
-            <div className="space-y-3">
-              {repositories.length === 0 ? (
-                <div className="ui-muted-panel p-4 text-sm leading-6 text-muted">
-                  No repositories are synced yet.
-                </div>
-              ) : (
-                repositories.map((repository) => (
-                  <div className="ui-muted-panel space-y-3 p-4" key={repository.id}>
+            {repositories.length === 0 ? (
+              <p className="text-[13px] leading-6 text-muted">No repositories are synced yet.</p>
+            ) : (
+              <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+                {repositories.map((repository) => (
+                  <li className="flex flex-col gap-3 px-5 py-4" key={repository.id}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-2">
-                        <a
-                          className={`text-sm ${interactiveLinkClass}`}
-                          href={repository.htmlUrl}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          {repository.fullName}
-                        </a>
-                        <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.16em] text-muted">
-                          <span>{repository.defaultProgrammingLanguage ?? "language unknown"}</span>
-                          <span>{repository.defaultBranch ?? "no default branch"}</span>
-                          {repository.isPrivate ? <span>private</span> : <span>public</span>}
-                          {repository.isArchived ? <span>archived</span> : null}
-                          <span>{onboardingLabel(repository.onboarding.status)}</span>
+                      <div className="min-w-0 space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <a
+                            className={`text-[14px] ${interactiveLinkClass}`}
+                            href={repository.htmlUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {repository.fullName}
+                          </a>
+                          <StatusBadge tone={onboardingBadgeTone(repository.onboarding.status)}>
+                            {onboardingLabel(repository.onboarding.status)}
+                          </StatusBadge>
                         </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {repository.defaultProgrammingLanguage ? (
+                            <span className="ui-pill">
+                              {repository.defaultProgrammingLanguage}
+                            </span>
+                          ) : null}
+                          {repository.defaultBranch ? (
+                            <span className="ui-pill font-mono">{repository.defaultBranch}</span>
+                          ) : null}
+                          <span className="ui-pill">
+                            {repository.isPrivate ? "Private" : "Public"}
+                          </span>
+                          {repository.isArchived ? (
+                            <span className="ui-pill">Archived</span>
+                          ) : null}
+                        </div>
+                        {repository.description ? (
+                          <p className="text-[13px] leading-5 text-muted">
+                            {repository.description}
+                          </p>
+                        ) : null}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
                         {repository.onboarding.setupPrUrl ? (
                           <a
                             className="ui-button"
@@ -225,7 +270,7 @@ export function GitHubInstallSection({
                             rel="noreferrer"
                             target="_blank"
                           >
-                            View Setup PR
+                            View setup PR
                           </a>
                         ) : null}
                         <button
@@ -243,11 +288,8 @@ export function GitHubInstallSection({
                         </button>
                       </div>
                     </div>
-                    {repository.description ? (
-                      <p className="text-sm leading-6 text-muted">{repository.description}</p>
-                    ) : null}
                     {repository.onboarding.status === "conflict" ? (
-                      <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
+                      <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] leading-5 text-warning">
                         <p className="font-semibold">Existing skill files need review.</p>
                         <ul className="mt-1 space-y-1">
                           {repository.onboarding.conflictReport.map((conflict) => (
@@ -259,34 +301,28 @@ export function GitHubInstallSection({
                       </div>
                     ) : null}
                     {repository.onboarding.lastError ? (
-                      <p className="text-xs leading-5 text-danger">
+                      <p className="text-[12px] leading-5 text-danger">
                         {repository.onboarding.lastError}
                       </p>
                     ) : null}
-                  </div>
-                ))
-              )}
-            </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         ) : (
-          <div className="ui-subpanel space-y-4 p-4">
-            <div className="space-y-2">
-              <p className="text-sm leading-7 text-foreground">
-                Install the workspace GitHub App so PR status appears on each issue automatically
-                and Wallie can open PRs from agent runs.
-              </p>
-              <p className="text-xs leading-6 text-muted">
-                Workspace admins only. The app requests read access to repositories and metadata,
-                plus write access to pull requests on the repos you select during install.
-              </p>
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <p className="max-w-2xl text-[13px] leading-6 text-muted">
+              The app requests read access to repositories and metadata, plus write access to pull
+              requests on the repos you select during install.
+            </p>
             <button
               className="ui-button-primary"
               disabled={!canManage || !hasGitHubAppConfig || launchInstall.isBusy}
               onClick={() => void launchInstall.run()}
               type="button"
             >
-              {launchInstall.isBusy ? "Preparing Install…" : "Install GitHub App"}
+              {launchInstall.isBusy ? "Preparing install…" : "Install GitHub App"}
             </button>
           </div>
         )}

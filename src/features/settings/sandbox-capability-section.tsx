@@ -49,10 +49,10 @@ export function SandboxCapabilitySection({
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3">
-        <label className="min-w-64 space-y-2 text-sm font-semibold text-foreground">
-          <span>Repository</span>
+        <label className="min-w-64 flex-1 space-y-1.5">
+          <span className="text-[13px] font-medium text-foreground">Repository</span>
           <select
             className="ui-input"
             disabled={!canManage || selectableRepositories.length === 0}
@@ -77,20 +77,31 @@ export function SandboxCapabilitySection({
       </div>
 
       {check ? (
-        <div className="ui-subpanel space-y-3 p-4">
+        <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-foreground">
-              Latest check: <span className="font-mono">{check.status}</span>
+            <p className="text-[13px] font-medium text-foreground">
+              Latest check:{" "}
+              <span
+                className={
+                  check.status === "success"
+                    ? "text-success"
+                    : check.status === "error"
+                      ? "text-danger"
+                      : "text-muted"
+                }
+              >
+                {check.status}
+              </span>
             </p>
-            <p className="text-xs text-muted">{new Date(check.checkedAt).toLocaleString()}</p>
+            <p className="text-[12px] text-muted">{new Date(check.checkedAt).toLocaleString()}</p>
           </div>
           {check.errorText ? (
-            <p className="text-xs leading-5 text-danger">{check.errorText}</p>
+            <p className="text-[12px] leading-5 text-danger">{check.errorText}</p>
           ) : null}
           <div className="grid gap-2 md:grid-cols-2">
             {Object.entries(check.capabilities).map(([name, result]) => (
               <div
-                className={`rounded-[6px] border px-3 py-2 text-xs leading-5 ${
+                className={`rounded-[6px] border px-3 py-2 text-[12px] leading-5 ${
                   result?.ok
                     ? "border-success/20 bg-success-soft text-success"
                     : "border-danger/20 bg-danger-soft text-danger"
@@ -104,7 +115,7 @@ export function SandboxCapabilitySection({
           </div>
         </div>
       ) : (
-        <p className="text-sm leading-6 text-muted">No sandbox capability check has run yet.</p>
+        <p className="text-[13px] leading-6 text-muted">No sandbox capability check has run yet.</p>
       )}
     </div>
   );
