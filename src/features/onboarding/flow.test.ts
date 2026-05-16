@@ -60,6 +60,24 @@ describe("onboarding flow helpers", () => {
     ).toEqual({
       completedSteps: ["repository"],
       currentStep: "pipeline",
+      skippedSteps: [],
+      status: "in_progress",
+    });
+  });
+
+  it("clears the skipped mark when a previously skipped step is completed", () => {
+    expect(
+      buildOnboardingContinuePatch(
+        onboardingState({
+          currentStep: "linear",
+          skippedSteps: ["linear"],
+          status: "in_progress",
+        }),
+      ),
+    ).toEqual({
+      completedSteps: ["linear"],
+      currentStep: "runtime",
+      skippedSteps: [],
       status: "in_progress",
     });
   });
@@ -76,6 +94,7 @@ describe("onboarding flow helpers", () => {
     ).toEqual({
       completedSteps: ["github", "repository", "pipeline", "linear", "runtime", "verify"],
       currentStep: "verify",
+      skippedSteps: [],
       status: "completed",
     });
   });
@@ -83,6 +102,24 @@ describe("onboarding flow helpers", () => {
   it("only skips locally allowlisted placeholder steps", () => {
     expect(buildOnboardingSkipPatch(onboardingState({ currentStep: "pipeline" }))).toBeNull();
     expect(buildOnboardingSkipPatch(onboardingState({ currentStep: "linear" }))).toEqual({
+      completedSteps: [],
+      currentStep: "runtime",
+      skippedSteps: ["linear"],
+      status: "in_progress",
+    });
+  });
+
+  it("clears the completed mark when a completed placeholder step is skipped again", () => {
+    expect(
+      buildOnboardingSkipPatch(
+        onboardingState({
+          completedSteps: ["github", "repository", "pipeline", "linear"],
+          currentStep: "linear",
+          status: "in_progress",
+        }),
+      ),
+    ).toEqual({
+      completedSteps: ["github", "repository", "pipeline"],
       currentStep: "runtime",
       skippedSteps: ["linear"],
       status: "in_progress",

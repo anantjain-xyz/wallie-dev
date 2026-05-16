@@ -95,6 +95,13 @@ function appendStep(
   return uniqueSteps([...steps, step]);
 }
 
+function removeStep(
+  steps: WorkspaceOnboardingStep[],
+  stepToRemove: WorkspaceOnboardingStep,
+): WorkspaceOnboardingStep[] {
+  return steps.filter((step) => step !== stepToRemove);
+}
+
 export function getOnboardingStepRailItems(
   onboarding: WorkspaceOnboardingState,
 ): OnboardingStepRailItem[] {
@@ -132,12 +139,14 @@ export function buildOnboardingContinuePatch(
 ): WorkspaceOnboardingUpdatePayload {
   const currentIndex = onboardingStepIndex(onboarding.currentStep);
   const completedSteps = appendStep(onboarding.completedSteps, onboarding.currentStep);
+  const skippedSteps = removeStep(onboarding.skippedSteps, onboarding.currentStep);
   const nextStep = WORKSPACE_ONBOARDING_STEPS[currentIndex + 1];
 
   if (!nextStep) {
     return {
       completedSteps,
       currentStep: onboarding.currentStep,
+      skippedSteps,
       status: "completed",
     };
   }
@@ -145,6 +154,7 @@ export function buildOnboardingContinuePatch(
   return {
     completedSteps,
     currentStep: nextStep,
+    skippedSteps,
     status: "in_progress",
   };
 }
@@ -164,6 +174,7 @@ export function buildOnboardingSkipPatch(
   }
 
   return {
+    completedSteps: removeStep(onboarding.completedSteps, onboarding.currentStep),
     currentStep: nextStep,
     skippedSteps: appendStep(onboarding.skippedSteps, onboarding.currentStep),
     status: "in_progress",
