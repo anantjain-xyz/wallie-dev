@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   loginPath,
   onboardingWorkspacePath,
-  signupPath,
   workspaceBasePath,
   workspaceLabel,
   workspaceSessionDetailPath,
@@ -43,7 +42,6 @@ describe("workspace route helpers", () => {
 
   it("builds auth and onboarding paths", () => {
     expect(loginPath("/w/northwind-labs")).toBe("/login?next=%2Fw%2Fnorthwind-labs");
-    expect(signupPath("/onboarding/workspace")).toBe("/signup?next=%2Fonboarding%2Fworkspace");
     expect(onboardingWorkspacePath()).toBe("/onboarding/workspace");
   });
 });
