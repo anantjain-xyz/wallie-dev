@@ -16,7 +16,6 @@ const authErrorMessages = {
 const authStatusMessages = {
   check_email:
     "Check your inbox for a secure sign-in link. It will continue into your workspace flow.",
-  signed_out: "Your session has been closed.",
 } as const;
 
 type AuthEntryPanelProps = {
