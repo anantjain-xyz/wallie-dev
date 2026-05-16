@@ -1,6 +1,10 @@
 import type { Tables } from "@/lib/supabase/database.types";
 
-import type { SessionPhaseStatus, SessionSummary } from "@/features/sessions/types";
+import type {
+  SessionPhaseStatus,
+  SessionPullRequest,
+  SessionSummary,
+} from "@/features/sessions/types";
 
 // Mappers from `sessions` table rows to the domain types the UI consumes.
 // The session row no longer carries phase/name/slug — those live on
@@ -36,6 +40,7 @@ export function mapSessionRow(
   row: SessionRow,
   stage: CurrentStageInfo,
   pullRequestCount = 0,
+  pullRequests: SessionPullRequest[] = [],
 ): SessionSummary {
   return {
     archivedAt: row.archived_at,
@@ -52,6 +57,7 @@ export function mapSessionRow(
     pipelineId: row.pipeline_id,
     promptMd: row.prompt_md,
     pullRequestCount,
+    pullRequests,
     rejectionCount: row.rejection_count,
     title: row.title,
     updatedAt: row.updated_at,

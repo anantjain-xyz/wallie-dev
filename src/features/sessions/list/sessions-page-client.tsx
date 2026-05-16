@@ -228,6 +228,7 @@ function SessionRow({
           linearIssueId={session.linearIssueId}
           linearIssueUrl={session.linearIssueUrl}
           pullRequestCount={session.pullRequestCount}
+          pullRequests={session.pullRequests}
         />
       </div>
     </li>

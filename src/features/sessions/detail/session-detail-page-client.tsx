@@ -87,6 +87,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const [isPending, startTransition] = useTransition();
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
+  const hasConnectionLinks =
+    !!session.linearIssueUrl ||
+    session.pullRequests.some((pullRequest) => pullRequest.pullRequestUrl);
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
 
@@ -159,13 +162,17 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
       <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px] text-muted">
         <span className="font-mono">#{session.number}</span>
-        <span aria-hidden="true">·</span>
-        <SessionConnections
-          linearIssueId={session.linearIssueId}
-          linearIssueUrl={session.linearIssueUrl}
-          pullRequestCount={session.pullRequestCount}
-          pullRequests={session.pullRequests}
-        />
+        {hasConnectionLinks ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <SessionConnections
+              linearIssueId={session.linearIssueId}
+              linearIssueUrl={session.linearIssueUrl}
+              pullRequestCount={session.pullRequestCount}
+              pullRequests={session.pullRequests}
+            />
+          </>
+        ) : null}
       </div>
 
       <div className="mb-6 rounded-[10px] border border-border bg-surface px-5 py-4">

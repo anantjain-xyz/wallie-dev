@@ -71,6 +71,7 @@ export type SessionSummary = {
   pipelineId: string;
   promptMd: string;
   pullRequestCount: number;
+  pullRequests: SessionPullRequest[];
   rejectionCount: number;
   title: string;
   updatedAt: string;
