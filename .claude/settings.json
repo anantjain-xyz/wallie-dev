@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mobile-mcp__mobile_list_elements_on_screen",
+      "mcp__mobile-mcp__mobile_take_screenshot",
+      "mcp__linear-server__get_issue",
+      "mcp__linear-server__list_issue_statuses",
+      "mcp__linear-server__list_comments",
+      "Bash(npx eslint:*)"
+    ]
+  }
+}
