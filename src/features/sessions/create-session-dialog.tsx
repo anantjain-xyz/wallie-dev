@@ -95,6 +95,10 @@ function CreateSessionDialogBody({
         title: title.trim() || null,
         workspaceId,
       });
+      // The dialog now lives in the workspace shell (stays mounted across
+      // route changes), so we must explicitly close it on success — the
+      // previous page-scoped mounting closed it implicitly on navigation.
+      onClose();
       router.push(workspaceSessionDetailPath(workspaceSlug, result.number));
       router.refresh();
     } catch (error) {

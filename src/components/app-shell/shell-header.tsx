@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { LogoutIcon, PlusIcon } from "@/components/shared/icons";
@@ -32,8 +32,26 @@ function isActive(pathname: string, workspaceSlug: string, item: WorkspaceNavIte
 
 export function ShellHeader({ navItems, viewerEmail, workspace }: ShellHeaderProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const signOutLabel = viewerEmail ? `Sign out ${viewerEmail}` : "Sign out";
-  const [createOpen, setCreateOpen] = useState(false);
+
+  // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
+  // that auto-opens the dialog regardless of which page in the workspace the
+  // user lands on.
+  const createFromUrl = searchParams?.get("create") === "1";
+  const [userCreateOpen, setUserCreateOpen] = useState(false);
+  const createOpen = userCreateOpen || createFromUrl;
+
+  function handleCreateClose() {
+    setUserCreateOpen(false);
+    if (createFromUrl) {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      params.delete("create");
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : (pathname ?? "/"));
+    }
+  }
 
   const pipelineHref = workspaceBasePath(workspace.slug);
 
@@ -68,7 +86,7 @@ export function ShellHeader({ navItems, viewerEmail, workspace }: ShellHeaderPro
         <button
           type="button"
           className="ui-button-primary inline-flex items-center gap-2"
-          onClick={() => setCreateOpen(true)}
+          onClick={() => setUserCreateOpen(true)}
         >
           <PlusIcon className="h-3.5 w-3.5" />
           New session
@@ -82,7 +100,7 @@ export function ShellHeader({ navItems, viewerEmail, workspace }: ShellHeaderPro
 
       <CreateSessionDialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={handleCreateClose}
         workspaceId={workspace.id}
         workspaceSlug={workspace.slug}
       />
