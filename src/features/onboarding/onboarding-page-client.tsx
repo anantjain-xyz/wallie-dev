@@ -59,19 +59,19 @@ const stepStateLabels: Record<OnboardingStepDisplayState, string> = {
 };
 
 const badgeToneClasses: Record<HealthTone, string> = {
-  accent: "ui-badge-accent",
+  accent: "ui-badge-neutral",
   danger: "ui-badge-danger",
   neutral: "ui-badge-neutral",
-  success: "ui-badge-success",
-  warning: "ui-badge-warning",
+  success: "ui-badge-neutral",
+  warning: "ui-badge-neutral",
 };
 
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
-  active: "border-accent/30 bg-accent-soft text-accent",
+  active: "border-border-strong bg-background text-foreground shadow-sm",
   available: "border-border bg-surface text-foreground hover:bg-surface-strong",
   blocked: "border-border bg-surface-muted text-muted opacity-70",
-  completed: "border-success/20 bg-success-soft text-success",
-  skipped: "border-warning/20 bg-warning-soft text-warning",
+  completed: "border-border bg-surface text-muted hover:bg-surface-strong",
+  skipped: "border-border bg-surface text-muted hover:bg-surface-strong",
 };
 
 function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
