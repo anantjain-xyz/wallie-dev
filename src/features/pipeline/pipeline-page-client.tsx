@@ -4,10 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { StatusChip } from "@/components/shared/status-chip";
-import { PlusIcon } from "@/components/shared/icons";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
-import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
 import {
   formatSessionPhaseStatus,
   sessionPhaseStatusTone,
@@ -39,7 +37,6 @@ function relativeTime(iso: string): string {
 
 export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   const [cards, setCards] = useState<PipelineDashboardCard[]>(initialData.cards);
-  const [createOpen, setCreateOpen] = useState(false);
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
   // Index of stage_id → slug, built once from the default-pipeline payload.
@@ -154,29 +151,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
   return (
     <main className="flex min-h-screen flex-col bg-background">
-      <header className="border-b border-border px-6 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">Pipeline</p>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
-              {initialData.workspace.name}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-5 text-muted">
-              Stages, prompts, and approvers are configured in workspace settings. Approve or
-              request changes from the session detail page to advance a card.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="ui-button-primary inline-flex items-center gap-2"
-            onClick={() => setCreateOpen(true)}
-          >
-            <PlusIcon className="h-3.5 w-3.5" />
-            New session
-          </button>
-        </div>
-      </header>
-
       <div className="flex-1 overflow-x-auto px-6 py-6">
         <div className="flex gap-4">
           {lanes.order.map((lane) => {
@@ -259,13 +233,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
           })}
         </div>
       </div>
-
-      <CreateSessionDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        workspaceId={initialData.workspace.id}
-        workspaceSlug={initialData.workspace.slug}
-      />
     </main>
   );
 }
