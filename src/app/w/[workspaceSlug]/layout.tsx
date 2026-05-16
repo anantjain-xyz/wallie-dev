@@ -1,16 +1,6 @@
 import type { ReactNode } from "react";
-import { notFound, redirect } from "next/navigation";
 
-import { AppShell } from "@/components/app-shell/app-shell";
-import {
-  ensureProfileForUser,
-  getWorkspaceBySlugForUser,
-  hasAnyWorkspaceForUser,
-  workspaceLoginRedirectPath,
-} from "@/lib/auth";
-import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 
 type WorkspaceLayoutProps = {
   children: ReactNode;
@@ -21,28 +11,8 @@ type WorkspaceLayoutProps = {
 
 export default async function WorkspaceLayout({ children, params }: WorkspaceLayoutProps) {
   const { workspaceSlug } = await params;
-  const supabase = await createSupabaseServerClient();
-  const user = await getSupabaseUserOrNull(supabase);
 
-  if (!user) {
-    redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));
-  }
+  await loadWorkspaceLayoutContext(workspaceSlug);
 
-  await ensureProfileForUser(supabase, user);
-
-  const workspace = await getWorkspaceBySlugForUser(supabase, workspaceSlug);
-
-  if (!workspace) {
-    if (!(await hasAnyWorkspaceForUser(supabase))) {
-      redirect(onboardingWorkspacePath());
-    }
-
-    notFound();
-  }
-
-  return (
-    <AppShell viewerEmail={user.email ?? null} workspace={workspace}>
-      {children}
-    </AppShell>
-  );
+  return children;
 }

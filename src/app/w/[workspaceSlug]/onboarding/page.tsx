@@ -1,5 +1,9 @@
-import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { workspaceLabel } from "@/lib/routes";
+import { notFound, redirect } from "next/navigation";
+
+import { loadWorkspaceOnboardingData } from "@/features/onboarding/data";
+import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
+import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
+import { loginPath } from "@/lib/routes";
 
 type WorkspaceOnboardingPageProps = {
   params: Promise<{
@@ -9,20 +13,16 @@ type WorkspaceOnboardingPageProps = {
 
 export default async function WorkspaceOnboardingPage({ params }: WorkspaceOnboardingPageProps) {
   const { workspaceSlug } = await params;
+  const { workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
+  const result = await loadWorkspaceOnboardingData(workspace.id);
 
-  return (
-    <PageContainer>
-      <PageHeader
-        title="Workspace setup"
-        description={`${workspaceLabel(workspaceSlug)} onboarding state is ready for setup checks.`}
-      />
-      <section className="rounded-[8px] border border-border bg-background p-6 shadow-sm">
-        <h2 className="text-[16px] font-semibold text-foreground">Setup status</h2>
-        <p className="mt-2 max-w-2xl text-[13px] leading-5 text-muted">
-          The workspace onboarding route is available. The full guided setup flow will build on the
-          API contracts added in this change.
-        </p>
-      </section>
-    </PageContainer>
-  );
+  if (!result.ok) {
+    if (result.status === 401) {
+      redirect(loginPath(`/w/${workspaceSlug}/onboarding`));
+    }
+
+    notFound();
+  }
+
+  return <OnboardingPageClient initialData={result.data} />;
 }

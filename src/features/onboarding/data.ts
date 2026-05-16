@@ -292,18 +292,7 @@ export async function updateWorkspaceOnboardingData(
     };
   }
 
-  const updatePayload: TablesUpdate<"workspace_onboarding"> = {};
-
-  if (payload.status !== undefined) {
-    updatePayload.status = payload.status;
-    // Completion timestamps are reserved for the later completion route.
-    if (payload.status === "dismissed") {
-      updatePayload.dismissed_at = new Date().toISOString();
-    }
-  }
-  if (payload.currentStep !== undefined) updatePayload.current_step = payload.currentStep;
-  if (payload.completedSteps !== undefined) updatePayload.completed_steps = payload.completedSteps;
-  if (payload.skippedSteps !== undefined) updatePayload.skipped_steps = payload.skippedSteps;
+  const updatePayload = buildWorkspaceOnboardingUpdatePayload(payload);
 
   const { data, error } = await access.context.supabase
     .from("workspace_onboarding")
@@ -318,4 +307,28 @@ export async function updateWorkspaceOnboardingData(
     data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
     ok: true,
   };
+}
+
+export function buildWorkspaceOnboardingUpdatePayload(
+  payload: WorkspaceOnboardingUpdatePayload,
+  now = new Date(),
+): TablesUpdate<"workspace_onboarding"> {
+  const updatePayload: TablesUpdate<"workspace_onboarding"> = {};
+
+  if (payload.status !== undefined) {
+    updatePayload.status = payload.status;
+    if (payload.status === "dismissed") {
+      updatePayload.dismissed_at = now.toISOString();
+    } else if (payload.status === "completed") {
+      updatePayload.completed_at = now.toISOString();
+      updatePayload.dismissed_at = null;
+    } else if (payload.status === "in_progress") {
+      updatePayload.dismissed_at = null;
+    }
+  }
+  if (payload.currentStep !== undefined) updatePayload.current_step = payload.currentStep;
+  if (payload.completedSteps !== undefined) updatePayload.completed_steps = payload.completedSteps;
+  if (payload.skippedSteps !== undefined) updatePayload.skipped_steps = payload.skippedSteps;
+
+  return updatePayload;
 }

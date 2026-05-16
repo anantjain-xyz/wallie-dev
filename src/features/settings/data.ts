@@ -3,9 +3,14 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
+import type { OnboardingResumeState } from "@/features/onboarding/flow";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
+import {
+  workspaceOnboardingStatusSchema,
+  workspaceOnboardingStepSchema,
+} from "@/lib/onboarding/contracts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
@@ -78,6 +83,7 @@ export type SettingsPageData = {
   };
   latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
   linearRouting: LinearRoutingConfig;
+  onboarding: OnboardingResumeState | null;
   workspace: {
     avatarPath: string | null;
     avatarUrl: string | null;
@@ -93,6 +99,17 @@ export type SettingsPageData = {
     role: "owner" | "admin" | "member" | "agent";
   }>;
 };
+
+function mapOnboardingResumeState(
+  row: { current_step: string; status: string } | null,
+): OnboardingResumeState | null {
+  if (!row) return null;
+
+  return {
+    currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
+    status: workspaceOnboardingStatusSchema.parse(row.status),
+  };
+}
 
 function mapRepositoryOnboardingState(
   row: Record<string, unknown> | undefined,
@@ -212,6 +229,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
   const [
     linearRouting,
     { data: onboardingRows, error: onboardingError },
+    { data: workspaceOnboardingRow, error: workspaceOnboardingError },
     { data: capabilityRows, error: capabilityError },
   ] = await Promise.all([
     loadLinearRoutingConfig(admin, workspace.id),
@@ -221,6 +239,11 @@ export async function loadSettingsPageData(workspaceSlug: string) {
         "github_repository_id, status, setup_branch_name, setup_pr_number, setup_pr_url, installed_skill_version, installed_skill_hash, conflict_report, last_error, updated_at",
       )
       .eq("workspace_id", workspace.id),
+    supabase
+      .from("workspace_onboarding")
+      .select("current_step, status")
+      .eq("workspace_id", workspace.id)
+      .maybeSingle(),
     looseAdmin
       .from("sandbox_capability_checks")
       .select("id, github_repository_id, status, capabilities, error_text, checked_at")
@@ -235,6 +258,10 @@ export async function loadSettingsPageData(workspaceSlug: string) {
 
   if (capabilityError) {
     throw capabilityError;
+  }
+
+  if (workspaceOnboardingError) {
+    throw workspaceOnboardingError;
   }
 
   const onboardingIndex = new Map(
@@ -386,6 +413,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     },
     latestSandboxCapabilityCheck,
     linearRouting,
+    onboarding: mapOnboardingResumeState(workspaceOnboardingRow),
     workspace: {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),

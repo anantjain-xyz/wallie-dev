@@ -2,7 +2,12 @@ import "server-only";
 
 import { notFound, redirect } from "next/navigation";
 
+import type { OnboardingResumeState } from "@/features/onboarding/flow";
 import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/auth";
+import {
+  workspaceOnboardingStatusSchema,
+  workspaceOnboardingStepSchema,
+} from "@/lib/onboarding/contracts";
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -41,8 +46,20 @@ export type PipelineDashboardCard = {
 export type PipelineDashboardData = {
   cards: PipelineDashboardCard[];
   defaultPipelineStages: PipelineStage[];
+  onboarding: OnboardingResumeState | null;
   workspace: { id: string; name: string; slug: string };
 };
+
+function mapOnboardingResumeState(
+  row: { current_step: string; status: string } | null,
+): OnboardingResumeState | null {
+  if (!row) return null;
+
+  return {
+    currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
+    status: workspaceOnboardingStatusSchema.parse(row.status),
+  };
+}
 
 export async function loadPipelineDashboardData(
   workspaceSlug: string,
@@ -58,6 +75,13 @@ export async function loadPipelineDashboardData(
   if (!workspace) {
     notFound();
   }
+
+  const { data: onboardingRow, error: onboardingError } = await supabase
+    .from("workspace_onboarding")
+    .select("current_step, status")
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (onboardingError) throw onboardingError;
 
   // Pull the default pipeline so the dashboard knows which lanes to render.
   // Sessions whose current stage isn't in the default pipeline (e.g. the
@@ -181,6 +205,7 @@ export async function loadPipelineDashboardData(
   return {
     cards,
     defaultPipelineStages,
+    onboarding: mapOnboardingResumeState(onboardingRow),
     workspace,
   };
 }
