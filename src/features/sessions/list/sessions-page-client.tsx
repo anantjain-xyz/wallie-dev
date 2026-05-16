@@ -180,7 +180,6 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
           </ul>
         )}
       </div>
-
     </main>
   );
 }
