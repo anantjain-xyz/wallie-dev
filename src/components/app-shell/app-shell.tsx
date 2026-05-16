@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 
 import { ShellHeader } from "@/components/app-shell/shell-header";
-import { ShellSidebar } from "@/components/app-shell/shell-sidebar";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { getWorkspaceNavItems } from "@/lib/routes";
 
@@ -16,16 +15,11 @@ export function AppShell({ children, viewerEmail, workspace }: AppShellProps) {
 
   return (
     <div className="h-screen overflow-hidden bg-background">
-      <div className="flex h-full w-full">
-        <ShellSidebar navItems={navItems} viewerEmail={viewerEmail} workspace={workspace} />
-        <div className="flex min-w-0 flex-1 flex-col bg-surface">
-          <div className="md:hidden">
-            <ShellHeader viewerEmail={viewerEmail} workspace={workspace} />
-          </div>
-          <main id="main-content" className="flex-1 overflow-y-auto">
-            {children}
-          </main>
-        </div>
+      <div className="flex h-full min-w-0 flex-col bg-surface">
+        <ShellHeader navItems={navItems} viewerEmail={viewerEmail} workspace={workspace} />
+        <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
+          {children}
+        </main>
       </div>
     </div>
   );
