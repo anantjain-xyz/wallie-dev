@@ -26,7 +26,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   return (
     <SplashShell>
-      <AuthEntryPanel errorCode={errorCode} mode="login" next={next} statusCode={statusCode} />
+      <AuthEntryPanel errorCode={errorCode} next={next} statusCode={statusCode} />
     </SplashShell>
   );
 }

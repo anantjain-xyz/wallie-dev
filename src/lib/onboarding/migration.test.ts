@@ -39,11 +39,13 @@ describe("workspace onboarding migration", () => {
   it("allows members to read and only managers to mutate onboarding state", () => {
     expect(migration).toContain("grant select on public.workspace_onboarding to authenticated");
     expect(migration).toContain(
-      "grant insert, update, delete on public.workspace_onboarding to authenticated",
+      "grant insert, update on public.workspace_onboarding to authenticated",
     );
+    expect(migration).not.toContain("grant insert, update, delete");
     expect(migration).toContain("workspace_onboarding_select_membership");
     expect(migration).toContain("workspace_id in (select public.current_user_workspace_ids())");
-    expect(migration).toContain("workspace_onboarding_manage");
+    expect(migration).toContain("workspace_onboarding_insert_managers");
+    expect(migration).toContain("workspace_onboarding_update_managers");
     expect(migration).toContain("public.can_manage_workspace(workspace_id)");
   });
 });

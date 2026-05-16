@@ -90,9 +90,9 @@ const onboardingData: WorkspaceOnboardingData = {
   },
 };
 
-function routeContext() {
+function routeContext(workspaceId = WORKSPACE_ID) {
   return {
-    params: Promise.resolve({ workspaceId: WORKSPACE_ID }),
+    params: Promise.resolve({ workspaceId }),
   };
 }
 
@@ -119,6 +119,16 @@ describe("workspace onboarding route", () => {
     expect(mocked.loadWorkspaceOnboardingData).toHaveBeenCalledWith(WORKSPACE_ID);
   });
 
+  it("rejects malformed workspace ids before loading onboarding state", async () => {
+    const response = await GET(new Request("http://localhost"), routeContext("not-a-uuid"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Workspace id must be a valid UUID.",
+    });
+    expect(mocked.loadWorkspaceOnboardingData).not.toHaveBeenCalled();
+  });
+
   it("updates onboarding state with a valid patch", async () => {
     mocked.updateWorkspaceOnboardingData.mockResolvedValue({ data: onboardingData, ok: true });
 
@@ -140,6 +150,16 @@ describe("workspace onboarding route", () => {
       skippedSteps: [],
       status: "in_progress",
     });
+  });
+
+  it("rejects malformed workspace ids before updating onboarding state", async () => {
+    const response = await PATCH(patchRequest({ status: "dismissed" }), routeContext("not-a-uuid"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Workspace id must be a valid UUID.",
+    });
+    expect(mocked.updateWorkspaceOnboardingData).not.toHaveBeenCalled();
   });
 
   it("rejects updates from non-managers", async () => {

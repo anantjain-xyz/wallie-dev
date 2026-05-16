@@ -2,7 +2,6 @@ import Link from "next/link";
 
 import { isLocalDev } from "@/env/deploy";
 import type { OAuthProvider } from "@/lib/auth-providers";
-import { loginPath, signupPath } from "@/lib/routes";
 
 const authErrorMessages = {
   auth_callback_failed: "The sign-in callback did not complete. Start the flow again.",
@@ -17,19 +16,16 @@ const authErrorMessages = {
 const authStatusMessages = {
   check_email:
     "Check your inbox for a secure sign-in link. It will continue into your workspace flow.",
-  signed_out: "Your session has been closed.",
 } as const;
 
 type AuthEntryPanelProps = {
   errorCode?: string | null;
-  mode: "login" | "signup";
   next: string;
   statusCode?: string | null;
 };
 
-function buildOauthHref(provider: OAuthProvider, mode: "login" | "signup", next: string) {
+function buildOauthHref(provider: OAuthProvider, next: string) {
   const params = new URLSearchParams({
-    mode,
     next,
     provider,
   });
@@ -43,11 +39,7 @@ const inputClasses =
 const secondaryButtonClasses =
   "inline-flex w-full items-center justify-center gap-2 rounded-[6px] border border-[#d9cfbf] bg-white/60 px-3 py-2.5 text-[13px] font-medium text-[#1a1714] transition-colors hover:border-[#bdb19e] hover:bg-white";
 
-export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryPanelProps) {
-  const isSignup = mode === "signup";
-  const alternateHref = isSignup ? loginPath(next) : signupPath(next);
-  const alternateLabel = isSignup ? "Sign in" : "Create one";
-  const alternatePreface = isSignup ? "Already with us?" : "New to Wallie?";
+export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelProps) {
   const errorMessage = errorCode
     ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
     : null;
@@ -57,10 +49,6 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
 
   return (
     <div className="w-full max-w-[360px]">
-      <p className="mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-[#8a8170]">
-        {isSignup ? "Create account" : "Sign in"}
-      </p>
-
       <div className="rounded-[10px] border border-[#d9cfbf] bg-[#fdfaf3] p-5 shadow-[0_1px_0_rgba(26,23,20,0.03),0_8px_24px_-12px_rgba(26,23,20,0.08)]">
         {statusMessage ? (
           <div
@@ -83,7 +71,6 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
         ) : null}
 
         <form action="/auth/email" method="post" className="space-y-3">
-          <input type="hidden" name="mode" value={mode} />
           <input type="hidden" name="next" value={next} />
 
           <label className="block">
@@ -104,7 +91,7 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
             type="submit"
             className="inline-flex w-full items-center justify-center rounded-[6px] bg-[#1a1714] px-3 py-2.5 text-[13px] font-medium text-[#f6f1e7] transition-colors hover:bg-[#2b4570] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2b4570]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fdfaf3]"
           >
-            {isSignup ? "Send sign-up link" : "Send sign-in link"}
+            Send magic link
           </button>
         </form>
 
@@ -117,11 +104,11 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
         </div>
 
         <div className="grid gap-2">
-          <Link href={buildOauthHref("google", mode, next)} className={secondaryButtonClasses}>
+          <Link href={buildOauthHref("google", next)} className={secondaryButtonClasses}>
             <GoogleGlyph />
             <span>Continue with Google</span>
           </Link>
-          <Link href={buildOauthHref("github", mode, next)} className={secondaryButtonClasses}>
+          <Link href={buildOauthHref("github", next)} className={secondaryButtonClasses}>
             <GitHubGlyph />
             <span>Continue with GitHub</span>
           </Link>
@@ -134,7 +121,6 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
               Dev password
             </summary>
             <form action="/auth/password" method="post" className="mt-3 space-y-2">
-              <input type="hidden" name="mode" value={mode} />
               <input type="hidden" name="next" value={next} />
               <input
                 type="email"
@@ -153,26 +139,13 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
                 placeholder="Password (min 6)"
                 className={inputClasses}
               />
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-[6px] border border-[#d9cfbf] bg-white/60 px-3 py-2 text-[12px] font-medium text-[#1a1714] transition-colors hover:bg-white"
-              >
-                {isSignup ? "Dev sign up" : "Dev sign in"}
+              <button type="submit" className={secondaryButtonClasses}>
+                Continue
               </button>
             </form>
           </details>
         )}
       </div>
-
-      <p className="mt-4 text-[12px] text-[#6b6358]">
-        {alternatePreface}{" "}
-        <Link
-          href={alternateHref}
-          className="text-[#2b4570] underline decoration-[#2b4570]/30 underline-offset-2 transition-colors hover:decoration-[#2b4570]"
-        >
-          {alternateLabel}
-        </Link>
-      </p>
     </div>
   );
 }

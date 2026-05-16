@@ -40,10 +40,6 @@ export function loginPath(next?: string) {
   return withSearchParams("/login", next ? { next } : undefined);
 }
 
-export function signupPath(next?: string) {
-  return withSearchParams("/signup", next ? { next } : undefined);
-}
-
 export function onboardingWorkspacePath() {
   return "/onboarding/workspace";
 }

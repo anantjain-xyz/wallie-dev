@@ -12,6 +12,8 @@ type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
 
+const workspaceIdParamSchema = z.string().uuid("Workspace id must be a valid UUID.");
+
 function onboardingResponse(data: WorkspaceOnboardingData) {
   return {
     canManage: data.canManage,
@@ -24,7 +26,15 @@ function onboardingResponse(data: WorkspaceOnboardingData) {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
-  const result = await loadWorkspaceOnboardingData(workspaceId);
+  const parsedWorkspaceId = workspaceIdParamSchema.safeParse(workspaceId);
+  if (!parsedWorkspaceId.success) {
+    return NextResponse.json(
+      { error: parsedWorkspaceId.error.issues[0]?.message ?? "Invalid workspace id." },
+      { status: 400 },
+    );
+  }
+
+  const result = await loadWorkspaceOnboardingData(parsedWorkspaceId.data);
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
@@ -35,6 +45,13 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
+  const parsedWorkspaceId = workspaceIdParamSchema.safeParse(workspaceId);
+  if (!parsedWorkspaceId.success) {
+    return NextResponse.json(
+      { error: parsedWorkspaceId.error.issues[0]?.message ?? "Invalid workspace id." },
+      { status: 400 },
+    );
+  }
 
   let body: unknown;
   try {
@@ -52,7 +69,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   try {
-    const result = await updateWorkspaceOnboardingData(workspaceId, parsed.data);
+    const result = await updateWorkspaceOnboardingData(parsedWorkspaceId.data, parsed.data);
 
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });

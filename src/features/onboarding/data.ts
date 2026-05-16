@@ -296,6 +296,7 @@ export async function updateWorkspaceOnboardingData(
 
   if (payload.status !== undefined) {
     updatePayload.status = payload.status;
+    // Completion timestamps are reserved for the later completion route.
     if (payload.status === "dismissed") {
       updatePayload.dismissed_at = new Date().toISOString();
     }

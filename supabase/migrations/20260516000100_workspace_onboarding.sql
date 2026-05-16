@@ -41,7 +41,7 @@ alter table public.workspace_onboarding enable row level security;
 revoke all on public.workspace_onboarding from anon, authenticated;
 
 grant select on public.workspace_onboarding to authenticated;
-grant insert, update, delete on public.workspace_onboarding to authenticated;
+grant insert, update on public.workspace_onboarding to authenticated;
 
 create policy workspace_onboarding_select_membership
   on public.workspace_onboarding
@@ -49,9 +49,15 @@ create policy workspace_onboarding_select_membership
   to authenticated
   using (workspace_id in (select public.current_user_workspace_ids()));
 
-create policy workspace_onboarding_manage
+create policy workspace_onboarding_insert_managers
   on public.workspace_onboarding
-  for all
+  for insert
+  to authenticated
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_onboarding_update_managers
+  on public.workspace_onboarding
+  for update
   to authenticated
   using (public.can_manage_workspace(workspace_id))
   with check (public.can_manage_workspace(workspace_id));

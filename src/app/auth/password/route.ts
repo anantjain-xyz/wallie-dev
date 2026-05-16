@@ -1,20 +1,33 @@
-import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
 
-import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { isLocalDev } from "@/env/deploy";
-import { loginPath, signupPath } from "@/lib/routes";
+import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-const authModeSchema = z.enum(["login", "signup"]);
+type AuthFailure = {
+  code?: string;
+  message?: string;
+};
 
-function getEntryPath(mode: "login" | "signup", next: string, params: Record<string, string>) {
-  const basePath = mode === "signup" ? signupPath(next) : loginPath(next);
+function getEntryPath(next: string, params: Record<string, string>) {
+  const basePath = loginPath(next);
   const searchParams = new URLSearchParams(params);
   const separator = basePath.includes("?") ? "&" : "?";
 
   return `${basePath}${separator}${searchParams.toString()}`;
+}
+
+function isInvalidCredentialsError(error: AuthFailure | null) {
+  if (!error) {
+    return false;
+  }
+
+  return (
+    error.code === "invalid_credentials" ||
+    error.message?.toLowerCase().includes("invalid login credentials") === true
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -27,35 +40,44 @@ export async function POST(request: NextRequest) {
     .trim()
     .toLowerCase();
   const password = String(formData.get("password") ?? "");
-  const mode = authModeSchema.catch("login").parse(formData.get("mode"));
   const next = normalizeNextPath(String(formData.get("next") ?? ""));
 
   if (!email || password.length < 6) {
     return NextResponse.redirect(
-      new URL(getEntryPath(mode, next, { error: "password_auth_failed" }), request.url),
+      new URL(getEntryPath(next, { error: "password_auth_failed" }), request.url),
       { status: 303 },
     );
   }
 
   const supabase = await createSupabaseServerClient();
+  const signInResult = await supabase.auth.signInWithPassword({ email, password });
 
-  const { error } =
-    mode === "signup"
-      ? await supabase.auth.signUp({ email, password })
-      : await supabase.auth.signInWithPassword({ email, password });
+  if (signInResult.error && isInvalidCredentialsError(signInResult.error)) {
+    const signUpResult = await supabase.auth.signUp({ email, password });
 
-  if (error) {
+    if (signUpResult.error) {
+      return NextResponse.redirect(
+        new URL(getEntryPath(next, { error: "password_auth_failed" }), request.url),
+        { status: 303 },
+      );
+    }
+  } else if (signInResult.error) {
     return NextResponse.redirect(
-      new URL(getEntryPath(mode, next, { error: "password_auth_failed" }), request.url),
+      new URL(getEntryPath(next, { error: "password_auth_failed" }), request.url),
       { status: 303 },
     );
   }
 
   const user = await getSupabaseUserOrNull(supabase);
 
-  if (user) {
-    await ensureProfileForUser(supabase, user);
+  if (!user) {
+    return NextResponse.redirect(
+      new URL(getEntryPath(next, { error: "password_auth_failed" }), request.url),
+      { status: 303 },
+    );
   }
+
+  await ensureProfileForUser(supabase, user);
 
   const redirectTarget = next === "/" ? await resolveAuthenticatedHomePath(supabase) : next;
 
