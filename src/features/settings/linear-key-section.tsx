@@ -100,11 +100,13 @@ export function LinearKeySection({
     void deleteLinearKey.run();
   }
 
-  const statusBadge = linearSecret ? (
-    <StatusBadge tone="success">Connected</StatusBadge>
-  ) : (
-    <StatusBadge tone="neutral">Not connected</StatusBadge>
-  );
+  const statusBadge = canManage ? (
+    linearSecret ? (
+      <StatusBadge tone="success">Connected</StatusBadge>
+    ) : (
+      <StatusBadge tone="neutral">Not connected</StatusBadge>
+    )
+  ) : null;
 
   return (
     <Section

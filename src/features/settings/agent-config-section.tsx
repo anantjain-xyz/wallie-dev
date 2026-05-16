@@ -167,7 +167,7 @@ export function AgentConfigSection({
     result: AgentConfigVerifyResult | null;
   }>({ isVerifying: false, result: null });
 
-  const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown]>({
+  const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown], true>({
     call: (key, value) =>
       fetch("/api/agent-config", {
         body: JSON.stringify({
@@ -181,6 +181,7 @@ export function AgentConfigSection({
     errorText: "Agent config save failed.",
     onSuccess: (payload) => {
       setAgentConfig((current) => ({ ...current, [payload.entry.key]: payload.entry.value }));
+      return true;
     },
     setFlashMessage,
     successText: null,
@@ -266,32 +267,40 @@ export function AgentConfigSection({
 
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
-  const canSave = !saveAgentConfig.isBusy && dirtyFields.length > 0 && !hasErrors;
+  const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
+  const canSave = !saveAgentConfig.isBusy && saveableFields.length > 0 && !hasErrors;
   const canVerify =
     !verifyState.isVerifying && drafts.agent_model.trim() !== "" && !saveAgentConfig.isBusy;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => ({ ...current, [key]: next }));
-    if (key === "agent_model") {
+    if (key === "agent_model" || key === "agent_provider") {
       setVerifyState({ isVerifying: false, result: null });
     }
   }
 
   async function handleSaveAll() {
-    const toSave = dirtyFields.filter(
-      (status) => status.validation && status.validation.ok === true,
-    );
-    if (toSave.length === 0) return;
+    if (saveableFields.length === 0) return;
 
-    for (const status of toSave) {
+    let successCount = 0;
+    for (const status of saveableFields) {
       if (!status.validation || !status.validation.ok) continue;
-      await saveAgentConfig.run(status.field.configKey, status.validation.value);
+      const result = await saveAgentConfig.run(status.field.configKey, status.validation.value);
+      if (result === true) successCount++;
     }
 
-    setFlashMessage({
-      kind: "success",
-      text: `Saved ${toSave.length} agent setting${toSave.length === 1 ? "" : "s"}.`,
-    });
+    if (successCount === saveableFields.length) {
+      setFlashMessage({
+        kind: "success",
+        text: `Saved ${successCount} agent setting${successCount === 1 ? "" : "s"}.`,
+      });
+    } else if (successCount > 0) {
+      setFlashMessage({
+        kind: "error",
+        text: `Saved ${successCount} of ${saveableFields.length} agent settings — see errors above.`,
+      });
+    }
+    // If successCount === 0, useApiAction already surfaced the per-call error flash.
   }
 
   async function handleVerify() {
