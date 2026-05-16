@@ -108,7 +108,10 @@ describe("onboarding flow helpers", () => {
   });
 
   it("builds exit patches and hides resume after completion", () => {
-    expect(buildOnboardingExitPatch()).toEqual({ status: "dismissed" });
+    expect(buildOnboardingExitPatch(onboardingState({ status: "in_progress" }))).toEqual({
+      status: "dismissed",
+    });
+    expect(buildOnboardingExitPatch(onboardingState({ status: "completed" }))).toBeNull();
     expect(shouldShowOnboardingResumeCta(onboardingState({ status: "dismissed" }))).toBe(true);
     expect(shouldShowOnboardingResumeCta(onboardingState({ status: "completed" }))).toBe(false);
     expect(shouldShowOnboardingResumeCta(null)).toBe(false);

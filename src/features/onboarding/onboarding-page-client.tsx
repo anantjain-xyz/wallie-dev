@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   StatusBacklogIcon,
@@ -436,16 +436,19 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const [data, setData] = useState(initialData);
   const [error, setError] = useState<string | null>(null);
   const [savingAction, setSavingAction] = useState<string | null>(null);
+  const saveInFlightRef = useRef(false);
   const onboarding = data.onboarding;
   const activeStep = ONBOARDING_STEPS.find((step) => step.id === onboarding.currentStep)!;
   const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
+  const isSaving = savingAction !== null;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
-    if (!data.canManage) return null;
+    if (!data.canManage || saveInFlightRef.current) return null;
 
+    saveInFlightRef.current = true;
     setSavingAction(action);
     setError(null);
 
@@ -469,6 +472,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       setError(caught instanceof Error ? caught.message : "Failed to save onboarding state.");
       return null;
     } finally {
+      saveInFlightRef.current = false;
       setSavingAction(null);
     }
   }
@@ -498,7 +502,8 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function exitSetup() {
-    const nextData = await persistOnboarding(buildOnboardingExitPatch(), "exit");
+    const patch = buildOnboardingExitPatch(onboarding);
+    const nextData = patch ? await persistOnboarding(patch, "exit") : data;
     if (nextData) {
       router.push(workspaceBasePath(data.workspace.slug));
     }
@@ -518,7 +523,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           <button
             type="button"
             className="ui-button"
-            disabled={!data.canManage || savingAction === "exit"}
+            disabled={!data.canManage || isSaving}
             onClick={() => void exitSetup()}
           >
             {savingAction === "exit" ? "Exiting..." : "Exit setup"}
@@ -526,7 +531,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         </div>
       </header>
 
-      <MobileStepControl canManage={data.canManage} items={railItems} onSelect={selectStep} />
+      <MobileStepControl
+        canManage={data.canManage && !isSaving}
+        items={railItems}
+        onSelect={selectStep}
+      />
 
       <main
         id="main-content"
@@ -535,7 +544,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         <aside className="hidden lg:block">
           <div className="sticky top-6">
             <p className="mb-3 text-[11px] font-medium text-muted">Progress</p>
-            <StepRail canManage={data.canManage} items={railItems} onSelect={selectStep} />
+            <StepRail
+              canManage={data.canManage && !isSaving}
+              items={railItems}
+              onSelect={selectStep}
+            />
           </div>
         </aside>
 
@@ -618,7 +631,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             <button
               type="button"
               className="ui-button"
-              disabled={!data.canManage || !canGoBack || savingAction === "back"}
+              disabled={!data.canManage || !canGoBack || isSaving}
               onClick={() => void goBack()}
             >
               {savingAction === "back" ? "Saving..." : "Back"}
@@ -627,7 +640,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               <button
                 type="button"
                 className="ui-button"
-                disabled={!data.canManage || savingAction === "skip"}
+                disabled={!data.canManage || isSaving}
                 onClick={() => void skipStep()}
               >
                 {savingAction === "skip" ? "Saving..." : "Skip"}
@@ -636,7 +649,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             <button
               type="button"
               className="ui-button-primary"
-              disabled={!data.canManage || isCompleted || savingAction === "continue"}
+              disabled={!data.canManage || isCompleted || isSaving}
               onClick={() => void continueSetup()}
             >
               {isCompleted

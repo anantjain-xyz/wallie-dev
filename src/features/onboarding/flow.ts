@@ -186,7 +186,13 @@ export function buildOnboardingRailNavigationPatch(
   };
 }
 
-export function buildOnboardingExitPatch(): WorkspaceOnboardingUpdatePayload {
+export function buildOnboardingExitPatch(
+  onboarding: WorkspaceOnboardingState,
+): WorkspaceOnboardingUpdatePayload | null {
+  if (onboarding.status === "completed") {
+    return null;
+  }
+
   return {
     status: "dismissed",
   };
