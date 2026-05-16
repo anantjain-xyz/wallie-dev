@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeNextPath, workspaceLoginRedirectPath } from "@/lib/auth";
+import {
+  normalizeNextPath,
+  resolveAuthenticatedHomePath,
+  workspaceLoginRedirectPath,
+} from "@/lib/auth";
 
 describe("auth helpers", () => {
   it("normalizes safe relative redirect targets", () => {
@@ -20,5 +24,30 @@ describe("auth helpers", () => {
 
   it("builds the workspace login redirect path", () => {
     expect(workspaceLoginRedirectPath("northwind-labs")).toBe("/w/northwind-labs");
+  });
+
+  it("keeps signed-in home routing on the existing workspace home", async () => {
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          order: () => ({
+            limit: () => ({
+              maybeSingle: async () => ({
+                data: {
+                  id: "workspace-1",
+                  name: "Northwind Labs",
+                  slug: "northwind-labs",
+                },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    };
+
+    await expect(resolveAuthenticatedHomePath(supabase as never)).resolves.toBe(
+      "/w/northwind-labs",
+    );
   });
 });

@@ -5,6 +5,7 @@ import {
   onboardingWorkspacePath,
   workspaceBasePath,
   workspaceLabel,
+  workspaceOnboardingPath,
   workspaceSessionDetailPath,
   workspaceSessionsPath,
   workspaceSettingsPath,
@@ -28,6 +29,7 @@ describe("workspace route helpers", () => {
     expect(workspaceSessionDetailPath("northwind-labs", 101)).toBe(
       "/w/northwind-labs/sessions/101",
     );
+    expect(workspaceOnboardingPath("northwind-labs")).toBe("/w/northwind-labs/onboarding");
     expect(workspaceSettingsPath("northwind-labs")).toBe("/w/northwind-labs/settings");
     expect(
       workspaceSettingsPath("northwind-labs", {
