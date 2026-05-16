@@ -12,7 +12,7 @@ import type {
   SessionPullRequest,
 } from "@/features/sessions/types";
 
-type PipelineDashboardPullRequest = Pick<
+export type PipelineDashboardPullRequest = Pick<
   SessionPullRequest,
   | "id"
   | "isDraft"

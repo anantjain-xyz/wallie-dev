@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
+import type {
+  PipelineDashboardCard,
+  PipelineDashboardData,
+  PipelineDashboardPullRequest,
+} from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import {
   formatSessionPhaseStatus,
@@ -56,6 +60,33 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   }, [initialData.defaultPipelineStages]);
 
   useEffect(() => {
+    async function refreshSessionPullRequests(sessionId: string) {
+      const { data, error } = await supabase
+        .from("session_pull_requests")
+        .select("id, is_draft, pull_request_number, pull_request_state, pull_request_url")
+        .eq("workspace_id", initialData.workspace.id)
+        .eq("session_id", sessionId)
+        .not("pull_request_url", "is", null)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        return;
+      }
+
+      const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
+        id: row.id,
+        isDraft: row.is_draft,
+        pullRequestNumber: row.pull_request_number,
+        pullRequestState: row.pull_request_state,
+        pullRequestUrl: row.pull_request_url,
+        repositoryFullName: null,
+      }));
+
+      setCards((prev) =>
+        prev.map((card) => (card.id === sessionId ? { ...card, pullRequests } : card)),
+      );
+    }
+
     const channel = supabase
       .channel(`sessions:${initialData.workspace.id}`)
       .on(
@@ -114,6 +145,23 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
             copy[idx] = next;
             return copy;
           });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `workspace_id=eq.${initialData.workspace.id}`,
+          schema: "public",
+          table: "session_pull_requests",
+        },
+        (payload) => {
+          const row =
+            payload.eventType === "DELETE"
+              ? (payload.old as { session_id?: string } | null)
+              : (payload.new as { session_id?: string } | null);
+          if (!row?.session_id) return;
+          void refreshSessionPullRequests(row.session_id);
         },
       )
       .subscribe();
