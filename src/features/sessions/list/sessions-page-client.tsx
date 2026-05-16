@@ -1,10 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useMemo, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
-import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
@@ -15,7 +14,7 @@ import {
   type SessionSummary,
 } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
-import { PlusIcon, SearchIcon } from "@/components/shared/icons";
+import { SearchIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -56,18 +55,9 @@ const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
 ];
 
 export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const router = useRouter();
   const [, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  // `create=1` is a link-triggered intent (from the sidebar plus button /
-  // legacy issues redirect). The create dialog is otherwise controlled by
-  // `userCreateOpen` once the user clicks the button inside the page.
-  const createFromSearchParam = searchParams?.get("create") === "1";
-  const [userCreateOpen, setUserCreateOpen] = useState(false);
-  const createOpen = userCreateOpen || createFromSearchParam;
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -87,16 +77,6 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
     event.preventDefault();
     const value = searchInputRef.current?.value ?? "";
     updateQueryState({ query: value });
-  }
-
-  function handleCreateClose() {
-    setUserCreateOpen(false);
-    if (createFromSearchParam) {
-      const params = new URLSearchParams(searchParams?.toString());
-      params.delete("create");
-      const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : (pathname ?? basePath));
-    }
   }
 
   const sessions = initialData.sessions;
@@ -121,27 +101,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   return (
     <main className="flex min-h-screen flex-col bg-background">
       <header className="border-b border-border px-6 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">Sessions</p>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
-              {initialData.workspace.name}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-5 text-muted">
-              Every Wallie session, across every phase. Start a new session or filter by phase.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="ui-button-primary inline-flex items-center gap-2"
-            onClick={() => setUserCreateOpen(true)}
-          >
-            <PlusIcon className="h-3.5 w-3.5" />
-            New session
-          </button>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <form onSubmit={handleSearchSubmit} className="relative flex-1 min-w-[220px] max-w-md">
             <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
             <input
@@ -221,12 +181,6 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
         )}
       </div>
 
-      <CreateSessionDialog
-        open={createOpen}
-        onClose={handleCreateClose}
-        workspaceId={initialData.workspace.id}
-        workspaceSlug={workspaceSlug}
-      />
     </main>
   );
 }
