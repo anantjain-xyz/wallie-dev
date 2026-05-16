@@ -54,7 +54,7 @@ export function AuthEntryPanel({ errorCode, mode, next, statusCode }: AuthEntryP
         <div className="space-y-3">
           <StatusChip tone="ready">{isSignup ? "Create Access" : "Sign In"}</StatusChip>
           <div className="space-y-3">
-            <h1 className="text-3xl font-semibold tracking-tight text-balance text-foreground sm:text-[2.2rem]">
+            <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
               {isSignup ? "Create Your Wallie Identity" : "Enter Your Workspace"}
             </h1>
             <p className="max-w-2xl text-sm leading-6 text-muted">

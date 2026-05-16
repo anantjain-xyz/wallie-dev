@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { PageSection } from "@/components/ui/page-shell";
 import type { WorkspaceUsageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 
@@ -12,32 +13,9 @@ export const dateFormatter = new Intl.DateTimeFormat(undefined, {
 export const interactiveLinkClass =
   "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
 
-export function Section({
-  anchorId,
-  children,
-  statusBadge,
-  tagline,
-  title,
-}: {
-  anchorId?: string;
-  children: ReactNode;
-  statusBadge?: ReactNode;
-  tagline?: ReactNode;
-  title: string;
-}) {
-  return (
-    <section id={anchorId} className="scroll-mt-8">
-      <header className="settings-section-header mb-6">
-        <div className="space-y-1">
-          <h2 className="text-[18px] font-semibold tracking-tight text-foreground">{title}</h2>
-          {tagline ? <p className="text-[13px] leading-5 text-muted">{tagline}</p> : null}
-        </div>
-        {statusBadge ? <div className="shrink-0">{statusBadge}</div> : null}
-      </header>
-      <div>{children}</div>
-    </section>
-  );
-}
+// Re-export the shared PageSection under the legacy "Section" name so the
+// settings sub-components keep importing from this module unchanged.
+export const Section = PageSection;
 
 export type BadgeTone = "success" | "warning" | "danger" | "neutral" | "accent";
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { StatusChip } from "@/components/shared/status-chip";
+import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import {
@@ -150,19 +151,25 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
   }, [cards, initialData.defaultPipelineStages]);
 
   return (
-    <main className="flex min-h-screen flex-col bg-background">
-      <div className="flex-1 overflow-x-auto px-6 py-6">
-        <div className="flex gap-4">
+    <div className="min-h-full">
+      <PageContainer className="pb-6">
+        <PageHeader
+          title="Pipeline"
+          description="Sessions move through these stages from product to monitor."
+        />
+      </PageContainer>
+      <div className="overflow-x-auto px-6 pb-12 sm:px-8">
+        <div className="flex min-w-max gap-4">
           {lanes.order.map((lane) => {
             const items = lanes.buckets.get(lane.slug) ?? [];
             return (
               <section
                 key={lane.slug}
-                className="flex min-h-[200px] min-w-[220px] flex-1 flex-col rounded-[8px] border border-border bg-surface"
+                className="flex min-h-[200px] w-[240px] shrink-0 flex-col rounded-[10px] border border-border bg-surface"
               >
-                <header className="flex items-baseline justify-between border-b border-border px-3 py-2.5">
-                  <div>
-                    <h2 className="text-[13px] font-semibold text-foreground">{lane.name}</h2>
+                <header className="flex items-baseline justify-between gap-2 border-b border-border px-3 py-2.5">
+                  <div className="min-w-0">
+                    <h2 className="text-[14px] font-semibold text-foreground">{lane.name}</h2>
                     <p className="mt-0.5 text-[11px] leading-4 text-muted">{lane.description}</p>
                   </div>
                   <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-muted">
@@ -233,6 +240,6 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
           })}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

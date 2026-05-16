@@ -16,10 +16,6 @@ type ShellHeaderProps = {
   workspace: WorkspaceSummary;
 };
 
-function navLabel(item: WorkspaceNavItem) {
-  return item.label === "Settings" ? "Workspace Settings" : item.label;
-}
-
 function isActive(pathname: string, workspaceSlug: string, item: WorkspaceNavItem) {
   const pipelineHref = workspaceBasePath(workspaceSlug);
 
@@ -75,7 +71,7 @@ export function ShellHeader({ navItems, viewerEmail, workspace }: ShellHeaderPro
                 aria-current={active ? "page" : undefined}
                 className={cn("ui-top-nav-tab", active && "ui-top-nav-tab-active")}
               >
-                {navLabel(item)}
+                {item.label}
               </Link>
             );
           })}
