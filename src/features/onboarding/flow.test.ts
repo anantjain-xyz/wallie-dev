@@ -107,6 +107,16 @@ describe("onboarding flow helpers", () => {
     expect(buildOnboardingRailNavigationPatch(state, "verify")).toBeNull();
   });
 
+  it("does not persist rail navigation after onboarding is completed", () => {
+    const state = onboardingState({
+      completedSteps: ["github", "repository", "pipeline", "linear", "runtime", "verify"],
+      currentStep: "verify",
+      status: "completed",
+    });
+
+    expect(buildOnboardingRailNavigationPatch(state, "pipeline")).toBeNull();
+  });
+
   it("builds exit patches and hides resume after completion", () => {
     expect(buildOnboardingExitPatch(onboardingState({ status: "in_progress" }))).toEqual({
       status: "dismissed",

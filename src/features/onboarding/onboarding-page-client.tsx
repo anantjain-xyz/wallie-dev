@@ -493,7 +493,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function exitSetup() {
-    const patch = buildOnboardingExitPatch(onboarding);
+    const patch = data.canManage ? buildOnboardingExitPatch(onboarding) : null;
     const nextData = patch ? await persistOnboarding(patch, "exit") : data;
     if (nextData) {
       router.push(workspaceBasePath(data.workspace.slug));
@@ -514,7 +514,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           <button
             type="button"
             className="ui-button"
-            disabled={!data.canManage || isSaving}
+            disabled={isSaving}
             onClick={() => void exitSetup()}
           >
             {savingAction === "exit" ? "Exiting..." : "Exit setup"}

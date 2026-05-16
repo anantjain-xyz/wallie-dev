@@ -174,6 +174,10 @@ export function buildOnboardingRailNavigationPatch(
   onboarding: WorkspaceOnboardingState,
   targetStep: WorkspaceOnboardingStep,
 ): WorkspaceOnboardingUpdatePayload | null {
+  if (onboarding.status === "completed") {
+    return null;
+  }
+
   const target = getOnboardingStepRailItems(onboarding).find((step) => step.id === targetStep);
 
   if (!target?.isNavigable || targetStep === onboarding.currentStep) {
@@ -182,7 +186,7 @@ export function buildOnboardingRailNavigationPatch(
 
   return {
     currentStep: targetStep,
-    status: onboarding.status === "completed" ? "completed" : "in_progress",
+    status: "in_progress",
   };
 }
 
