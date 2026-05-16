@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
+import { SplashShell } from "@/components/auth/splash-shell";
 import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -24,11 +25,8 @@ export default async function SignupPage({ searchParams }: SignupPageProps) {
   }
 
   return (
-    <main
-      id="main-content"
-      className="mx-auto flex min-h-screen w-full max-w-[1080px] items-center px-6 py-10 sm:px-8"
-    >
+    <SplashShell>
       <AuthEntryPanel errorCode={errorCode} mode="signup" next={next} statusCode={statusCode} />
-    </main>
+    </SplashShell>
   );
 }
