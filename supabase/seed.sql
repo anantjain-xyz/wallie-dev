@@ -90,12 +90,12 @@ BEGIN
     (
       '00000000-0000-0000-0000-000000000000',
       user1_id, 'authenticated', 'authenticated',
-      'wallie@gmail.com',
+      'anant@example.com',
       crypt('password123', gen_salt('bf')),
       now(), '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object(
         'sub', user1_id::text,
-        'email', 'wallie@gmail.com',
+        'email', 'anant@example.com',
         'full_name', 'Anant Jain',
         'email_verified', true,
         'phone_verified', false
@@ -106,13 +106,13 @@ BEGIN
     (
       '00000000-0000-0000-0000-000000000000',
       user2_id, 'authenticated', 'authenticated',
-      'bob@example.com',
+      'wallie@example.com',
       crypt('password123', gen_salt('bf')),
       now(), '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object(
         'sub', user2_id::text,
-        'email', 'bob@example.com',
-        'full_name', 'Bob Chen',
+        'email', 'wallie@example.com',
+        'full_name', 'Wallie',
         'email_verified', true,
         'phone_verified', false
       ),
@@ -127,12 +127,12 @@ BEGIN
   ) VALUES
     (
       gen_random_uuid(), user1_id::text, user1_id,
-      jsonb_build_object('sub', user1_id::text, 'email', 'wallie@gmail.com'),
+      jsonb_build_object('sub', user1_id::text, 'email', 'anant@example.com'),
       'email', now(), now() - interval '14 days', now()
     ),
     (
       gen_random_uuid(), user2_id::text, user2_id,
-      jsonb_build_object('sub', user2_id::text, 'email', 'bob@example.com'),
+      jsonb_build_object('sub', user2_id::text, 'email', 'wallie@example.com'),
       'email', now(), now() - interval '12 days', now()
     );
 
@@ -141,8 +141,8 @@ BEGIN
   -- -------------------------------------------------------------------------
   INSERT INTO public.profiles (id, primary_email, full_name, avatar_url, created_at)
   VALUES
-    (user1_id, 'wallie@gmail.com', 'Anant Jain', null, now() - interval '14 days'),
-    (user2_id, 'bob@example.com',  'Bob Chen',   null, now() - interval '12 days');
+    (user1_id, 'anant@example.com', 'Anant Jain', null, now() - interval '14 days'),
+    (user2_id, 'wallie@example.com',  'Wallie',   null, now() - interval '12 days');
 
   -- -------------------------------------------------------------------------
   -- 3. Workspace
@@ -156,8 +156,8 @@ BEGIN
   INSERT INTO public.workspace_members
     (id, workspace_id, user_id, kind, role, email, full_name, avatar_url, created_at)
   VALUES
-    (mem1_id, ws_id, user1_id, 'human', 'owner',  'wallie@gmail.com', 'Anant Jain', null, now() - interval '14 days'),
-    (mem2_id, ws_id, user2_id, 'human', 'member', 'bob@example.com',  'Bob Chen',   null, now() - interval '12 days');
+    (mem1_id, ws_id, user1_id, 'human', 'owner',  'anant@example.com', 'Anant Jain', null, now() - interval '14 days'),
+    (mem2_id, ws_id, user2_id, 'human', 'member', 'wallie@example.com',  'Wallie',   null, now() - interval '12 days');
 
   INSERT INTO public.workspace_members
     (id, workspace_id, kind, role, username, full_name, created_at)
