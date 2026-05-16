@@ -1,6 +1,5 @@
 import "server-only";
 
-import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
@@ -609,6 +608,7 @@ async function loadGitHubContext(
 }
 
 async function mintInstallationToken(installationId: number): Promise<string> {
+  const { App } = await import("@octokit/app");
   const app = new App(resolveGitHubAppConfig());
   const { data } = await app.octokit.request(
     "POST /app/installations/{installation_id}/access_tokens",
