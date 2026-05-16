@@ -6,6 +6,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
+  buildOnboardingAdvancePatch,
   buildOnboardingContinuePatch,
   buildOnboardingExitPatch,
   buildOnboardingRailNavigationPatch,
@@ -472,7 +473,9 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
-  const requiresInlineCompletion = activeStep.id === "pipeline" || activeStep.id === "linear";
+  const pipelineEditorUnavailable = activeStep.id === "pipeline" && !data.pipeline;
+  const requiresInlineCompletion =
+    (activeStep.id === "pipeline" && !pipelineEditorUnavailable) || activeStep.id === "linear";
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
     if (!data.canManage || saveInFlightRef.current) return null;
@@ -542,6 +545,13 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function continueSetup() {
+    if (pipelineEditorUnavailable) {
+      const patch = buildOnboardingAdvancePatch(onboarding);
+      if (!patch) return;
+      await persistOnboarding(patch, "continue");
+      return;
+    }
+
     await persistOnboarding(buildOnboardingContinuePatch(onboarding), "continue");
   }
 

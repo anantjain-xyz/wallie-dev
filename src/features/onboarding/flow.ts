@@ -159,6 +159,22 @@ export function buildOnboardingContinuePatch(
   };
 }
 
+export function buildOnboardingAdvancePatch(
+  onboarding: WorkspaceOnboardingState,
+): WorkspaceOnboardingUpdatePayload | null {
+  const currentIndex = onboardingStepIndex(onboarding.currentStep);
+  const nextStep = WORKSPACE_ONBOARDING_STEPS[currentIndex + 1];
+
+  if (!nextStep) {
+    return null;
+  }
+
+  return {
+    currentStep: nextStep,
+    status: "in_progress",
+  };
+}
+
 export function buildOnboardingSkipPatch(
   onboarding: WorkspaceOnboardingState,
 ): WorkspaceOnboardingUpdatePayload | null {

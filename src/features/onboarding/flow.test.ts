@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildOnboardingAdvancePatch,
   buildOnboardingContinuePatch,
   buildOnboardingExitPatch,
   buildOnboardingRailNavigationPatch,
@@ -61,6 +62,20 @@ describe("onboarding flow helpers", () => {
       completedSteps: ["repository"],
       currentStep: "pipeline",
       skippedSteps: [],
+      status: "in_progress",
+    });
+  });
+
+  it("can advance to the next step without completing the current step", () => {
+    expect(
+      buildOnboardingAdvancePatch(
+        onboardingState({
+          currentStep: "pipeline",
+          status: "in_progress",
+        }),
+      ),
+    ).toEqual({
+      currentStep: "linear",
       status: "in_progress",
     });
   });
