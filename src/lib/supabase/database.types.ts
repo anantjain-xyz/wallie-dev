@@ -7,6 +7,31 @@ export type Json =
   | Json[]
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       agent_jobs: {
@@ -399,32 +424,62 @@ export type Database = {
           },
         ]
       }
-      profiles: {
+      pipeline_stages: {
         Row: {
-          avatar_url: string | null
+          approver_member_ids: string[]
           created_at: string
-          full_name: string | null
+          description: string
           id: string
-          primary_email: string | null
+          name: string
+          pipeline_id: string
+          position: number
+          prompt_template_md: string
+          slug: string
           updated_at: string
+          workspace_id: string
         }
         Insert: {
-          avatar_url?: string | null
+          approver_member_ids?: string[]
           created_at?: string
-          full_name?: string | null
-          id: string
-          primary_email?: string | null
+          description?: string
+          id?: string
+          name: string
+          pipeline_id: string
+          position: number
+          prompt_template_md?: string
+          slug: string
           updated_at?: string
+          workspace_id: string
         }
         Update: {
-          avatar_url?: string | null
+          approver_member_ids?: string[]
           created_at?: string
-          full_name?: string | null
+          description?: string
           id?: string
-          primary_email?: string | null
+          name?: string
+          pipeline_id?: string
+          position?: number
+          prompt_template_md?: string
+          slug?: string
           updated_at?: string
+          workspace_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_stages_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       pipelines: {
         Row: {
@@ -461,56 +516,140 @@ export type Database = {
           },
         ]
       }
-      pipeline_stages: {
+      profiles: {
         Row: {
-          approver_member_ids: string[]
+          avatar_url: string | null
           created_at: string
-          description: string
+          full_name: string | null
           id: string
-          name: string
-          pipeline_id: string
-          position: number
-          prompt_template_md: string
-          slug: string
+          primary_email: string | null
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id: string
+          primary_email?: string | null
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          primary_email?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      repository_onboarding_status: {
+        Row: {
+          conflict_report: Json
+          created_at: string
+          github_repository_id: string
+          id: string
+          installed_skill_hash: string | null
+          installed_skill_version: number | null
+          last_error: string | null
+          setup_branch_name: string | null
+          setup_pr_number: number | null
+          setup_pr_url: string | null
+          status: string
           updated_at: string
           workspace_id: string
         }
         Insert: {
-          approver_member_ids?: string[]
+          conflict_report?: Json
           created_at?: string
-          description?: string
+          github_repository_id: string
           id?: string
-          name: string
-          pipeline_id: string
-          position: number
-          prompt_template_md?: string
-          slug: string
+          installed_skill_hash?: string | null
+          installed_skill_version?: number | null
+          last_error?: string | null
+          setup_branch_name?: string | null
+          setup_pr_number?: number | null
+          setup_pr_url?: string | null
+          status?: string
           updated_at?: string
-          workspace_id?: string
+          workspace_id: string
         }
         Update: {
-          approver_member_ids?: string[]
+          conflict_report?: Json
           created_at?: string
-          description?: string
+          github_repository_id?: string
           id?: string
-          name?: string
-          pipeline_id?: string
-          position?: number
-          prompt_template_md?: string
-          slug?: string
+          installed_skill_hash?: string | null
+          installed_skill_version?: number | null
+          last_error?: string | null
+          setup_branch_name?: string | null
+          setup_pr_number?: number | null
+          setup_pr_url?: string | null
+          status?: string
           updated_at?: string
           workspace_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "pipeline_stages_pipeline_id_fkey"
-            columns: ["pipeline_id"]
+            foreignKeyName: "repository_onboarding_status_github_repository_id_fkey"
+            columns: ["github_repository_id"]
             isOneToOne: false
-            referencedRelation: "pipelines"
+            referencedRelation: "github_repositories"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "pipeline_stages_workspace_id_fkey"
+            foreignKeyName: "repository_onboarding_status_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sandbox_capability_checks: {
+        Row: {
+          capabilities: Json
+          checked_at: string
+          created_at: string
+          error_text: string | null
+          github_repository_id: string | null
+          id: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          capabilities?: Json
+          checked_at?: string
+          created_at?: string
+          error_text?: string | null
+          github_repository_id?: string | null
+          id?: string
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          capabilities?: Json
+          checked_at?: string
+          created_at?: string
+          error_text?: string | null
+          github_repository_id?: string | null
+          id?: string
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sandbox_capability_checks_github_repository_id_fkey"
+            columns: ["github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sandbox_capability_checks_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -815,13 +954,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "sessions_pipeline_id_fkey"
-            columns: ["pipeline_id"]
-            isOneToOne: false
-            referencedRelation: "pipelines"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "sessions_current_stage_id_fkey"
             columns: ["current_stage_id"]
             isOneToOne: false
@@ -829,45 +961,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "sessions_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "sessions_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      worker_heartbeats: {
-        Row: {
-          active_job_id: string | null
-          id: string
-          last_heartbeat_at: string
-          metadata: Json
-          started_at: string
-          worker_id: string
-        }
-        Insert: {
-          active_job_id?: string | null
-          id?: string
-          last_heartbeat_at?: string
-          metadata?: Json
-          started_at?: string
-          worker_id: string
-        }
-        Update: {
-          active_job_id?: string | null
-          id?: string
-          last_heartbeat_at?: string
-          metadata?: Json
-          started_at?: string
-          worker_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
-            columns: ["active_job_id"]
-            isOneToOne: false
-            referencedRelation: "agent_jobs"
             referencedColumns: ["id"]
           },
         ]
@@ -908,6 +1012,41 @@ export type Database = {
         }
         Relationships: []
       }
+      worker_heartbeats: {
+        Row: {
+          active_job_id: string | null
+          id: string
+          last_heartbeat_at: string
+          metadata: Json
+          started_at: string
+          worker_id: string
+        }
+        Insert: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id: string
+        }
+        Update: {
+          active_job_id?: string | null
+          id?: string
+          last_heartbeat_at?: string
+          metadata?: Json
+          started_at?: string
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
+            columns: ["active_job_id"]
+            isOneToOne: false
+            referencedRelation: "agent_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_agent_config: {
         Row: {
           created_at: string
@@ -938,6 +1077,47 @@ export type Database = {
             foreignKeyName: "workspace_agent_config_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_linear_routing: {
+        Row: {
+          created_at: string
+          id: string
+          land_stage_slug: string
+          monitor_stage_slug: string | null
+          rework_stage_slug: string
+          status_mappings: Json
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          land_stage_slug?: string
+          monitor_stage_slug?: string | null
+          rework_stage_slug?: string
+          status_mappings?: Json
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          land_stage_slug?: string
+          monitor_stage_slug?: string | null
+          rework_stage_slug?: string
+          status_mappings?: Json
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_linear_routing_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },
@@ -994,6 +1174,53 @@ export type Database = {
             foreignKeyName: "workspace_members_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_onboarding: {
+        Row: {
+          completed_at: string | null
+          completed_steps: string[]
+          created_at: string
+          current_step: string
+          dismissed_at: string | null
+          id: string
+          skipped_steps: string[]
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_steps?: string[]
+          created_at?: string
+          current_step?: string
+          dismissed_at?: string | null
+          id?: string
+          skipped_steps?: string[]
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          completed_steps?: string[]
+          created_at?: string
+          current_step?: string
+          dismissed_at?: string | null
+          id?: string
+          skipped_steps?: string[]
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_onboarding_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },
@@ -1344,9 +1571,19 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
-      agent_job_status: ["queued", "started", "running", "success", "error", "canceled"],
+      agent_job_status: [
+        "queued",
+        "started",
+        "running",
+        "success",
+        "error",
+        "canceled",
+      ],
       agent_run_status: [
         "queued",
         "started",
@@ -1372,3 +1609,4 @@ export const Constants = {
     },
   },
 } as const
+

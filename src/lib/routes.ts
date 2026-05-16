@@ -32,6 +32,10 @@ export function workspaceBasePath(workspaceSlug: string) {
   return `/w/${workspaceSlug}`;
 }
 
+export function workspaceOnboardingPath(workspaceSlug: string) {
+  return `${workspaceBasePath(workspaceSlug)}/onboarding`;
+}
+
 export function loginPath(next?: string) {
   return withSearchParams("/login", next ? { next } : undefined);
 }
