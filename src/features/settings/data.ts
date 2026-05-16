@@ -2,7 +2,7 @@ import "server-only";
 
 import { notFound } from "next/navigation";
 
-import { getGitHubConfigStatus } from "@/features/github/config";
+import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
 import type { OnboardingResumeState } from "@/features/onboarding/flow";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
@@ -11,7 +11,6 @@ import {
   workspaceOnboardingStatusSchema,
   workspaceOnboardingStepSchema,
 } from "@/lib/onboarding/contracts";
-import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
@@ -23,10 +22,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const workspaceSelect = "id, name, slug, avatar_path";
 const currentMemberSelect = "id, role, is_active, kind";
-const installationSelect =
-  "id, app_id, installation_id, installation_url, permissions, suspended, target_name, target_type, updated_at";
-const repositorySelect =
-  "id, repo_id, name, full_name, html_url, private, description, default_programming_language, default_branch, is_archived";
 
 export type AgentConfigMap = Record<string, unknown>;
 
@@ -53,34 +48,7 @@ export type SettingsPageData = {
     id: string;
     role: "admin" | "agent" | "member" | "owner";
   };
-  github: {
-    installation: {
-      appId: number;
-      id: string;
-      installationId: number;
-      installationUrl: string;
-      permissions: Record<string, unknown>;
-      suspended: boolean;
-      targetName: string;
-      targetType: string;
-      updatedAt: string;
-    } | null;
-    missingAppKeys: string[];
-    missingWebhookKeys: string[];
-    repositories: Array<{
-      defaultBranch: string | null;
-      defaultProgrammingLanguage: string | null;
-      description: string | null;
-      fullName: string;
-      htmlUrl: string;
-      id: string;
-      isArchived: boolean;
-      isPrivate: boolean;
-      name: string;
-      onboarding: RepositoryOnboardingState;
-      repoId: number;
-    }>;
-  };
+  github: WorkspaceGitHubData;
   latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
   linearRouting: LinearRoutingConfig;
   onboarding: OnboardingResumeState | null;
@@ -108,35 +76,6 @@ function mapOnboardingResumeState(
   return {
     currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
     status: workspaceOnboardingStatusSchema.parse(row.status),
-  };
-}
-
-function mapRepositoryOnboardingState(
-  row: Record<string, unknown> | undefined,
-  repositoryId: string,
-): RepositoryOnboardingState {
-  const conflictReport = Array.isArray(row?.conflict_report) ? row.conflict_report : [];
-  const status = row?.status;
-  return {
-    conflictReport: conflictReport as RepositoryOnboardingState["conflictReport"],
-    githubRepositoryId: repositoryId,
-    installedSkillHash:
-      typeof row?.installed_skill_hash === "string" ? row.installed_skill_hash : null,
-    installedSkillVersion:
-      typeof row?.installed_skill_version === "number" ? row.installed_skill_version : null,
-    lastError: typeof row?.last_error === "string" ? row.last_error : null,
-    setupBranchName: typeof row?.setup_branch_name === "string" ? row.setup_branch_name : null,
-    setupPrNumber: typeof row?.setup_pr_number === "number" ? row.setup_pr_number : null,
-    setupPrUrl: typeof row?.setup_pr_url === "string" ? row.setup_pr_url : null,
-    status:
-      status === "pr_open" ||
-      status === "ready" ||
-      status === "conflict" ||
-      status === "error" ||
-      status === "not_set_up"
-        ? status
-        : "not_set_up",
-    updatedAt: typeof row?.updated_at === "string" ? row.updated_at : null,
   };
 }
 
@@ -185,60 +124,29 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     notFound();
   }
 
-  const [
-    { data: currentMember, error: currentMemberError },
-    { data: installationRows, error: installationError },
-    { data: repositoryRows, error: repositoryError },
-  ] = await Promise.all([
-    supabase
-      .from("workspace_members")
-      .select(currentMemberSelect)
-      .eq("workspace_id", workspace.id)
-      .eq("user_id", user.id)
-      .maybeSingle(),
-    supabase
-      .from("github_installations")
-      .select(installationSelect)
-      .eq("workspace_id", workspace.id)
-      .order("updated_at", { ascending: false })
-      .limit(1),
-    supabase
-      .from("github_repositories")
-      .select(repositorySelect)
-      .eq("workspace_id", workspace.id)
-      .order("full_name", { ascending: true }),
-  ]);
+  const { data: currentMember, error: currentMemberError } = await supabase
+    .from("workspace_members")
+    .select(currentMemberSelect)
+    .eq("workspace_id", workspace.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
 
   if (currentMemberError) {
     throw currentMemberError;
-  }
-
-  if (installationError) {
-    throw installationError;
-  }
-
-  if (repositoryError) {
-    throw repositoryError;
   }
 
   if (!currentMember || !currentMember.is_active) {
     notFound();
   }
 
-  const installation = installationRows?.[0] ?? null;
   const [
     linearRouting,
-    { data: onboardingRows, error: onboardingError },
+    github,
     { data: workspaceOnboardingRow, error: workspaceOnboardingError },
     { data: capabilityRows, error: capabilityError },
   ] = await Promise.all([
     loadLinearRoutingConfig(admin, workspace.id),
-    looseAdmin
-      .from("repository_onboarding_status")
-      .select(
-        "github_repository_id, status, setup_branch_name, setup_pr_number, setup_pr_url, installed_skill_version, installed_skill_hash, conflict_report, last_error, updated_at",
-      )
-      .eq("workspace_id", workspace.id),
+    loadWorkspaceGitHubData(admin, workspace.id),
     supabase
       .from("workspace_onboarding")
       .select("current_step, status")
@@ -252,10 +160,6 @@ export async function loadSettingsPageData(workspaceSlug: string) {
       .limit(1),
   ]);
 
-  if (onboardingError) {
-    throw onboardingError;
-  }
-
   if (capabilityError) {
     throw capabilityError;
   }
@@ -264,9 +168,6 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     throw workspaceOnboardingError;
   }
 
-  const onboardingIndex = new Map(
-    (onboardingRows ?? []).map((row) => [String(row.github_repository_id), row]),
-  );
   const latestSandboxCapabilityCheck = mapSandboxCapabilityCheck(capabilityRows?.[0]);
 
   // Load agent config (visible to managers only, but load for everyone to
@@ -382,35 +283,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
       id: currentMember.id,
       role: currentMember.role,
     },
-    github: {
-      installation: installation
-        ? {
-            appId: installation.app_id,
-            id: installation.id,
-            installationId: installation.installation_id,
-            installationUrl: installation.installation_url,
-            permissions: (installation.permissions ?? {}) as Record<string, unknown>,
-            suspended: installation.suspended,
-            targetName: installation.target_name,
-            targetType: installation.target_type,
-            updatedAt: installation.updated_at,
-          }
-        : null,
-      ...getGitHubConfigStatus(),
-      repositories: (repositoryRows ?? []).map((repository) => ({
-        defaultBranch: repository.default_branch,
-        defaultProgrammingLanguage: repository.default_programming_language,
-        description: repository.description,
-        fullName: repository.full_name,
-        htmlUrl: repository.html_url,
-        id: repository.id,
-        isArchived: repository.is_archived,
-        isPrivate: repository.private,
-        name: repository.name,
-        onboarding: mapRepositoryOnboardingState(onboardingIndex.get(repository.id), repository.id),
-        repoId: repository.repo_id,
-      })),
-    },
+    github,
     latestSandboxCapabilityCheck,
     linearRouting,
     onboarding: mapOnboardingResumeState(workspaceOnboardingRow),

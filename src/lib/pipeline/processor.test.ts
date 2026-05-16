@@ -160,6 +160,14 @@ interface MockOptions {
   latestFeedback?: { feedback_text: string } | null;
   workspaceSecrets?: Record<string, string>;
   githubInstallation?: { id: string; installation_id: number } | null;
+  githubRepositories?: Array<{
+    default_branch: string | null;
+    full_name: string;
+    github_installation_id?: string;
+    id: string;
+    is_archived?: boolean;
+  }>;
+  primaryRepositoryProfile?: { github_repository_id: string } | null;
 }
 
 type AdminClient = SupabaseClient<Database>;
@@ -321,6 +329,15 @@ function buildAdminMock(opts: MockOptions) {
     opts.githubInstallation === undefined
       ? { id: "ghi-1", installation_id: 123 }
       : opts.githubInstallation;
+  const githubRepositories = opts.githubRepositories ?? [
+    {
+      default_branch: "main",
+      full_name: "acme/app",
+      github_installation_id: "ghi-1",
+      id: "repo-1",
+      is_archived: false,
+    },
+  ];
   const githubInstallationsTable = {
     select: () => ({
       eq: () => ({
@@ -330,16 +347,50 @@ function buildAdminMock(opts: MockOptions) {
   } as const;
 
   const githubRepositoriesTable = {
+    select: () => {
+      const filters: Record<string, unknown> = {};
+      const builder = {
+        eq: (column: string, value: unknown) => {
+          filters[column] = value;
+          return builder;
+        },
+        limit: () => builder,
+        maybeSingle: async () => {
+          const row = githubRepositories
+            .filter((repository) =>
+              filters.github_installation_id
+                ? repository.github_installation_id === filters.github_installation_id
+                : true,
+            )
+            .filter((repository) =>
+              typeof filters.is_archived === "boolean"
+                ? Boolean(repository.is_archived) === filters.is_archived
+                : true,
+            )
+            .filter((repository) => (filters.id ? repository.id === filters.id : true))
+            .sort((a, b) => a.full_name.localeCompare(b.full_name))[0];
+
+          return {
+            data: row
+              ? { default_branch: row.default_branch, full_name: row.full_name, id: row.id }
+              : null,
+            error: null,
+          };
+        },
+        order: () => builder,
+      };
+      return builder;
+    },
+  };
+
+  const workspaceRepositoryProfilesTable = {
     select: () => ({
       eq: () => ({
         eq: () => ({
-          order: () => ({
-            limit: () => ({
-              maybeSingle: async () => ({
-                data: { default_branch: "main", full_name: "acme/app", id: "repo-1" },
-                error: null,
-              }),
-            }),
+          maybeSingle: async () => ({
+            data:
+              opts.primaryRepositoryProfile === undefined ? null : opts.primaryRepositoryProfile,
+            error: null,
           }),
         }),
       }),
@@ -358,6 +409,7 @@ function buildAdminMock(opts: MockOptions) {
     workspace_secrets: workspaceSecretsTable,
     github_installations: githubInstallationsTable,
     github_repositories: githubRepositoriesTable,
+    workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
   return {
@@ -443,6 +495,38 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect((call.branch as string).endsWith(session.id)).toBe(true);
     expect(call.title).toBe(`${productStage.name}: ${session.title}`);
     expect(call.body).toContain("Drafted spec body");
+  });
+
+  it("uses the selected primary repository profile before alphabetical fallback", async () => {
+    const session = baseSession();
+    const job = baseJob();
+    const { admin } = buildAdminMock({
+      session,
+      githubRepositories: [
+        {
+          default_branch: "main",
+          full_name: "acme/aaa",
+          github_installation_id: "ghi-1",
+          id: "repo-a",
+          is_archived: false,
+        },
+        {
+          default_branch: "trunk",
+          full_name: "acme/zzz",
+          github_installation_id: "ghi-1",
+          id: "repo-z",
+          is_archived: false,
+        },
+      ],
+      primaryRepositoryProfile: { github_repository_id: "repo-z" },
+    });
+
+    await processPipelineJob({ admin, job });
+
+    const call = mocked.openSessionPullRequest.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.baseBranch).toBe("trunk");
+    expect(call.repoFullName).toBe("acme/zzz");
+    expect(call.repoId).toBe("repo-z");
   });
 
   it("does not abort the stage when opening the pull request fails", async () => {

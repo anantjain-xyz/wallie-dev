@@ -22,6 +22,13 @@ const onboardingData: WorkspaceOnboardingData = {
     id: "member-1",
     role: "owner",
   },
+  github: {
+    installation: null,
+    missingAppKeys: [],
+    missingWebhookKeys: [],
+    primaryProfile: null,
+    repositories: [],
+  },
   onboarding: {
     completedAt: null,
     completedSteps: ["github"],
@@ -75,7 +82,7 @@ const onboardingData: WorkspaceOnboardingData = {
       configured: false,
       fullName: null,
       repositoryId: null,
-      status: "placeholder",
+      status: "missing",
     },
     repositorySetup: {
       configured: false,

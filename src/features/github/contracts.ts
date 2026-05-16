@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const githubWorkspaceQuerySchema = z.object({
+  source: z.enum(["onboarding", "settings"]).optional(),
   workspaceId: z.string().uuid("Workspace id is invalid."),
 });
 

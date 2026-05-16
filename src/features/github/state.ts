@@ -7,6 +7,7 @@ const maxStateAgeMs = 60 * 60 * 1000;
 
 export type GitHubInstallState = {
   createdAt: string;
+  source: "onboarding" | "settings";
   userId: string;
   version: 1;
   workspaceId: string;
@@ -30,13 +31,15 @@ function createSignature(payload: string, input: Record<string, string | undefin
 }
 
 export function createGitHubInstallState(
-  payload: Omit<GitHubInstallState, "createdAt" | "version">,
+  payload: Omit<GitHubInstallState, "createdAt" | "source" | "version"> &
+    Partial<Pick<GitHubInstallState, "source">>,
   input: Record<string, string | undefined> = process.env,
 ) {
   const encodedPayload = encodeBase64Url(
     JSON.stringify({
       ...payload,
       createdAt: new Date().toISOString(),
+      source: payload.source ?? "settings",
       version: githubStateVersion,
     } satisfies GitHubInstallState),
   );
@@ -78,6 +81,10 @@ export function verifyGitHubInstallState(
 
   if (parsed.version !== githubStateVersion) {
     return null;
+  }
+
+  if (parsed.source !== "onboarding") {
+    parsed.source = "settings";
   }
 
   const ageMs = Date.now() - new Date(parsed.createdAt).getTime();

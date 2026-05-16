@@ -37,6 +37,13 @@ import WorkspaceOnboardingPage from "./page";
 const onboardingData = {
   canManage: false,
   currentMember: { id: "member-1", role: "member" },
+  github: {
+    installation: null,
+    missingAppKeys: [],
+    missingWebhookKeys: [],
+    primaryProfile: null,
+    repositories: [],
+  },
   onboarding: {
     completedAt: null,
     completedSteps: [],
@@ -78,7 +85,7 @@ const onboardingData = {
       configured: false,
       fullName: null,
       repositoryId: null,
-      status: "placeholder",
+      status: "missing",
     },
     repositorySetup: {
       configured: false,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { RepositoryOnboardingStatus } from "@/lib/repo-onboarding/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 
 export const WORKSPACE_ONBOARDING_STEPS = [
@@ -92,14 +93,14 @@ export type OnboardingSetupHealth = {
     updatedAt: string | null;
   };
   primaryRepositoryProfile: {
-    configured: false;
-    fullName: null;
-    repositoryId: null;
-    status: Extract<SetupReadinessStatus, "placeholder">;
+    configured: boolean;
+    fullName: string | null;
+    repositoryId: string | null;
+    status: Extract<SetupReadinessStatus, "missing" | "ready">;
   };
   repositorySetup: {
-    configured: false;
-    repositoryId: null;
-    status: Extract<SetupReadinessStatus, "placeholder">;
+    configured: boolean;
+    repositoryId: string | null;
+    status: RepositoryOnboardingStatus | Extract<SetupReadinessStatus, "placeholder">;
   };
 };

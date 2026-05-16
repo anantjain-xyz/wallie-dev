@@ -1226,6 +1226,78 @@ export type Database = {
           },
         ]
       }
+      workspace_repository_profiles: {
+        Row: {
+          build_command: string | null
+          created_at: string
+          env_key_suggestions: string[]
+          framework_hints: string[]
+          github_repository_id: string
+          id: string
+          inference_confidence: string
+          inference_sources: Json
+          install_command: string | null
+          is_primary: boolean
+          language_hints: string[]
+          package_manager: string | null
+          setup_notes: string
+          test_command: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          build_command?: string | null
+          created_at?: string
+          env_key_suggestions?: string[]
+          framework_hints?: string[]
+          github_repository_id: string
+          id?: string
+          inference_confidence?: string
+          inference_sources?: Json
+          install_command?: string | null
+          is_primary?: boolean
+          language_hints?: string[]
+          package_manager?: string | null
+          setup_notes?: string
+          test_command?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          build_command?: string | null
+          created_at?: string
+          env_key_suggestions?: string[]
+          framework_hints?: string[]
+          github_repository_id?: string
+          id?: string
+          inference_confidence?: string
+          inference_sources?: Json
+          install_command?: string | null
+          is_primary?: boolean
+          language_hints?: string[]
+          package_manager?: string | null
+          setup_notes?: string
+          test_command?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_repository_profiles_github_repository_id_fkey"
+            columns: ["github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_repository_profiles_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_secrets: {
         Row: {
           created_at: string
@@ -1609,4 +1681,3 @@ export const Constants = {
     },
   },
 } as const
-

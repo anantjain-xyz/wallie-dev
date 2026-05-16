@@ -586,14 +586,22 @@ async function loadGitHubContext(
 
   if (!installation) return null;
 
-  const { data: repo } = await admin
+  const { data: primaryProfile } = await admin
+    .from("workspace_repository_profiles")
+    .select("github_repository_id")
+    .eq("workspace_id", workspaceId)
+    .eq("is_primary", true)
+    .maybeSingle();
+
+  const repoQuery = admin
     .from("github_repositories")
     .select("id, full_name, default_branch")
     .eq("github_installation_id", installation.id)
-    .eq("is_archived", false)
-    .order("full_name", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .eq("is_archived", false);
+
+  const { data: repo } = primaryProfile
+    ? await repoQuery.eq("id", primaryProfile.github_repository_id).maybeSingle()
+    : await repoQuery.order("full_name", { ascending: true }).limit(1).maybeSingle();
 
   if (!repo) return null;
 

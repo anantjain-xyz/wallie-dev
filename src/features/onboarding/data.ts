@@ -1,5 +1,6 @@
 import "server-only";
 
+import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
@@ -27,6 +28,7 @@ export type WorkspaceOnboardingData = {
     id: string;
     role: "admin" | "agent" | "member" | "owner";
   };
+  github: WorkspaceGitHubData;
   onboarding: WorkspaceOnboardingState;
   setupHealth: OnboardingSetupHealth;
   workspace: {
@@ -107,12 +109,14 @@ function codexConnectionStatus(
   };
 }
 
-async function loadSetupHealth(context: WorkspaceAccessContext): Promise<OnboardingSetupHealth> {
+async function loadSetupHealth(
+  context: WorkspaceAccessContext,
+  github: WorkspaceGitHubData,
+): Promise<OnboardingSetupHealth> {
   const admin = createSupabaseAdminClient();
   const workspaceId = context.workspace.id;
 
   const [
-    { data: installationRows, error: installationError },
     { data: pipelineRow, error: pipelineError },
     { data: stageRows, error: stageError },
     { data: linearSecret, error: linearSecretError },
@@ -121,12 +125,6 @@ async function loadSetupHealth(context: WorkspaceAccessContext): Promise<Onboard
     { data: codexCredentials, error: codexError },
     { data: sandboxRows, error: sandboxError },
   ] = await Promise.all([
-    admin
-      .from("github_installations")
-      .select("installation_id, suspended, target_name, updated_at")
-      .eq("workspace_id", workspaceId)
-      .order("updated_at", { ascending: false })
-      .limit(1),
     admin
       .from("pipelines")
       .select("id")
@@ -160,7 +158,6 @@ async function loadSetupHealth(context: WorkspaceAccessContext): Promise<Onboard
   ]);
 
   const firstError =
-    installationError ??
     pipelineError ??
     stageError ??
     linearSecretError ??
@@ -170,13 +167,17 @@ async function loadSetupHealth(context: WorkspaceAccessContext): Promise<Onboard
     sandboxError;
   if (firstError) throw firstError;
 
-  const installation = installationRows?.[0] ?? null;
   const stageCount = pipelineRow
     ? (stageRows ?? []).filter((stage) => stage.pipeline_id === pipelineRow.id).length
     : 0;
   const configuredKeys = [...new Set((agentConfigRows ?? []).map((row) => row.key))].sort();
   const linearRoutingUpdatedAt =
     typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
+  const primaryProfile = github.primaryProfile;
+  const primaryRepository = primaryProfile
+    ? github.repositories.find((repository) => repository.id === primaryProfile.githubRepositoryId)
+    : null;
+  const primaryRepositorySetup = primaryRepository?.onboarding ?? null;
 
   return {
     agentConfig: {
@@ -192,12 +193,12 @@ async function loadSetupHealth(context: WorkspaceAccessContext): Promise<Onboard
       status: pipelineRow && stageCount > 0 ? "ready" : "missing",
     },
     githubInstallation: {
-      connected: Boolean(installation && !installation.suspended),
-      installationId: installation?.installation_id ?? null,
-      status: installation ? "present" : "missing",
-      suspended: installation?.suspended ?? null,
-      targetName: installation?.target_name ?? null,
-      updatedAt: installation?.updated_at ?? null,
+      connected: Boolean(github.installation && !github.installation.suspended),
+      installationId: github.installation?.installationId ?? null,
+      status: github.installation ? "present" : "missing",
+      suspended: github.installation?.suspended ?? null,
+      targetName: github.installation?.targetName ?? null,
+      updatedAt: github.installation?.updatedAt ?? null,
     },
     latestSandboxCapabilityCheck: mapSandboxCapabilityCheck(sandboxRows?.[0]),
     linearKey: {
@@ -211,15 +212,16 @@ async function loadSetupHealth(context: WorkspaceAccessContext): Promise<Onboard
       updatedAt: linearRoutingUpdatedAt,
     },
     primaryRepositoryProfile: {
-      configured: false,
-      fullName: null,
-      repositoryId: null,
-      status: "placeholder",
+      configured: Boolean(primaryProfile),
+      fullName: primaryRepository?.fullName ?? null,
+      repositoryId: primaryProfile?.githubRepositoryId ?? null,
+      status: primaryProfile ? "ready" : "missing",
     },
     repositorySetup: {
-      configured: false,
-      repositoryId: null,
-      status: "placeholder",
+      configured: primaryRepositorySetup?.status === "ready",
+      repositoryId:
+        primaryRepositorySetup?.githubRepositoryId ?? primaryProfile?.githubRepositoryId ?? null,
+      status: primaryRepositorySetup?.status ?? "placeholder",
     },
   };
 }
@@ -243,14 +245,18 @@ async function buildWorkspaceOnboardingData(
     onboardingRow = data;
   }
 
+  const admin = createSupabaseAdminClient();
+  const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
+
   return {
     canManage: context.currentMember.role === "owner" || context.currentMember.role === "admin",
     currentMember: {
       id: context.currentMember.id,
       role: context.currentMember.role,
     },
+    github,
     onboarding: mapOnboardingRow(onboardingRow),
-    setupHealth: await loadSetupHealth(context),
+    setupHealth: await loadSetupHealth(context, github),
     workspace: {
       id: context.workspace.id,
       name: context.workspace.name,
