@@ -137,4 +137,36 @@ describe("POST /auth/password", () => {
       "http://localhost:3000/login?next=%2Fw%2Facme&error=password_auth_failed",
     );
   });
+
+  it("treats sessionless fallback sign-up as failed auth", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue({
+      auth: {
+        signInWithPassword: mocked.signInWithPassword,
+        signUp: mocked.signUp,
+      },
+    });
+    mocked.signInWithPassword.mockResolvedValue({
+      error: { code: "invalid_credentials", message: "Invalid login credentials" },
+    });
+    mocked.signUp.mockResolvedValue({ error: null });
+    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+
+    const response = await POST(
+      createPasswordRequest({
+        email: "dev@localhost.com",
+        next: "/w/acme",
+        password: "password",
+      }),
+    );
+
+    expect(mocked.signUp).toHaveBeenCalledWith({
+      email: "dev@localhost.com",
+      password: "password",
+    });
+    expect(mocked.ensureProfileForUser).not.toHaveBeenCalled();
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Fw%2Facme&error=password_auth_failed",
+    );
+  });
 });

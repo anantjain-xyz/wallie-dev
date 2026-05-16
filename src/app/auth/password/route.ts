@@ -70,9 +70,14 @@ export async function POST(request: NextRequest) {
 
   const user = await getSupabaseUserOrNull(supabase);
 
-  if (user) {
-    await ensureProfileForUser(supabase, user);
+  if (!user) {
+    return NextResponse.redirect(
+      new URL(getEntryPath(next, { error: "password_auth_failed" }), request.url),
+      { status: 303 },
+    );
   }
+
+  await ensureProfileForUser(supabase, user);
 
   const redirectTarget = next === "/" ? await resolveAuthenticatedHomePath(supabase) : next;
 
