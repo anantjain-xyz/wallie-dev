@@ -1,6 +1,5 @@
 import "server-only";
 
-import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
@@ -17,13 +16,15 @@ type GitHubAppLike = {
   getInstallationOctokit: (installationId: number) => Promise<InstallationOctokit>;
 };
 
+type MaybePromise<T> = T | Promise<T>;
+
 interface OpenSessionPullRequestInput {
   admin: AdminClient;
   baseBranch: string;
   body: string;
   branch: string;
   /** Override for tests. Defaults to a real `App` from `@octokit/app`. */
-  githubAppFactory?: () => GitHubAppLike;
+  githubAppFactory?: () => MaybePromise<GitHubAppLike>;
   installationId: number;
   repoFullName: string;
   /** github_repositories.id (DB UUID, not GitHub's numeric repo id). */
@@ -75,7 +76,7 @@ export async function openSessionPullRequest(
     return { kind: "pr_failed", reason: `Invalid repo full_name: ${input.repoFullName}` };
   }
 
-  const app = (input.githubAppFactory ?? defaultAppFactory)();
+  const app = await (input.githubAppFactory ?? defaultAppFactory)();
   const octokit = await app.getInstallationOctokit(input.installationId);
 
   let pr: GitHubPullRequestResponse;
@@ -224,7 +225,8 @@ function pullRequestState(pr: GitHubPullRequestResponse): string {
   return pr.merged_at ? "merged" : pr.state;
 }
 
-function defaultAppFactory(): GitHubAppLike {
+async function defaultAppFactory(): Promise<GitHubAppLike> {
+  const { App } = await import("@octokit/app");
   return new App(resolveGitHubAppConfig()) as unknown as GitHubAppLike;
 }
 
