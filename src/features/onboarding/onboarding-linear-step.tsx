@@ -85,7 +85,6 @@ export function OnboardingLinearStep({
             onSecretSaved={async () => {
               setKeySavedInSession(true);
               setTestPassed(false);
-              setRoutingSavedSignature(null);
               await onRefresh("linear:key");
             }}
             onTestSucceeded={async () => {

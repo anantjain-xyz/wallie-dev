@@ -130,7 +130,7 @@ export function LinearKeyControls({
           <div className="flex flex-wrap gap-2">
             <button
               className="ui-button"
-              disabled={testLinearConnection.isBusy}
+              disabled={testLinearConnection.isBusy || saveLinearKey.isBusy}
               onClick={() => void testLinearConnection.run()}
               type="button"
             >

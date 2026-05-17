@@ -168,6 +168,31 @@ describe("OnboardingPageClient", () => {
     expect(button).not.toContain("disabled");
   });
 
+  it("allows continuing when returning to an already-completed inline step", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "pipeline",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+        }),
+      }),
+    );
+
+    const button = primaryFooterButton(html);
+    expect(button).toContain(">Continue</button>");
+    expect(button).not.toContain("disabled");
+  });
+
   it("lets onboarding replace an existing Linear key inline", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

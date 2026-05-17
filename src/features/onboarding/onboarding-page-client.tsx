@@ -473,12 +473,17 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
+  const activeStepAlreadyResolved =
+    onboarding.completedSteps.includes(activeStep.id) ||
+    onboarding.skippedSteps.includes(activeStep.id);
   const pipelineEditorUnavailable = activeStep.id === "pipeline" && !data.pipeline;
   const linearRoutingUnavailable =
     activeStep.id === "linear" && (!data.pipeline || data.pipeline.stages.length === 0);
   const inlineCompletionUnavailable = pipelineEditorUnavailable || linearRoutingUnavailable;
   const requiresInlineCompletion =
-    (activeStep.id === "pipeline" || activeStep.id === "linear") && !inlineCompletionUnavailable;
+    (activeStep.id === "pipeline" || activeStep.id === "linear") &&
+    !inlineCompletionUnavailable &&
+    !activeStepAlreadyResolved;
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
     if (!data.canManage || saveInFlightRef.current) return null;
