@@ -42,10 +42,10 @@ export type RateLimiter = {
 };
 
 // ---------------------------------------------------------------------------
-// In-memory limiter — used in dev/tests and as a graceful fallback when
-// Upstash credentials are not configured. Production on Vercel runs across
-// many isolated instances, so without a shared backend the limit is "best
-// effort" — explicitly logged at module init.
+// In-memory sliding-window limiter. Production on Vercel runs across many
+// isolated instances, so each instance keeps its own bucket — the effective
+// cap is `max × instance_count`. Acceptable for the small caps we set here;
+// revisit if we ever need precise global limits.
 // ---------------------------------------------------------------------------
 
 type MemoryBucket = number[];
@@ -93,142 +93,9 @@ export function clearRateLimitsForTesting() {
   memoryBuckets.clear();
 }
 
-// ---------------------------------------------------------------------------
-// Upstash REST limiter — sliding window via sorted sets. Activated when both
-// UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set.
-// Fail-open: if the backend errors we let the request through so a transient
-// upstash outage cannot DoS our own product.
-// ---------------------------------------------------------------------------
-
-type UpstashPipelineResponse = Array<{ result?: unknown; error?: string }>;
-
-function buildUpstashLimiter(url: string, token: string): RateLimiter {
-  async function exec(commands: Array<Array<string>>): Promise<UpstashPipelineResponse> {
-    const response = await fetch(`${url}/pipeline`, {
-      body: JSON.stringify(commands),
-      cache: "no-store",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Upstash pipeline returned ${response.status}`);
-    }
-
-    return (await response.json()) as UpstashPipelineResponse;
-  }
-
-  return {
-    async check(scope, key) {
-      const config = RATE_LIMITS[scope];
-      const now = Date.now();
-      const cutoff = now - config.windowMs;
-      const redisKey = `ratelimit:${scope}:${key}`;
-      // Member is unique per request so concurrent inserts at the same ms do
-      // not collide on the sorted set's score+member uniqueness.
-      const member = `${now}-${Math.random().toString(36).slice(2, 10)}`;
-
-      try {
-        const results = await exec([
-          ["ZREMRANGEBYSCORE", redisKey, "0", String(cutoff)],
-          ["ZADD", redisKey, String(now), member],
-          ["ZCARD", redisKey],
-          ["PEXPIRE", redisKey, String(config.windowMs * 2)],
-        ]);
-
-        // Upstash returns HTTP 200 even when individual pipeline commands fail
-        // (e.g. WRONGTYPE on a stale key). Surface those as a backend error so
-        // the catch below logs and fails open explicitly instead of treating
-        // the missing result as a count of 0, which would silently bypass the
-        // limiter for every subsequent request.
-        for (const [index, entry] of results.entries()) {
-          if (entry?.error) {
-            throw new Error(`Upstash pipeline command ${index} failed: ${entry.error}`);
-          }
-        }
-
-        const cardResult = results[2]?.result;
-        if (typeof cardResult !== "number") {
-          throw new Error(
-            `Upstash ZCARD returned unexpected ${typeof cardResult}: ${JSON.stringify(cardResult)}`,
-          );
-        }
-        const count = cardResult;
-
-        if (count <= config.max) {
-          return {
-            success: true,
-            limit: config.max,
-            remaining: Math.max(0, config.max - count),
-            resetMs: now + config.windowMs,
-            retryAfterSeconds: 0,
-          };
-        }
-
-        // Over the limit — pull the just-inserted member back off so the next
-        // call's count reflects only legitimate hits, then read the oldest
-        // surviving timestamp to compute Retry-After.
-        const followUp = await exec([
-          ["ZREM", redisKey, member],
-          ["ZRANGE", redisKey, "0", "0", "WITHSCORES"],
-        ]);
-        const oldestEntry = followUp[1]?.result;
-        const oldestTs =
-          Array.isArray(oldestEntry) && oldestEntry.length >= 2 ? Number(oldestEntry[1]) : now;
-        const resetMs = oldestTs + config.windowMs;
-
-        return {
-          success: false,
-          limit: config.max,
-          remaining: 0,
-          resetMs,
-          retryAfterSeconds: Math.max(1, Math.ceil((resetMs - now) / 1000)),
-        };
-      } catch (error) {
-        console.error("Rate limit backend unavailable; failing open", { error, scope, key });
-        return {
-          success: true,
-          limit: config.max,
-          remaining: config.max,
-          resetMs: now + config.windowMs,
-          retryAfterSeconds: 0,
-        };
-      }
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Singleton selection. Resolved on first use so tests that stub env vars take
-// effect, but cached so we don't rebuild the fetch closure on every request.
-// ---------------------------------------------------------------------------
-
-let cachedLimiter: RateLimiter | null = null;
-let cachedFingerprint: string | null = null;
-
-function getRateLimiter(): RateLimiter {
-  const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
-  const fingerprint = url && token ? `upstash:${url}` : "memory";
-
-  if (cachedLimiter && cachedFingerprint === fingerprint) {
-    return cachedLimiter;
-  }
-
-  cachedFingerprint = fingerprint;
-  cachedLimiter = url && token ? buildUpstashLimiter(url, token) : memoryLimiter;
-  return cachedLimiter;
-}
-
-/**
- * Check the configured limit for a scope/key. Always resolves; on backend
- * failure the call fails open and `success` is true.
- */
+/** Check the configured limit for a scope/key. */
 export async function checkRateLimit(scope: RateLimitScope, key: string): Promise<RateLimitResult> {
-  return getRateLimiter().check(scope, key);
+  return memoryLimiter.check(scope, key);
 }
 
 /** Build the standard X-RateLimit-* + Retry-After header bag for a result. */

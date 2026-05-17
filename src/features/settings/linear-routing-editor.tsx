@@ -23,16 +23,72 @@ type LinearRoutingResponse = {
   routing: LinearRoutingConfig;
 };
 
-function joinStatuses(values: readonly string[]): string {
+type LinearRoutingDraft = {
+  landStageSlug: string;
+  monitorStageSlug: string;
+  reworkStageSlug: string;
+  statusMappings: Record<(typeof LINEAR_ROUTE_KEYS)[number], string>;
+};
+
+export function joinStatuses(values: readonly string[]): string {
   return values.join(", ");
 }
 
-function splitStatuses(value: string): string[] {
+export function splitStatuses(value: string): string[] {
   const statuses = value
     .split(/[,\n]/)
     .map((entry) => entry.trim())
     .filter(Boolean);
   return statuses;
+}
+
+export function validateLinearRoutingDraftStages(
+  draft: Pick<LinearRoutingDraft, "landStageSlug" | "monitorStageSlug" | "reworkStageSlug">,
+  stageOptions: readonly string[],
+) {
+  if (stageOptions.length === 0) {
+    return "Load a default pipeline with at least one stage before saving Linear routing.";
+  }
+
+  const available = new Set(stageOptions);
+  const requiredRoutes = [
+    ["Rework stage", draft.reworkStageSlug],
+    ["Land stage", draft.landStageSlug],
+  ] as const;
+
+  for (const [label, slug] of requiredRoutes) {
+    if (!available.has(slug)) {
+      return `${label} must match a current default pipeline stage.`;
+    }
+  }
+
+  if (draft.monitorStageSlug && !available.has(draft.monitorStageSlug)) {
+    return "Monitor stage must match a current default pipeline stage.";
+  }
+
+  return null;
+}
+
+function routingDraftFromConfig(routing: LinearRoutingConfig): LinearRoutingDraft {
+  return {
+    landStageSlug: routing.landStageSlug,
+    monitorStageSlug: routing.monitorStageSlug ?? "",
+    reworkStageSlug: routing.reworkStageSlug,
+    statusMappings: Object.fromEntries(
+      LINEAR_ROUTE_KEYS.map((key) => [key, joinStatuses(routing.statusMappings[key])]),
+    ) as LinearRoutingDraft["statusMappings"],
+  };
+}
+
+function buildRoutingPayload(draft: LinearRoutingDraft) {
+  return {
+    landStageSlug: draft.landStageSlug,
+    monitorStageSlug: draft.monitorStageSlug.trim() || null,
+    reworkStageSlug: draft.reworkStageSlug,
+    statusMappings: Object.fromEntries(
+      LINEAR_ROUTE_KEYS.map((key) => [key, splitStatuses(draft.statusMappings[key])]),
+    ),
+  };
 }
 
 export function LinearRoutingEditor({
@@ -42,41 +98,48 @@ export function LinearRoutingEditor({
   stages,
   workspaceId,
 }: LinearRoutingEditorProps) {
-  const [draft, setDraft] = useState(() => ({
-    landStageSlug: routing.landStageSlug,
-    monitorStageSlug: routing.monitorStageSlug ?? "",
-    reworkStageSlug: routing.reworkStageSlug,
-    statusMappings: Object.fromEntries(
-      LINEAR_ROUTE_KEYS.map((key) => [key, joinStatuses(routing.statusMappings[key])]),
-    ) as Record<(typeof LINEAR_ROUTE_KEYS)[number], string>,
-  }));
+  return (
+    <LinearRoutingControls
+      canManage={canManage}
+      routing={routing}
+      setFlashMessage={setFlashMessage}
+      stages={stages}
+      workspaceId={workspaceId}
+    />
+  );
+}
+
+export function LinearRoutingControls({
+  canManage,
+  onSaved,
+  routing,
+  setFlashMessage,
+  stages,
+  workspaceId,
+}: LinearRoutingEditorProps & {
+  onSaved?: (routing: LinearRoutingConfig) => Promise<void> | void;
+}) {
+  const [draft, setDraft] = useState(() => routingDraftFromConfig(routing));
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);
 
   const saveRouting = useApiAction<LinearRoutingResponse>({
-    call: () =>
-      fetch(`/api/workspaces/${workspaceId}/linear-routing`, {
-        body: JSON.stringify({
-          landStageSlug: draft.landStageSlug,
-          monitorStageSlug: draft.monitorStageSlug.trim() || null,
-          reworkStageSlug: draft.reworkStageSlug,
-          statusMappings: Object.fromEntries(
-            LINEAR_ROUTE_KEYS.map((key) => [key, splitStatuses(draft.statusMappings[key])]),
-          ),
-        }),
+    call: () => {
+      const stageError = validateLinearRoutingDraftStages(draft, stageOptions);
+      if (stageError) {
+        return Response.json({ error: stageError }, { status: 400 });
+      }
+
+      return fetch(`/api/workspaces/${workspaceId}/linear-routing`, {
+        body: JSON.stringify(buildRoutingPayload(draft)),
         headers: { "Content-Type": "application/json" },
         method: "PUT",
-      }),
-    errorText: "Linear routing save failed.",
-    onSuccess: (payload) => {
-      setDraft({
-        landStageSlug: payload.routing.landStageSlug,
-        monitorStageSlug: payload.routing.monitorStageSlug ?? "",
-        reworkStageSlug: payload.routing.reworkStageSlug,
-        statusMappings: Object.fromEntries(
-          LINEAR_ROUTE_KEYS.map((key) => [key, joinStatuses(payload.routing.statusMappings[key])]),
-        ) as Record<(typeof LINEAR_ROUTE_KEYS)[number], string>,
       });
+    },
+    errorText: "Linear routing save failed.",
+    onSuccess: async (payload) => {
+      setDraft(routingDraftFromConfig(payload.routing));
+      await onSaved?.(payload.routing);
     },
     setFlashMessage,
     successText: "Linear routing saved.",

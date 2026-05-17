@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   RATE_LIMITS,
@@ -9,17 +9,9 @@ import {
   enforceRateLimit,
 } from "@/lib/rate-limit";
 
-describe("rate-limit memory backend", () => {
+describe("rate-limit", () => {
   beforeEach(() => {
     clearRateLimitsForTesting();
-    // Force the cached limiter to re-resolve as the in-memory backend even if
-    // a stray UPSTASH_REDIS_REST_URL is exported on the developer's shell.
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
-  });
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
   });
 
   it("allows up to the configured cap per scope+key", async () => {
@@ -136,92 +128,5 @@ describe("rate-limit memory backend", () => {
       expect(entry.endpoint.length).toBeGreaterThan(0);
       expect(entry.description.length).toBeGreaterThan(0);
     }
-  });
-});
-
-describe("rate-limit upstash backend", () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    clearRateLimitsForTesting();
-    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://upstash.test");
-    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "token");
-    fetchSpy = vi.spyOn(globalThis, "fetch");
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    fetchSpy.mockRestore();
-    errorSpy.mockRestore();
-    vi.unstubAllEnvs();
-  });
-
-  function mockPipelineResponse(payload: unknown) {
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify(payload), {
-        headers: { "Content-Type": "application/json" },
-        status: 200,
-      }),
-    );
-  }
-
-  it("fails open and logs when a pipeline command returns an error", async () => {
-    // ZCARD command (index 2) reports a Redis-level error; the pipeline still
-    // returns 200. The buggy version of this code read result=undefined, treated
-    // count as 0, and let every request through silently. We now surface the
-    // error explicitly and fail open with a console.error trail.
-    mockPipelineResponse([
-      { result: 0 },
-      { result: 1 },
-      { error: "WRONGTYPE Operation against a key holding the wrong kind of value" },
-      { result: 1 },
-    ]);
-
-    const result = await checkRateLimit("agentRuns", "ws-err:user-err");
-
-    expect(result.success).toBe(true);
-    expect(result.remaining).toBe(RATE_LIMITS.agentRuns.max);
-    expect(errorSpy).toHaveBeenCalledWith(
-      "Rate limit backend unavailable; failing open",
-      expect.objectContaining({
-        scope: "agentRuns",
-        key: "ws-err:user-err",
-        error: expect.any(Error),
-      }),
-    );
-    const [, ctx] = errorSpy.mock.calls[0] as [string, { error: Error }];
-    expect(ctx.error.message).toMatch(/pipeline command 2 failed.*WRONGTYPE/);
-  });
-
-  it("fails open when the ZCARD result is missing or non-numeric", async () => {
-    mockPipelineResponse([{ result: 0 }, { result: 1 }, { result: null }, { result: 1 }]);
-
-    const result = await checkRateLimit("agentRuns", "ws-null:user-null");
-
-    expect(result.success).toBe(true);
-    expect(errorSpy).toHaveBeenCalled();
-    const [, ctx] = errorSpy.mock.calls[0] as [string, { error: Error }];
-    expect(ctx.error.message).toMatch(/ZCARD returned unexpected/);
-  });
-
-  it("blocks when ZCARD reports the bucket is over capacity", async () => {
-    // First exec — over the cap.
-    mockPipelineResponse([
-      { result: 0 },
-      { result: 1 },
-      { result: RATE_LIMITS.agentRuns.max + 1 },
-      { result: 1 },
-    ]);
-    // Second exec — the over-limit follow-up: ZREM the just-added member, then
-    // ZRANGE for the oldest surviving entry.
-    mockPipelineResponse([{ result: 1 }, { result: ["existing-member", "0"] }]);
-
-    const result = await checkRateLimit("agentRuns", "ws-block:user-block");
-
-    expect(result.success).toBe(false);
-    expect(result.remaining).toBe(0);
-    expect(result.retryAfterSeconds).toBeGreaterThan(0);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 const mocked = vi.hoisted(() => ({
   loadWorkspaceOnboardingData: vi.fn(),
@@ -29,6 +30,16 @@ const onboardingData: WorkspaceOnboardingData = {
     primaryProfile: null,
     repositories: [],
   },
+  linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
+  linearSecret: {
+    createdAt: "2026-05-16T18:00:00.000Z",
+    createdByMemberId: "member-1",
+    id: "secret-1",
+    key: "LINEAR_API_KEY",
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    valuePreview: "••••1234",
+    workspaceId: WORKSPACE_ID,
+  },
   onboarding: {
     completedAt: null,
     completedSteps: ["github"],
@@ -40,6 +51,23 @@ const onboardingData: WorkspaceOnboardingData = {
     status: "in_progress",
     updatedAt: "2026-05-16T18:00:00.000Z",
     workspaceId: WORKSPACE_ID,
+  },
+  pipeline: {
+    id: "pipeline-1",
+    isDefault: true,
+    name: "Default",
+    stages: [
+      {
+        approverMemberIds: [],
+        description: "Product",
+        id: "stage-1",
+        name: "Product",
+        pipelineId: "pipeline-1",
+        position: 1,
+        promptTemplateMd: "Product prompt",
+        slug: "product",
+      },
+    ],
   },
   setupHealth: {
     agentConfig: {
@@ -95,6 +123,14 @@ const onboardingData: WorkspaceOnboardingData = {
     name: "Wallie",
     slug: "wallie",
   },
+  workspaceMembers: [
+    {
+      email: "owner@example.com",
+      fullName: "Owner",
+      id: "member-1",
+      role: "owner",
+    },
+  ],
 };
 
 function routeContext(workspaceId = WORKSPACE_ID) {

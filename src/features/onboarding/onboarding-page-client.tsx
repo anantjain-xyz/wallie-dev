@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
+  buildOnboardingAdvancePatch,
   buildOnboardingContinuePatch,
   buildOnboardingExitPatch,
   buildOnboardingRailNavigationPatch,
@@ -18,6 +19,8 @@ import {
   ONBOARDING_STEPS,
   type OnboardingStepDisplayState,
 } from "@/features/onboarding/flow";
+import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
+import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import type {
   OnboardingSetupHealth,
@@ -495,8 +498,10 @@ function RepositoryProfileEditor({
 function StepBody({
   data,
   isSaving,
+  onCompleteStep,
   onDataChange,
   onInferRepository,
+  onRefresh,
   onRepositoryProfileSaved,
   onSelectRepository,
   profileBusy,
@@ -509,8 +514,10 @@ function StepBody({
 }: {
   data: WorkspaceOnboardingData;
   isSaving: boolean;
+  onCompleteStep: (action: string) => Promise<void>;
   onDataChange: (data: WorkspaceOnboardingData) => void;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
+  onRefresh: (action: string) => Promise<void>;
   onRepositoryProfileSaved: () => void;
   onSelectRepository: (repository: WorkspaceGitHubRepository) => void;
   profileBusy: boolean;
@@ -598,20 +605,33 @@ function StepBody({
     );
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {rows.map((row) => (
-          <div
-            key={`${step}-${row.label}`}
-            className="flex min-h-12 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
-          >
-            <span className="min-w-0 text-[12px] font-medium text-muted">{row.label}</span>
-            <Badge tone={row.tone}>{row.value}</Badge>
-          </div>
-        ))}
-      </div>
+  let controls: ReactNode;
 
+  if (step === "pipeline") {
+    controls = (
+      <OnboardingPipelineEditor
+        canManage={data.canManage}
+        onCompleted={onCompleteStep}
+        pipeline={data.pipeline}
+        workspaceId={data.workspace.id}
+        workspaceMembers={data.workspaceMembers}
+      />
+    );
+  } else if (step === "linear") {
+    controls = (
+      <OnboardingLinearStep
+        canManage={data.canManage}
+        linearKeyConfigured={data.setupHealth.linearKey.configured}
+        linearRouting={data.linearRouting}
+        linearSecret={data.linearSecret}
+        onCompleted={onCompleteStep}
+        onRefresh={onRefresh}
+        pipeline={data.pipeline}
+        workspaceId={data.workspace.id}
+      />
+    );
+  } else {
+    controls = (
       <div className="rounded-[6px] border border-border bg-background p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -631,6 +651,24 @@ function StepBody({
           ) : null}
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div
+            key={`${step}-${row.label}`}
+            className="flex min-h-12 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
+          >
+            <span className="min-w-0 text-[12px] font-medium text-muted">{row.label}</span>
+            <Badge tone={row.tone}>{row.value}</Badge>
+          </div>
+        ))}
+      </div>
+
+      {controls}
     </div>
   );
 }
@@ -756,6 +794,17 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
+  const activeStepAlreadyResolved =
+    onboarding.completedSteps.includes(activeStep.id) ||
+    onboarding.skippedSteps.includes(activeStep.id);
+  const pipelineEditorUnavailable = activeStep.id === "pipeline" && !data.pipeline;
+  const linearRoutingUnavailable =
+    activeStep.id === "linear" && (!data.pipeline || data.pipeline.stages.length === 0);
+  const inlineCompletionUnavailable = pipelineEditorUnavailable || linearRoutingUnavailable;
+  const requiresInlineCompletion =
+    (activeStep.id === "pipeline" || activeStep.id === "linear") &&
+    !inlineCompletionUnavailable &&
+    !activeStepAlreadyResolved;
   const repositoryContinueBlocked =
     activeStep.id === "repository" && !data.setupHealth.primaryRepositoryProfile.configured;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
@@ -792,7 +841,49 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     }
   }
 
+  async function refreshOnboarding(action: string) {
+    if (!data.canManage) return null;
+
+    setSavingAction(action);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding`, {
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Failed to refresh onboarding state.");
+      }
+
+      const nextData = (await response.json()) as WorkspaceOnboardingData;
+      setData(nextData);
+      router.refresh();
+      return nextData;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to refresh onboarding state.");
+      return null;
+    } finally {
+      setSavingAction(null);
+    }
+  }
+
+  async function completeCurrentStep(action: string) {
+    const nextData = await persistOnboarding(buildOnboardingContinuePatch(data.onboarding), action);
+    if (!nextData) {
+      throw new Error("Failed to save onboarding state.");
+    }
+  }
+
   async function continueSetup() {
+    if (inlineCompletionUnavailable) {
+      const patch = buildOnboardingAdvancePatch(onboarding);
+      if (!patch) return;
+      await persistOnboarding(patch, "continue");
+      return;
+    }
+
     await persistOnboarding(buildOnboardingContinuePatch(onboarding), "continue");
   }
 
@@ -1040,8 +1131,15 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             <StepBody
               data={data}
               isSaving={isSaving}
+              onCompleteStep={completeCurrentStep}
               onDataChange={setData}
               onInferRepository={(repository) => void inferRepositoryProfile(repository)}
+              onRefresh={async (action) => {
+                const nextData = await refreshOnboarding(action);
+                if (!nextData) {
+                  throw new Error("Failed to refresh onboarding state.");
+                }
+              }}
               onRepositoryProfileSaved={() => void saveRepositoryProfile()}
               onSelectRepository={(repository) => void selectRepository(repository)}
               profileBusy={profileBusy}
@@ -1087,16 +1185,24 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             <button
               type="button"
               className="ui-button-primary"
-              disabled={!data.canManage || isCompleted || isSaving || repositoryContinueBlocked}
+              disabled={
+                !data.canManage ||
+                isCompleted ||
+                isSaving ||
+                repositoryContinueBlocked ||
+                requiresInlineCompletion
+              }
               onClick={() => void continueSetup()}
             >
               {isCompleted
                 ? "Setup complete"
-                : savingAction === "continue"
-                  ? "Saving..."
-                  : activeStep.id === "verify"
-                    ? "Complete setup"
-                    : "Continue"}
+                : requiresInlineCompletion
+                  ? "Complete in step"
+                  : savingAction === "continue"
+                    ? "Saving..."
+                    : activeStep.id === "verify"
+                      ? "Complete setup"
+                      : "Continue"}
             </button>
           </div>
         </div>

@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 const mocked = vi.hoisted(() => ({
   OnboardingPageClient: vi.fn(() => null),
@@ -44,6 +45,8 @@ const onboardingData = {
     primaryProfile: null,
     repositories: [],
   },
+  linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
+  linearSecret: null,
   onboarding: {
     completedAt: null,
     completedSteps: [],
@@ -55,6 +58,23 @@ const onboardingData = {
     status: "dismissed",
     updatedAt: "2026-05-16T18:00:00.000Z",
     workspaceId: "workspace-1",
+  },
+  pipeline: {
+    id: "pipeline-1",
+    isDefault: true,
+    name: "Default",
+    stages: [
+      {
+        approverMemberIds: [],
+        description: "Product",
+        id: "stage-1",
+        name: "Product",
+        pipelineId: "pipeline-1",
+        position: 1,
+        promptTemplateMd: "Product prompt",
+        slug: "product",
+      },
+    ],
   },
   setupHealth: {
     agentConfig: { configured: false, configuredKeys: [], status: "missing" },
@@ -94,6 +114,7 @@ const onboardingData = {
     },
   },
   workspace: { id: "workspace-1", name: "Northwind", slug: "northwind" },
+  workspaceMembers: [],
 } satisfies WorkspaceOnboardingData;
 
 describe("workspace onboarding page", () => {
