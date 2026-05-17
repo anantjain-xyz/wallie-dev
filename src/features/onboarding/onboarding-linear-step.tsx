@@ -79,6 +79,7 @@ export function OnboardingLinearStep({
         <div className="mt-3">
           <LinearKeyControls
             allowDelete={false}
+            allowReplace
             canManage={canManage}
             linearSecret={linearSecret}
             onSecretSaved={async () => {

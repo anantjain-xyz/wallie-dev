@@ -13,6 +13,7 @@ import type {
 
 type LinearKeyControlsProps = {
   allowDelete?: boolean;
+  allowReplace?: boolean;
   canManage: boolean;
   isLoadingSecrets?: boolean;
   linearSecret: WorkspaceSecretPreview | null;
@@ -25,6 +26,7 @@ type LinearKeyControlsProps = {
 
 export function LinearKeyControls({
   allowDelete = true,
+  allowReplace = false,
   canManage,
   isLoadingSecrets = false,
   linearSecret,
@@ -116,34 +118,66 @@ export function LinearKeyControls({
 
   if (linearSecret) {
     return (
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-[13px] font-medium text-foreground">Linear API key configured</p>
-          <p className="font-mono text-[12px] text-muted">
-            {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
-            {dateFormatter.format(new Date(linearSecret.updatedAt))}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="ui-button"
-            disabled={testLinearConnection.isBusy}
-            onClick={() => void testLinearConnection.run()}
-            type="button"
-          >
-            {testLinearConnection.isBusy ? "Testing…" : "Test connection"}
-          </button>
-          {allowDelete ? (
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-[13px] font-medium text-foreground">Linear API key configured</p>
+            <p className="font-mono text-[12px] text-muted">
+              {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
+              {dateFormatter.format(new Date(linearSecret.updatedAt))}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
             <button
-              className="ui-button-danger"
-              disabled={deleteLinearKey.isBusy}
-              onClick={handleDeleteLinearKey}
+              className="ui-button"
+              disabled={testLinearConnection.isBusy}
+              onClick={() => void testLinearConnection.run()}
               type="button"
             >
-              {deleteLinearKey.isBusy ? "Removing…" : "Remove"}
+              {testLinearConnection.isBusy ? "Testing…" : "Test connection"}
             </button>
-          ) : null}
+            {allowDelete ? (
+              <button
+                className="ui-button-danger"
+                disabled={deleteLinearKey.isBusy}
+                onClick={handleDeleteLinearKey}
+                type="button"
+              >
+                {deleteLinearKey.isBusy ? "Removing…" : "Remove"}
+              </button>
+            ) : null}
+          </div>
         </div>
+
+        {allowReplace ? (
+          <div className="space-y-3 border-t border-border pt-3">
+            <label className="block space-y-1.5">
+              <span className="text-[13px] font-medium text-foreground">
+                Replace Linear API key
+              </span>
+              <input
+                autoComplete="off"
+                className="ui-input font-mono"
+                name="linearApiKey"
+                onChange={(event) => setLinearApiKeyDraft(event.target.value)}
+                placeholder="lin_api_…"
+                spellCheck={false}
+                type="password"
+                value={linearApiKeyDraft}
+              />
+            </label>
+            <div className="flex justify-end">
+              <button
+                className="ui-button-primary"
+                disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
+                onClick={handleSaveLinearKey}
+                type="button"
+              >
+                {saveLinearKey.isBusy ? "Saving…" : "Save key"}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }

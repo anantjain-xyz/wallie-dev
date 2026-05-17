@@ -141,4 +141,42 @@ describe("OnboardingPageClient", () => {
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete in step</button>");
   });
+
+  it("lets onboarding replace an existing Linear key inline", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          linearSecret: {
+            createdAt: "2026-05-16T18:00:00.000Z",
+            createdByMemberId: "member-1",
+            id: "secret-1",
+            key: "LINEAR_API_KEY",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            valuePreview: "••••1234",
+            workspaceId: "workspace-1",
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "linear",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Linear API key configured");
+    expect(html).toContain("Replace Linear API key");
+    expect(html).toContain('type="password"');
+    expect(html).toContain("Save key");
+    expect(html).toContain("Test connection");
+    expect(html).not.toContain("Remove");
+    expect(html).not.toContain("lin_api_plaintext");
+  });
 });
