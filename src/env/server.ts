@@ -41,10 +41,6 @@ export const serverEnvSchema = z.object({
   VERCEL_PROJECT_ID: optionalEnvStringSchema,
   // "vercel" (default) or "fake" (tests). Any other value throws at runtime.
   WALLIE_SANDBOX_IMPL: optionalEnvStringSchema,
-  // Optional Upstash REST credentials for distributed rate limiting. When
-  // unset, the rate limiter falls back to a per-instance in-memory store.
-  UPSTASH_REDIS_REST_URL: optionalEnvStringSchema,
-  UPSTASH_REDIS_REST_TOKEN: optionalEnvStringSchema,
 });
 type ServerOnlyEnv = z.infer<typeof serverEnvSchema>;
 export type ServerEnv = ClientEnv & ServerOnlyEnv;
@@ -77,8 +73,6 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     VERCEL_TEAM_ID: input.VERCEL_TEAM_ID,
     VERCEL_PROJECT_ID: input.VERCEL_PROJECT_ID,
     WALLIE_SANDBOX_IMPL: input.WALLIE_SANDBOX_IMPL,
-    UPSTASH_REDIS_REST_URL: input.UPSTASH_REDIS_REST_URL,
-    UPSTASH_REDIS_REST_TOKEN: input.UPSTASH_REDIS_REST_TOKEN,
   });
 
   return {
