@@ -33,7 +33,6 @@ function CreateSessionDialogBody({
   workspaceSlug,
 }: CreateSessionDialogProps) {
   const titleId = useId();
-  const descriptionId = useId();
   const router = useRouter();
   const [supabase] = useState(() => createSupabaseBrowserClient());
 
@@ -70,7 +69,7 @@ function CreateSessionDialogBody({
     setLinearError(null);
   }
 
-  const autoTitle = title.trim() || deriveSessionTitleFromPrompt(prompt);
+  const derivedTitle = deriveSessionTitleFromPrompt(prompt);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,23 +109,18 @@ function CreateSessionDialogBody({
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-10 backdrop-blur-sm">
       <div
-        aria-describedby={descriptionId}
         aria-labelledby={titleId}
         aria-modal="true"
         className="ui-panel-elevated max-h-[calc(100vh-5rem)] w-full max-w-xl overflow-y-auto overscroll-contain p-6"
         role="dialog"
       >
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted">New session</p>
           <h2
             id={titleId}
-            className="mt-2 text-2xl font-semibold tracking-tight text-balance text-foreground"
+            className="text-2xl font-semibold tracking-tight text-balance text-foreground"
           >
-            Start a Wallie pipeline
+            Start a new session
           </h2>
-          <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-            Write the prompt. Wallie drafts a product spec and you review before it moves to design.
-          </p>
         </div>
 
         <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
@@ -142,7 +136,7 @@ function CreateSessionDialogBody({
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               className="ui-textarea min-h-40 leading-6"
-              placeholder="What should Wallie build? The first line becomes the session title."
+              placeholder="What should Wallie build?"
               required
             />
           </div>
@@ -158,13 +152,8 @@ function CreateSessionDialogBody({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               className="ui-input"
-              placeholder={autoTitle || "Auto-filled from the first line of the prompt"}
+              placeholder={prompt.trim() ? derivedTitle : "Generated from the prompt"}
             />
-            {!title.trim() && prompt.trim() ? (
-              <p className="text-[11px] text-muted">
-                Will be saved as: <span className="font-medium text-foreground">{autoTitle}</span>
-              </p>
-            ) : null}
           </div>
 
           <div className="space-y-2">
@@ -185,11 +174,7 @@ function CreateSessionDialogBody({
             />
             {linearError ? (
               <p className="text-[11px] text-danger">{linearError}</p>
-            ) : (
-              <p className="text-[11px] text-muted">
-                If provided, Wallie will link this session to the Linear issue.
-              </p>
-            )}
+            ) : null}
           </div>
 
           {errorMessage ? (
@@ -211,7 +196,7 @@ function CreateSessionDialogBody({
               disabled={isSubmitting || !prompt.trim()}
               className="ui-button-primary"
             >
-              {isSubmitting ? "Creating…" : "Create session"}
+              {isSubmitting ? "Starting…" : "Start session"}
             </button>
           </div>
         </form>

@@ -99,10 +99,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   return (
     <PageContainer>
-      <PageHeader
-        title="Sessions"
-        description="Every session in this workspace, across all pipeline stages."
-      />
+      <PageHeader title="Sessions" />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <form onSubmit={handleSearchSubmit} className="relative min-w-[220px] flex-1 max-w-md">
@@ -169,7 +166,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
           <p className="text-[14px] font-semibold text-foreground">No sessions match.</p>
           <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
             {initialData.totalCount === 0
-              ? "Kick off your first session by clicking New session in the top nav."
+              ? "Start your first session from the top nav."
               : "Adjust the stage, scope, or search to see more sessions."}
           </p>
         </div>
