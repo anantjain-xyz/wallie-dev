@@ -9,6 +9,7 @@ import {
   hasAnyWorkspaceForUser,
   workspaceLoginRedirectPath,
 } from "@/lib/auth";
+import { mapOnboardingResumeState } from "@/features/onboarding/flow";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -33,7 +34,15 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
     notFound();
   }
 
+  const { data: onboardingRow, error: onboardingError } = await supabase
+    .from("workspace_onboarding")
+    .select("current_step, status")
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (onboardingError) throw onboardingError;
+
   return {
+    onboarding: mapOnboardingResumeState(onboardingRow),
     supabase,
     user,
     workspace,

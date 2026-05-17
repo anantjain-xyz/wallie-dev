@@ -19,7 +19,9 @@ import WorkspaceAppLayout from "./layout";
 describe("workspace app route group layout", () => {
   it("wraps workspace app pages in the normal app shell", async () => {
     const workspace = { id: "workspace-1", name: "Northwind", slug: "northwind" };
+    const onboarding = { currentStep: "repository", status: "in_progress" };
     mocked.loadWorkspaceLayoutContext.mockResolvedValue({
+      onboarding,
       user: { email: "owner@example.com" },
       workspace,
     });
@@ -29,6 +31,7 @@ describe("workspace app route group layout", () => {
       params: Promise.resolve({ workspaceSlug: "northwind" }),
     })) as ReactElement<{
       children: string;
+      onboarding: typeof onboarding;
       viewerEmail: string;
       workspace: typeof workspace;
     }>;
@@ -36,6 +39,7 @@ describe("workspace app route group layout", () => {
     expect(element.type).toBe(mocked.AppShell);
     expect(element.props).toMatchObject({
       children: "app-page",
+      onboarding,
       viewerEmail: "owner@example.com",
       workspace,
     });

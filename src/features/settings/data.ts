@@ -3,14 +3,10 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
-import type { OnboardingResumeState } from "@/features/onboarding/flow";
+import { mapOnboardingResumeState, type OnboardingResumeState } from "@/features/onboarding/flow";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
-import {
-  workspaceOnboardingStatusSchema,
-  workspaceOnboardingStepSchema,
-} from "@/lib/onboarding/contracts";
 import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import { describeRateLimits } from "@/lib/rate-limit";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
@@ -67,17 +63,6 @@ export type SettingsPageData = {
     role: "owner" | "admin" | "member" | "agent";
   }>;
 };
-
-function mapOnboardingResumeState(
-  row: { current_step: string; status: string } | null,
-): OnboardingResumeState | null {
-  if (!row) return null;
-
-  return {
-    currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
-    status: workspaceOnboardingStatusSchema.parse(row.status),
-  };
-}
 
 function mapSandboxCapabilityCheck(
   row: Record<string, unknown> | null | undefined,

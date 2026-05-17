@@ -5,6 +5,7 @@ import { useMemo, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import type { SessionListPageData } from "@/features/sessions/list/data";
@@ -60,6 +61,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
+  const shouldResumeSetup = shouldShowOnboardingResumeCta(initialData.onboarding);
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
@@ -169,7 +171,9 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
           <p className="text-[14px] font-semibold text-foreground">No sessions match.</p>
           <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
             {initialData.totalCount === 0
-              ? "Kick off your first session by clicking New session in the top nav."
+              ? shouldResumeSetup
+                ? "Finish workspace setup before starting the first session."
+                : "Kick off your first session by clicking New session in the top nav."
               : "Adjust the stage, scope, or search to see more sessions."}
           </p>
         </div>
