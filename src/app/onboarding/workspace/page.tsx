@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
-import { PlaceholderPanel } from "@/components/shared/placeholder-panel";
+import { PageHeader } from "@/components/ui/page-shell";
 import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
@@ -24,18 +24,11 @@ export default async function WorkspaceOnboardingPage() {
   }
 
   return (
-    <main
-      id="main-content"
-      className="mx-auto flex min-h-screen w-full max-w-[1080px] items-center px-6 py-10 sm:px-8"
-    >
-      <PlaceholderPanel
-        title="Create the First Workspace & Enter the App Shell"
-        summary="Create the first workspace, provision the owner membership, and bootstrap the system `wallie` member before Wallie sends you to `/w/[workspaceSlug]/issues`."
-        titleAs="h1"
-        tone="ready"
-      >
+    <main id="main-content" className="min-h-screen bg-surface text-foreground">
+      <div className="mx-auto w-full max-w-[640px] px-6 pb-24 pt-10 sm:px-8">
+        <PageHeader title="Create workspace" description="Name your workspace to finish setup." />
         <WorkspaceOnboardingForm />
-      </PlaceholderPanel>
+      </div>
     </main>
   );
 }
