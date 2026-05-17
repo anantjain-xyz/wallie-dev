@@ -1,0 +1,175 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  buildRuntimeReadiness,
+  buildVerifyChecklist,
+  verifyBlockersFromChecklist,
+} from "@/features/onboarding/runtime-readiness";
+import type { OnboardingSetupHealth, WorkspaceOnboardingState } from "@/lib/onboarding/contracts";
+
+const repositoryId = "11111111-1111-4111-8111-111111111111";
+
+function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetupHealth {
+  return {
+    agentConfig: {
+      configured: true,
+      configuredKeys: ["agent_model", "agent_provider"],
+      status: "present",
+      values: {
+        agent_model: "gpt-5-codex",
+        agent_provider: "codex",
+      },
+    },
+    codexConnection: {
+      connected: true,
+      expiresAt: "2026-05-16T20:00:00.000Z",
+      status: "connected",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    },
+    defaultPipeline: {
+      configured: true,
+      pipelineId: "pipeline-1",
+      stageCount: 6,
+      status: "ready",
+    },
+    githubInstallation: {
+      connected: true,
+      installationId: 123,
+      status: "present",
+      suspended: false,
+      targetName: "wallie",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    },
+    latestSandboxCapabilityCheck: {
+      capabilities: {},
+      checkedAt: "2026-05-16T18:00:00.000Z",
+      errorText: null,
+      githubRepositoryId: repositoryId,
+      id: "check-1",
+      status: "success",
+    },
+    linearKey: { configured: true, status: "present", updatedAt: "2026-05-16T18:00:00.000Z" },
+    linearRouting: { configured: true, status: "present", updatedAt: "2026-05-16T18:00:00.000Z" },
+    primaryRepositoryProfile: {
+      configured: true,
+      fullName: "acme/app",
+      repositoryId,
+      status: "ready",
+    },
+    repositorySetup: {
+      configured: true,
+      repositoryId,
+      status: "ready",
+    },
+    workspaceSecrets: {
+      configuredKeys: ["ANTHROPIC_API_KEY", "LINEAR_API_KEY"],
+    },
+    ...overrides,
+  };
+}
+
+function onboarding(overrides: Partial<WorkspaceOnboardingState> = {}): WorkspaceOnboardingState {
+  return {
+    completedAt: null,
+    completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+    createdAt: "2026-05-16T18:00:00.000Z",
+    currentStep: "verify",
+    dismissedAt: null,
+    id: "onboarding-1",
+    skippedSteps: [],
+    status: "in_progress",
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    workspaceId: "workspace-1",
+    ...overrides,
+  };
+}
+
+describe("buildRuntimeReadiness", () => {
+  it("requires Codex connection for the codex provider", () => {
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "gpt-5-codex", agent_provider: "codex" },
+        codexConnection: health().codexConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+        secretKeys: [],
+      }).canComplete,
+    ).toBe(true);
+
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "gpt-5-codex", agent_provider: "codex" },
+        codexConnection: { connected: false, expiresAt: null, status: "missing", updatedAt: null },
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+        secretKeys: [],
+      }).canComplete,
+    ).toBe(false);
+  });
+
+  it("requires ANTHROPIC_API_KEY for anthropic-api", () => {
+    const base = {
+      agentConfig: { agent_model: "claude-sonnet-4-5", agent_provider: "anthropic-api" },
+      codexConnection: health().codexConnection,
+      primaryRepositoryId: repositoryId,
+      repositorySetup: health().repositorySetup,
+    };
+
+    expect(buildRuntimeReadiness({ ...base, secretKeys: ["ANTHROPIC_API_KEY"] }).canComplete).toBe(
+      true,
+    );
+    expect(buildRuntimeReadiness({ ...base, secretKeys: [] }).canComplete).toBe(false);
+  });
+
+  it("requires claude-* models and ready repository setup for claude-code", () => {
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "gpt-5-codex", agent_provider: "claude-code" },
+        codexConnection: health().codexConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+        secretKeys: [],
+      }).canComplete,
+    ).toBe(false);
+
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "claude-sonnet-4-5", agent_provider: "claude-code" },
+        codexConnection: health().codexConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: { configured: false, repositoryId, status: "not_set_up" },
+        secretKeys: [],
+      }).canComplete,
+    ).toBe(false);
+  });
+});
+
+describe("buildVerifyChecklist", () => {
+  it("returns no blockers when all verification requirements pass", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health(),
+      onboarding: onboarding(),
+    });
+
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+  });
+
+  it("links blockers to their owning onboarding steps", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: { agent_model: "gpt-5-codex", agent_provider: "codex" },
+      health: health({
+        latestSandboxCapabilityCheck: null,
+        repositorySetup: { configured: false, repositoryId, status: "conflict" },
+      }),
+      onboarding: onboarding({ completedSteps: ["github", "repository", "pipeline"] }),
+    });
+
+    expect(verifyBlockersFromChecklist(checklist)).toMatchObject([
+      { id: "repository-setup", step: "repository" },
+      { id: "linear", step: "linear" },
+      { id: "runtime", step: "runtime" },
+      { id: "sandbox", step: "verify" },
+    ]);
+  });
+});

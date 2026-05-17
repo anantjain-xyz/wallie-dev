@@ -2,8 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import type {
+  ApplyAgentConfigDefaultsResponse,
+  UpsertAgentConfigResponse,
+} from "@/app/api/agent-config/route";
+import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -22,12 +27,37 @@ import {
 import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
 import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
+import {
+  buildRuntimeReadiness,
+  buildVerifyChecklist,
+  configuredAgentConfigKeys,
+  resolveAgentConfigValue,
+  verifyBlockersFromChecklist,
+  type AgentConfigMap,
+  type RuntimeReadiness,
+} from "@/features/onboarding/runtime-readiness";
+import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
+import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
+import {
+  type AgentConfigKey,
+  AGENT_CONFIG_LIMITS,
+  AGENT_PROVIDERS,
+  ALLOWED_AGENT_CONFIG_KEYS,
+  RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  parseAgentConfigValue,
+} from "@/lib/agent-config/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
+import type {
+  SandboxCapabilityCheckLatestResponse,
+  SandboxCapabilityCheckResponse,
+  SandboxCapabilityCheckState,
+} from "@/lib/sandbox-capabilities/contracts";
+import type { UpsertWorkspaceSecretResponse } from "@/lib/secrets/contracts";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +81,23 @@ type StepHealthItem = {
 };
 
 type EditableProfile = RepositoryProfileState;
+type AgentConfigDrafts = Record<AgentConfigKey, string>;
+type FieldType = "number" | "select" | "text";
+
+type RuntimeCompletionState = {
+  hasInvalidDrafts: boolean;
+  hasUnsavedDrafts: boolean;
+  readiness: RuntimeReadiness;
+};
+
+type FieldDescriptor = {
+  configKey: AgentConfigKey;
+  description: string;
+  label: string;
+  options?: readonly string[];
+  placeholder?: string;
+  type: FieldType;
+};
 
 const stepStateLabels: Record<OnboardingStepDisplayState, string> = {
   active: "Current",
@@ -102,6 +149,128 @@ function presenceBadge(configured: boolean) {
   return configured
     ? { tone: "success" as const, value: "Present" }
     : { tone: "warning" as const, value: "Missing" };
+}
+
+function configValueToString(value: unknown): string {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function buildAgentConfigDrafts(agentConfig: AgentConfigMap): AgentConfigDrafts {
+  return {
+    agent_provider: configValueToString(resolveAgentConfigValue("agent_provider", agentConfig)),
+    agent_model: configValueToString(resolveAgentConfigValue("agent_model", agentConfig)),
+    concurrency_limit: configValueToString(
+      resolveAgentConfigValue("concurrency_limit", agentConfig),
+    ),
+    stall_timeout_ms: configValueToString(resolveAgentConfigValue("stall_timeout_ms", agentConfig)),
+    max_retries: configValueToString(resolveAgentConfigValue("max_retries", agentConfig)),
+  };
+}
+
+function parseDraftForKey(
+  configKey: AgentConfigKey,
+  type: FieldType,
+  draft: string,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const trimmed = draft.trim();
+
+  if (type === "number") {
+    if (trimmed === "") {
+      return { ok: false, error: "Enter a number." };
+    }
+    const numeric = Number(trimmed);
+    if (Number.isNaN(numeric)) {
+      return { ok: false, error: "Must be a number." };
+    }
+    return parseAgentConfigValue(configKey, numeric);
+  }
+
+  if (type === "select") {
+    if (trimmed === "") {
+      return { ok: false, error: "Pick a value." };
+    }
+    return parseAgentConfigValue(configKey, trimmed);
+  }
+
+  return parseAgentConfigValue(configKey, trimmed);
+}
+
+function draftValueToConfigMap(drafts: AgentConfigDrafts, fields: readonly FieldDescriptor[]) {
+  const config: AgentConfigMap = {};
+  for (const field of fields) {
+    const draft = drafts[field.configKey].trim();
+    config[field.configKey] = field.type === "number" ? Number(draft) : draft;
+  }
+  return config;
+}
+
+function workspaceSecretKeys(data: WorkspaceOnboardingData) {
+  return data.setupHealth.workspaceSecrets.configuredKeys;
+}
+
+function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = data.agentConfig) {
+  return buildRuntimeReadiness({
+    agentConfig,
+    codexConnection: data.setupHealth.codexConnection,
+    primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
+    repositorySetup: data.setupHealth.repositorySetup,
+    secretKeys: workspaceSecretKeys(data),
+  });
+}
+
+function updateAgentConfigInData(
+  currentData: WorkspaceOnboardingData,
+  entries: Array<{ key: string; value: unknown }>,
+): WorkspaceOnboardingData {
+  const agentConfig = { ...currentData.agentConfig };
+  for (const entry of entries) {
+    if (ALLOWED_AGENT_CONFIG_KEYS.includes(entry.key as AgentConfigKey)) {
+      agentConfig[entry.key as AgentConfigKey] = entry.value;
+    }
+  }
+  const configuredKeys = configuredAgentConfigKeys(agentConfig);
+
+  return {
+    ...currentData,
+    agentConfig,
+    setupHealth: {
+      ...currentData.setupHealth,
+      agentConfig: {
+        configured: configuredKeys.length > 0,
+        configuredKeys,
+        status: configuredKeys.length > 0 ? "present" : "missing",
+        values: agentConfig,
+      },
+    },
+  };
+}
+
+function updateSecretInData(
+  currentData: WorkspaceOnboardingData,
+  secret: UpsertWorkspaceSecretResponse["secret"],
+): WorkspaceOnboardingData {
+  const workspaceSecrets = upsertSecretPreview(currentData.workspaceSecrets, secret);
+  const configuredKeys = [...new Set(workspaceSecrets.map((item) => item.key))].sort();
+
+  return {
+    ...currentData,
+    linearSecret: secret.key === "LINEAR_API_KEY" ? secret : currentData.linearSecret,
+    setupHealth: {
+      ...currentData.setupHealth,
+      linearKey:
+        secret.key === "LINEAR_API_KEY"
+          ? {
+              configured: true,
+              status: "present",
+              updatedAt: secret.updatedAt,
+            }
+          : currentData.setupHealth.linearKey,
+      workspaceSecrets: {
+        configuredKeys,
+      },
+    },
+    workspaceSecrets,
+  };
 }
 
 function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
@@ -286,6 +455,44 @@ function stepHealthItems(
 function settingsHref(workspaceSlug: string, anchor: string) {
   return `${workspaceSettingsPath(workspaceSlug)}#${anchor}`;
 }
+
+const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
+  {
+    configKey: "agent_provider",
+    description: "Choose the runtime Wallie uses for coding-agent work.",
+    label: "Agent provider",
+    options: AGENT_PROVIDERS,
+    type: "select",
+  },
+  {
+    configKey: "agent_model",
+    description: "Use Verify to check the model against the selected provider.",
+    label: "Agent model",
+    placeholder: RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model,
+    type: "text",
+  },
+  {
+    configKey: "concurrency_limit",
+    description: `Parallel agent jobs (${AGENT_CONFIG_LIMITS.concurrency_limit.min}-${AGENT_CONFIG_LIMITS.concurrency_limit.max}).`,
+    label: "Concurrency",
+    placeholder: String(RECOMMENDED_AGENT_CONFIG_DEFAULTS.concurrency_limit),
+    type: "number",
+  },
+  {
+    configKey: "stall_timeout_ms",
+    description: `Stall timeout in milliseconds (${AGENT_CONFIG_LIMITS.stall_timeout_ms.min.toLocaleString()}-${AGENT_CONFIG_LIMITS.stall_timeout_ms.max.toLocaleString()}).`,
+    label: "Stall timeout",
+    placeholder: String(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms),
+    type: "number",
+  },
+  {
+    configKey: "max_retries",
+    description: `Automatic retries (${AGENT_CONFIG_LIMITS.max_retries.min}-${AGENT_CONFIG_LIMITS.max_retries.max}).`,
+    label: "Max retries",
+    placeholder: String(RECOMMENDED_AGENT_CONFIG_DEFAULTS.max_retries),
+    type: "number",
+  },
+];
 
 function splitList(value: string): string[] {
   return [
@@ -495,6 +702,733 @@ function RepositoryProfileEditor({
   );
 }
 
+function RuntimeRequirementList({
+  requirements,
+}: {
+  requirements: RuntimeReadiness["requirements"];
+}) {
+  return (
+    <div className="space-y-2">
+      {requirements.map((requirement) => (
+        <div
+          className="flex items-start justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
+          key={requirement.id}
+        >
+          <div className="min-w-0">
+            <p className="text-[12px] font-medium text-foreground">{requirement.label}</p>
+            <p className="mt-0.5 text-[12px] leading-5 text-muted">{requirement.detail}</p>
+          </div>
+          <Badge tone={requirement.passed ? "success" : "warning"}>
+            {requirement.passed ? "Ready" : "Blocked"}
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RuntimeStep({
+  data,
+  isSaving,
+  onCompleted,
+  onDataChange,
+  onRuntimeStateChange,
+}: {
+  data: WorkspaceOnboardingData;
+  isSaving: boolean;
+  onCompleted: (action: string) => Promise<void>;
+  onDataChange: (data: WorkspaceOnboardingData) => void;
+  onRuntimeStateChange: (state: RuntimeCompletionState) => void;
+}) {
+  const [drafts, setDrafts] = useState<AgentConfigDrafts>(() =>
+    buildAgentConfigDrafts(data.agentConfig),
+  );
+  const [secretKey, setSecretKey] = useState(
+    data.github.primaryProfile?.envKeySuggestions.find(
+      (key) => !data.setupHealth.workspaceSecrets.configuredKeys.includes(key),
+    ) ??
+      data.github.primaryProfile?.envKeySuggestions[0] ??
+      "",
+  );
+  const [secretValue, setSecretValue] = useState("");
+  const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [verifyState, setVerifyState] = useState<{
+    isVerifying: boolean;
+    result: VerifyAgentConfigResponse | null;
+  }>({ isVerifying: false, result: null });
+  const fields = AGENT_CONFIG_FIELDS;
+  const savedDrafts = buildAgentConfigDrafts(data.agentConfig);
+  const fieldStatuses = fields.map((field) => {
+    const draft = drafts[field.configKey];
+    const validation = parseDraftForKey(field.configKey, field.type, draft);
+    const isDirty = draft !== savedDrafts[field.configKey];
+    return {
+      draft,
+      field,
+      isDirty,
+      validation,
+      validationError: validation.ok ? null : validation.error,
+    };
+  });
+  const hasInvalidDrafts = fieldStatuses.some((status) => status.validationError !== null);
+  const hasUnsavedDrafts = fieldStatuses.some((status) => status.isDirty);
+  const draftConfig = useMemo(() => draftValueToConfigMap(drafts, fields), [drafts, fields]);
+  const readiness = useMemo(() => runtimeReadinessFromData(data, draftConfig), [data, draftConfig]);
+  const readinessSignature = JSON.stringify({
+    canComplete: readiness.canComplete,
+    invalidConfig: readiness.invalidConfig,
+    requirements: readiness.requirements.map((requirement) => [
+      requirement.id,
+      requirement.passed,
+      requirement.detail,
+    ]),
+  });
+  const selectedProvider = readiness.provider;
+  const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
+  const configuredSecretKeys = new Set(data.workspaceSecrets.map((secret) => secret.key));
+  const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
+    (key) =>
+      data.agentConfig[key] === undefined &&
+      drafts[key] === configValueToString(RECOMMENDED_AGENT_CONFIG_DEFAULTS[key]),
+  );
+  const canSaveConfig =
+    data.canManage &&
+    !isSaving &&
+    busyAction === null &&
+    !hasInvalidDrafts &&
+    fieldStatuses.some((status) => status.isDirty);
+  const canApplyDefaults =
+    data.canManage && !isSaving && busyAction === null && missingDefaultKeys.length > 0;
+  const canSaveSecret =
+    data.canManage &&
+    !isSaving &&
+    busyAction === null &&
+    Boolean(secretKey.trim()) &&
+    Boolean(secretValue.trim());
+  const canVerify =
+    data.canManage &&
+    !isSaving &&
+    busyAction === null &&
+    !verifyState.isVerifying &&
+    !hasInvalidDrafts &&
+    drafts.agent_model.trim() !== "";
+  const canCompleteRuntime =
+    data.canManage &&
+    !isSaving &&
+    busyAction === null &&
+    !hasInvalidDrafts &&
+    !hasUnsavedDrafts &&
+    readiness.canComplete;
+
+  useEffect(() => {
+    onRuntimeStateChange({ hasInvalidDrafts, hasUnsavedDrafts, readiness });
+  }, [hasInvalidDrafts, hasUnsavedDrafts, onRuntimeStateChange, readiness, readinessSignature]);
+
+  function handleFieldChange(key: AgentConfigKey, next: string) {
+    setDrafts((current) => ({ ...current, [key]: next }));
+    if (key === "agent_model" || key === "agent_provider") {
+      setVerifyState({ isVerifying: false, result: null });
+    }
+  }
+
+  async function handleSaveConfig() {
+    if (!canSaveConfig) return;
+    setBusyAction("config");
+    setRuntimeError(null);
+    setRuntimeMessage(null);
+    const entries: Array<{ key: string; value: unknown }> = [];
+
+    try {
+      for (const status of fieldStatuses) {
+        if (!status.isDirty || !status.validation.ok) continue;
+        const response = await fetch("/api/agent-config", {
+          body: JSON.stringify({
+            key: status.field.configKey,
+            value: status.validation.value,
+            workspaceId: data.workspace.id,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        });
+        const body = (await response.json().catch(() => null)) as
+          | (UpsertAgentConfigResponse & { error?: string })
+          | null;
+        if (!response.ok || !body) {
+          throw new Error(body?.error ?? "Agent config save failed.");
+        }
+        entries.push(body.entry);
+      }
+
+      if (entries.length > 0) {
+        onDataChange(updateAgentConfigInData(data, entries));
+        setRuntimeMessage(
+          `Saved ${entries.length} agent setting${entries.length === 1 ? "" : "s"}.`,
+        );
+      }
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Agent config save failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleApplyDefaults() {
+    if (!canApplyDefaults) return;
+    setBusyAction("defaults");
+    setRuntimeError(null);
+    setRuntimeMessage(null);
+
+    try {
+      const response = await fetch("/api/agent-config", {
+        body: JSON.stringify({
+          skipKeys: ALLOWED_AGENT_CONFIG_KEYS.filter(
+            (key) =>
+              data.agentConfig[key] === undefined &&
+              drafts[key] !== configValueToString(RECOMMENDED_AGENT_CONFIG_DEFAULTS[key]),
+          ),
+          workspaceId: data.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (ApplyAgentConfigDefaultsResponse & { error?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.error ?? "Applying defaults failed.");
+      }
+      onDataChange(updateAgentConfigInData(data, body.applied));
+      setRuntimeMessage(
+        body.applied.length
+          ? `Applied ${body.applied.length} recommended default${body.applied.length === 1 ? "" : "s"}.`
+          : "Recommended defaults were already saved.",
+      );
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Applying defaults failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSaveSecret() {
+    if (!canSaveSecret) return;
+    setBusyAction("secret");
+    setRuntimeError(null);
+    setRuntimeMessage(null);
+
+    try {
+      const response = await fetch("/api/secrets", {
+        body: JSON.stringify({
+          key: secretKey.trim().toUpperCase(),
+          value: secretValue,
+          workspaceId: data.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (UpsertWorkspaceSecretResponse & { error?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.error ?? "Workspace secret save failed.");
+      }
+      onDataChange(updateSecretInData(data, body.secret));
+      setSecretValue("");
+      setRuntimeMessage(`Saved preview for ${body.secret.key}.`);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleVerifyModel() {
+    if (!canVerify) return;
+    setVerifyState({ isVerifying: true, result: null });
+    setRuntimeError(null);
+
+    try {
+      const response = await fetch("/api/agent-config/verify", {
+        body: JSON.stringify({
+          model: drafts.agent_model.trim(),
+          provider: selectedProvider,
+          workspaceId: data.workspace.id,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (VerifyAgentConfigResponse & { error?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.error ?? "Verify call failed.");
+      }
+      setVerifyState({ isVerifying: false, result: body });
+    } catch (error) {
+      setVerifyState({
+        isVerifying: false,
+        result: {
+          ok: false,
+          error: error instanceof Error ? error.message : "Verify call failed.",
+        },
+      });
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {runtimeError ? (
+        <div
+          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          role="alert"
+        >
+          {runtimeError}
+        </div>
+      ) : null}
+      {runtimeMessage ? (
+        <div
+          className="rounded-[6px] border border-success/20 bg-success-soft px-3 py-2 text-[13px] text-success"
+          role="status"
+        >
+          {runtimeMessage}
+        </div>
+      ) : null}
+
+      <div className="rounded-[6px] border border-border bg-background p-4">
+        <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Agent config</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Unset fields use Wallie&apos;s recommended defaults until saved.
+            </p>
+          </div>
+          <button
+            className="ui-button"
+            disabled={!canApplyDefaults}
+            onClick={() => void handleApplyDefaults()}
+            type="button"
+          >
+            {busyAction === "defaults" ? "Applying..." : "Apply recommended defaults"}
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {fieldStatuses.map((status) => (
+            <label className="block space-y-1.5" key={status.field.configKey}>
+              <span className="text-[12px] font-medium text-muted">{status.field.label}</span>
+              {status.field.type === "select" && status.field.options ? (
+                <select
+                  className="ui-input"
+                  disabled={busyAction !== null}
+                  onChange={(event) =>
+                    handleFieldChange(status.field.configKey, event.target.value)
+                  }
+                  value={status.draft}
+                >
+                  {status.field.options.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  autoComplete="off"
+                  className="ui-input"
+                  disabled={busyAction !== null}
+                  onChange={(event) =>
+                    handleFieldChange(status.field.configKey, event.target.value)
+                  }
+                  placeholder={status.field.placeholder}
+                  type={status.field.type === "number" ? "number" : "text"}
+                  value={status.draft}
+                />
+              )}
+              {status.validationError ? (
+                <p className="text-[12px] leading-5 text-danger" role="alert">
+                  {status.validationError}
+                </p>
+              ) : (
+                <p className="text-[12px] leading-5 text-muted">{status.field.description}</p>
+              )}
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+          <div className="min-w-0 text-[12px] leading-5 text-muted">
+            {hasUnsavedDrafts
+              ? "Save agent config before completing Runtime."
+              : "No unsaved changes."}
+            {verifyState.result ? (
+              <span
+                className={cn(
+                  "ml-2",
+                  verifyState.result.ok === true
+                    ? "text-success"
+                    : verifyState.result.ok === "skipped"
+                      ? "text-muted"
+                      : "text-danger",
+                )}
+                role="status"
+              >
+                {verifyState.result.ok === true
+                  ? "Reachable"
+                  : verifyState.result.ok === "skipped"
+                    ? verifyState.result.reason
+                    : verifyState.result.error}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="ui-button"
+              disabled={!canVerify}
+              onClick={() => void handleVerifyModel()}
+              type="button"
+            >
+              {verifyState.isVerifying ? "Verifying..." : "Verify model"}
+            </button>
+            <button
+              className="ui-button-primary"
+              disabled={!canSaveConfig}
+              onClick={() => void handleSaveConfig()}
+              type="button"
+            >
+              {busyAction === "config" ? "Saving..." : "Save config"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-[6px] border border-border bg-background p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Values are encrypted server-side; only previews are returned.
+            </p>
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {envSuggestions.length === 0 ? (
+                <p className="text-[13px] text-muted">
+                  No env keys suggested by the repository profile.
+                </p>
+              ) : (
+                envSuggestions.map((key) => (
+                  <div
+                    className="flex min-h-11 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
+                    key={key}
+                  >
+                    <span className="min-w-0 truncate font-mono text-[12px] text-foreground">
+                      {key}
+                    </span>
+                    <Badge tone={configuredSecretKeys.has(key) ? "success" : "warning"}>
+                      {configuredSecretKeys.has(key) ? "Present" : "Missing"}
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="w-full shrink-0 space-y-3 lg:w-72">
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-muted">Secret key</span>
+              <input
+                autoCapitalize="characters"
+                autoComplete="off"
+                className="ui-input"
+                disabled={busyAction !== null}
+                onChange={(event) => setSecretKey(event.target.value)}
+                placeholder="ANTHROPIC_API_KEY"
+                spellCheck={false}
+                value={secretKey}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-muted">Secret value</span>
+              <textarea
+                autoComplete="off"
+                className="ui-textarea min-h-24"
+                disabled={busyAction !== null}
+                onChange={(event) => setSecretValue(event.target.value)}
+                placeholder="Paste value..."
+                value={secretValue}
+              />
+            </label>
+            <button
+              className="ui-button-primary w-full"
+              disabled={!canSaveSecret}
+              onClick={() => void handleSaveSecret()}
+              type="button"
+            >
+              {busyAction === "secret" ? "Saving..." : "Save secret"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {selectedProvider === "codex" ? (
+        <div className="rounded-[6px] border border-border bg-background p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-[14px] font-semibold text-foreground">Codex account</h3>
+              <p className="mt-1 text-[12px] leading-5 text-muted">
+                Runtime checks the current user&apos;s Codex connection.
+              </p>
+            </div>
+          </div>
+          <CodexConnectionPanel returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`} />
+        </div>
+      ) : null}
+
+      <div className="rounded-[6px] border border-border bg-background p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Runtime readiness</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Provider-specific requirements must pass before this step can complete.
+            </p>
+          </div>
+          <Badge tone={canCompleteRuntime ? "success" : "warning"}>
+            {canCompleteRuntime ? "Ready" : "Blocked"}
+          </Badge>
+        </div>
+        <div className="mt-4">
+          <RuntimeRequirementList requirements={readiness.requirements} />
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            className="ui-button-primary"
+            disabled={!canCompleteRuntime}
+            onClick={() => void onCompleted("runtime")}
+            type="button"
+          >
+            {isSaving ? "Saving..." : "Complete runtime"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function sandboxStatusTone(check: SandboxCapabilityCheckState | null): HealthTone {
+  if (!check) return "warning";
+  if (check.status === "success") return "success";
+  if (check.status === "error") return "danger";
+  return "accent";
+}
+
+function VerifyStep({
+  data,
+  onDataChange,
+  onSelectStep,
+}: {
+  data: WorkspaceOnboardingData;
+  onDataChange: (data: WorkspaceOnboardingData) => void;
+  onSelectStep: (step: WorkspaceOnboardingStep) => void;
+}) {
+  const [check, setCheck] = useState(data.setupHealth.latestSandboxCapabilityCheck);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const primaryRepositoryId = data.setupHealth.primaryRepositoryProfile.repositoryId;
+  const checklist = buildVerifyChecklist({
+    agentConfig: data.agentConfig,
+    health: {
+      ...data.setupHealth,
+      latestSandboxCapabilityCheck: check,
+    },
+    onboarding: data.onboarding,
+  });
+  const blockers = verifyBlockersFromChecklist(checklist);
+  const isPolling = check?.status === "running";
+
+  useEffect(() => {
+    if (!primaryRepositoryId || check?.status !== "running") return;
+
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/workspaces/${data.workspace.id}/sandbox-capability-check?repositoryId=${encodeURIComponent(primaryRepositoryId)}`,
+          { cache: "no-store" },
+        );
+        const body = (await response.json().catch(() => null)) as
+          | (SandboxCapabilityCheckLatestResponse & { error?: string })
+          | null;
+        if (!response.ok || !body) {
+          throw new Error(body?.error ?? "Capability check polling failed.");
+        }
+        if (cancelled || !body.check) return;
+        setCheck(body.check);
+        onDataChange({
+          ...data,
+          setupHealth: {
+            ...data.setupHealth,
+            latestSandboxCapabilityCheck: body.check,
+          },
+        });
+        if (body.check.status === "success" || body.check.status === "error") {
+          window.clearInterval(timer);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setVerifyError(
+            error instanceof Error ? error.message : "Capability check polling failed.",
+          );
+        }
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [check?.status, data, onDataChange, primaryRepositoryId]);
+
+  async function runCapabilityCheck() {
+    if (!primaryRepositoryId || busyAction !== null) return;
+    setBusyAction("sandbox");
+    setVerifyError(null);
+
+    try {
+      const response = await fetch(
+        `/api/workspaces/${data.workspace.id}/sandbox-capability-check`,
+        {
+          body: JSON.stringify({ repositoryId: primaryRepositoryId }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      const body = (await response.json().catch(() => null)) as
+        | (SandboxCapabilityCheckResponse & { error?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.error ?? "Sandbox capability check failed.");
+      }
+      setCheck(body.check);
+      onDataChange({
+        ...data,
+        setupHealth: {
+          ...data.setupHealth,
+          latestSandboxCapabilityCheck: body.check,
+        },
+      });
+    } catch (error) {
+      setVerifyError(error instanceof Error ? error.message : "Sandbox capability check failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {verifyError ? (
+        <div
+          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          role="alert"
+        >
+          {verifyError}
+        </div>
+      ) : null}
+
+      <div className="rounded-[6px] border border-border bg-background p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Readiness checklist</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Resolve blockers in their owning setup step, then complete onboarding.
+            </p>
+          </div>
+          <Badge tone={blockers.length === 0 ? "success" : "warning"}>
+            {blockers.length === 0 ? "Ready" : `${blockers.length} blocked`}
+          </Badge>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          {checklist.map((item) => (
+            <div
+              className="flex flex-col gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
+              key={item.id}
+            >
+              <div className="min-w-0">
+                <p className="text-[12px] font-medium text-foreground">{item.label}</p>
+                <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Badge tone={item.passed ? "success" : "warning"}>
+                  {item.passed ? "Ready" : "Blocked"}
+                </Badge>
+                {!item.passed && item.step !== "verify" ? (
+                  <button
+                    className="ui-button"
+                    data-step-link={item.step}
+                    onClick={() => onSelectStep(item.step)}
+                    type="button"
+                  >
+                    Open {ONBOARDING_STEPS.find((step) => step.id === item.step)?.shortTitle}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-[6px] border border-border bg-background p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Checks run against the selected primary repository only.
+            </p>
+          </div>
+          <Badge tone={sandboxStatusTone(check)}>{check?.status ?? "No check"}</Badge>
+        </div>
+        {check?.errorText ? (
+          <p className="mt-3 text-[12px] leading-5 text-danger">{check.errorText}</p>
+        ) : null}
+        {check ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {Object.entries(check.capabilities).map(([name, result]) => (
+              <div
+                className={cn(
+                  "rounded-[6px] border px-3 py-2 text-[12px] leading-5",
+                  result?.ok
+                    ? "border-success/20 bg-success-soft text-success"
+                    : "border-danger/20 bg-danger-soft text-danger",
+                )}
+                key={name}
+              >
+                <p className="font-semibold">{name}</p>
+                <p>{result?.detail ?? "No detail recorded."}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="mt-4 flex justify-end">
+          <button
+            className={check?.status === "error" ? "ui-button" : "ui-button-primary"}
+            disabled={!primaryRepositoryId || busyAction !== null || isPolling}
+            onClick={() => void runCapabilityCheck()}
+            type="button"
+          >
+            {busyAction === "sandbox"
+              ? "Starting..."
+              : isPolling
+                ? "Checking..."
+                : check?.status === "error"
+                  ? "Retry capability check"
+                  : "Run capability check"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StepBody({
   data,
   isSaving,
@@ -503,6 +1437,8 @@ function StepBody({
   onInferRepository,
   onRefresh,
   onRepositoryProfileSaved,
+  onRuntimeStateChange,
+  onSelectStep,
   onSelectRepository,
   profileBusy,
   profileDirty,
@@ -519,6 +1455,8 @@ function StepBody({
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
   onRefresh: (action: string) => Promise<void>;
   onRepositoryProfileSaved: () => void;
+  onRuntimeStateChange: (state: RuntimeCompletionState) => void;
+  onSelectStep: (step: WorkspaceOnboardingStep) => void;
   onSelectRepository: (repository: WorkspaceGitHubRepository) => void;
   profileBusy: boolean;
   profileDirty: boolean;
@@ -630,6 +1568,18 @@ function StepBody({
         workspaceId={data.workspace.id}
       />
     );
+  } else if (step === "runtime") {
+    controls = (
+      <RuntimeStep
+        data={data}
+        isSaving={isSaving}
+        onCompleted={onCompleteStep}
+        onDataChange={onDataChange}
+        onRuntimeStateChange={onRuntimeStateChange}
+      />
+    );
+  } else if (step === "verify") {
+    controls = <VerifyStep data={data} onDataChange={onDataChange} onSelectStep={onSelectStep} />;
   } else {
     controls = (
       <div className="rounded-[6px] border border-border bg-background p-4">
@@ -822,6 +1772,16 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     initialProfileDraft(initialData),
   );
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [runtimeCompletionState, setRuntimeCompletionState] = useState<RuntimeCompletionState>(
+    () => {
+      const readiness = runtimeReadinessFromData(initialData);
+      return {
+        hasInvalidDrafts: false,
+        hasUnsavedDrafts: false,
+        readiness,
+      };
+    },
+  );
   const [selectedRepositoryId, setSelectedRepositoryId] = useState<string | null>(
     initialData.github.primaryProfile?.githubRepositoryId ?? null,
   );
@@ -845,11 +1805,24 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     activeStep.id === "linear" && (!data.pipeline || data.pipeline.stages.length === 0);
   const inlineCompletionUnavailable = pipelineEditorUnavailable || linearRoutingUnavailable;
   const requiresInlineCompletion =
-    (activeStep.id === "pipeline" || activeStep.id === "linear") &&
+    (activeStep.id === "pipeline" || activeStep.id === "linear" || activeStep.id === "runtime") &&
     !inlineCompletionUnavailable &&
     !activeStepAlreadyResolved;
   const repositoryContinueBlocked =
     activeStep.id === "repository" && !data.setupHealth.primaryRepositoryProfile.configured;
+  const runtimeCompletionBlocked =
+    activeStep.id === "runtime" &&
+    !activeStepAlreadyResolved &&
+    (!runtimeCompletionState.readiness.canComplete ||
+      runtimeCompletionState.hasInvalidDrafts ||
+      runtimeCompletionState.hasUnsavedDrafts);
+  const verifyChecklist = buildVerifyChecklist({
+    agentConfig: data.agentConfig,
+    health: data.setupHealth,
+    onboarding: data.onboarding,
+  });
+  const verifyCompletionBlocked =
+    activeStep.id === "verify" && verifyChecklist.some((item) => !item.passed);
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
@@ -925,6 +1898,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function continueSetup() {
+    if (activeStep.id === "verify") {
+      await completeOnboarding();
+      return;
+    }
+
     if (inlineCompletionUnavailable) {
       const patch = buildOnboardingAdvancePatch(onboarding);
       if (!patch) return;
@@ -933,6 +1911,43 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     }
 
     await persistOnboarding(buildOnboardingContinuePatch(onboarding), "continue");
+  }
+
+  async function completeOnboarding() {
+    if (!data.canManage || saveInFlightRef.current || verifyCompletionBlocked) return;
+
+    saveInFlightRef.current = true;
+    setSavingAction("complete");
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding/complete`, {
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (WorkspaceOnboardingData & {
+            blockers?: ReturnType<typeof verifyBlockersFromChecklist>;
+            error?: string;
+          })
+        | null;
+
+      if (!response.ok || !body || "error" in body) {
+        const blockerText = body?.blockers?.length
+          ? ` Blocked: ${body.blockers.map((blocker) => blocker.label).join(", ")}.`
+          : "";
+        throw new Error((body?.error ?? "Failed to complete onboarding.") + blockerText);
+      }
+
+      latestDataRef.current = body;
+      setData(body);
+      router.refresh();
+      router.push(workspaceBasePath(body.workspace.slug));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to complete onboarding.");
+    } finally {
+      saveInFlightRef.current = false;
+      setSavingAction(null);
+    }
   }
 
   async function skipStep() {
@@ -1187,6 +2202,8 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
                 }
               }}
               onRepositoryProfileSaved={() => void saveRepositoryProfile()}
+              onRuntimeStateChange={setRuntimeCompletionState}
+              onSelectStep={(step) => void selectStep(step)}
               onSelectRepository={(repository) => void selectRepository(repository)}
               profileBusy={profileBusy}
               profileDirty={profileDirty}
@@ -1236,6 +2253,8 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
                 isCompleted ||
                 isSaving ||
                 repositoryContinueBlocked ||
+                runtimeCompletionBlocked ||
+                verifyCompletionBlocked ||
                 requiresInlineCompletion
               }
               onClick={() => void continueSetup()}
@@ -1244,7 +2263,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
                 ? "Setup complete"
                 : requiresInlineCompletion
                   ? "Complete in step"
-                  : savingAction === "continue"
+                  : savingAction === "continue" || savingAction === "complete"
                     ? "Saving..."
                     : activeStep.id === "verify"
                       ? "Complete setup"

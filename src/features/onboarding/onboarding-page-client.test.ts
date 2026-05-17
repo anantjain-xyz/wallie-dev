@@ -92,10 +92,29 @@ function profile(githubRepositoryId: string, overrides: Partial<RepositoryProfil
   } satisfies RepositoryProfileState;
 }
 
-function onboardingData(overrides: Partial<WorkspaceOnboardingData> = {}): WorkspaceOnboardingData {
+type OnboardingDataOverrides = Omit<
+  Partial<WorkspaceOnboardingData>,
+  "onboarding" | "setupHealth" | "workspace"
+> & {
+  onboarding?: Partial<WorkspaceOnboardingData["onboarding"]>;
+  setupHealth?: Partial<WorkspaceOnboardingData["setupHealth"]>;
+  workspace?: Partial<WorkspaceOnboardingData["workspace"]>;
+};
+
+function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboardingData {
   const pipeline = overrides.pipeline === undefined ? configuredPipeline : overrides.pipeline;
+  const {
+    onboarding: onboardingOverride,
+    setupHealth: setupHealthOverride,
+    workspace: workspaceOverride,
+    ...topLevelOverrides
+  } = overrides;
 
   return {
+    agentConfig: {
+      agent_model: "gpt-5-codex",
+      agent_provider: "codex",
+    },
     canManage: true,
     currentMember: { id: "member-1", role: "owner" },
     github: {
@@ -118,11 +137,19 @@ function onboardingData(overrides: Partial<WorkspaceOnboardingData> = {}): Works
       status: "in_progress",
       updatedAt: "2026-05-16T18:00:00.000Z",
       workspaceId: "workspace-1",
-      ...overrides.onboarding,
+      ...onboardingOverride,
     },
     pipeline,
     setupHealth: {
-      agentConfig: { configured: false, configuredKeys: [], status: "missing" },
+      agentConfig: {
+        configured: true,
+        configuredKeys: ["agent_model", "agent_provider"],
+        status: "present",
+        values: {
+          agent_model: "gpt-5-codex",
+          agent_provider: "codex",
+        },
+      },
       codexConnection: {
         connected: false,
         expiresAt: null,
@@ -153,6 +180,7 @@ function onboardingData(overrides: Partial<WorkspaceOnboardingData> = {}): Works
       latestSandboxCapabilityCheck: null,
       linearKey: { configured: false, status: "missing", updatedAt: null },
       linearRouting: { configured: false, status: "missing", updatedAt: null },
+      workspaceSecrets: { configuredKeys: [] },
       primaryRepositoryProfile: {
         configured: false,
         fullName: null,
@@ -164,11 +192,12 @@ function onboardingData(overrides: Partial<WorkspaceOnboardingData> = {}): Works
         repositoryId: null,
         status: "placeholder",
       },
-      ...overrides.setupHealth,
+      ...setupHealthOverride,
     },
-    workspace: { id: "workspace-1", name: "Northwind", slug: "northwind", ...overrides.workspace },
+    workspace: { id: "workspace-1", name: "Northwind", slug: "northwind", ...workspaceOverride },
     workspaceMembers: [],
-    ...overrides,
+    workspaceSecrets: [],
+    ...topLevelOverrides,
   };
 }
 
@@ -344,5 +373,185 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Test connection");
     expect(html).not.toContain("Remove");
     expect(html).not.toContain("lin_api_plaintext");
+  });
+
+  it("renders Verify blockers with links to owning steps and disables completion", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+        }),
+      }),
+    );
+
+    const button = primaryFooterButton(html);
+    expect(html).toContain("Readiness checklist");
+    expect(html).toContain('data-step-link="linear"');
+    expect(html).toContain('data-step-link="runtime"');
+    expect(html).toContain("Run a sandbox capability check for the selected repository.");
+    expect(button).toContain("disabled");
+    expect(button).toContain(">Complete setup</button>");
+  });
+
+  it("enables the Verify completion CTA when every blocker passes", () => {
+    const repo = repository("repo-a", {
+      onboarding: {
+        conflictReport: [],
+        githubRepositoryId: "repo-a",
+        installedSkillHash: null,
+        installedSkillVersion: null,
+        lastError: null,
+        setupBranchName: null,
+        setupPrNumber: null,
+        setupPrUrl: null,
+        status: "ready",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      profile: profile("repo-a"),
+    });
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: null,
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: profile("repo-a"),
+            repositories: [repo],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            codexConnection: {
+              connected: true,
+              expiresAt: "2026-05-16T20:00:00.000Z",
+              status: "connected",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            latestSandboxCapabilityCheck: {
+              capabilities: {},
+              checkedAt: "2026-05-16T18:00:00.000Z",
+              errorText: null,
+              githubRepositoryId: "repo-a",
+              id: "check-1",
+              status: "success",
+            },
+          },
+        }),
+      }),
+    );
+
+    const button = primaryFooterButton(html);
+    expect(html).toContain("Latest selected-repository sandbox capability check succeeded.");
+    expect(button).not.toContain("disabled");
+    expect(button).toContain(">Complete setup</button>");
+  });
+
+  it("renders sandbox polling and retry states", () => {
+    const running = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            latestSandboxCapabilityCheck: {
+              capabilities: {},
+              checkedAt: "2026-05-16T18:00:00.000Z",
+              errorText: null,
+              githubRepositoryId: "repo-a",
+              id: "check-1",
+              status: "running",
+            },
+          },
+        }),
+      }),
+    );
+    const failed = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            latestSandboxCapabilityCheck: {
+              capabilities: {},
+              checkedAt: "2026-05-16T18:00:00.000Z",
+              errorText: "sandbox failed",
+              githubRepositoryId: "repo-a",
+              id: "check-1",
+              status: "error",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(running).toContain("Checking...");
+    expect(running).toContain("disabled");
+    expect(failed).toContain("Retry capability check");
+    expect(failed).toContain("sandbox failed");
   });
 });

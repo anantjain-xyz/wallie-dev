@@ -16,6 +16,7 @@ const workspaceIdParamSchema = z.string().uuid("Workspace id must be a valid UUI
 
 function onboardingResponse(data: WorkspaceOnboardingData) {
   return {
+    agentConfig: data.agentConfig,
     canManage: data.canManage,
     currentMember: data.currentMember,
     github: data.github,
@@ -26,6 +27,7 @@ function onboardingResponse(data: WorkspaceOnboardingData) {
     setupHealth: data.setupHealth,
     workspace: data.workspace,
     workspaceMembers: data.workspaceMembers,
+    workspaceSecrets: data.workspaceSecrets,
   };
 }
 

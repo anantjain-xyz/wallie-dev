@@ -18,6 +18,10 @@ import { GET, PATCH } from "./route";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
 const onboardingData: WorkspaceOnboardingData = {
+  agentConfig: {
+    agent_model: "gpt-5-codex",
+    agent_provider: "codex",
+  },
   canManage: true,
   currentMember: {
     id: "member-1",
@@ -74,6 +78,10 @@ const onboardingData: WorkspaceOnboardingData = {
       configured: true,
       configuredKeys: ["agent_model", "agent_provider"],
       status: "present",
+      values: {
+        agent_model: "gpt-5-codex",
+        agent_provider: "codex",
+      },
     },
     codexConnection: {
       connected: true,
@@ -106,6 +114,9 @@ const onboardingData: WorkspaceOnboardingData = {
       status: "present",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
+    workspaceSecrets: {
+      configuredKeys: ["LINEAR_API_KEY"],
+    },
     primaryRepositoryProfile: {
       configured: false,
       fullName: null,
@@ -129,6 +140,17 @@ const onboardingData: WorkspaceOnboardingData = {
       fullName: "Owner",
       id: "member-1",
       role: "owner",
+    },
+  ],
+  workspaceSecrets: [
+    {
+      createdAt: "2026-05-16T18:00:00.000Z",
+      createdByMemberId: "member-1",
+      id: "secret-1",
+      key: "LINEAR_API_KEY",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+      valuePreview: "••••1234",
+      workspaceId: WORKSPACE_ID,
     },
   ],
 };

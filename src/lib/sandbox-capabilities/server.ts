@@ -192,6 +192,25 @@ export async function startSandboxCapabilityCheck(input: {
   return { check, repository };
 }
 
+export async function getLatestSandboxCapabilityCheck(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<SandboxCapabilityCheckState | null> {
+  const loose = asLooseSupabaseClient(input.admin);
+  const { data, error } = await loose
+    .from("sandbox_capability_checks")
+    .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+    .eq("workspace_id", input.workspaceId)
+    .eq("github_repository_id", input.repositoryId)
+    .order("checked_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? mapCheckRow(data) : null;
+}
+
 export async function completeSandboxCapabilityCheck(input: {
   admin: AdminClient;
   checkId: string | null;
