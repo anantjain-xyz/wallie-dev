@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 
 import {
   appendDraftStage,
@@ -17,53 +17,39 @@ import {
 } from "@/features/pipeline/editor-primitives";
 import type { SessionPipeline } from "@/features/sessions/types";
 
-type PipelineEditorProps = {
+type OnboardingPipelineEditorProps = {
   canManage: boolean;
+  onCompleted: (action: string) => Promise<void>;
   pipeline: SessionPipeline | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 };
 
-export function PipelineEditor({
+export function OnboardingPipelineEditor({
   canManage,
+  onCompleted,
   pipeline,
   workspaceId,
   workspaceMembers,
-}: PipelineEditorProps) {
+}: OnboardingPipelineEditorProps) {
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [stages, setStages] = useState<DraftPipelineStage[]>(
     () => pipeline?.stages.map(stageToDraft) ?? [],
   );
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isSaving, setIsSaving] = useState(false);
 
   if (!pipeline) {
     return (
-      <p className="text-sm text-muted">
-        No pipeline configured. The default pipeline should be seeded automatically when the
-        workspace is created.
-      </p>
+      <div className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger">
+        Workspace has no default pipeline.
+      </div>
     );
   }
 
+  const currentPipeline = pipeline;
+
   async function savePipeline() {
-    const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
-      body: JSON.stringify({ name, stages }),
-      headers: { "Content-Type": "application/json" },
-      method: "PUT",
-    });
-
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to save pipeline.");
-      return;
-    }
-
-    setSavedAt(new Date());
-  }
-
-  function handleSave() {
     setError(null);
     const validation = validatePipelineDraft({ name, stages });
     if (!validation.ok) {
@@ -71,28 +57,60 @@ export function PipelineEditor({
       return;
     }
 
-    startTransition(async () => {
-      await savePipeline().catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
+    setIsSaving(true);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
+        body: JSON.stringify({ name, stages }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
       });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setError(body?.error ?? "Failed to save pipeline.");
+        return;
+      }
+
+      await onCompleted("pipeline:save");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleUseCurrentPipeline() {
+    setError(null);
+    const currentStages = currentPipeline.stages.map(stageToDraft);
+    const validation = validatePipelineDraft({
+      name: currentPipeline.name,
+      stages: currentStages,
     });
+
+    if (!validation.ok) {
+      setError(validation.message);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await onCompleted("pipeline:current");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to complete pipeline setup.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {error ? (
         <div
-          role="status"
-          aria-live="polite"
+          role="alert"
           className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
         >
           {error}
         </div>
-      ) : null}
-      {savedAt && !error ? (
-        <p className="text-[12px] text-muted">
-          Saved at {savedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-        </p>
       ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
@@ -101,7 +119,7 @@ export function PipelineEditor({
           <input
             type="text"
             value={name}
-            disabled={!canManage}
+            disabled={!canManage || isSaving}
             onChange={(event) => setName(event.target.value)}
             className="ui-input min-w-[240px]"
             maxLength={80}
@@ -113,8 +131,9 @@ export function PipelineEditor({
       <ol className="space-y-3">
         {stages.map((stage, index) => (
           <StageRowEditor
+            compact
             key={stage.id ?? `new-${index}`}
-            canManage={canManage}
+            canManage={canManage && !isSaving}
             index={index}
             isFirst={index === 0}
             isLast={index === stages.length - 1}
@@ -130,10 +149,23 @@ export function PipelineEditor({
 
       <PipelineEditorControls
         canManage={canManage}
-        isPending={isPending}
+        isPending={isSaving}
         onAddStage={() => setStages((current) => appendDraftStage(current))}
-        onSave={handleSave}
+        onSave={() => void savePipeline()}
       />
+
+      {canManage ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="ui-button"
+            disabled={isSaving}
+            onClick={() => void handleUseCurrentPipeline()}
+          >
+            Use current pipeline
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -265,6 +265,22 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     await expect(response.json()).resolves.toEqual({ error: "Duplicate stage slug: product" });
   });
 
+  it("rejects an empty stage list before calling the RPC", async () => {
+    grantAccess();
+    setupRpc();
+
+    const response = await putPipeline({
+      name: "Default",
+      stages: [],
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Pipeline must have at least one stage.",
+    });
+    expect(mocked.rpc).not.toHaveBeenCalled();
+  });
+
   it("maps duplicate incoming stage IDs from SQL validation to 400", async () => {
     grantAccess();
     setupRpc({
