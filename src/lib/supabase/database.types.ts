@@ -1226,6 +1226,78 @@ export type Database = {
           },
         ]
       }
+      workspace_repository_profiles: {
+        Row: {
+          build_command: string | null
+          created_at: string
+          env_key_suggestions: string[]
+          framework_hints: string[]
+          github_repository_id: string
+          id: string
+          inference_confidence: string
+          inference_sources: Json
+          install_command: string | null
+          is_primary: boolean
+          language_hints: string[]
+          package_manager: string | null
+          setup_notes: string
+          test_command: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          build_command?: string | null
+          created_at?: string
+          env_key_suggestions?: string[]
+          framework_hints?: string[]
+          github_repository_id: string
+          id?: string
+          inference_confidence?: string
+          inference_sources?: Json
+          install_command?: string | null
+          is_primary?: boolean
+          language_hints?: string[]
+          package_manager?: string | null
+          setup_notes?: string
+          test_command?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          build_command?: string | null
+          created_at?: string
+          env_key_suggestions?: string[]
+          framework_hints?: string[]
+          github_repository_id?: string
+          id?: string
+          inference_confidence?: string
+          inference_sources?: Json
+          install_command?: string | null
+          is_primary?: boolean
+          language_hints?: string[]
+          package_manager?: string | null
+          setup_notes?: string
+          test_command?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_repository_profiles_github_repository_id_fkey"
+            columns: ["github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_repository_profiles_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_secrets: {
         Row: {
           created_at: string
@@ -1387,6 +1459,23 @@ export type Database = {
           target_workspace_id: string
         }
         Returns: Json
+      }
+      save_workspace_repository_profile: {
+        Args: {
+          selected_build_command: string | null
+          selected_env_key_suggestions: string[]
+          selected_framework_hints: string[]
+          selected_inference_confidence: string
+          selected_inference_sources: Json
+          selected_install_command: string | null
+          selected_language_hints: string[]
+          selected_package_manager: string | null
+          selected_setup_notes: string
+          selected_test_command: string | null
+          target_github_repository_id: string
+          target_workspace_id: string
+        }
+        Returns: Database["public"]["Tables"]["workspace_repository_profiles"]["Row"]
       }
       schedule_job_retry: {
         Args: {
@@ -1609,4 +1698,3 @@ export const Constants = {
     },
   },
 } as const
-

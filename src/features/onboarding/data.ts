@@ -1,5 +1,7 @@
 import "server-only";
 
+import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
+import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
@@ -32,9 +34,10 @@ export type WorkspaceOnboardingData = {
     id: string;
     role: "admin" | "agent" | "member" | "owner";
   };
-  onboarding: WorkspaceOnboardingState;
+  github: WorkspaceGitHubData;
   linearRouting: LinearRoutingConfig;
   linearSecret: WorkspaceSecretPreview | null;
+  onboarding: WorkspaceOnboardingState;
   pipeline: SessionPipeline | null;
   setupHealth: OnboardingSetupHealth;
   workspace: {
@@ -118,12 +121,12 @@ function codexConnectionStatus(
 
 async function loadSetupHealth(
   context: WorkspaceAccessContext,
+  github: WorkspaceGitHubData,
   admin = createSupabaseAdminClient(),
 ): Promise<OnboardingSetupHealth> {
   const workspaceId = context.workspace.id;
 
   const [
-    { data: installationRows, error: installationError },
     { data: pipelineRow, error: pipelineError },
     { data: stageRows, error: stageError },
     { data: linearSecret, error: linearSecretError },
@@ -132,12 +135,6 @@ async function loadSetupHealth(
     { data: codexCredentials, error: codexError },
     { data: sandboxRows, error: sandboxError },
   ] = await Promise.all([
-    admin
-      .from("github_installations")
-      .select("installation_id, suspended, target_name, updated_at")
-      .eq("workspace_id", workspaceId)
-      .order("updated_at", { ascending: false })
-      .limit(1),
     admin
       .from("pipelines")
       .select("id")
@@ -171,7 +168,6 @@ async function loadSetupHealth(
   ]);
 
   const firstError =
-    installationError ??
     pipelineError ??
     stageError ??
     linearSecretError ??
@@ -181,13 +177,13 @@ async function loadSetupHealth(
     sandboxError;
   if (firstError) throw firstError;
 
-  const installation = installationRows?.[0] ?? null;
   const stageCount = pipelineRow
     ? (stageRows ?? []).filter((stage) => stage.pipeline_id === pipelineRow.id).length
     : 0;
   const configuredKeys = [...new Set((agentConfigRows ?? []).map((row) => row.key))].sort();
   const linearRoutingUpdatedAt =
     typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
+  const repositoryHealth = buildRepositorySetupHealth(github);
 
   return {
     agentConfig: {
@@ -203,12 +199,12 @@ async function loadSetupHealth(
       status: pipelineRow && stageCount > 0 ? "ready" : "missing",
     },
     githubInstallation: {
-      connected: Boolean(installation && !installation.suspended),
-      installationId: installation?.installation_id ?? null,
-      status: installation ? "present" : "missing",
-      suspended: installation?.suspended ?? null,
-      targetName: installation?.target_name ?? null,
-      updatedAt: installation?.updated_at ?? null,
+      connected: Boolean(github.installation && !github.installation.suspended),
+      installationId: github.installation?.installationId ?? null,
+      status: github.installation ? "present" : "missing",
+      suspended: github.installation?.suspended ?? null,
+      targetName: github.installation?.targetName ?? null,
+      updatedAt: github.installation?.updatedAt ?? null,
     },
     latestSandboxCapabilityCheck: mapSandboxCapabilityCheck(sandboxRows?.[0]),
     linearKey: {
@@ -221,17 +217,7 @@ async function loadSetupHealth(
       status: linearRouting ? "present" : "missing",
       updatedAt: linearRoutingUpdatedAt,
     },
-    primaryRepositoryProfile: {
-      configured: false,
-      fullName: null,
-      repositoryId: null,
-      status: "placeholder",
-    },
-    repositorySetup: {
-      configured: false,
-      repositoryId: null,
-      status: "placeholder",
-    },
+    ...repositoryHealth,
   };
 }
 
@@ -345,8 +331,9 @@ async function buildWorkspaceOnboardingData(
   const canManage =
     context.currentMember.role === "owner" || context.currentMember.role === "admin";
   const admin = createSupabaseAdminClient();
+  const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
   const [setupHealth, pipeline, workspaceMembers, linearRouting, linearSecret] = await Promise.all([
-    loadSetupHealth(context, admin),
+    loadSetupHealth(context, github, admin),
     loadDefaultPipeline(context),
     loadWorkspaceMembers(context),
     loadLinearRoutingConfig(admin, context.workspace.id),
@@ -359,6 +346,7 @@ async function buildWorkspaceOnboardingData(
       id: context.currentMember.id,
       role: context.currentMember.role,
     },
+    github,
     linearRouting,
     linearSecret,
     onboarding: mapOnboardingRow(onboardingRow),

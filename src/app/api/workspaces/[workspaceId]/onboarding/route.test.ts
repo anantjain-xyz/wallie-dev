@@ -23,6 +23,13 @@ const onboardingData: WorkspaceOnboardingData = {
     id: "member-1",
     role: "owner",
   },
+  github: {
+    installation: null,
+    missingAppKeys: [],
+    missingWebhookKeys: [],
+    primaryProfile: null,
+    repositories: [],
+  },
   linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
   linearSecret: {
     createdAt: "2026-05-16T18:00:00.000Z",
@@ -103,7 +110,7 @@ const onboardingData: WorkspaceOnboardingData = {
       configured: false,
       fullName: null,
       repositoryId: null,
-      status: "placeholder",
+      status: "missing",
     },
     repositorySetup: {
       configured: false,

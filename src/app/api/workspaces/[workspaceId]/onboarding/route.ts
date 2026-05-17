@@ -18,6 +18,7 @@ function onboardingResponse(data: WorkspaceOnboardingData) {
   return {
     canManage: data.canManage,
     currentMember: data.currentMember,
+    github: data.github,
     linearRouting: data.linearRouting,
     linearSecret: data.linearSecret,
     onboarding: data.onboarding,

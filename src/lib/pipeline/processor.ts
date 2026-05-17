@@ -586,14 +586,36 @@ async function loadGitHubContext(
 
   if (!installation) return null;
 
-  const { data: repo } = await admin
-    .from("github_repositories")
-    .select("id, full_name, default_branch")
-    .eq("github_installation_id", installation.id)
-    .eq("is_archived", false)
-    .order("full_name", { ascending: true })
-    .limit(1)
+  const { data: primaryProfile } = await admin
+    .from("workspace_repository_profiles")
+    .select("github_repository_id")
+    .eq("workspace_id", workspaceId)
+    .eq("is_primary", true)
     .maybeSingle();
+
+  const repositoryQuery = () =>
+    admin
+      .from("github_repositories")
+      .select("id, full_name, default_branch")
+      .eq("github_installation_id", installation.id)
+      .eq("is_archived", false);
+
+  let repo: { default_branch: string | null; full_name: string; id: string } | null = null;
+
+  if (primaryProfile) {
+    const { data: selectedRepo } = await repositoryQuery()
+      .eq("id", primaryProfile.github_repository_id)
+      .maybeSingle();
+    repo = selectedRepo;
+  }
+
+  if (!repo) {
+    const { data: fallbackRepo } = await repositoryQuery()
+      .order("full_name", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    repo = fallbackRepo;
+  }
 
   if (!repo) return null;
 

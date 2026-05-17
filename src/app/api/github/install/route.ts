@@ -9,6 +9,7 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 export async function GET(request: NextRequest) {
   const parsed = githubWorkspaceQuerySchema.safeParse({
+    source: request.nextUrl.searchParams.get("source") ?? undefined,
     workspaceId: request.nextUrl.searchParams.get("workspaceId"),
   });
 
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
   const env = parseServerEnv();
   const installSlug = await resolveGitHubInstallSlug();
   const state = createGitHubInstallState({
+    source: parsed.data.source ?? "settings",
     userId: access.context.user.id,
     workspaceId: access.context.workspace.id,
     workspaceSlug: access.context.workspace.slug,

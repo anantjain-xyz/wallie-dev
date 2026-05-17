@@ -28,10 +28,28 @@ describe("github install state", () => {
     );
 
     expect(verifyGitHubInstallState(token, testEnv)).toMatchObject({
+      source: "settings",
       userId: "user-123",
       version: 1,
       workspaceId: "workspace-123",
       workspaceSlug: "northwind-labs",
+    });
+  });
+
+  it("preserves onboarding install state source", () => {
+    const token = createGitHubInstallState(
+      {
+        source: "onboarding",
+        userId: "user-123",
+        workspaceId: "workspace-123",
+        workspaceSlug: "northwind-labs",
+      },
+      testEnv,
+    );
+
+    expect(verifyGitHubInstallState(token, testEnv)).toMatchObject({
+      source: "onboarding",
+      workspaceId: "workspace-123",
     });
   });
 

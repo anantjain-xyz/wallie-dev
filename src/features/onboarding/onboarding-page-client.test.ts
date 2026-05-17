@@ -2,8 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
+import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 
 const router = vi.hoisted(() => ({
   push: vi.fn(),
@@ -14,7 +16,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 
-import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
+import {
+  applySavedRepositoryProfileToData,
+  buildRepositoryProfileAutoContinuePatch,
+  isRepositorySelectionCurrent,
+  OnboardingPageClient,
+} from "@/features/onboarding/onboarding-page-client";
 
 const configuredPipeline = {
   id: "pipeline-1",
@@ -34,12 +41,70 @@ const configuredPipeline = {
   ],
 };
 
+function repository(id: string, overrides: Partial<WorkspaceGitHubRepository> = {}) {
+  return {
+    defaultBranch: "main",
+    defaultProgrammingLanguage: "TypeScript",
+    description: null,
+    fullName: `acme/${id}`,
+    htmlUrl: `https://github.com/acme/${id}`,
+    id,
+    isArchived: false,
+    isPrivate: false,
+    name: id,
+    onboarding: {
+      conflictReport: [],
+      githubRepositoryId: id,
+      installedSkillHash: null,
+      installedSkillVersion: null,
+      lastError: null,
+      setupBranchName: null,
+      setupPrNumber: null,
+      setupPrUrl: null,
+      status: "not_set_up",
+      updatedAt: null,
+    },
+    profile: null,
+    repoId: 100,
+    ...overrides,
+  } satisfies WorkspaceGitHubRepository;
+}
+
+function profile(githubRepositoryId: string, overrides: Partial<RepositoryProfileState> = {}) {
+  return {
+    buildCommand: "pnpm build",
+    createdAt: "2026-05-16T18:00:00.000Z",
+    envKeySuggestions: [],
+    frameworkHints: ["next"],
+    githubRepositoryId,
+    id: `profile-${githubRepositoryId}`,
+    inferenceConfidence: "manual",
+    inferenceSources: [{ path: "package.json", reason: "Read package metadata" }],
+    installCommand: "pnpm install",
+    isPrimary: true,
+    languageHints: ["typescript"],
+    packageManager: "pnpm",
+    setupNotes: "",
+    testCommand: "pnpm test",
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    workspaceId: "workspace-1",
+    ...overrides,
+  } satisfies RepositoryProfileState;
+}
+
 function onboardingData(overrides: Partial<WorkspaceOnboardingData> = {}): WorkspaceOnboardingData {
   const pipeline = overrides.pipeline === undefined ? configuredPipeline : overrides.pipeline;
 
   return {
     canManage: true,
     currentMember: { id: "member-1", role: "owner" },
+    github: {
+      installation: null,
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [],
+    },
     linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
     linearSecret: null,
     onboarding: {
@@ -92,7 +157,7 @@ function onboardingData(overrides: Partial<WorkspaceOnboardingData> = {}): Works
         configured: false,
         fullName: null,
         repositoryId: null,
-        status: "placeholder",
+        status: "missing",
       },
       repositorySetup: {
         configured: false,
@@ -117,6 +182,56 @@ function primaryFooterButton(html: string) {
 }
 
 describe("OnboardingPageClient", () => {
+  it("merges a saved repository profile into the latest GitHub state", () => {
+    const previousPrimary = profile("repo-b");
+    const currentData = onboardingData({
+      github: {
+        installation: null,
+        missingAppKeys: [],
+        missingWebhookKeys: [],
+        primaryProfile: previousPrimary,
+        repositories: [
+          repository("repo-a", { name: "fresh-repo-a" }),
+          repository("repo-b", { profile: previousPrimary }),
+        ],
+      },
+    });
+    const savedProfile = profile("repo-a");
+
+    const nextData = applySavedRepositoryProfileToData(currentData, savedProfile);
+
+    expect(nextData.github.primaryProfile).toBe(savedProfile);
+    expect(nextData.github.repositories[0]).toMatchObject({
+      name: "fresh-repo-a",
+      profile: savedProfile,
+    });
+    expect(nextData.github.repositories[1]?.profile).toMatchObject({ isPrimary: false });
+    expect(nextData.setupHealth.primaryRepositoryProfile).toMatchObject({
+      configured: true,
+      repositoryId: "repo-a",
+    });
+  });
+
+  it("only applies repository async results for the latest selected repository", () => {
+    expect(isRepositorySelectionCurrent("repo-b", "repo-a")).toBe(false);
+    expect(isRepositorySelectionCurrent("repo-a", "repo-a")).toBe(true);
+  });
+
+  it("builds repository auto-continue patches from the current step only", () => {
+    const baseOnboarding = onboardingData().onboarding;
+    const repositoryStep = onboardingData({
+      onboarding: { ...baseOnboarding, currentStep: "repository" },
+    }).onboarding;
+    const linearStep = onboardingData({
+      onboarding: { ...baseOnboarding, currentStep: "linear" },
+    }).onboarding;
+
+    expect(buildRepositoryProfileAutoContinuePatch(repositoryStep)).toMatchObject({
+      currentStep: "pipeline",
+    });
+    expect(buildRepositoryProfileAutoContinuePatch(linearStep)).toBeNull();
+  });
+
   it("allows fallback progression when the pipeline editor cannot render", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

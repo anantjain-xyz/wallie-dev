@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
+import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
+import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
   buildOnboardingAdvancePatch,
@@ -19,11 +21,13 @@ import {
 } from "@/features/onboarding/flow";
 import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
 import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
+import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
+import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +49,8 @@ type StepHealthItem = {
   tone: HealthTone;
   value: string;
 };
+
+type EditableProfile = RepositoryProfileState;
 
 const stepStateLabels: Record<OnboardingStepDisplayState, string> = {
   active: "Current",
@@ -140,10 +146,10 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
   return [
     { detail: github.detail, label: "GitHub", tone: github.tone, value: github.value },
     {
-      detail: "Repository selector pending",
+      detail: health.primaryRepositoryProfile.fullName ?? "No primary repository",
       label: "Repository",
-      tone: "neutral",
-      value: "Pending",
+      tone: health.primaryRepositoryProfile.configured ? "success" : "warning",
+      value: health.primaryRepositoryProfile.configured ? "Selected" : "Missing",
     },
     { detail: pipeline.detail, label: "Pipeline", tone: pipeline.tone, value: pipeline.value },
     {
@@ -203,13 +209,20 @@ function stepHealthItems(
       return [
         {
           label: "Repository setup",
-          tone: "neutral",
-          value: "Pending",
+          tone:
+            health.repositorySetup.status === "ready"
+              ? "success"
+              : health.repositorySetup.status === "error"
+                ? "danger"
+                : health.repositorySetup.status === "conflict"
+                  ? "warning"
+                  : "neutral",
+          value: health.repositorySetup.status,
         },
         {
           label: "Primary profile",
-          tone: "neutral",
-          value: "Pending",
+          tone: health.primaryRepositoryProfile.configured ? "success" : "warning",
+          value: health.primaryRepositoryProfile.configured ? "Saved" : "Missing",
         },
       ];
     case "pipeline":
@@ -274,30 +287,323 @@ function settingsHref(workspaceSlug: string, anchor: string) {
   return `${workspaceSettingsPath(workspaceSlug)}#${anchor}`;
 }
 
+function splitList(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function joinList(value: readonly string[]) {
+  return value.join("\n");
+}
+
+function applyGithubHealth(
+  health: OnboardingSetupHealth,
+  github: WorkspaceGitHubData,
+): OnboardingSetupHealth {
+  return {
+    ...health,
+    githubInstallation: {
+      connected: Boolean(github.installation && !github.installation.suspended),
+      installationId: github.installation?.installationId ?? null,
+      status: github.installation ? "present" : "missing",
+      suspended: github.installation?.suspended ?? null,
+      targetName: github.installation?.targetName ?? null,
+      updatedAt: github.installation?.updatedAt ?? null,
+    },
+    ...buildRepositorySetupHealth(github),
+  };
+}
+
+function ProfileField({
+  label,
+  onChange,
+  placeholder,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  value: string;
+}) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-[12px] font-medium text-muted">{label}</span>
+      <input
+        className="ui-input w-full"
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function RepositoryProfileEditor({
+  canManage,
+  isBusy,
+  isDirty,
+  onChange,
+  onInfer,
+  onSave,
+  profile,
+}: {
+  canManage: boolean;
+  isBusy: boolean;
+  isDirty: boolean;
+  onChange: (profile: EditableProfile, dirty?: boolean) => void;
+  onInfer: () => void;
+  onSave: () => void;
+  profile: EditableProfile;
+}) {
+  const confidence = isDirty ? "manual" : profile.inferenceConfidence;
+
+  function update<K extends keyof EditableProfile>(key: K, value: EditableProfile[K]) {
+    onChange({ ...profile, [key]: value, inferenceConfidence: "manual" }, true);
+  }
+
+  return (
+    <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-semibold text-foreground">Repository profile</h3>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Badge
+              tone={
+                confidence === "high" ? "success" : confidence === "low" ? "warning" : "neutral"
+              }
+            >
+              {confidence}
+            </Badge>
+            {profile.packageManager ? (
+              <span className="ui-pill">{profile.packageManager}</span>
+            ) : null}
+            {profile.languageHints.map((hint) => (
+              <span className="ui-pill" key={hint}>
+                {hint}
+              </span>
+            ))}
+            {profile.frameworkHints.map((hint) => (
+              <span className="ui-pill" key={hint}>
+                {hint}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            className="ui-button"
+            disabled={!canManage || isBusy}
+            onClick={onInfer}
+            type="button"
+          >
+            {isBusy ? "Inferring..." : "Refresh inference"}
+          </button>
+          <button
+            className="ui-button-primary"
+            disabled={!canManage || isBusy}
+            onClick={onSave}
+            type="button"
+          >
+            {isBusy ? "Saving..." : "Save profile"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <ProfileField
+          label="Package manager"
+          onChange={(value) => update("packageManager", value.trim() || null)}
+          placeholder="pnpm"
+          value={profile.packageManager ?? ""}
+        />
+        <ProfileField
+          label="Install command"
+          onChange={(value) => update("installCommand", value.trim() || null)}
+          placeholder="pnpm install"
+          value={profile.installCommand ?? ""}
+        />
+        <ProfileField
+          label="Build command"
+          onChange={(value) => update("buildCommand", value.trim() || null)}
+          placeholder="pnpm build"
+          value={profile.buildCommand ?? ""}
+        />
+        <ProfileField
+          label="Test command"
+          onChange={(value) => update("testCommand", value.trim() || null)}
+          placeholder="pnpm test"
+          value={profile.testCommand ?? ""}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="block space-y-1.5">
+          <span className="text-[12px] font-medium text-muted">Language hints</span>
+          <textarea
+            className="ui-textarea min-h-24 w-full"
+            onChange={(event) => update("languageHints", splitList(event.target.value))}
+            value={joinList(profile.languageHints)}
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-[12px] font-medium text-muted">Framework hints</span>
+          <textarea
+            className="ui-textarea min-h-24 w-full"
+            onChange={(event) => update("frameworkHints", splitList(event.target.value))}
+            value={joinList(profile.frameworkHints)}
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-[12px] font-medium text-muted">Env key suggestions</span>
+          <textarea
+            className="ui-textarea min-h-28 w-full font-mono text-[12px]"
+            onChange={(event) => update("envKeySuggestions", splitList(event.target.value))}
+            value={joinList(profile.envKeySuggestions)}
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-[12px] font-medium text-muted">Setup notes</span>
+          <textarea
+            className="ui-textarea min-h-28 w-full"
+            onChange={(event) => update("setupNotes", event.target.value)}
+            value={profile.setupNotes}
+          />
+        </label>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-[12px] font-medium text-muted">Source files</p>
+        {profile.inferenceSources.length === 0 ? (
+          <p className="mt-1 text-[12px] leading-5 text-muted">No source files matched.</p>
+        ) : (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {profile.inferenceSources.map((source) => (
+              <span className="ui-pill font-mono" key={source.path}>
+                {source.path}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StepBody({
   data,
+  isSaving,
   onCompleteStep,
+  onDataChange,
+  onInferRepository,
   onRefresh,
+  onRepositoryProfileSaved,
+  onSelectRepository,
+  profileBusy,
+  profileDirty,
+  profileDraft,
+  profileError,
+  selectedRepositoryId,
   step,
+  updateProfileDraft,
 }: {
   data: WorkspaceOnboardingData;
+  isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
+  onDataChange: (data: WorkspaceOnboardingData) => void;
+  onInferRepository: (repository: WorkspaceGitHubRepository) => void;
   onRefresh: (action: string) => Promise<void>;
+  onRepositoryProfileSaved: () => void;
+  onSelectRepository: (repository: WorkspaceGitHubRepository) => void;
+  profileBusy: boolean;
+  profileDirty: boolean;
+  profileDraft: EditableProfile | null;
+  profileError: string | null;
+  selectedRepositoryId: string | null;
   step: WorkspaceOnboardingStep;
+  updateProfileDraft: (profile: EditableProfile, dirty?: boolean) => void;
 }) {
-  const health = data.setupHealth;
-  const workspaceSlug = data.workspace.slug;
-  const rows = stepHealthItems(step, health);
+  const rows = stepHealthItems(step, data.setupHealth);
   const primaryHref =
     step === "github"
-      ? settingsHref(workspaceSlug, "github")
+      ? settingsHref(data.workspace.slug, "github")
       : step === "pipeline"
-        ? settingsHref(workspaceSlug, "pipeline")
+        ? settingsHref(data.workspace.slug, "pipeline")
         : step === "linear"
-          ? settingsHref(workspaceSlug, "linear")
+          ? settingsHref(data.workspace.slug, "linear")
           : step === "runtime"
-            ? settingsHref(workspaceSlug, "coding-agent")
+            ? settingsHref(data.workspace.slug, "coding-agent")
             : null;
+
+  function updateGithub(github: WorkspaceGitHubData) {
+    onDataChange({
+      ...data,
+      github,
+      setupHealth: applyGithubHealth(data.setupHealth, github),
+    });
+  }
+
+  if (step === "github") {
+    return (
+      <GitHubConnectionPanel
+        canManage={data.canManage && !isSaving}
+        github={data.github}
+        onChange={updateGithub}
+        source="onboarding"
+        workspaceId={data.workspace.id}
+      />
+    );
+  }
+
+  if (step === "repository") {
+    return (
+      <div className="space-y-4">
+        {profileError ? (
+          <div
+            className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+            role="alert"
+          >
+            {profileError}
+          </div>
+        ) : null}
+        <GitHubConnectionPanel
+          canManage={data.canManage && !isSaving}
+          github={data.github}
+          hideArchivedRepositories
+          onChange={updateGithub}
+          onSelectRepository={(repositoryId) => {
+            const repository = data.github.repositories.find((item) => item.id === repositoryId);
+            if (repository) onSelectRepository(repository);
+          }}
+          renderRepositoryDetails={(repository) =>
+            selectedRepositoryId === repository.id && profileDraft ? (
+              <RepositoryProfileEditor
+                canManage={data.canManage && !isSaving}
+                isBusy={profileBusy}
+                isDirty={profileDirty}
+                onChange={updateProfileDraft}
+                onInfer={() => onInferRepository(repository)}
+                onSave={onRepositoryProfileSaved}
+                profile={profileDraft}
+              />
+            ) : profileBusy && selectedRepositoryId === repository.id ? (
+              <div className="rounded-[6px] border border-border bg-background px-3 py-2 text-[13px] text-muted">
+                Inferring repository setup...
+              </div>
+            ) : null
+          }
+          selectedRepositoryId={selectedRepositoryId}
+          source="onboarding"
+          workspaceId={data.workspace.id}
+        />
+      </div>
+    );
+  }
 
   let controls: ReactNode;
 
@@ -333,11 +639,9 @@ function StepBody({
               {step === "verify" ? "Setup health" : "Controls"}
             </h3>
             <p className="mt-1 text-[13px] leading-5 text-muted">
-              {step === "repository"
-                ? "Repository selection controls will appear here when repository setup is wired."
-                : step === "verify"
-                  ? "Review the health summary, then complete setup when the required signals are ready."
-                  : "Use the linked settings area for now; this step will receive inline controls in a later integration issue."}
+              {step === "verify"
+                ? "Review the health summary, then complete setup when the required signals are ready."
+                : "Use the linked settings area for now; this step will receive inline controls in a later integration issue."}
             </p>
           </div>
           {primaryHref ? (
@@ -460,19 +764,79 @@ function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
   );
 }
 
+export function isRepositorySelectionCurrent(
+  latestSelectedRepositoryId: string | null,
+  repositoryId: string,
+) {
+  return latestSelectedRepositoryId === repositoryId;
+}
+
+export function applySavedRepositoryProfileToData(
+  currentData: WorkspaceOnboardingData,
+  profile: EditableProfile,
+): WorkspaceOnboardingData {
+  const nextGithub: WorkspaceGitHubData = {
+    ...currentData.github,
+    primaryProfile: profile,
+    repositories: currentData.github.repositories.map((repository) => ({
+      ...repository,
+      profile:
+        repository.id === profile.githubRepositoryId
+          ? profile
+          : repository.profile
+            ? { ...repository.profile, isPrimary: false }
+            : null,
+    })),
+  };
+
+  return {
+    ...currentData,
+    github: nextGithub,
+    setupHealth: applyGithubHealth(currentData.setupHealth, nextGithub),
+  };
+}
+
+export function buildRepositoryProfileAutoContinuePatch(
+  onboarding: WorkspaceOnboardingData["onboarding"],
+): WorkspaceOnboardingUpdatePayload | null {
+  if (onboarding.currentStep !== "repository") return null;
+  return buildOnboardingContinuePatch(onboarding);
+}
+
+function initialProfileDraft(data: WorkspaceOnboardingData): EditableProfile | null {
+  const primaryRepositoryId = data.github.primaryProfile?.githubRepositoryId;
+  if (!primaryRepositoryId) return null;
+  return (
+    data.github.repositories.find((repository) => repository.id === primaryRepositoryId)?.profile ??
+    data.github.primaryProfile
+  );
+}
+
 export function OnboardingPageClient({ initialData }: OnboardingPageClientProps) {
   const router = useRouter();
   const [data, setData] = useState(initialData);
   const [error, setError] = useState<string | null>(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileDirty, setProfileDirty] = useState(false);
+  const [profileDraft, setProfileDraft] = useState<EditableProfile | null>(() =>
+    initialProfileDraft(initialData),
+  );
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState<string | null>(
+    initialData.github.primaryProfile?.githubRepositoryId ?? null,
+  );
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
+  const latestDataRef = useRef(data);
+  const selectedRepositoryIdRef = useRef(selectedRepositoryId);
   const onboarding = data.onboarding;
+  latestDataRef.current = data;
+  selectedRepositoryIdRef.current = selectedRepositoryId;
   const activeStep = ONBOARDING_STEPS.find((step) => step.id === onboarding.currentStep)!;
   const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
-  const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
   const activeStepAlreadyResolved =
     onboarding.completedSteps.includes(activeStep.id) ||
     onboarding.skippedSteps.includes(activeStep.id);
@@ -484,6 +848,9 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     (activeStep.id === "pipeline" || activeStep.id === "linear") &&
     !inlineCompletionUnavailable &&
     !activeStepAlreadyResolved;
+  const repositoryContinueBlocked =
+    activeStep.id === "repository" && !data.setupHealth.primaryRepositoryProfile.configured;
+  const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
     if (!data.canManage || saveInFlightRef.current) return null;
@@ -505,6 +872,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       }
 
       const nextData = (await response.json()) as WorkspaceOnboardingData;
+      latestDataRef.current = nextData;
       setData(nextData);
       router.refresh();
       return nextData;
@@ -534,6 +902,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       }
 
       const nextData = (await response.json()) as WorkspaceOnboardingData;
+      latestDataRef.current = nextData;
       setData(nextData);
       router.refresh();
       return nextData;
@@ -546,7 +915,10 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function completeCurrentStep(action: string) {
-    const nextData = await persistOnboarding(buildOnboardingContinuePatch(data.onboarding), action);
+    const nextData = await persistOnboarding(
+      buildOnboardingContinuePatch(latestDataRef.current.onboarding),
+      action,
+    );
     if (!nextData) {
       throw new Error("Failed to save onboarding state.");
     }
@@ -588,6 +960,117 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     const nextData = patch ? await persistOnboarding(patch, "exit") : data;
     if (nextData) {
       router.push(workspaceBasePath(data.workspace.slug));
+    }
+  }
+
+  function updateProfileDraft(nextProfile: EditableProfile, dirty = false) {
+    setProfileDraft(nextProfile);
+    setProfileDirty(dirty);
+  }
+
+  async function inferRepositoryProfile(repository: WorkspaceGitHubRepository) {
+    selectedRepositoryIdRef.current = repository.id;
+    setSelectedRepositoryId(repository.id);
+    setProfileDraft(null);
+    setProfileDirty(false);
+    setProfileError(null);
+    setProfileBusy(true);
+
+    try {
+      const response = await fetch(
+        `/api/workspaces/${data.workspace.id}/repositories/${repository.id}/inference`,
+        { method: "POST" },
+      );
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Failed to infer repository setup.");
+      }
+
+      const body = (await response.json()) as { profile: EditableProfile };
+      if (!isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) return;
+      setProfileDraft(body.profile);
+    } catch (caught) {
+      if (!isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) return;
+      setProfileError(
+        caught instanceof Error ? caught.message : "Failed to infer repository setup.",
+      );
+    } finally {
+      if (isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) {
+        setProfileBusy(false);
+      }
+    }
+  }
+
+  async function selectRepository(repository: WorkspaceGitHubRepository) {
+    selectedRepositoryIdRef.current = repository.id;
+    setSelectedRepositoryId(repository.id);
+    setProfileError(null);
+
+    if (repository.profile) {
+      setProfileDraft(repository.profile);
+      setProfileDirty(false);
+      setProfileBusy(false);
+      return;
+    }
+
+    await inferRepositoryProfile(repository);
+  }
+
+  async function saveRepositoryProfile() {
+    if (!profileDraft || !selectedRepositoryId || profileBusy) return;
+
+    const repositoryIdToSave = selectedRepositoryId;
+    const profileToSave = profileDraft;
+    setProfileBusy(true);
+    setProfileError(null);
+
+    try {
+      const response = await fetch(`/api/workspaces/${data.workspace.id}/repository-profile`, {
+        body: JSON.stringify({
+          buildCommand: profileToSave.buildCommand,
+          envKeySuggestions: profileToSave.envKeySuggestions,
+          frameworkHints: profileToSave.frameworkHints,
+          githubRepositoryId: repositoryIdToSave,
+          inferenceConfidence: profileDirty ? "manual" : profileToSave.inferenceConfidence,
+          inferenceSources: profileToSave.inferenceSources,
+          installCommand: profileToSave.installCommand,
+          languageHints: profileToSave.languageHints,
+          packageManager: profileToSave.packageManager,
+          setupNotes: profileToSave.setupNotes,
+          testCommand: profileToSave.testCommand,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "PUT",
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Failed to save repository profile.");
+      }
+
+      const body = (await response.json()) as { profile: EditableProfile };
+      const nextData = applySavedRepositoryProfileToData(latestDataRef.current, body.profile);
+      latestDataRef.current = nextData;
+      setData(nextData);
+
+      if (isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repositoryIdToSave)) {
+        setProfileDraft(body.profile);
+        setProfileDirty(false);
+      }
+
+      const autoContinuePatch = buildRepositoryProfileAutoContinuePatch(
+        latestDataRef.current.onboarding,
+      );
+      if (autoContinuePatch) {
+        await persistOnboarding(autoContinuePatch, "repository-profile");
+      }
+    } catch (caught) {
+      setProfileError(
+        caught instanceof Error ? caught.message : "Failed to save repository profile.",
+      );
+    } finally {
+      setProfileBusy(false);
     }
   }
 
@@ -693,14 +1176,25 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           <div className="mt-6">
             <StepBody
               data={data}
+              isSaving={isSaving}
               onCompleteStep={completeCurrentStep}
+              onDataChange={setData}
+              onInferRepository={(repository) => void inferRepositoryProfile(repository)}
               onRefresh={async (action) => {
                 const nextData = await refreshOnboarding(action);
                 if (!nextData) {
                   throw new Error("Failed to refresh onboarding state.");
                 }
               }}
+              onRepositoryProfileSaved={() => void saveRepositoryProfile()}
+              onSelectRepository={(repository) => void selectRepository(repository)}
+              profileBusy={profileBusy}
+              profileDirty={profileDirty}
+              profileDraft={profileDraft}
+              profileError={profileError}
+              selectedRepositoryId={selectedRepositoryId}
               step={activeStep.id}
+              updateProfileDraft={updateProfileDraft}
             />
           </div>
         </section>
@@ -737,7 +1231,13 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             <button
               type="button"
               className="ui-button-primary"
-              disabled={!data.canManage || isCompleted || isSaving || requiresInlineCompletion}
+              disabled={
+                !data.canManage ||
+                isCompleted ||
+                isSaving ||
+                repositoryContinueBlocked ||
+                requiresInlineCompletion
+              }
               onClick={() => void continueSetup()}
             >
               {isCompleted
