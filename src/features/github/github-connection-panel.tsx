@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   GitHubInstallResponse,
@@ -67,6 +67,25 @@ function attachRepositoryState(
   };
 }
 
+export function mergeRefreshedRepositories(
+  refreshedRepositories: readonly GitHubRepositorySummary[],
+  currentRepositories: readonly WorkspaceGitHubRepository[],
+): WorkspaceGitHubRepository[] {
+  return refreshedRepositories.map((repository) =>
+    attachRepositoryState(repository, currentRepositories),
+  );
+}
+
+export function mergeRepositoryOnboardingState(
+  repositories: readonly WorkspaceGitHubRepository[],
+  repositoryId: string,
+  onboarding: RepositoryOnboardingState,
+): WorkspaceGitHubRepository[] {
+  return repositories.map((repository) =>
+    repository.id === repositoryId ? { ...repository, onboarding } : repository,
+  );
+}
+
 export function primaryProfileForRepositories(
   github: Pick<WorkspaceGitHubData, "primaryProfile">,
   repositories: readonly WorkspaceGitHubRepository[],
@@ -127,19 +146,44 @@ export function GitHubConnectionPanel({
   const isControlled = Boolean(onChange);
   const githubInstallation = isControlled ? github.installation : localGithubInstallation;
   const repositories = isControlled ? github.repositories : localRepositories;
+  const latestGithubRef = useRef(github);
+  const latestInstallationRef = useRef(githubInstallation);
+  const latestRepositoriesRef = useRef(repositories);
   const hasGitHubAppConfig = github.missingAppKeys.length === 0;
 
+  useEffect(() => {
+    latestGithubRef.current = github;
+  }, [github]);
+
+  useEffect(() => {
+    latestInstallationRef.current = githubInstallation;
+  }, [githubInstallation]);
+
+  useEffect(() => {
+    latestRepositoriesRef.current = repositories;
+  }, [repositories]);
+
   function emitChange(next: Partial<WorkspaceGitHubData>) {
+    const currentGithub = latestGithubRef.current;
+    const currentInstallation = latestInstallationRef.current;
+    const currentRepositories = latestRepositoriesRef.current;
+    const nextInstallation = next.installation ?? currentInstallation;
+    const nextRepositories = next.repositories ?? currentRepositories;
     const nextPrimaryProfile = Object.prototype.hasOwnProperty.call(next, "primaryProfile")
       ? (next.primaryProfile ?? null)
-      : github.primaryProfile;
-
-    onChange?.({
-      ...github,
-      installation: next.installation ?? githubInstallation,
-      repositories: next.repositories ?? repositories,
+      : currentGithub.primaryProfile;
+    const nextGithub = {
+      ...currentGithub,
+      installation: nextInstallation,
       primaryProfile: nextPrimaryProfile,
-    });
+      repositories: nextRepositories,
+    };
+
+    latestGithubRef.current = nextGithub;
+    latestInstallationRef.current = nextInstallation;
+    latestRepositoriesRef.current = nextRepositories;
+
+    onChange?.(nextGithub);
   }
 
   const launchInstall = useApiAction<GitHubInstallResponse>({
@@ -169,10 +213,14 @@ export function GitHubConnectionPanel({
       }),
     errorText: "GitHub repository sync failed.",
     onSuccess: (payload) => {
-      const nextRepositories = payload.repositories.map((repository) =>
-        attachRepositoryState(repository, repositories),
+      const nextRepositories = mergeRefreshedRepositories(
+        payload.repositories,
+        latestRepositoriesRef.current,
       );
-      const nextPrimaryProfile = primaryProfileForRepositories(github, nextRepositories);
+      const nextPrimaryProfile = primaryProfileForRepositories(
+        latestGithubRef.current,
+        nextRepositories,
+      );
       if (!isControlled) {
         setLocalGithubInstallation(payload.installation);
         setLocalRepositories(nextRepositories);
@@ -194,10 +242,10 @@ export function GitHubConnectionPanel({
       }),
     errorText: "Wallie setup failed.",
     onSuccess: (payload, [repositoryId]) => {
-      const nextRepositories = repositories.map((repository) =>
-        repository.id === repositoryId
-          ? { ...repository, onboarding: payload.onboarding }
-          : repository,
+      const nextRepositories = mergeRepositoryOnboardingState(
+        latestRepositoriesRef.current,
+        repositoryId,
+        payload.onboarding,
       );
       if (!isControlled) setLocalRepositories(nextRepositories);
       emitChange({ repositories: nextRepositories });

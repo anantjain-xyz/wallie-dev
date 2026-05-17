@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { primaryProfileForRepositories } from "@/features/github/github-connection-panel";
+import {
+  mergeRefreshedRepositories,
+  mergeRepositoryOnboardingState,
+  primaryProfileForRepositories,
+} from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
+import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -55,6 +60,21 @@ function repository(id: string, profileState: RepositoryProfileState | null) {
   } satisfies WorkspaceGitHubRepository;
 }
 
+function readyOnboarding(repositoryId: string): RepositoryOnboardingState {
+  return {
+    conflictReport: [],
+    githubRepositoryId: repositoryId,
+    installedSkillHash: "hash-1",
+    installedSkillVersion: 1,
+    lastError: null,
+    setupBranchName: null,
+    setupPrNumber: null,
+    setupPrUrl: null,
+    status: "ready",
+    updatedAt: "2026-05-17T00:00:00.000Z",
+  };
+}
+
 describe("primaryProfileForRepositories", () => {
   it("keeps the primary profile when the refreshed repositories still include it", () => {
     const primary = profile("repo-1");
@@ -73,5 +93,45 @@ describe("primaryProfileForRepositories", () => {
         repository("repo-2", null),
       ]),
     ).toBeNull();
+  });
+});
+
+describe("mergeRefreshedRepositories", () => {
+  it("preserves the latest onboarding and profile state when refresh returns repository summaries", () => {
+    const primary = profile("repo-1");
+    const current = {
+      ...repository("repo-1", primary),
+      onboarding: readyOnboarding("repo-1"),
+    };
+    const refreshed = {
+      ...repository("repo-1", null),
+      defaultBranch: "trunk",
+      fullName: "acme/repo-1-renamed",
+    };
+
+    const [next] = mergeRefreshedRepositories([refreshed], [current]);
+
+    expect(next.fullName).toBe("acme/repo-1-renamed");
+    expect(next.defaultBranch).toBe("trunk");
+    expect(next.onboarding).toBe(current.onboarding);
+    expect(next.profile).toBe(primary);
+  });
+});
+
+describe("mergeRepositoryOnboardingState", () => {
+  it("patches setup state without dropping repositories added by a newer refresh", () => {
+    const repo1 = repository("repo-1", null);
+    const repo2 = repository("repo-2", null);
+    const nextOnboarding = readyOnboarding("repo-1");
+
+    const nextRepositories = mergeRepositoryOnboardingState(
+      [repo1, repo2],
+      "repo-1",
+      nextOnboarding,
+    );
+
+    expect(nextRepositories).toHaveLength(2);
+    expect(nextRepositories[0]?.onboarding).toBe(nextOnboarding);
+    expect(nextRepositories[1]).toBe(repo2);
   });
 });
