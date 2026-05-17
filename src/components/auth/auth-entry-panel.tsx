@@ -33,12 +33,6 @@ function buildOauthHref(provider: OAuthProvider, next: string) {
   return `/auth/oauth?${params.toString()}`;
 }
 
-const inputClasses =
-  "w-full rounded-[6px] border border-[#d9cfbf] bg-white/70 px-3 py-2.5 text-[14px] text-[#1a1714] placeholder:text-[#a39a8b] outline-none transition-[border-color,box-shadow] focus:border-[#2b4570] focus:ring-2 focus:ring-[#2b4570]/15";
-
-const secondaryButtonClasses =
-  "inline-flex w-full items-center justify-center gap-2 rounded-[6px] border border-[#d9cfbf] bg-white/60 px-3 py-2.5 text-[13px] font-medium text-[#1a1714] transition-colors hover:border-[#bdb19e] hover:bg-white";
-
 export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelProps) {
   const errorMessage = errorCode
     ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
@@ -49,12 +43,12 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
 
   return (
     <div className="w-full max-w-[360px]">
-      <div className="rounded-[10px] border border-[#d9cfbf] bg-[#fdfaf3] p-5 shadow-[0_1px_0_rgba(26,23,20,0.03),0_8px_24px_-12px_rgba(26,23,20,0.08)]">
+      <div className="ui-panel-elevated p-5">
         {statusMessage ? (
           <div
             aria-live="polite"
             role="status"
-            className="mb-4 rounded-[6px] border border-[#d9cfbf] bg-[#f3ecdb] px-3 py-2 text-[12px] leading-5 text-[#6b6358]"
+            className="mb-4 rounded-[6px] border border-border bg-accent-soft px-3 py-2 text-[12px] leading-5 text-foreground"
           >
             {statusMessage}
           </div>
@@ -64,7 +58,8 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
           <div
             aria-live="polite"
             role="status"
-            className="mb-4 rounded-[6px] border border-[#c89a8a] bg-[#f3e3da] px-3 py-2 text-[12px] leading-5 text-[#7a3320]"
+            className="mb-4 rounded-[6px] border bg-danger-soft px-3 py-2 text-[12px] leading-5 text-danger"
+            style={{ borderColor: "color-mix(in srgb, var(--danger) 22%, white)" }}
           >
             {errorMessage}
           </div>
@@ -83,40 +78,37 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
               inputMode="email"
               placeholder="you@company.com"
               spellCheck={false}
-              className={inputClasses}
+              className="ui-input"
             />
           </label>
 
-          <button
-            type="submit"
-            className="inline-flex w-full items-center justify-center rounded-[6px] bg-[#1a1714] px-3 py-2.5 text-[13px] font-medium text-[#f6f1e7] transition-colors hover:bg-[#2b4570] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2b4570]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fdfaf3]"
-          >
+          <button type="submit" className="ui-button-primary w-full">
             Send magic link
           </button>
         </form>
 
         <div className="my-4 flex items-center gap-3">
-          <div className="h-px flex-1 bg-[#d9cfbf]" />
-          <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-[#8a8170]">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted">
             or
           </span>
-          <div className="h-px flex-1 bg-[#d9cfbf]" />
+          <div className="h-px flex-1 bg-border" />
         </div>
 
         <div className="grid gap-2">
-          <Link href={buildOauthHref("google", next)} className={secondaryButtonClasses}>
+          <Link href={buildOauthHref("google", next)} className="ui-button w-full gap-2">
             <GoogleGlyph />
             <span>Continue with Google</span>
           </Link>
-          <Link href={buildOauthHref("github", next)} className={secondaryButtonClasses}>
+          <Link href={buildOauthHref("github", next)} className="ui-button w-full gap-2">
             <GitHubGlyph />
             <span>Continue with GitHub</span>
           </Link>
         </div>
 
         {isLocalDev() && (
-          <details className="mt-4 border-t border-[#d9cfbf]/70 pt-3">
-            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-[#8a8170] transition-colors hover:text-[#1a1714]">
+          <details className="mt-4 border-t border-border pt-3">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-muted transition-colors hover:text-foreground">
               <span aria-hidden="true">›</span>
               Dev password
             </summary>
@@ -128,7 +120,7 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
                 required
                 autoComplete="email"
                 placeholder="dev@localhost.com"
-                className={inputClasses}
+                className="ui-input"
               />
               <input
                 type="password"
@@ -137,9 +129,9 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
                 minLength={6}
                 autoComplete="current-password"
                 placeholder="Password (min 6)"
-                className={inputClasses}
+                className="ui-input"
               />
-              <button type="submit" className={secondaryButtonClasses}>
+              <button type="submit" className="ui-button w-full">
                 Continue
               </button>
             </form>
@@ -177,7 +169,7 @@ function GitHubGlyph() {
   return (
     <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" focusable="false">
       <path
-        fill="#1a1714"
+        fill="currentColor"
         d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
       />
     </svg>
