@@ -142,6 +142,32 @@ describe("OnboardingPageClient", () => {
     expect(button).toContain(">Complete in step</button>");
   });
 
+  it("allows fallback progression when Linear routing cannot load pipeline stages", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "linear",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          pipeline: null,
+        }),
+      }),
+    );
+
+    const button = primaryFooterButton(html);
+    expect(button).toContain(">Continue</button>");
+    expect(button).not.toContain("disabled");
+  });
+
   it("lets onboarding replace an existing Linear key inline", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

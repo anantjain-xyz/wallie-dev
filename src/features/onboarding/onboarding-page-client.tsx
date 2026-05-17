@@ -474,8 +474,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const isSaving = savingAction !== null;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
   const pipelineEditorUnavailable = activeStep.id === "pipeline" && !data.pipeline;
+  const linearRoutingUnavailable =
+    activeStep.id === "linear" && (!data.pipeline || data.pipeline.stages.length === 0);
+  const inlineCompletionUnavailable = pipelineEditorUnavailable || linearRoutingUnavailable;
   const requiresInlineCompletion =
-    (activeStep.id === "pipeline" && !pipelineEditorUnavailable) || activeStep.id === "linear";
+    (activeStep.id === "pipeline" || activeStep.id === "linear") && !inlineCompletionUnavailable;
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
     if (!data.canManage || saveInFlightRef.current) return null;
@@ -545,7 +548,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function continueSetup() {
-    if (pipelineEditorUnavailable) {
+    if (inlineCompletionUnavailable) {
       const patch = buildOnboardingAdvancePatch(onboarding);
       if (!patch) return;
       await persistOnboarding(patch, "continue");
