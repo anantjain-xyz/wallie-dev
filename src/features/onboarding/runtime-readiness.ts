@@ -88,6 +88,7 @@ function resolveModel(config: AgentConfigMap): string {
 
 export function buildRuntimeReadiness(input: {
   agentConfig: AgentConfigMap;
+  anthropicApiKeyConfigured?: boolean;
   codexConnection: OnboardingSetupHealth["codexConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
@@ -96,6 +97,8 @@ export function buildRuntimeReadiness(input: {
   const provider = resolveProvider(input.agentConfig);
   const model = resolveModel(input.agentConfig);
   const secretKeySet = new Set(input.secretKeys);
+  const anthropicApiKeyConfigured =
+    input.anthropicApiKeyConfigured ?? secretKeySet.has("ANTHROPIC_API_KEY");
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) => input.agentConfig[key] === undefined,
   );
@@ -141,12 +144,12 @@ export function buildRuntimeReadiness(input: {
       break;
     case "anthropic-api":
       requirements.push({
-        detail: secretKeySet.has("ANTHROPIC_API_KEY")
+        detail: anthropicApiKeyConfigured
           ? "ANTHROPIC_API_KEY is stored in workspace secrets."
           : "Add ANTHROPIC_API_KEY to workspace secrets.",
         id: "anthropic-key",
         label: "Anthropic API key",
-        passed: secretKeySet.has("ANTHROPIC_API_KEY"),
+        passed: anthropicApiKeyConfigured,
         step: "runtime",
       });
       break;
@@ -195,6 +198,7 @@ export function buildVerifyChecklist(input: {
 }): VerifyChecklistItem[] {
   const runtimeReadiness = buildRuntimeReadiness({
     agentConfig: input.agentConfig,
+    anthropicApiKeyConfigured: input.health.workspaceSecrets.anthropicApiKeyConfigured,
     codexConnection: input.health.codexConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,

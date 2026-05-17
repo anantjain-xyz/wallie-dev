@@ -62,6 +62,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       status: "ready",
     },
     workspaceSecrets: {
+      anthropicApiKeyConfigured: true,
       configuredKeys: ["ANTHROPIC_API_KEY", "LINEAR_API_KEY"],
     },
     ...overrides,
@@ -119,6 +120,19 @@ describe("buildRuntimeReadiness", () => {
       true,
     );
     expect(buildRuntimeReadiness({ ...base, secretKeys: [] }).canComplete).toBe(false);
+  });
+
+  it("uses provider secret booleans when full key inventory is redacted", () => {
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "claude-sonnet-4-5", agent_provider: "anthropic-api" },
+        anthropicApiKeyConfigured: true,
+        codexConnection: health().codexConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+        secretKeys: [],
+      }).canComplete,
+    ).toBe(true);
   });
 
   it("requires claude-* models and ready repository setup for claude-code", () => {

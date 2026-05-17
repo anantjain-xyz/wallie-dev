@@ -102,7 +102,7 @@ const onboardingData = {
     latestSandboxCapabilityCheck: null,
     linearKey: { configured: false, status: "missing", updatedAt: null },
     linearRouting: { configured: false, status: "missing", updatedAt: null },
-    workspaceSecrets: { configuredKeys: [] },
+    workspaceSecrets: { anthropicApiKeyConfigured: false, configuredKeys: [] },
     primaryRepositoryProfile: {
       configured: false,
       fullName: null,

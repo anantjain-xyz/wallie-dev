@@ -115,6 +115,7 @@ const onboardingData: WorkspaceOnboardingData = {
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     workspaceSecrets: {
+      anthropicApiKeyConfigured: false,
       configuredKeys: ["LINEAR_API_KEY"],
     },
     primaryRepositoryProfile: {

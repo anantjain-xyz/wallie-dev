@@ -180,7 +180,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
       latestSandboxCapabilityCheck: null,
       linearKey: { configured: false, status: "missing", updatedAt: null },
       linearRouting: { configured: false, status: "missing", updatedAt: null },
-      workspaceSecrets: { configuredKeys: [] },
+      workspaceSecrets: { anthropicApiKeyConfigured: false, configuredKeys: [] },
       primaryRepositoryProfile: {
         configured: false,
         fullName: null,
@@ -553,5 +553,39 @@ describe("OnboardingPageClient", () => {
     expect(running).toContain("disabled");
     expect(failed).toContain("Retry capability check");
     expect(failed).toContain("sandbox failed");
+  });
+
+  it("disables sandbox capability checks for non-managers", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          canManage: false,
+          currentMember: { id: "member-2", role: "member" },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+          },
+        }),
+      }),
+    );
+
+    const match = html.match(/<button[^>]*>Run capability check<\/button>/)?.[0];
+    expect(match).toContain("disabled");
   });
 });

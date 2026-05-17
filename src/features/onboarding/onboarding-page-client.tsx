@@ -211,6 +211,7 @@ function workspaceSecretKeys(data: WorkspaceOnboardingData) {
 function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = data.agentConfig) {
   return buildRuntimeReadiness({
     agentConfig,
+    anthropicApiKeyConfigured: data.setupHealth.workspaceSecrets.anthropicApiKeyConfigured,
     codexConnection: data.setupHealth.codexConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
@@ -251,6 +252,10 @@ function updateSecretInData(
 ): WorkspaceOnboardingData {
   const workspaceSecrets = upsertSecretPreview(currentData.workspaceSecrets, secret);
   const configuredKeys = [...new Set(workspaceSecrets.map((item) => item.key))].sort();
+  const anthropicApiKeyConfigured =
+    secret.key === "ANTHROPIC_API_KEY"
+      ? true
+      : currentData.setupHealth.workspaceSecrets.anthropicApiKeyConfigured;
 
   return {
     ...currentData,
@@ -266,6 +271,7 @@ function updateSecretInData(
             }
           : currentData.setupHealth.linearKey,
       workspaceSecrets: {
+        anthropicApiKeyConfigured,
         configuredKeys,
       },
     },
@@ -838,7 +844,8 @@ function RuntimeStep({
     setBusyAction("config");
     setRuntimeError(null);
     setRuntimeMessage(null);
-    const entries: Array<{ key: string; value: unknown }> = [];
+    let savedCount = 0;
+    let nextData = data;
 
     try {
       for (const status of fieldStatuses) {
@@ -858,14 +865,13 @@ function RuntimeStep({
         if (!response.ok || !body) {
           throw new Error(body?.error ?? "Agent config save failed.");
         }
-        entries.push(body.entry);
+        savedCount += 1;
+        nextData = updateAgentConfigInData(nextData, [body.entry]);
+        onDataChange(nextData);
       }
 
-      if (entries.length > 0) {
-        onDataChange(updateAgentConfigInData(data, entries));
-        setRuntimeMessage(
-          `Saved ${entries.length} agent setting${entries.length === 1 ? "" : "s"}.`,
-        );
+      if (savedCount > 0) {
+        setRuntimeMessage(`Saved ${savedCount} agent setting${savedCount === 1 ? "" : "s"}.`);
       }
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Agent config save failed.");
@@ -1244,9 +1250,11 @@ function VerifyStep({
   });
   const blockers = verifyBlockersFromChecklist(checklist);
   const isPolling = check?.status === "running";
+  const canRunCapabilityCheck =
+    data.canManage && Boolean(primaryRepositoryId) && busyAction === null && !isPolling;
 
   useEffect(() => {
-    if (!primaryRepositoryId || check?.status !== "running") return;
+    if (!data.canManage || !primaryRepositoryId || check?.status !== "running") return;
 
     let cancelled = false;
     const timer = window.setInterval(async () => {
@@ -1289,7 +1297,7 @@ function VerifyStep({
   }, [check?.status, data, onDataChange, primaryRepositoryId]);
 
   async function runCapabilityCheck() {
-    if (!primaryRepositoryId || busyAction !== null) return;
+    if (!canRunCapabilityCheck || !primaryRepositoryId) return;
     setBusyAction("sandbox");
     setVerifyError(null);
 
@@ -1411,7 +1419,7 @@ function VerifyStep({
         <div className="mt-4 flex justify-end">
           <button
             className={check?.status === "error" ? "ui-button" : "ui-button-primary"}
-            disabled={!primaryRepositoryId || busyAction !== null || isPolling}
+            disabled={!canRunCapabilityCheck}
             onClick={() => void runCapabilityCheck()}
             type="button"
           >
