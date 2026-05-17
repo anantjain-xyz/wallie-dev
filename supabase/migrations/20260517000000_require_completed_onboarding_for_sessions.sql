@@ -1,6 +1,11 @@
 -- Session creation remains browser-initiated, but workspaces must finish
 -- onboarding before clients can insert the first session.
 
+insert into public.workspace_onboarding (workspace_id)
+select workspace_record.id
+from public.workspaces workspace_record
+on conflict (workspace_id) do nothing;
+
 drop policy if exists sessions_insert_membership on public.sessions;
 
 create policy sessions_insert_membership

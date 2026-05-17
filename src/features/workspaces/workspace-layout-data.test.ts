@@ -116,4 +116,18 @@ describe("loadWorkspaceLayoutContext", () => {
     });
     expect(mocked.ensureProfileForUser).toHaveBeenCalledWith(supabase, user);
   });
+
+  it("treats a missing onboarding row as setup-required state", async () => {
+    const supabase = buildSupabaseMock(null);
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase);
+    mocked.getSupabaseUserOrNull.mockResolvedValue(user);
+    mocked.getWorkspaceBySlugForUser.mockResolvedValue(workspace);
+
+    await expect(loadWorkspaceLayoutContext("legacy-workspace")).resolves.toMatchObject({
+      onboarding: {
+        currentStep: "github",
+        status: "not_started",
+      },
+    });
+  });
 });

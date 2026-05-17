@@ -7,6 +7,7 @@ import {
   buildOnboardingRailNavigationPatch,
   buildOnboardingSkipPatch,
   getOnboardingStepRailItems,
+  mapOnboardingResumeState,
   shouldShowOnboardingResumeCta,
 } from "@/features/onboarding/flow";
 import type { WorkspaceOnboardingState } from "@/lib/onboarding/contracts";
@@ -177,5 +178,12 @@ describe("onboarding flow helpers", () => {
     expect(shouldShowOnboardingResumeCta(onboardingState({ status: "dismissed" }))).toBe(true);
     expect(shouldShowOnboardingResumeCta(onboardingState({ status: "completed" }))).toBe(false);
     expect(shouldShowOnboardingResumeCta(null)).toBe(false);
+  });
+
+  it("maps a missing onboarding row to setup-required resume state", () => {
+    expect(mapOnboardingResumeState(null)).toEqual({
+      currentStep: "github",
+      status: "not_started",
+    });
   });
 });

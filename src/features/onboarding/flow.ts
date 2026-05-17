@@ -86,7 +86,12 @@ export function shouldShowOnboardingResumeCta(onboarding: OnboardingResumeState 
 }
 
 export function mapOnboardingResumeState(row: OnboardingResumeRow): OnboardingResumeState | null {
-  if (!row) return null;
+  if (!row) {
+    return {
+      currentStep: "github",
+      status: "not_started",
+    };
+  }
 
   return {
     currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
