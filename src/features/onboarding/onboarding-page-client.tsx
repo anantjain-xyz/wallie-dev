@@ -764,6 +764,45 @@ function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
   );
 }
 
+export function isRepositorySelectionCurrent(
+  latestSelectedRepositoryId: string | null,
+  repositoryId: string,
+) {
+  return latestSelectedRepositoryId === repositoryId;
+}
+
+export function applySavedRepositoryProfileToData(
+  currentData: WorkspaceOnboardingData,
+  profile: EditableProfile,
+): WorkspaceOnboardingData {
+  const nextGithub: WorkspaceGitHubData = {
+    ...currentData.github,
+    primaryProfile: profile,
+    repositories: currentData.github.repositories.map((repository) => ({
+      ...repository,
+      profile:
+        repository.id === profile.githubRepositoryId
+          ? profile
+          : repository.profile
+            ? { ...repository.profile, isPrimary: false }
+            : null,
+    })),
+  };
+
+  return {
+    ...currentData,
+    github: nextGithub,
+    setupHealth: applyGithubHealth(currentData.setupHealth, nextGithub),
+  };
+}
+
+export function buildRepositoryProfileAutoContinuePatch(
+  onboarding: WorkspaceOnboardingData["onboarding"],
+): WorkspaceOnboardingUpdatePayload | null {
+  if (onboarding.currentStep !== "repository") return null;
+  return buildOnboardingContinuePatch(onboarding);
+}
+
 function initialProfileDraft(data: WorkspaceOnboardingData): EditableProfile | null {
   const primaryRepositoryId = data.github.primaryProfile?.githubRepositoryId;
   if (!primaryRepositoryId) return null;
@@ -788,7 +827,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   );
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
+  const latestDataRef = useRef(data);
+  const selectedRepositoryIdRef = useRef(selectedRepositoryId);
   const onboarding = data.onboarding;
+  latestDataRef.current = data;
+  selectedRepositoryIdRef.current = selectedRepositoryId;
   const activeStep = ONBOARDING_STEPS.find((step) => step.id === onboarding.currentStep)!;
   const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
@@ -829,6 +872,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       }
 
       const nextData = (await response.json()) as WorkspaceOnboardingData;
+      latestDataRef.current = nextData;
       setData(nextData);
       router.refresh();
       return nextData;
@@ -858,6 +902,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       }
 
       const nextData = (await response.json()) as WorkspaceOnboardingData;
+      latestDataRef.current = nextData;
       setData(nextData);
       router.refresh();
       return nextData;
@@ -870,7 +915,10 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function completeCurrentStep(action: string) {
-    const nextData = await persistOnboarding(buildOnboardingContinuePatch(data.onboarding), action);
+    const nextData = await persistOnboarding(
+      buildOnboardingContinuePatch(latestDataRef.current.onboarding),
+      action,
+    );
     if (!nextData) {
       throw new Error("Failed to save onboarding state.");
     }
@@ -921,6 +969,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function inferRepositoryProfile(repository: WorkspaceGitHubRepository) {
+    selectedRepositoryIdRef.current = repository.id;
     setSelectedRepositoryId(repository.id);
     setProfileDraft(null);
     setProfileDirty(false);
@@ -939,23 +988,29 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       }
 
       const body = (await response.json()) as { profile: EditableProfile };
+      if (!isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) return;
       setProfileDraft(body.profile);
     } catch (caught) {
+      if (!isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) return;
       setProfileError(
         caught instanceof Error ? caught.message : "Failed to infer repository setup.",
       );
     } finally {
-      setProfileBusy(false);
+      if (isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) {
+        setProfileBusy(false);
+      }
     }
   }
 
   async function selectRepository(repository: WorkspaceGitHubRepository) {
+    selectedRepositoryIdRef.current = repository.id;
     setSelectedRepositoryId(repository.id);
     setProfileError(null);
 
     if (repository.profile) {
       setProfileDraft(repository.profile);
       setProfileDirty(false);
+      setProfileBusy(false);
       return;
     }
 
@@ -965,23 +1020,25 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   async function saveRepositoryProfile() {
     if (!profileDraft || !selectedRepositoryId || profileBusy) return;
 
+    const repositoryIdToSave = selectedRepositoryId;
+    const profileToSave = profileDraft;
     setProfileBusy(true);
     setProfileError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${data.workspace.id}/repository-profile`, {
         body: JSON.stringify({
-          buildCommand: profileDraft.buildCommand,
-          envKeySuggestions: profileDraft.envKeySuggestions,
-          frameworkHints: profileDraft.frameworkHints,
-          githubRepositoryId: selectedRepositoryId,
-          inferenceConfidence: profileDirty ? "manual" : profileDraft.inferenceConfidence,
-          inferenceSources: profileDraft.inferenceSources,
-          installCommand: profileDraft.installCommand,
-          languageHints: profileDraft.languageHints,
-          packageManager: profileDraft.packageManager,
-          setupNotes: profileDraft.setupNotes,
-          testCommand: profileDraft.testCommand,
+          buildCommand: profileToSave.buildCommand,
+          envKeySuggestions: profileToSave.envKeySuggestions,
+          frameworkHints: profileToSave.frameworkHints,
+          githubRepositoryId: repositoryIdToSave,
+          inferenceConfidence: profileDirty ? "manual" : profileToSave.inferenceConfidence,
+          inferenceSources: profileToSave.inferenceSources,
+          installCommand: profileToSave.installCommand,
+          languageHints: profileToSave.languageHints,
+          packageManager: profileToSave.packageManager,
+          setupNotes: profileToSave.setupNotes,
+          testCommand: profileToSave.testCommand,
         }),
         headers: { "content-type": "application/json" },
         method: "PUT",
@@ -993,31 +1050,20 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       }
 
       const body = (await response.json()) as { profile: EditableProfile };
-      const nextGithub: WorkspaceGitHubData = {
-        ...data.github,
-        primaryProfile: body.profile,
-        repositories: data.github.repositories.map((repository) => ({
-          ...repository,
-          profile:
-            repository.id === body.profile.githubRepositoryId
-              ? body.profile
-              : repository.profile
-                ? { ...repository.profile, isPrimary: false }
-                : null,
-        })),
-      };
-      const nextData = {
-        ...data,
-        github: nextGithub,
-        setupHealth: applyGithubHealth(data.setupHealth, nextGithub),
-      };
-
+      const nextData = applySavedRepositoryProfileToData(latestDataRef.current, body.profile);
+      latestDataRef.current = nextData;
       setData(nextData);
-      setProfileDraft(body.profile);
-      setProfileDirty(false);
 
-      if (onboarding.currentStep === "repository") {
-        await persistOnboarding(buildOnboardingContinuePatch(onboarding), "repository-profile");
+      if (isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repositoryIdToSave)) {
+        setProfileDraft(body.profile);
+        setProfileDirty(false);
+      }
+
+      const autoContinuePatch = buildRepositoryProfileAutoContinuePatch(
+        latestDataRef.current.onboarding,
+      );
+      if (autoContinuePatch) {
+        await persistOnboarding(autoContinuePatch, "repository-profile");
       }
     } catch (caught) {
       setProfileError(

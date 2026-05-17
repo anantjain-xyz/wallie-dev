@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { RepositoryProfileSavePayload } from "@/lib/repo-inference/contracts";
 import {
+  inferRepositoryProfileForRepository,
   RepositoryProfileError,
   saveWorkspaceRepositoryProfile,
 } from "@/lib/repo-inference/server";
@@ -10,6 +11,11 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const REPOSITORY_ID = "11111111-1111-4111-8111-111111111111";
+
+type InstallationRequest = <T = unknown>(
+  route: string,
+  params?: Record<string, unknown>,
+) => Promise<{ data: T }>;
 
 const payload: RepositoryProfileSavePayload = {
   buildCommand: "pnpm build",
@@ -133,5 +139,57 @@ describe("saveWorkspaceRepositoryProfile", () => {
         workspaceId: WORKSPACE_ID,
       }),
     ).rejects.toBeInstanceOf(RepositoryProfileError);
+  });
+});
+
+describe("inferRepositoryProfileForRepository", () => {
+  it("skips unreadable optional candidate files and returns partial inference", async () => {
+    const { admin } = createAdminMock({ data: null, error: null });
+    const packageJson = JSON.stringify({
+      dependencies: { next: "^16.0.0" },
+      packageManager: "pnpm@10.15.0",
+      scripts: { build: "next build", test: "vitest" },
+    });
+    const request = vi.fn(async function request<T = unknown>(
+      _route: string,
+      params?: Record<string, unknown>,
+    ): Promise<{ data: T }> {
+      if (params?.path === "package.json") {
+        return {
+          data: {
+            content: Buffer.from(packageJson).toString("base64"),
+            encoding: "base64",
+            type: "file",
+          } as T,
+        };
+      }
+      if (params?.path === "README.md") {
+        const error = new Error("GitHub API unavailable") as Error & { status?: number };
+        error.status = 500;
+        throw error;
+      }
+      const error = new Error("Not found") as Error & { status?: number };
+      error.status = 404;
+      throw error;
+    });
+
+    const result = await inferRepositoryProfileForRepository({
+      admin,
+      githubAppFactory: () => ({
+        getInstallationOctokit: async () => ({ request: request as InstallationRequest }),
+      }),
+      repositoryId: REPOSITORY_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+
+    expect(result).toMatchObject({
+      buildCommand: "pnpm build",
+      githubRepositoryId: REPOSITORY_ID,
+      installCommand: "pnpm install",
+      packageManager: "pnpm",
+      testCommand: "pnpm test",
+    });
+    expect(result.inferenceSources.map((source) => source.path)).toContain("package.json");
+    expect(result.inferenceSources.map((source) => source.path)).not.toContain("README.md");
   });
 });

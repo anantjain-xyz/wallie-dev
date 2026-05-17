@@ -61,12 +61,6 @@ function splitRepo(fullName: string): { owner: string; repo: string } {
   return { owner, repo };
 }
 
-function readGitHubStatus(error: unknown): number | null {
-  return typeof error === "object" && error !== null && "status" in error
-    ? Number((error as { status?: unknown }).status)
-    : null;
-}
-
 export function mapRepositoryProfileRow(
   row: Tables<"workspace_repository_profiles">,
 ): RepositoryProfileState {
@@ -153,9 +147,8 @@ async function readRepositoryFile(input: {
         : null;
 
     return { content, path: input.path };
-  } catch (error) {
-    if (readGitHubStatus(error) === 404) return null;
-    throw error;
+  } catch {
+    return null;
   }
 }
 
