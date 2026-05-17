@@ -6,15 +6,13 @@ import { useRouter } from "next/navigation";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
+import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
-  formatSessionPhaseStatus,
-  sessionPhaseStatusTone,
   type SessionFilterKey,
   type SessionListQueryState,
   type SessionSummary,
 } from "@/features/sessions/types";
-import { StatusChip } from "@/components/shared/status-chip";
 import { SearchIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -208,9 +206,7 @@ function SessionRow({
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>
-          <StatusChip tone={sessionPhaseStatusTone(session.phaseStatus)}>
-            {formatSessionPhaseStatus(session.phaseStatus)}
-          </StatusChip>
+          <SessionPhaseStatusLabel status={session.phaseStatus} />
           <span>·</span>
           <span>updated {relativeTime(session.updatedAt)}</span>
           {session.archivedAt ? (

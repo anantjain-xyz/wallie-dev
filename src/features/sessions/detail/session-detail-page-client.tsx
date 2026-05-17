@@ -11,7 +11,6 @@ import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
   formatSessionPhaseStatus,
   isTerminalStage,
-  sessionPhaseStatusTone,
   stageIndex,
   type PipelineStage,
   type SessionArtifactSummary,
@@ -20,6 +19,7 @@ import {
   type SessionRun,
 } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
+import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -194,9 +194,10 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                 <p className="mt-0.5 text-[11px] text-muted">{selectedStage?.description ?? ""}</p>
               </div>
               {selectedStageSlug === session.currentStageSlug ? (
-                <StatusChip tone={sessionPhaseStatusTone(session.phaseStatus)}>
-                  {formatSessionPhaseStatus(session.phaseStatus)}
-                </StatusChip>
+                <SessionPhaseStatusLabel
+                  status={session.phaseStatus}
+                  className="shrink-0 text-right text-[11px] leading-4"
+                />
               ) : null}
             </div>
 
