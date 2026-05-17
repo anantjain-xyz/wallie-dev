@@ -7,6 +7,7 @@ const authErrorMessages = {
   auth_callback_failed: "The sign-in callback did not complete. Start the flow again.",
   auth_confirmation_failed:
     "The email link could not be confirmed. Request a fresh link and try again.",
+  email_code_failed: "Wallie could not verify that code. Check the email and code, then try again.",
   email_sign_in_failed: "Wallie could not send that magic link. Check the email and try again.",
   password_auth_failed: "Dev password sign-in failed. Check credentials and try again.",
   invalid_provider: "That sign-in provider is not supported on this route.",
@@ -15,7 +16,7 @@ const authErrorMessages = {
 
 const authStatusMessages = {
   check_email:
-    "Check your inbox for a secure sign-in link. It will continue into your workspace flow.",
+    "Check your inbox for a secure sign-in link or six-digit code. It will continue into your workspace flow.",
 } as const;
 
 type AuthEntryPanelProps = {
@@ -87,11 +88,52 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
           </button>
         </form>
 
+        <div className="mt-4 border-t border-border pt-4">
+          <p id="email-code-heading" className="mb-3 text-[12px] font-medium text-muted">
+            Email code
+          </p>
+          <form
+            action="/auth/code"
+            method="post"
+            aria-labelledby="email-code-heading"
+            className="space-y-2"
+          >
+            <input type="hidden" name="next" value={next} />
+            <label className="block">
+              <span className="sr-only">Email</span>
+              <input
+                type="email"
+                name="email"
+                required
+                autoComplete="email"
+                inputMode="email"
+                placeholder="you@company.com"
+                spellCheck={false}
+                className="ui-input"
+              />
+            </label>
+            <label className="block">
+              <span className="sr-only">Six-digit code</span>
+              <input
+                type="text"
+                name="token"
+                required
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                maxLength={8}
+                placeholder="6-digit code"
+                className="ui-input text-center font-mono text-[17px]"
+              />
+            </label>
+            <button type="submit" className="ui-button w-full">
+              Continue with code
+            </button>
+          </form>
+        </div>
+
         <div className="my-4 flex items-center gap-3">
           <div className="h-px flex-1 bg-border" />
-          <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted">
-            or
-          </span>
+          <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted">or</span>
           <div className="h-px flex-1 bg-border" />
         </div>
 
