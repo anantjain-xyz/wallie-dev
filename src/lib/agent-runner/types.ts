@@ -87,20 +87,14 @@ export interface AgentRunner {
 export interface AgentRunnerConfig {
   /** Which provider to use: "codex" | "claude-code" | "anthropic-api". */
   provider: AgentProvider;
-  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-6"). */
+  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-opus-4-7"). */
   model?: string;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
 export const DEFAULT_CODEX_MODEL = "gpt-5-codex";
-export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
-
-export function getDefaultAnthropicModel(
-  env: Record<string, string | undefined> = process.env,
-): string {
-  return env.WALLIE_DEFAULT_ANTHROPIC_MODEL?.trim() || DEFAULT_ANTHROPIC_MODEL;
-}
+export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
 
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
   provider: "codex",

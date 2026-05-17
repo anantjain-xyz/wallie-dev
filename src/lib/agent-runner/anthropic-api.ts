@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Message, RawMessageStreamEvent } from "@anthropic-ai/sdk/resources/messages/messages";
 
 import {
-  getDefaultAnthropicModel,
+  DEFAULT_ANTHROPIC_MODEL,
   type AgentEvent,
   type AgentRunner,
   type AgentRunnerStartInput,
@@ -15,7 +15,7 @@ const MAX_LOGGED_MODEL_CHARS = 32;
 export interface AnthropicApiRunnerOptions {
   /** Workspace-scoped Anthropic API key (decrypted from `workspace_secrets`). */
   apiKey: string;
-  /** Model identifier (e.g. "claude-sonnet-4-6"). */
+  /** Model identifier (e.g. "claude-opus-4-7"). */
   model?: string;
   /**
    * Optional injection point for the Anthropic client. The factory builds one
@@ -125,15 +125,14 @@ export class AnthropicApiRunner implements AgentRunner {
  */
 export function resolveAnthropicModel(model: string | undefined): string {
   const configuredModel = model?.trim();
-  const defaultModel = getDefaultAnthropicModel();
-  if (!configuredModel) return defaultModel;
+  if (!configuredModel) return DEFAULT_ANTHROPIC_MODEL;
   if (configuredModel.startsWith("claude-")) return configuredModel;
 
   console.warn("Anthropic API model is not Claude-compatible; using default Anthropic model.", {
     configuredModel: formatModelForLog(configuredModel),
-    defaultModel,
+    defaultModel: DEFAULT_ANTHROPIC_MODEL,
   });
-  return defaultModel;
+  return DEFAULT_ANTHROPIC_MODEL;
 }
 
 function formatModelForLog(model: string): string {

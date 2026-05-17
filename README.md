@@ -320,7 +320,6 @@ Fill in the required values. Integration variables can be left blank until you c
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                     |
 | `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                           |
 | `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption    |
-| `WALLIE_DEFAULT_ANTHROPIC_MODEL`       | No       | Emergency override for the Anthropic runner default                                 |
 | `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                    |
 | `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)      |
 | `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                             |
@@ -331,7 +330,7 @@ Workspace-scoped secrets (`ANTHROPIC_API_KEY`, `LINEAR_API_KEY`) are **not** env
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. The Codex runner defaults to `gpt-5-codex`. The Anthropic API runner defaults to `claude-sonnet-4-6`; set `WALLIE_DEFAULT_ANTHROPIC_MODEL` only when you need to override that default before a code change can ship.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. The Codex runner defaults to `gpt-5-codex`. The Anthropic API runner defaults to `claude-opus-4-7`.
 
 ### 5. Create a GitHub App
 

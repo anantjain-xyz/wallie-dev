@@ -7,7 +7,7 @@ import {
   parseStreamEvent,
   resolveAnthropicModel,
 } from "./anthropic-api";
-import { DEFAULT_ANTHROPIC_MODEL, getDefaultAnthropicModel } from "./types";
+import { DEFAULT_ANTHROPIC_MODEL } from "./types";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -250,20 +250,6 @@ describe("resolveAnthropicModel", () => {
     expect(payload.configuredModel).toContain("...");
     expect(payload.configuredModel).not.toBe(model);
     expect(payload.configuredModel.length).toBeLessThan(model.length);
-  });
-});
-
-describe("getDefaultAnthropicModel", () => {
-  it("uses the built-in default when no env override is set", () => {
-    expect(getDefaultAnthropicModel({})).toBe(DEFAULT_ANTHROPIC_MODEL);
-  });
-
-  it("uses a trimmed env override when present", () => {
-    expect(
-      getDefaultAnthropicModel({
-        WALLIE_DEFAULT_ANTHROPIC_MODEL: " claude-opus-4-6 ",
-      }),
-    ).toBe("claude-opus-4-6");
   });
 });
 

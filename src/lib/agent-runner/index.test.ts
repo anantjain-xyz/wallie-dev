@@ -67,6 +67,6 @@ describe("DEFAULT_AGENT_RUNNER_CONFIG", () => {
   });
 
   it("exports the Anthropic runner default from the shared defaults module", () => {
-    expect(DEFAULT_ANTHROPIC_MODEL).toBe("claude-sonnet-4-6");
+    expect(DEFAULT_ANTHROPIC_MODEL).toBe("claude-opus-4-7");
   });
 });
