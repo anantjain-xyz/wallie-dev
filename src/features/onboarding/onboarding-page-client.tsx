@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   ApplyAgentConfigDefaultsResponse,
@@ -83,6 +83,10 @@ type StepHealthItem = {
 type EditableProfile = RepositoryProfileState;
 type AgentConfigDrafts = Record<AgentConfigKey, string>;
 type FieldType = "number" | "select" | "text";
+type OnboardingDataUpdate =
+  | WorkspaceOnboardingData
+  | ((currentData: WorkspaceOnboardingData) => WorkspaceOnboardingData);
+type OnboardingDataChange = (update: OnboardingDataUpdate) => void;
 
 type RuntimeCompletionState = {
   hasInvalidDrafts: boolean;
@@ -204,6 +208,19 @@ function draftValueToConfigMap(drafts: AgentConfigDrafts, fields: readonly Field
   return config;
 }
 
+export function isAgentConfigDraftDirty(
+  configKey: AgentConfigKey,
+  type: "number" | "select" | "text",
+  draft: string,
+  savedDraft: string,
+): boolean {
+  const validation = parseDraftForKey(configKey, type, draft);
+  if (!validation.ok) {
+    return draft !== savedDraft;
+  }
+  return configValueToString(validation.value) !== savedDraft;
+}
+
 function workspaceSecretKeys(data: WorkspaceOnboardingData) {
   return data.setupHealth.workspaceSecrets.configuredKeys;
 }
@@ -276,6 +293,19 @@ function updateSecretInData(
       },
     },
     workspaceSecrets,
+  };
+}
+
+export function updateSandboxCapabilityCheckInData(
+  currentData: WorkspaceOnboardingData,
+  check: SandboxCapabilityCheckState,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      latestSandboxCapabilityCheck: check,
+    },
   };
 }
 
@@ -743,7 +773,7 @@ function RuntimeStep({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onCompleted: (action: string) => Promise<void>;
-  onDataChange: (data: WorkspaceOnboardingData) => void;
+  onDataChange: OnboardingDataChange;
   onRuntimeStateChange: (state: RuntimeCompletionState) => void;
 }) {
   const [drafts, setDrafts] = useState<AgentConfigDrafts>(() =>
@@ -769,7 +799,12 @@ function RuntimeStep({
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];
     const validation = parseDraftForKey(field.configKey, field.type, draft);
-    const isDirty = draft !== savedDrafts[field.configKey];
+    const isDirty = isAgentConfigDraftDirty(
+      field.configKey,
+      field.type,
+      draft,
+      savedDrafts[field.configKey],
+    );
     return {
       draft,
       field,
@@ -867,6 +902,12 @@ function RuntimeStep({
         }
         savedCount += 1;
         nextData = updateAgentConfigInData(nextData, [body.entry]);
+        if (ALLOWED_AGENT_CONFIG_KEYS.includes(body.entry.key as AgentConfigKey)) {
+          setDrafts((current) => ({
+            ...current,
+            [body.entry.key]: configValueToString(body.entry.value),
+          }));
+        }
         onDataChange(nextData);
       }
 
@@ -1233,12 +1274,13 @@ function VerifyStep({
   onSelectStep,
 }: {
   data: WorkspaceOnboardingData;
-  onDataChange: (data: WorkspaceOnboardingData) => void;
+  onDataChange: OnboardingDataChange;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
 }) {
   const [check, setCheck] = useState(data.setupHealth.latestSandboxCapabilityCheck);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
   const primaryRepositoryId = data.setupHealth.primaryRepositoryProfile.repositoryId;
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
@@ -1252,6 +1294,12 @@ function VerifyStep({
   const isPolling = check?.status === "running";
   const canRunCapabilityCheck =
     data.canManage && Boolean(primaryRepositoryId) && busyAction === null && !isPolling;
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!data.canManage || !primaryRepositoryId || check?.status !== "running") return;
@@ -1270,15 +1318,10 @@ function VerifyStep({
           throw new Error(body?.error ?? "Capability check polling failed.");
         }
         if (cancelled || !body.check) return;
-        setCheck(body.check);
-        onDataChange({
-          ...data,
-          setupHealth: {
-            ...data.setupHealth,
-            latestSandboxCapabilityCheck: body.check,
-          },
-        });
-        if (body.check.status === "success" || body.check.status === "error") {
+        const nextCheck = body.check;
+        setCheck(nextCheck);
+        onDataChange((currentData) => updateSandboxCapabilityCheckInData(currentData, nextCheck));
+        if (nextCheck.status === "success" || nextCheck.status === "error") {
           window.clearInterval(timer);
         }
       } catch (error) {
@@ -1294,7 +1337,7 @@ function VerifyStep({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [check?.status, data, onDataChange, primaryRepositoryId]);
+  }, [check?.status, data.canManage, data.workspace.id, onDataChange, primaryRepositoryId]);
 
   async function runCapabilityCheck() {
     if (!canRunCapabilityCheck || !primaryRepositoryId) return;
@@ -1316,18 +1359,17 @@ function VerifyStep({
       if (!response.ok || !body) {
         throw new Error(body?.error ?? "Sandbox capability check failed.");
       }
+      if (!mountedRef.current) return;
       setCheck(body.check);
-      onDataChange({
-        ...data,
-        setupHealth: {
-          ...data.setupHealth,
-          latestSandboxCapabilityCheck: body.check,
-        },
-      });
+      onDataChange((currentData) => updateSandboxCapabilityCheckInData(currentData, body.check));
     } catch (error) {
-      setVerifyError(error instanceof Error ? error.message : "Sandbox capability check failed.");
+      if (mountedRef.current) {
+        setVerifyError(error instanceof Error ? error.message : "Sandbox capability check failed.");
+      }
     } finally {
-      setBusyAction(null);
+      if (mountedRef.current) {
+        setBusyAction(null);
+      }
     }
   }
 
@@ -1459,7 +1501,7 @@ function StepBody({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
-  onDataChange: (data: WorkspaceOnboardingData) => void;
+  onDataChange: OnboardingDataChange;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
   onRefresh: (action: string) => Promise<void>;
   onRepositoryProfileSaved: () => void;
@@ -1800,6 +1842,13 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const onboarding = data.onboarding;
   latestDataRef.current = data;
   selectedRepositoryIdRef.current = selectedRepositoryId;
+  const updateData = useCallback((update: OnboardingDataUpdate) => {
+    setData((currentData) => {
+      const nextData = typeof update === "function" ? update(currentData) : update;
+      latestDataRef.current = nextData;
+      return nextData;
+    });
+  }, []);
   const activeStep = ONBOARDING_STEPS.find((step) => step.id === onboarding.currentStep)!;
   const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
@@ -2201,7 +2250,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               data={data}
               isSaving={isSaving}
               onCompleteStep={completeCurrentStep}
-              onDataChange={setData}
+              onDataChange={updateData}
               onInferRepository={(repository) => void inferRepositoryProfile(repository)}
               onRefresh={async (action) => {
                 const nextData = await refreshOnboarding(action);

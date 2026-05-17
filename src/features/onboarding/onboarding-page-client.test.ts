@@ -19,8 +19,10 @@ vi.mock("next/navigation", () => ({
 import {
   applySavedRepositoryProfileToData,
   buildRepositoryProfileAutoContinuePatch,
+  isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
+  updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
 const configuredPipeline = {
@@ -589,5 +591,32 @@ describe("OnboardingPageClient", () => {
 
     const match = html.match(/<button[^>]*>Run capability check<\/button>/)?.[0];
     expect(match).toContain("disabled");
+  });
+
+  it("normalizes agent config drafts before dirty comparison", () => {
+    expect(isAgentConfigDraftDirty("concurrency_limit", "number", "01", "1")).toBe(false);
+    expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "3e5", "300000")).toBe(false);
+    expect(isAgentConfigDraftDirty("max_retries", "number", "2", "3")).toBe(true);
+  });
+
+  it("merges sandbox capability results into the latest onboarding data", () => {
+    const currentData = onboardingData({
+      onboarding: {
+        completedSteps: ["github", "repository", "pipeline"],
+        currentStep: "runtime",
+      },
+    });
+    const nextData = updateSandboxCapabilityCheckInData(currentData, {
+      capabilities: {},
+      checkedAt: "2026-05-16T19:00:00.000Z",
+      errorText: null,
+      githubRepositoryId: "repo-a",
+      id: "check-2",
+      status: "success",
+    });
+
+    expect(nextData.onboarding.currentStep).toBe("runtime");
+    expect(nextData.onboarding.completedSteps).toEqual(["github", "repository", "pipeline"]);
+    expect(nextData.setupHealth.latestSandboxCapabilityCheck?.id).toBe("check-2");
   });
 });
