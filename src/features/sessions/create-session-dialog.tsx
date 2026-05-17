@@ -172,9 +172,7 @@ function CreateSessionDialogBody({
               placeholder="https://linear.app/acme/issue/TEAM-123"
               type="url"
             />
-            {linearError ? (
-              <p className="text-[11px] text-danger">{linearError}</p>
-            ) : null}
+            {linearError ? <p className="text-[11px] text-danger">{linearError}</p> : null}
           </div>
 
           {errorMessage ? (
