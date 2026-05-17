@@ -3,4 +3,13 @@ version = 1
 name = "wallie-cc"
 
 [setup]
-script = ""
+script = '''
+cd "$CODEX_WORKTREE_PATH"
+corepack enable
+corepack prepare pnpm@10.15.0 --activate
+pnpm install --frozen-lockfile
+
+# For Codex-created local worktrees, make env available.
+# Prefer symlink/copy from the canonical repo only on your machine.
+[ -f "$CODEX_SOURCE_TREE_PATH/.env.local" ] && [ ! -f .env.local ] && ln -s "$CODEX_SOURCE_TREE_PATH/.env.local" .env.local
+'''
