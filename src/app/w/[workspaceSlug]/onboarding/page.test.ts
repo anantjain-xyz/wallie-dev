@@ -36,6 +36,7 @@ vi.mock("@/features/onboarding/onboarding-page-client", () => ({
 import WorkspaceOnboardingPage from "./page";
 
 const onboardingData = {
+  agentConfig: {},
   canManage: false,
   currentMember: { id: "member-1", role: "member" },
   github: {
@@ -77,7 +78,7 @@ const onboardingData = {
     ],
   },
   setupHealth: {
-    agentConfig: { configured: false, configuredKeys: [], status: "missing" },
+    agentConfig: { configured: false, configuredKeys: [], status: "missing", values: {} },
     codexConnection: {
       connected: false,
       expiresAt: null,
@@ -101,6 +102,7 @@ const onboardingData = {
     latestSandboxCapabilityCheck: null,
     linearKey: { configured: false, status: "missing", updatedAt: null },
     linearRouting: { configured: false, status: "missing", updatedAt: null },
+    workspaceSecrets: { anthropicApiKeyConfigured: false, configuredKeys: [] },
     primaryRepositoryProfile: {
       configured: false,
       fullName: null,
@@ -115,6 +117,7 @@ const onboardingData = {
   },
   workspace: { id: "workspace-1", name: "Northwind", slug: "northwind" },
   workspaceMembers: [],
+  workspaceSecrets: [],
 } satisfies WorkspaceOnboardingData;
 
 describe("workspace onboarding page", () => {

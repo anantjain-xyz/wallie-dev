@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   after: vi.fn(),
   completeSandboxCapabilityCheck: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
+  getLatestSandboxCapabilityCheck: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   startSandboxCapabilityCheck: vi.fn(),
 }));
@@ -26,10 +27,11 @@ vi.mock("@/lib/workspaces/access", () => ({
 
 vi.mock("@/lib/sandbox-capabilities/server", () => ({
   completeSandboxCapabilityCheck: mocked.completeSandboxCapabilityCheck,
+  getLatestSandboxCapabilityCheck: mocked.getLatestSandboxCapabilityCheck,
   startSandboxCapabilityCheck: mocked.startSandboxCapabilityCheck,
 }));
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const REPOSITORY_ID = "11111111-1111-4111-8111-111111111111";
@@ -107,5 +109,53 @@ describe("POST /api/workspaces/[workspaceId]/sandbox-capability-check", () => {
       userId: "user-1",
       workspaceId: WORKSPACE_ID,
     });
+  });
+});
+
+describe("GET /api/workspaces/[workspaceId]/sandbox-capability-check", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the latest check for the requested repository", async () => {
+    grantAccess();
+    const admin = {};
+    const check = {
+      capabilities: { git: { detail: "git ok", ok: true } },
+      checkedAt: "2026-05-15T00:00:00.000Z",
+      errorText: null,
+      githubRepositoryId: REPOSITORY_ID,
+      id: "check-1",
+      status: "success",
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.getLatestSandboxCapabilityCheck.mockResolvedValue(check);
+
+    const response = await GET(
+      new Request(
+        `http://localhost/api/workspaces/${WORKSPACE_ID}/sandbox-capability-check?repositoryId=${REPOSITORY_ID}`,
+      ),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ check });
+    expect(mocked.getLatestSandboxCapabilityCheck).toHaveBeenCalledWith({
+      admin,
+      repositoryId: REPOSITORY_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
+  it("rejects missing repository ids", async () => {
+    grantAccess();
+
+    const response = await GET(
+      new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}/sandbox-capability-check`),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocked.getLatestSandboxCapabilityCheck).not.toHaveBeenCalled();
   });
 });

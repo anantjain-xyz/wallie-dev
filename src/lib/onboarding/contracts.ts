@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 import type { RepositoryOnboardingStatus } from "@/lib/repo-onboarding/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 
@@ -58,8 +59,9 @@ export type SetupReadinessStatus = "missing" | "placeholder" | "ready";
 export type OnboardingSetupHealth = {
   agentConfig: {
     configured: boolean;
-    configuredKeys: string[];
+    configuredKeys: AgentConfigKey[];
     status: SetupPresenceStatus;
+    values: Partial<Record<AgentConfigKey, unknown>>;
   };
   codexConnection: {
     connected: boolean;
@@ -91,6 +93,10 @@ export type OnboardingSetupHealth = {
     configured: boolean;
     status: SetupPresenceStatus;
     updatedAt: string | null;
+  };
+  workspaceSecrets: {
+    anthropicApiKeyConfigured: boolean;
+    configuredKeys: string[];
   };
   primaryRepositoryProfile: {
     configured: boolean;

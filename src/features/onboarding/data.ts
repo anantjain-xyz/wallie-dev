@@ -2,6 +2,14 @@ import "server-only";
 
 import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
+import {
+  agentConfigEntriesToMap,
+  buildVerifyChecklist,
+  configuredAgentConfigKeys,
+  verifyBlockersFromChecklist,
+  type AgentConfigMap,
+  type VerifyBlocker,
+} from "@/features/onboarding/runtime-readiness";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
@@ -12,6 +20,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import {
   type OnboardingSetupHealth,
+  WORKSPACE_ONBOARDING_STEPS,
   type WorkspaceOnboardingState,
   type WorkspaceOnboardingUpdatePayload,
   workspaceOnboardingStatusSchema,
@@ -29,6 +38,7 @@ type OnboardingAccessFailure = {
 };
 
 export type WorkspaceOnboardingData = {
+  agentConfig: AgentConfigMap;
   canManage: boolean;
   currentMember: {
     id: string;
@@ -46,6 +56,7 @@ export type WorkspaceOnboardingData = {
     slug: string;
   };
   workspaceMembers: WorkspaceMemberSummary[];
+  workspaceSecrets: WorkspaceSecretPreview[];
 };
 
 type OnboardingDataResult =
@@ -58,6 +69,19 @@ type OnboardingDataResult =
 type SandboxCapabilityCheckRow = Pick<
   Tables<"sandbox_capability_checks">,
   "capabilities" | "checked_at" | "error_text" | "github_repository_id" | "id" | "status"
+>;
+
+type AgentConfigRow = Pick<Tables<"workspace_agent_config">, "key" | "value_json">;
+
+type SecretPreviewRow = Pick<
+  Tables<"workspace_secrets">,
+  | "created_at"
+  | "created_by_member_id"
+  | "id"
+  | "key"
+  | "updated_at"
+  | "value_preview"
+  | "workspace_id"
 >;
 
 function mapOnboardingRow(row: Tables<"workspace_onboarding">): WorkspaceOnboardingState {
@@ -96,6 +120,18 @@ function mapSandboxCapabilityCheck(
   };
 }
 
+function mapSecretPreview(row: SecretPreviewRow): WorkspaceSecretPreview {
+  return {
+    createdAt: row.created_at,
+    createdByMemberId: row.created_by_member_id,
+    id: row.id,
+    key: row.key,
+    updatedAt: row.updated_at,
+    valuePreview: row.value_preview,
+    workspaceId: row.workspace_id,
+  };
+}
+
 function codexConnectionStatus(
   row: { access_token_expires_at: string; updated_at: string } | null,
 ) {
@@ -123,13 +159,26 @@ async function loadSetupHealth(
   context: WorkspaceAccessContext,
   github: WorkspaceGitHubData,
   admin = createSupabaseAdminClient(),
+  options: { includeSecretKeyInventory?: boolean } = {},
 ): Promise<OnboardingSetupHealth> {
   const workspaceId = context.workspace.id;
+  const repositoryHealth = buildRepositorySetupHealth(github);
+  const primaryRepositoryId = repositoryHealth.primaryRepositoryProfile.repositoryId;
+  let sandboxQuery = admin
+    .from("sandbox_capability_checks")
+    .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+    .eq("workspace_id", workspaceId);
+
+  if (primaryRepositoryId) {
+    sandboxQuery = sandboxQuery.eq("github_repository_id", primaryRepositoryId);
+  }
+
+  const latestSandboxQuery = sandboxQuery.order("checked_at", { ascending: false }).limit(1);
 
   const [
     { data: pipelineRow, error: pipelineError },
     { data: stageRows, error: stageError },
-    { data: linearSecret, error: linearSecretError },
+    { data: secretRows, error: secretsError },
     { data: linearRouting, error: linearRoutingError },
     { data: agentConfigRows, error: agentConfigError },
     { data: codexCredentials, error: codexError },
@@ -142,35 +191,31 @@ async function loadSetupHealth(
       .eq("is_default", true)
       .maybeSingle(),
     admin.from("pipeline_stages").select("id, pipeline_id").eq("workspace_id", workspaceId),
-    admin
-      .from("workspace_secrets")
-      .select("id, updated_at")
-      .eq("workspace_id", workspaceId)
-      .eq("key", "LINEAR_API_KEY")
-      .maybeSingle(),
+    options.includeSecretKeyInventory
+      ? admin.from("workspace_secrets").select("key, updated_at").eq("workspace_id", workspaceId)
+      : admin
+          .from("workspace_secrets")
+          .select("key, updated_at")
+          .eq("workspace_id", workspaceId)
+          .in("key", ["ANTHROPIC_API_KEY", "LINEAR_API_KEY"]),
     admin
       .from("workspace_linear_routing")
       .select("id, updated_at")
       .eq("workspace_id", workspaceId)
       .maybeSingle(),
-    admin.from("workspace_agent_config").select("key").eq("workspace_id", workspaceId),
+    admin.from("workspace_agent_config").select("key, value_json").eq("workspace_id", workspaceId),
     admin
       .from("user_codex_credentials")
       .select("access_token_expires_at, updated_at")
       .eq("user_id", context.user.id)
       .maybeSingle(),
-    admin
-      .from("sandbox_capability_checks")
-      .select("id, github_repository_id, status, capabilities, error_text, checked_at")
-      .eq("workspace_id", workspaceId)
-      .order("checked_at", { ascending: false })
-      .limit(1),
+    latestSandboxQuery,
   ]);
 
   const firstError =
     pipelineError ??
     stageError ??
-    linearSecretError ??
+    secretsError ??
     linearRoutingError ??
     agentConfigError ??
     codexError ??
@@ -180,16 +225,25 @@ async function loadSetupHealth(
   const stageCount = pipelineRow
     ? (stageRows ?? []).filter((stage) => stage.pipeline_id === pipelineRow.id).length
     : 0;
-  const configuredKeys = [...new Set((agentConfigRows ?? []).map((row) => row.key))].sort();
+  const agentConfig = agentConfigEntriesToMap(
+    ((agentConfigRows ?? []) as AgentConfigRow[]).map((row) => ({
+      key: row.key,
+      value: row.value_json,
+    })),
+  );
+  const configuredKeys = configuredAgentConfigKeys(agentConfig);
+  const secretKeys = [...new Set((secretRows ?? []).map((row) => row.key))].sort();
+  const anthropicApiKeyConfigured = secretKeys.includes("ANTHROPIC_API_KEY");
+  const linearSecret = (secretRows ?? []).find((row) => row.key === "LINEAR_API_KEY") ?? null;
   const linearRoutingUpdatedAt =
     typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
-  const repositoryHealth = buildRepositorySetupHealth(github);
 
   return {
     agentConfig: {
       configured: configuredKeys.length > 0,
       configuredKeys,
       status: configuredKeys.length > 0 ? "present" : "missing",
+      values: agentConfig,
     },
     codexConnection: codexConnectionStatus(codexCredentials),
     defaultPipeline: {
@@ -216,6 +270,10 @@ async function loadSetupHealth(
       configured: Boolean(linearRouting),
       status: linearRouting ? "present" : "missing",
       updatedAt: linearRoutingUpdatedAt,
+    },
+    workspaceSecrets: {
+      anthropicApiKeyConfigured,
+      configuredKeys: options.includeSecretKeyInventory ? secretKeys : [],
     },
     ...repositoryHealth,
   };
@@ -298,15 +356,36 @@ async function loadLinearSecretPreview(
   if (error) throw error;
   if (!data) return null;
 
-  return {
-    createdAt: data.created_at,
-    createdByMemberId: data.created_by_member_id,
-    id: data.id,
-    key: data.key,
-    updatedAt: data.updated_at,
-    valuePreview: data.value_preview,
-    workspaceId: data.workspace_id,
-  };
+  return mapSecretPreview(data);
+}
+
+async function loadWorkspaceSecretPreviews(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+): Promise<WorkspaceSecretPreview[]> {
+  const { data, error } = await admin
+    .from("workspace_secrets")
+    .select("id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at")
+    .eq("workspace_id", workspaceId)
+    .order("key", { ascending: true });
+
+  if (error) throw error;
+  return ((data ?? []) as SecretPreviewRow[]).map(mapSecretPreview);
+}
+
+async function loadAgentConfig(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+): Promise<AgentConfigMap> {
+  const { data, error } = await admin
+    .from("workspace_agent_config")
+    .select("key, value_json")
+    .eq("workspace_id", workspaceId);
+
+  if (error) throw error;
+  return agentConfigEntriesToMap(
+    ((data ?? []) as AgentConfigRow[]).map((row) => ({ key: row.key, value: row.value_json })),
+  );
 }
 
 async function buildWorkspaceOnboardingData(
@@ -332,15 +411,26 @@ async function buildWorkspaceOnboardingData(
     context.currentMember.role === "owner" || context.currentMember.role === "admin";
   const admin = createSupabaseAdminClient();
   const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
-  const [setupHealth, pipeline, workspaceMembers, linearRouting, linearSecret] = await Promise.all([
-    loadSetupHealth(context, github, admin),
+  const [
+    setupHealth,
+    pipeline,
+    workspaceMembers,
+    linearRouting,
+    linearSecret,
+    workspaceSecrets,
+    agentConfig,
+  ] = await Promise.all([
+    loadSetupHealth(context, github, admin, { includeSecretKeyInventory: canManage }),
     loadDefaultPipeline(context),
     loadWorkspaceMembers(context),
     loadLinearRoutingConfig(admin, context.workspace.id),
     canManage ? loadLinearSecretPreview(admin, context.workspace.id) : Promise.resolve(null),
+    canManage ? loadWorkspaceSecretPreviews(admin, context.workspace.id) : Promise.resolve([]),
+    loadAgentConfig(admin, context.workspace.id),
   ]);
 
   return {
+    agentConfig,
     canManage,
     currentMember: {
       id: context.currentMember.id,
@@ -358,6 +448,7 @@ async function buildWorkspaceOnboardingData(
       slug: context.workspace.slug,
     },
     workspaceMembers,
+    workspaceSecrets,
   };
 }
 
@@ -395,6 +486,79 @@ export async function updateWorkspaceOnboardingData(
   }
 
   const updatePayload = buildWorkspaceOnboardingUpdatePayload(payload);
+
+  const { data, error } = await access.context.supabase
+    .from("workspace_onboarding")
+    .update(updatePayload)
+    .eq("workspace_id", access.context.workspace.id)
+    .select(onboardingSelect)
+    .single();
+
+  if (error) throw error;
+
+  return {
+    data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
+    ok: true,
+  };
+}
+
+type CompleteOnboardingResult =
+  | {
+      data: WorkspaceOnboardingData;
+      ok: true;
+    }
+  | {
+      blockers?: VerifyBlocker[];
+      error: string;
+      ok: false;
+      status: 400 | 401 | 403 | 404 | 409;
+    };
+
+export async function completeWorkspaceOnboarding(
+  workspaceId: string,
+): Promise<CompleteOnboardingResult> {
+  const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
+
+  if (!access.ok) {
+    return {
+      error: access.error,
+      ok: false,
+      status: access.status,
+    };
+  }
+
+  const { data: onboardingRow, error: onboardingError } = await access.context.supabase
+    .from("workspace_onboarding")
+    .select(onboardingSelect)
+    .eq("workspace_id", access.context.workspace.id)
+    .single();
+
+  if (onboardingError) throw onboardingError;
+
+  const currentData = await buildWorkspaceOnboardingData(access.context, { onboardingRow });
+  const blockers = verifyBlockersFromChecklist(
+    buildVerifyChecklist({
+      agentConfig: currentData.agentConfig,
+      health: currentData.setupHealth,
+      onboarding: currentData.onboarding,
+    }),
+  );
+
+  if (blockers.length > 0) {
+    return {
+      blockers,
+      error: "Onboarding verification is blocked.",
+      ok: false,
+      status: 409,
+    };
+  }
+
+  const updatePayload = buildWorkspaceOnboardingUpdatePayload({
+    completedSteps: [...WORKSPACE_ONBOARDING_STEPS],
+    currentStep: "verify",
+    skippedSteps: [],
+    status: "completed",
+  });
 
   const { data, error } = await access.context.supabase
     .from("workspace_onboarding")

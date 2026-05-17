@@ -29,6 +29,10 @@ export type SandboxCapabilityCheckResponse = {
   check: SandboxCapabilityCheckState;
 };
 
+export type SandboxCapabilityCheckLatestResponse = {
+  check: SandboxCapabilityCheckState | null;
+};
+
 export const sandboxCapabilityCheckRequestSchema = z.object({
   repositoryId: z.string().uuid("Repository id is invalid.").optional(),
 });

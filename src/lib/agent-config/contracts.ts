@@ -39,6 +39,14 @@ export const AGENT_CONFIG_LIMITS = {
   max_retries: { min: 0, max: 10 },
 } as const;
 
+export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
+  agent_provider: "codex",
+  agent_model: "gpt-5-codex",
+  concurrency_limit: 1,
+  max_retries: 3,
+  stall_timeout_ms: 300_000,
+} as const satisfies Record<AgentConfigKey, string | number>;
+
 /**
  * Model identifiers must match the prefix of a supported provider family.
  * This prevents typos (e.g. "lol") while keeping the field flexible enough
