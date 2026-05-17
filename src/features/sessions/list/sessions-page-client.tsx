@@ -101,10 +101,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   return (
     <PageContainer>
-      <PageHeader
-        title="Sessions"
-        description="Every session in this workspace, across all pipeline stages."
-      />
+      <PageHeader title="Sessions" />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <form onSubmit={handleSearchSubmit} className="relative min-w-[220px] flex-1 max-w-md">
@@ -173,7 +170,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
             {initialData.totalCount === 0
               ? shouldResumeSetup
                 ? "Finish workspace setup before starting the first session."
-                : "Kick off your first session by clicking New session in the top nav."
+                : "Start your first session from the top nav."
               : "Adjust the stage, scope, or search to see more sessions."}
           </p>
         </div>
