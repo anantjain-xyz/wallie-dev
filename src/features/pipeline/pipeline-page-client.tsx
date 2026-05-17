@@ -10,11 +10,8 @@ import type {
 } from "@/features/pipeline/data";
 import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
-import {
-  formatSessionPhaseStatus,
-  sessionPhaseStatusTone,
-  type SessionPhaseStatus,
-} from "@/features/sessions/types";
+import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
+import { type SessionPhaseStatus } from "@/features/sessions/types";
 import { workspaceOnboardingPath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Tables } from "@/lib/supabase/database.types";
@@ -25,12 +22,6 @@ type PipelinePageClientProps = {
 };
 
 const OTHER_LANE = { name: "Other", slug: "__other__" };
-
-const phaseStatusTextClasses: Record<ReturnType<typeof sessionPhaseStatusTone>, string> = {
-  blocked: "text-danger",
-  planned: "text-muted",
-  ready: "text-accent",
-};
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -289,14 +280,10 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                               {card.title}
                             </Link>
                           </h3>
-                          <span
-                            className={cn(
-                              "mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4",
-                              phaseStatusTextClasses[sessionPhaseStatusTone(card.phaseStatus)],
-                            )}
-                          >
-                            {formatSessionPhaseStatus(card.phaseStatus)}
-                          </span>
+                          <SessionPhaseStatusLabel
+                            status={card.phaseStatus}
+                            className="mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4"
+                          />
                         </div>
 
                         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
