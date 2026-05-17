@@ -18,6 +18,7 @@ import {
   ONBOARDING_STEPS,
   type OnboardingStepDisplayState,
 } from "@/features/onboarding/flow";
+import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingStep,
@@ -302,12 +303,6 @@ function applyGithubHealth(
   health: OnboardingSetupHealth,
   github: WorkspaceGitHubData,
 ): OnboardingSetupHealth {
-  const primaryProfile = github.primaryProfile;
-  const primaryRepository = primaryProfile
-    ? github.repositories.find((repository) => repository.id === primaryProfile.githubRepositoryId)
-    : null;
-  const primaryRepositorySetup = primaryRepository?.onboarding ?? null;
-
   return {
     ...health,
     githubInstallation: {
@@ -318,18 +313,7 @@ function applyGithubHealth(
       targetName: github.installation?.targetName ?? null,
       updatedAt: github.installation?.updatedAt ?? null,
     },
-    primaryRepositoryProfile: {
-      configured: Boolean(primaryProfile),
-      fullName: primaryRepository?.fullName ?? null,
-      repositoryId: primaryProfile?.githubRepositoryId ?? null,
-      status: primaryProfile ? "ready" : "missing",
-    },
-    repositorySetup: {
-      configured: primaryRepositorySetup?.status === "ready",
-      repositoryId:
-        primaryRepositorySetup?.githubRepositoryId ?? primaryProfile?.githubRepositoryId ?? null,
-      status: primaryRepositorySetup?.status ?? "placeholder",
-    },
+    ...buildRepositorySetupHealth(github),
   };
 }
 
@@ -512,6 +496,7 @@ function StepBody({
   data,
   isSaving,
   onDataChange,
+  onInferRepository,
   onRepositoryProfileSaved,
   onSelectRepository,
   profileBusy,
@@ -525,6 +510,7 @@ function StepBody({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onDataChange: (data: WorkspaceOnboardingData) => void;
+  onInferRepository: (repository: WorkspaceGitHubRepository) => void;
   onRepositoryProfileSaved: () => void;
   onSelectRepository: (repository: WorkspaceGitHubRepository) => void;
   profileBusy: boolean;
@@ -594,7 +580,7 @@ function StepBody({
                 isBusy={profileBusy}
                 isDirty={profileDirty}
                 onChange={updateProfileDraft}
-                onInfer={() => onSelectRepository(repository)}
+                onInfer={() => onInferRepository(repository)}
                 onSave={onRepositoryProfileSaved}
                 profile={profileDraft}
               />
@@ -1055,6 +1041,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               data={data}
               isSaving={isSaving}
               onDataChange={setData}
+              onInferRepository={(repository) => void inferRepositoryProfile(repository)}
               onRepositoryProfileSaved={() => void saveRepositoryProfile()}
               onSelectRepository={(repository) => void selectRepository(repository)}
               profileBusy={profileBusy}

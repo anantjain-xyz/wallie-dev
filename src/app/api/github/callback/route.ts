@@ -25,7 +25,7 @@ function buildCallbackRedirectPath(
   });
 }
 
-async function activateOnboardingGitHubStep(state: GitHubInstallState) {
+export async function activateOnboardingGitHubStep(state: GitHubInstallState) {
   if (state.source !== "onboarding") return;
 
   const admin = createSupabaseAdminClient();
@@ -35,7 +35,8 @@ async function activateOnboardingGitHubStep(state: GitHubInstallState) {
       current_step: "github",
       status: "in_progress",
     })
-    .eq("workspace_id", state.workspaceId);
+    .eq("workspace_id", state.workspaceId)
+    .neq("status", "completed");
 }
 
 export async function GET(request: NextRequest) {

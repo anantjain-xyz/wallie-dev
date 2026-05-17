@@ -67,6 +67,17 @@ function attachRepositoryState(
   };
 }
 
+export function primaryProfileForRepositories(
+  github: Pick<WorkspaceGitHubData, "primaryProfile">,
+  repositories: readonly WorkspaceGitHubRepository[],
+): WorkspaceGitHubData["primaryProfile"] {
+  if (!github.primaryProfile) return null;
+  return (
+    repositories.find((repository) => repository.id === github.primaryProfile?.githubRepositoryId)
+      ?.profile ?? null
+  );
+}
+
 export function repositoryOnboardingLabel(status: RepositoryOnboardingState["status"]): string {
   switch (status) {
     case "pr_open":
@@ -119,11 +130,15 @@ export function GitHubConnectionPanel({
   const hasGitHubAppConfig = github.missingAppKeys.length === 0;
 
   function emitChange(next: Partial<WorkspaceGitHubData>) {
+    const nextPrimaryProfile = Object.prototype.hasOwnProperty.call(next, "primaryProfile")
+      ? (next.primaryProfile ?? null)
+      : github.primaryProfile;
+
     onChange?.({
       ...github,
       installation: next.installation ?? githubInstallation,
       repositories: next.repositories ?? repositories,
-      primaryProfile: next.primaryProfile ?? github.primaryProfile,
+      primaryProfile: nextPrimaryProfile,
     });
   }
 
@@ -157,11 +172,16 @@ export function GitHubConnectionPanel({
       const nextRepositories = payload.repositories.map((repository) =>
         attachRepositoryState(repository, repositories),
       );
+      const nextPrimaryProfile = primaryProfileForRepositories(github, nextRepositories);
       if (!isControlled) {
         setLocalGithubInstallation(payload.installation);
         setLocalRepositories(nextRepositories);
       }
-      emitChange({ installation: payload.installation, repositories: nextRepositories });
+      emitChange({
+        installation: payload.installation,
+        primaryProfile: nextPrimaryProfile,
+        repositories: nextRepositories,
+      });
     },
     setFlashMessage,
     successText: "GitHub repositories refreshed.",

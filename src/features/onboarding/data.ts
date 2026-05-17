@@ -1,6 +1,7 @@
 import "server-only";
 
 import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
+import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
@@ -173,11 +174,7 @@ async function loadSetupHealth(
   const configuredKeys = [...new Set((agentConfigRows ?? []).map((row) => row.key))].sort();
   const linearRoutingUpdatedAt =
     typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
-  const primaryProfile = github.primaryProfile;
-  const primaryRepository = primaryProfile
-    ? github.repositories.find((repository) => repository.id === primaryProfile.githubRepositoryId)
-    : null;
-  const primaryRepositorySetup = primaryRepository?.onboarding ?? null;
+  const repositoryHealth = buildRepositorySetupHealth(github);
 
   return {
     agentConfig: {
@@ -211,18 +208,7 @@ async function loadSetupHealth(
       status: linearRouting ? "present" : "missing",
       updatedAt: linearRoutingUpdatedAt,
     },
-    primaryRepositoryProfile: {
-      configured: Boolean(primaryProfile),
-      fullName: primaryRepository?.fullName ?? null,
-      repositoryId: primaryProfile?.githubRepositoryId ?? null,
-      status: primaryProfile ? "ready" : "missing",
-    },
-    repositorySetup: {
-      configured: primaryRepositorySetup?.status === "ready",
-      repositoryId:
-        primaryRepositorySetup?.githubRepositoryId ?? primaryProfile?.githubRepositoryId ?? null,
-      status: primaryRepositorySetup?.status ?? "placeholder",
-    },
+    ...repositoryHealth,
   };
 }
 
