@@ -186,4 +186,40 @@ describe("buildVerifyChecklist", () => {
       { id: "sandbox", step: "verify" },
     ]);
   });
+
+  it("treats skipped optional steps as satisfied", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health(),
+      onboarding: onboarding({
+        completedSteps: ["github", "repository", "pipeline"],
+        skippedSteps: ["linear", "runtime"],
+      }),
+    });
+
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+  });
+
+  it("blocks sandbox checks that belong to a different repository", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: "22222222-2222-4222-8222-222222222222",
+          id: "check-2",
+          status: "success",
+        },
+      }),
+      onboarding: onboarding(),
+    });
+    const sandboxItem = checklist.find((item) => item.id === "sandbox");
+
+    expect(sandboxItem).toMatchObject({
+      detail: "Run a sandbox capability check for the selected repository.",
+      passed: false,
+    });
+  });
 });

@@ -8,6 +8,7 @@ import {
   normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
+import { canSkipOnboardingStep } from "@/features/onboarding/flow";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingState,
@@ -205,8 +206,16 @@ export function buildVerifyChecklist(input: {
     secretKeys: input.health.workspaceSecrets.configuredKeys,
   });
   const completedSteps = new Set(input.onboarding.completedSteps);
+  const skippedSteps = new Set(input.onboarding.skippedSteps);
   const primaryRepositoryId = input.health.primaryRepositoryProfile.repositoryId;
   const latestCheck = input.health.latestSandboxCapabilityCheck;
+  const latestCheckMatchesPrimaryRepository =
+    Boolean(primaryRepositoryId) && latestCheck?.githubRepositoryId === primaryRepositoryId;
+  const latestSelectedRepositoryCheckStatus = latestCheckMatchesPrimaryRepository
+    ? latestCheck?.status
+    : null;
+  const stepSatisfied = (step: WorkspaceOnboardingStep) =>
+    completedSteps.has(step) || (canSkipOnboardingStep(step) && skippedSteps.has(step));
 
   return [
     {
@@ -248,19 +257,21 @@ export function buildVerifyChecklist(input: {
       step: "pipeline",
     },
     {
-      detail: completedSteps.has("linear") ? "Linear step completed." : "Complete the Linear step.",
+      detail: stepSatisfied("linear")
+        ? "Linear step completed or skipped."
+        : "Complete the Linear step.",
       id: "linear",
       label: "Linear completed",
-      passed: completedSteps.has("linear"),
+      passed: stepSatisfied("linear"),
       step: "linear",
     },
     {
-      detail: completedSteps.has("runtime")
-        ? "Runtime step completed."
+      detail: stepSatisfied("runtime")
+        ? "Runtime step completed or skipped."
         : "Complete the Runtime step.",
       id: "runtime",
       label: "Runtime completed",
-      passed: completedSteps.has("runtime"),
+      passed: stepSatisfied("runtime"),
       step: "runtime",
     },
     {
@@ -277,19 +288,18 @@ export function buildVerifyChecklist(input: {
     },
     {
       detail:
-        latestCheck?.status === "success"
+        latestSelectedRepositoryCheckStatus === "success"
           ? "Latest selected-repository sandbox capability check succeeded."
-          : latestCheck?.status === "running"
+          : latestSelectedRepositoryCheckStatus === "running"
             ? "Sandbox capability check is still running."
-            : latestCheck?.status === "error"
-              ? (latestCheck.errorText ?? "Latest sandbox capability check failed.")
-              : "Run a sandbox capability check for the selected repository.",
+            : latestSelectedRepositoryCheckStatus === "error"
+              ? (latestCheck?.errorText ?? "Latest sandbox capability check failed.")
+              : primaryRepositoryId
+                ? "Run a sandbox capability check for the selected repository."
+                : "Save a primary repository profile before running a sandbox capability check.",
       id: "sandbox",
       label: "Sandbox capability check succeeded",
-      passed:
-        latestCheck?.status === "success" &&
-        Boolean(primaryRepositoryId) &&
-        latestCheck.githubRepositoryId === primaryRepositoryId,
+      passed: latestSelectedRepositoryCheckStatus === "success",
       step: "verify",
     },
   ];

@@ -399,7 +399,9 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Readiness checklist");
     expect(html).toContain('data-step-link="linear"');
     expect(html).toContain('data-step-link="runtime"');
-    expect(html).toContain("Run a sandbox capability check for the selected repository.");
+    expect(html).toContain(
+      "Save a primary repository profile before running a sandbox capability check.",
+    );
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete setup</button>");
   });
