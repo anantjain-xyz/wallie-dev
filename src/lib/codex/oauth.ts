@@ -4,17 +4,13 @@ import { createHash, randomBytes } from "node:crypto";
  * Codex CLI public OAuth client. This is the client_id the Codex CLI ships
  * with when it performs "Sign in with ChatGPT". We reuse it from the web
  * app because OpenAI does not currently offer a third-party OAuth client
- * for Codex/ChatGPT entitlements. Overridable via env for local testing
- * and to allow a swap if OpenAI publishes a dedicated client.
+ * for Codex/ChatGPT entitlements.
  */
-export const CODEX_CLIENT_ID =
-  process.env.CODEX_OAUTH_CLIENT_ID?.trim() || "app_EMoamEEZ73f0CkXaXp7hrann";
+export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-export const CODEX_AUTHORIZE_URL =
-  process.env.CODEX_OAUTH_AUTHORIZE_URL?.trim() || "https://auth.openai.com/oauth/authorize";
+export const CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 
-export const CODEX_TOKEN_URL =
-  process.env.CODEX_OAUTH_TOKEN_URL?.trim() || "https://auth.openai.com/oauth/token";
+export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 
 /**
  * Scopes the Codex CLI requests. `offline_access` is required to obtain a
