@@ -4,7 +4,6 @@ import type { WallieActionErrorCode, WallieRun } from "@/features/wallie/types";
 
 const workspaceIdSchema = z.string().uuid("Workspace id is invalid.");
 const sessionIdSchema = z.string().uuid("Session id is invalid.");
-const jobIdSchema = z.string().uuid("Job id is invalid.");
 const runIdSchema = z.string().uuid("Run id is invalid.");
 
 export const enqueueAgentRunSchema = z.object({
@@ -20,11 +19,6 @@ export const retryAgentRunParamsSchema = z.object({
   runId: runIdSchema,
 });
 
-export const processAgentJobsSchema = z.object({
-  jobId: jobIdSchema.optional(),
-  workspaceId: workspaceIdSchema.optional(),
-});
-
 export type AgentRunActionResponse = {
   code?: "active_run";
   created: boolean;
@@ -36,11 +30,4 @@ export type AgentRunActionErrorResponse = {
   code: WallieActionErrorCode;
   error: string;
   missingSecretKeys?: string[];
-};
-
-export type ProcessAgentJobsResponse = {
-  jobId: string | null;
-  processed: boolean;
-  result: "error" | "idle" | "success";
-  runId: string | null;
 };

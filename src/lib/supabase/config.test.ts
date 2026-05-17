@@ -47,7 +47,6 @@ describe("supabase config resolvers", () => {
       resolveSupabaseAdminConfig({
         ...adminEnv,
         GITHUB_APP_ID: "",
-        WALLIE_PROCESS_TOKEN: "",
       }),
     ).toEqual({
       publishableKey: "publishable-key",

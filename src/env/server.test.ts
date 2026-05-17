@@ -21,13 +21,11 @@ describe("parseServerEnv", () => {
       GITHUB_APP_ID: "",
       GITHUB_APP_PRIVATE_KEY: "",
       GITHUB_WEBHOOK_SECRET: "",
-      WALLIE_PROCESS_TOKEN: "",
     });
 
     expect(parsed.GITHUB_APP_ID).toBeUndefined();
     expect(parsed.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
     expect(parsed.GITHUB_WEBHOOK_SECRET).toBeUndefined();
-    expect(parsed.WALLIE_PROCESS_TOKEN).toBeUndefined();
   });
 
   it("rejects short encryption keys", () => {

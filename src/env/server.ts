@@ -33,7 +33,6 @@ export const serverEnvSchema = z.object({
       (value) => hexEncryptionKeyShape.test(value) || base64EncryptionKeyShape.test(value),
       encryptionKeyShapeMessage,
     ),
-  WALLIE_PROCESS_TOKEN: optionalEnvStringSchema,
   // Vercel Sandbox credentials for agent execution. All three required in
   // environments that don't run on Vercel infra (where OIDC is used instead).
   VERCEL_TOKEN: optionalEnvStringSchema,
@@ -68,7 +67,6 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     GITHUB_WEBHOOK_SECRET: input.GITHUB_WEBHOOK_SECRET,
     SUPABASE_SECRET_KEY: input.SUPABASE_SECRET_KEY,
     WALLIE_ENCRYPTION_KEY: input.WALLIE_ENCRYPTION_KEY,
-    WALLIE_PROCESS_TOKEN: input.WALLIE_PROCESS_TOKEN,
     VERCEL_TOKEN: input.VERCEL_TOKEN,
     VERCEL_TEAM_ID: input.VERCEL_TEAM_ID,
     VERCEL_PROJECT_ID: input.VERCEL_PROJECT_ID,

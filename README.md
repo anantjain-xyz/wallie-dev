@@ -84,15 +84,15 @@ Workspace (tenant)
 Session created + job enqueued
       | (dedup: pipeline:<linear_issue_id>:active)
       v
-Worker polls --> [POST /api/agent-jobs/process]
-      |             |- CAS claim (atomic phase_status update)
-      |             |- Generic runStage():
-      |             |    * load current stage + prior artifacts
-      |             |    * render prompt_template_md against session
-      |             |    * mint GitHub installation token, spin up sandbox
-      |             |    * run agent runner (Codex or Claude Code)
-      |             |    * stream events into agent_run_messages
-      |             `- Save markdown artifact, status=awaiting_review
+Worker polls agent_jobs (Supabase) --> processPipelineJob()
+      |- CAS claim (atomic phase_status update)
+      |- Generic runStage():
+      |    * load current stage + prior artifacts
+      |    * render prompt_template_md against session
+      |    * mint GitHub installation token, spin up sandbox
+      |    * run agent runner (Codex or Claude Code)
+      |    * stream events into agent_run_messages
+      `- Save markdown artifact, status=awaiting_review
       v
 [POST /api/sessions/[sessionId]/phase-action]  (from the dashboard)
       |- Approve -> approve_session_stage RPC: records completion,
@@ -144,14 +144,14 @@ The default `product → design → engineering → review → land → monitor`
 #### API Routes (`src/app/api/`)
 
 ```
-agent-jobs/process/route.ts          <- worker calls this
+agent-runs/                          <- enqueue a run (also kicks the queue in-process)
+agent-runs/[runId]/retry/            <- rerun a failed run
 sessions/[sessionId]/phase-action/   <- in-app approve/reject
 github/webhooks/                     <- PR/install events
 github/install/ + callback/          <- OAuth
 linear/test-connection/              <- verify API key
 secrets/                             <- encrypted workspace creds
 workspaces/[id]/avatar/              <- storage upload
-agent-runs/[runId]/retry/            <- rerun a failed run
 ```
 
 #### Features (`src/features/`) -- domain-grouped
@@ -223,7 +223,7 @@ Everything else is UI glue or integration plumbing.
 src/
   app/                        # Next.js App Router
     api/                      # Route handlers (webhooks, jobs, auth, secrets)
-      agent-jobs/             # Pipeline job processor endpoint
+      agent-runs/             # Enqueue + retry pipeline jobs
       github/                 # GitHub App install, webhooks, repo sync
       linear/                 # Linear API key verification
       secrets/                # Encrypted credential CRUD
@@ -313,18 +313,17 @@ cp .env.example .env.local
 
 Fill in the required values. Integration variables can be left blank until you complete the GitHub app setup below.
 
-| Variable                               | Required | Description                                                                          |
-| -------------------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)  |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                         |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                      |
-| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                            |
-| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption     |
-| `WALLIE_PROCESS_TOKEN`                 | No       | Bearer token required on `POST /api/agent-jobs/process` when present; worker uses it |
-| `WALLIE_DEFAULT_ANTHROPIC_MODEL`       | No       | Emergency override for the Anthropic runner default                                  |
-| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                     |
-| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)       |
-| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                              |
+| Variable                               | Required | Description                                                                         |
+| -------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`) |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                        |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                     |
+| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                           |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption    |
+| `WALLIE_DEFAULT_ANTHROPIC_MODEL`       | No       | Emergency override for the Anthropic runner default                                 |
+| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                    |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)      |
+| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                             |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 

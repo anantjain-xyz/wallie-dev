@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   enqueueAgentRunSchema,
-  processAgentJobsSchema,
   retryAgentRunParamsSchema,
   retryAgentRunSchema,
 } from "@/features/wallie/contracts";
@@ -20,7 +19,7 @@ describe("wallie route contracts", () => {
     });
   });
 
-  it("rejects invalid retry and process payloads", () => {
+  it("rejects invalid retry payloads", () => {
     expect(() =>
       retryAgentRunSchema.parse({
         workspaceId: "not-a-uuid",
@@ -31,10 +30,5 @@ describe("wallie route contracts", () => {
         runId: "not-a-uuid",
       }),
     ).toThrow("Run id is invalid.");
-    expect(() =>
-      processAgentJobsSchema.parse({
-        jobId: "still-not-a-uuid",
-      }),
-    ).toThrow("Job id is invalid.");
   });
 });
