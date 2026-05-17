@@ -111,8 +111,11 @@ export function GitHubConnectionPanel({
   source = "settings",
   workspaceId,
 }: GitHubConnectionPanelProps) {
-  const [githubInstallation, setGithubInstallation] = useState(github.installation);
-  const [repositories, setRepositories] = useState(github.repositories);
+  const [localGithubInstallation, setLocalGithubInstallation] = useState(github.installation);
+  const [localRepositories, setLocalRepositories] = useState(github.repositories);
+  const isControlled = Boolean(onChange);
+  const githubInstallation = isControlled ? github.installation : localGithubInstallation;
+  const repositories = isControlled ? github.repositories : localRepositories;
   const hasGitHubAppConfig = github.missingAppKeys.length === 0;
 
   function emitChange(next: Partial<WorkspaceGitHubData>) {
@@ -154,8 +157,10 @@ export function GitHubConnectionPanel({
       const nextRepositories = payload.repositories.map((repository) =>
         attachRepositoryState(repository, repositories),
       );
-      setGithubInstallation(payload.installation);
-      setRepositories(nextRepositories);
+      if (!isControlled) {
+        setLocalGithubInstallation(payload.installation);
+        setLocalRepositories(nextRepositories);
+      }
       emitChange({ installation: payload.installation, repositories: nextRepositories });
     },
     setFlashMessage,
@@ -174,7 +179,7 @@ export function GitHubConnectionPanel({
           ? { ...repository, onboarding: payload.onboarding }
           : repository,
       );
-      setRepositories(nextRepositories);
+      if (!isControlled) setLocalRepositories(nextRepositories);
       emitChange({ repositories: nextRepositories });
     },
     setFlashMessage,

@@ -1460,6 +1460,23 @@ export type Database = {
         }
         Returns: Json
       }
+      save_workspace_repository_profile: {
+        Args: {
+          selected_build_command: string | null
+          selected_env_key_suggestions: string[]
+          selected_framework_hints: string[]
+          selected_inference_confidence: string
+          selected_inference_sources: Json
+          selected_install_command: string | null
+          selected_language_hints: string[]
+          selected_package_manager: string | null
+          selected_setup_notes: string
+          selected_test_command: string | null
+          target_github_repository_id: string
+          target_workspace_id: string
+        }
+        Returns: Database["public"]["Tables"]["workspace_repository_profiles"]["Row"]
+      }
       schedule_job_retry: {
         Args: {
           base_delay_ms?: number

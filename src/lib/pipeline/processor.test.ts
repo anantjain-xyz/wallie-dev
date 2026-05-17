@@ -529,6 +529,45 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.repoId).toBe("repo-z");
   });
 
+  it("falls back to the first non-archived repository when the selected primary repo is unavailable", async () => {
+    const session = baseSession();
+    const job = baseJob();
+    const { admin } = buildAdminMock({
+      session,
+      githubRepositories: [
+        {
+          default_branch: "main",
+          full_name: "acme/aaa",
+          github_installation_id: "ghi-1",
+          id: "repo-a",
+          is_archived: false,
+        },
+        {
+          default_branch: "trunk",
+          full_name: "acme/zzz",
+          github_installation_id: "ghi-1",
+          id: "repo-z",
+          is_archived: false,
+        },
+        {
+          default_branch: "main",
+          full_name: "acme/selected-but-archived",
+          github_installation_id: "ghi-1",
+          id: "repo-archived",
+          is_archived: true,
+        },
+      ],
+      primaryRepositoryProfile: { github_repository_id: "repo-archived" },
+    });
+
+    await processPipelineJob({ admin, job });
+
+    const call = mocked.openSessionPullRequest.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.baseBranch).toBe("main");
+    expect(call.repoFullName).toBe("acme/aaa");
+    expect(call.repoId).toBe("repo-a");
+  });
+
   it("does not abort the stage when opening the pull request fails", async () => {
     mocked.openSessionPullRequest.mockResolvedValueOnce({
       kind: "pr_failed",

@@ -42,4 +42,16 @@ describe("workspace repository profiles migration", () => {
     expect(migration).toContain("workspace_repository_profiles_delete_managers");
     expect(migration).toContain("public.can_manage_workspace(workspace_id)");
   });
+
+  it("provides an atomic save function for switching the primary profile", () => {
+    expect(migration).toContain(
+      "create or replace function public.save_workspace_repository_profile",
+    );
+    expect(migration).toContain("returns public.workspace_repository_profiles");
+    expect(migration).toContain("update public.workspace_repository_profiles");
+    expect(migration).toContain("on conflict (workspace_id, github_repository_id)");
+    expect(migration).toContain(
+      "grant execute on function public.save_workspace_repository_profile",
+    );
+  });
 });

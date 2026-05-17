@@ -200,38 +200,20 @@ export async function saveWorkspaceRepositoryProfile(input: {
     workspaceId: input.workspaceId,
   });
 
-  const clearResult = await input.admin
-    .from("workspace_repository_profiles")
-    .update({ is_primary: false })
-    .eq("workspace_id", input.workspaceId)
-    .neq("github_repository_id", input.payload.githubRepositoryId);
-
-  if (clearResult.error) throw clearResult.error;
-
-  const { data, error } = await input.admin
-    .from("workspace_repository_profiles")
-    .upsert(
-      {
-        build_command: input.payload.buildCommand,
-        env_key_suggestions: input.payload.envKeySuggestions,
-        framework_hints: input.payload.frameworkHints,
-        github_repository_id: input.payload.githubRepositoryId,
-        inference_confidence: input.payload.inferenceConfidence,
-        inference_sources: input.payload.inferenceSources as unknown as Json,
-        install_command: input.payload.installCommand,
-        is_primary: true,
-        language_hints: input.payload.languageHints,
-        package_manager: input.payload.packageManager,
-        setup_notes: input.payload.setupNotes,
-        test_command: input.payload.testCommand,
-        workspace_id: input.workspaceId,
-      },
-      { onConflict: "workspace_id,github_repository_id" },
-    )
-    .select(
-      "id, workspace_id, github_repository_id, is_primary, package_manager, language_hints, framework_hints, install_command, build_command, test_command, env_key_suggestions, setup_notes, inference_confidence, inference_sources, created_at, updated_at",
-    )
-    .single();
+  const { data, error } = await input.admin.rpc("save_workspace_repository_profile", {
+    selected_build_command: input.payload.buildCommand,
+    selected_env_key_suggestions: input.payload.envKeySuggestions,
+    selected_framework_hints: input.payload.frameworkHints,
+    selected_inference_confidence: input.payload.inferenceConfidence,
+    selected_inference_sources: input.payload.inferenceSources as unknown as Json,
+    selected_install_command: input.payload.installCommand,
+    selected_language_hints: input.payload.languageHints,
+    selected_package_manager: input.payload.packageManager,
+    selected_setup_notes: input.payload.setupNotes,
+    selected_test_command: input.payload.testCommand,
+    target_github_repository_id: input.payload.githubRepositoryId,
+    target_workspace_id: input.workspaceId,
+  });
 
   if (error) {
     if (error.code === "23505") {
@@ -243,5 +225,8 @@ export async function saveWorkspaceRepositoryProfile(input: {
     throw error;
   }
 
-  return mapRepositoryProfileRow(data);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new RepositoryProfileError("Repository profile could not be saved.", 409);
+
+  return mapRepositoryProfileRow(row);
 }
