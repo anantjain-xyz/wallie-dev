@@ -22,6 +22,7 @@ type PipelinePageClientProps = {
 };
 
 const OTHER_LANE = { name: "Other", slug: "__other__" };
+const LANE_WIDTH_PX = 260;
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -196,38 +197,42 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
     }
     return { buckets, order };
   }, [cards, initialData.defaultPipelineStages]);
+  const boardWidthPx = lanes.order.length * LANE_WIDTH_PX;
+  const boardContainerWidth = `${boardWidthPx || LANE_WIDTH_PX}px`;
 
   return (
     <div className="min-h-full bg-surface">
       <header className="px-6 pb-10 pt-14 sm:px-8">
-        <div className="max-w-2xl space-y-2">
-          <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
-            Pipeline
-          </h1>
-          <p className="text-[14px] leading-6 text-muted">
-            Sessions move through these stages from product to monitor.
-          </p>
-          {showResumeSetup ? (
-            <section className="mt-5 flex flex-col gap-3 rounded-[8px] border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-[14px] font-semibold text-foreground">Setup in progress</h2>
-                <p className="mt-1 text-[13px] leading-5 text-muted">
-                  Finish workspace setup before starting the first session.
-                </p>
-              </div>
-              <Link
-                className="ui-button-primary shrink-0"
-                href={workspaceOnboardingPath(initialData.workspace.slug)}
-              >
-                Resume setup
-              </Link>
-            </section>
-          ) : null}
+        <div className="mx-auto w-full" style={{ maxWidth: boardContainerWidth }}>
+          <div className="max-w-2xl space-y-2">
+            <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
+              Pipeline
+            </h1>
+            <p className="text-[14px] leading-6 text-muted">
+              Sessions move through these stages from product to monitor.
+            </p>
+            {showResumeSetup ? (
+              <section className="mt-5 flex flex-col gap-3 rounded-[8px] border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-semibold text-foreground">Setup in progress</h2>
+                  <p className="mt-1 text-[13px] leading-5 text-muted">
+                    Finish workspace setup before starting the first session.
+                  </p>
+                </div>
+                <Link
+                  className="ui-button-primary shrink-0"
+                  href={workspaceOnboardingPath(initialData.workspace.slug)}
+                >
+                  Resume setup
+                </Link>
+              </section>
+            ) : null}
+          </div>
         </div>
       </header>
 
       <div className="overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8">
-        <div className="flex min-w-max">
+        <div className="mx-auto flex" style={{ width: boardContainerWidth }}>
           {lanes.order.map((lane) => {
             const items = lanes.buckets.get(lane.slug) ?? [];
             return (
