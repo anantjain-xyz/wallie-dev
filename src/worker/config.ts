@@ -1,46 +1,32 @@
-import { z } from "zod";
-
-const workerConfigSchema = z.object({
+export type WorkerConfig = {
   /** How often the worker polls for queued jobs (milliseconds). */
-  pollIntervalMs: z.number().int().min(500).default(2_000),
+  pollIntervalMs: number;
   /** How often the worker sends a heartbeat (milliseconds). */
-  heartbeatIntervalMs: z.number().int().min(1_000).default(10_000),
+  heartbeatIntervalMs: number;
   /** How often the stall-detection sweep runs (milliseconds). */
-  stallSweepIntervalMs: z.number().int().min(5_000).default(30_000),
+  stallSweepIntervalMs: number;
   /** How often the reconciliation sweep runs (milliseconds). */
-  reconcileIntervalMs: z.number().int().min(10_000).default(60_000),
+  reconcileIntervalMs: number;
   /** How often the sandbox reaper runs (milliseconds). */
-  sandboxReapIntervalMs: z.number().int().min(10_000).default(60_000),
+  sandboxReapIntervalMs: number;
   /** Default stall timeout if not configured per-workspace (milliseconds). */
-  defaultStallTimeoutMs: z.number().int().min(10_000).default(300_000), // 5 minutes
+  defaultStallTimeoutMs: number;
   /** Default per-workspace concurrency limit if not configured. */
-  defaultConcurrencyLimit: z.number().int().min(1).default(2),
+  defaultConcurrencyLimit: number;
   /** Unique identifier for this worker instance. */
-  workerId: z.string().min(1),
-});
+  workerId: string;
+};
 
-export type WorkerConfig = z.infer<typeof workerConfigSchema>;
-
-/**
- * Build worker config from environment variables with sensible defaults.
- */
-export function parseWorkerConfig(
-  env: Record<string, string | undefined> = process.env,
-): WorkerConfig {
-  return workerConfigSchema.parse({
-    pollIntervalMs: intOrUndefined(env.WALLIE_WORKER_POLL_INTERVAL_MS),
-    heartbeatIntervalMs: intOrUndefined(env.WALLIE_WORKER_HEARTBEAT_INTERVAL_MS),
-    stallSweepIntervalMs: intOrUndefined(env.WALLIE_WORKER_STALL_SWEEP_INTERVAL_MS),
-    reconcileIntervalMs: intOrUndefined(env.WALLIE_WORKER_RECONCILE_INTERVAL_MS),
-    sandboxReapIntervalMs: intOrUndefined(env.WALLIE_WORKER_SANDBOX_REAP_INTERVAL_MS),
-    defaultStallTimeoutMs: intOrUndefined(env.WALLIE_WORKER_DEFAULT_STALL_TIMEOUT_MS),
-    defaultConcurrencyLimit: intOrUndefined(env.WALLIE_WORKER_DEFAULT_CONCURRENCY_LIMIT),
-    workerId: env.WALLIE_WORKER_ID || `worker-${process.pid}-${Date.now()}`,
-  });
-}
-
-function intOrUndefined(value: string | undefined): number | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? undefined : parsed;
+/** Build worker config with baked-in defaults and a generated worker id. */
+export function parseWorkerConfig(): WorkerConfig {
+  return {
+    pollIntervalMs: 2_000,
+    heartbeatIntervalMs: 10_000,
+    stallSweepIntervalMs: 30_000,
+    reconcileIntervalMs: 60_000,
+    sandboxReapIntervalMs: 60_000,
+    defaultStallTimeoutMs: 300_000, // 5 minutes
+    defaultConcurrencyLimit: 2,
+    workerId: `worker-${process.pid}-${Date.now()}`,
+  };
 }
