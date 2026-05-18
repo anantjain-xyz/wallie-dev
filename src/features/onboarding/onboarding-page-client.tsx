@@ -9,7 +9,7 @@ import type {
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
-import { CodeIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
+import { CodeIcon, LockIcon, PlusIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -59,7 +59,10 @@ import type {
   SandboxCapabilityCheckResponse,
   SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
-import type { UpsertWorkspaceSecretResponse } from "@/lib/secrets/contracts";
+import type {
+  UpsertWorkspaceSecretResponse,
+  WorkspaceSecretPreview,
+} from "@/lib/secrets/contracts";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -98,6 +101,12 @@ type FieldDescriptor = {
   options?: readonly string[];
   placeholder?: string;
   type: FieldType;
+};
+
+type RuntimeCredentialDescriptor = {
+  description: string;
+  key: string;
+  label: string;
 };
 
 const badgeToneClasses: Record<HealthTone, string> = {
@@ -277,6 +286,43 @@ function repositoryEnvKeyLabel(key: string, runtimeCredentialKeys: ReadonlySet<s
   }
 
   return "Server env";
+}
+
+function secretBusyActionKey(key: string) {
+  return `secret:${key.trim().toUpperCase()}`;
+}
+
+function secretPreviewLabel(secret: WorkspaceSecretPreview | undefined) {
+  if (!secret) {
+    return "Not saved";
+  }
+
+  return secret.valuePreview ? `Stored ${secret.valuePreview}` : "Stored value";
+}
+
+function repositoryVariableKeys(
+  envSuggestions: readonly string[],
+  workspaceSecrets: readonly WorkspaceSecretPreview[],
+  runtimeCredentialKeys: ReadonlySet<string>,
+) {
+  const keys = new Set<string>();
+  const rows: string[] = [];
+  const addKey = (key: string) => {
+    if (key === "LINEAR_API_KEY" || runtimeCredentialKeys.has(key) || keys.has(key)) {
+      return;
+    }
+    keys.add(key);
+    rows.push(key);
+  };
+
+  for (const key of envSuggestions) {
+    addKey(key);
+  }
+  for (const secret of workspaceSecrets) {
+    addKey(secret.key);
+  }
+
+  return rows;
 }
 
 function configValueToString(value: unknown): string {
@@ -794,8 +840,9 @@ function RuntimeStep({
   const [drafts, setDrafts] = useState<AgentConfigDrafts>(() =>
     buildAgentConfigDrafts(data.agentConfig),
   );
-  const [secretKey, setSecretKey] = useState("");
-  const [secretValue, setSecretValue] = useState("");
+  const [secretValueDrafts, setSecretValueDrafts] = useState<Record<string, string>>({});
+  const [newSecretKey, setNewSecretKey] = useState("");
+  const [newSecretValue, setNewSecretValue] = useState("");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -837,10 +884,15 @@ function RuntimeStep({
   });
   const selectedProvider = readiness.provider;
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
+  const secretByKey = new Map(data.workspaceSecrets.map((secret) => [secret.key, secret]));
   const configuredSecretKeys = new Set(data.workspaceSecrets.map((secret) => secret.key));
-  const runtimeCredentials: Array<{ description: string; key: string; label: string }> = [];
+  const runtimeCredentials: RuntimeCredentialDescriptor[] = [];
   const runtimeCredentialKeys = new Set(runtimeCredentials.map((credential) => credential.key));
-  const missingRuntimeCredentialKey = "";
+  const repositoryVariables = repositoryVariableKeys(
+    envSuggestions,
+    data.workspaceSecrets,
+    runtimeCredentialKeys,
+  );
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) =>
       data.agentConfig[key] === undefined &&
@@ -854,12 +906,12 @@ function RuntimeStep({
     fieldStatuses.some((status) => status.isDirty);
   const canApplyDefaults =
     data.canManage && !isSaving && busyAction === null && missingDefaultKeys.length > 0;
-  const canSaveSecret =
+  const canSaveNewSecret =
     data.canManage &&
     !isSaving &&
     busyAction === null &&
-    Boolean(secretKey.trim()) &&
-    Boolean(secretValue.trim());
+    Boolean(newSecretKey.trim()) &&
+    Boolean(newSecretValue.trim());
 
   const canVerify =
     data.canManage &&
@@ -972,17 +1024,25 @@ function RuntimeStep({
     }
   }
 
-  async function handleSaveSecret() {
-    if (!canSaveSecret) return;
-    setBusyAction("secret");
+  function handleSecretDraftChange(key: string, value: string) {
+    setSecretValueDrafts((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSaveSecret(key: string, value: string, options?: { clearNewRow?: boolean }) {
+    const normalizedKey = key.trim().toUpperCase();
+    if (!data.canManage || isSaving || busyAction !== null || !normalizedKey || !value.trim()) {
+      return;
+    }
+
+    setBusyAction(secretBusyActionKey(normalizedKey));
     setRuntimeError(null);
     setRuntimeMessage(null);
 
     try {
       const response = await fetch("/api/secrets", {
         body: JSON.stringify({
-          key: secretKey.trim().toUpperCase(),
-          value: secretValue,
+          key: normalizedKey,
+          value,
           workspaceId: data.workspace.id,
         }),
         headers: { "content-type": "application/json" },
@@ -995,7 +1055,15 @@ function RuntimeStep({
         throw new Error(body?.error ?? "Workspace secret save failed.");
       }
       onDataChange(updateSecretInData(data, body.secret));
-      setSecretValue("");
+      setSecretValueDrafts((current) => {
+        const next = { ...current };
+        delete next[normalizedKey];
+        return next;
+      });
+      if (options?.clearNewRow) {
+        setNewSecretKey("");
+        setNewSecretValue("");
+      }
       setRuntimeMessage(`Saved preview for ${body.secret.key}.`);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
@@ -1163,120 +1231,222 @@ function RuntimeStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1 space-y-4">
-            <div>
-              <h3 className="text-[14px] font-semibold text-foreground">Runtime credentials</h3>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                Agent-only secrets are encrypted server-side; only previews are returned.
-              </p>
-            </div>
+      <div className="space-y-4">
+        <div className="rounded-[6px] border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-[14px] font-semibold text-foreground">Runtime credentials</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Agent-only secrets are encrypted server-side; only previews are returned.
+            </p>
+          </div>
 
-            <div className="space-y-2">
-              {runtimeCredentials.length === 0 ? (
-                <p className="rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-[13px] leading-5 text-muted">
-                  No encrypted workspace secret is required for the selected {selectedProvider}{" "}
-                  runner.
-                </p>
-              ) : (
-                runtimeCredentials.map((credential) => {
-                  const configured = configuredSecretKeys.has(credential.key);
+          {runtimeCredentials.length === 0 ? (
+            <p className="px-4 py-3 text-[13px] leading-5 text-muted">
+              No encrypted workspace secret is required for the selected {selectedProvider} runner.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {runtimeCredentials.map((credential) => {
+                const configured = configuredSecretKeys.has(credential.key);
+                const draftValue = secretValueDrafts[credential.key] ?? "";
+                const isSavingSecret = busyAction === secretBusyActionKey(credential.key);
+                const canSaveCredential =
+                  data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
 
-                  return (
-                    <div
-                      className="flex min-h-11 flex-col gap-2 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
-                      key={credential.key}
-                    >
+                return (
+                  <div
+                    className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-start"
+                    key={credential.key}
+                  >
+                    <div className="flex min-w-0 gap-3">
+                      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-muted">
+                        <LockIcon className="h-3.5 w-3.5" />
+                      </span>
                       <div className="min-w-0 space-y-1">
-                        <p className="text-[12px] font-medium text-foreground">
-                          {credential.label}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[13px] font-medium text-foreground">
+                            {credential.label}
+                          </p>
+                          <Badge tone={configured ? "success" : "warning"}>
+                            {configured ? "Present" : "Missing"}
+                          </Badge>
+                        </div>
                         <code className="block break-all font-mono text-[12px] text-foreground">
                           {credential.key}
                         </code>
                         <p className="text-[12px] leading-5 text-muted">{credential.description}</p>
                       </div>
-                      <Badge tone={configured ? "success" : "warning"}>
-                        {configured ? "Present" : "Missing"}
-                      </Badge>
                     </div>
-                  );
-                })
-              )}
-            </div>
 
-            <div className="border-t border-border pt-4">
-              <h4 className="text-[13px] font-semibold text-foreground">
-                Repository environment variables
-              </h4>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                Detected from the repository profile. Configure deployment values outside this
-                encrypted secret store unless they are listed above as runtime credentials.
-              </p>
-              <div className="mt-3 space-y-2">
-                {envSuggestions.length === 0 ? (
-                  <p className="text-[13px] text-muted">No repository env keys were detected.</p>
-                ) : (
-                  envSuggestions.map((key) => (
-                    <div
-                      className="flex min-h-10 flex-col gap-2 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                      key={key}
-                    >
-                      <code className="min-w-0 break-all font-mono text-[12px] text-foreground">
-                        {key}
-                      </code>
-                      <Badge tone={runtimeCredentialKeys.has(key) ? "success" : "neutral"}>
-                        {repositoryEnvKeyLabel(key, runtimeCredentialKeys)}
-                      </Badge>
+                    <div className="grid min-w-0 gap-2">
+                      <label className="block min-w-0 space-y-1">
+                        <span className="text-[11px] font-medium text-muted">Value</span>
+                        <input
+                          autoComplete="off"
+                          className="ui-input font-mono text-[13px]"
+                          disabled={busyAction !== null}
+                          onChange={(event) =>
+                            handleSecretDraftChange(credential.key, event.target.value)
+                          }
+                          placeholder={configured ? "Paste replacement value..." : "Paste value..."}
+                          type="password"
+                          value={draftValue}
+                        />
+                      </label>
+
+                      <button
+                        className={cn(
+                          "w-full whitespace-nowrap",
+                          canSaveCredential ? "ui-button-primary" : "ui-button",
+                        )}
+                        disabled={!canSaveCredential}
+                        onClick={() => void handleSaveSecret(credential.key, draftValue)}
+                        type="button"
+                      >
+                        {isSavingSecret ? "Saving..." : configured ? "Update" : "Save"}
+                      </button>
                     </div>
-                  ))
-                )}
-              </div>
+                  </div>
+                );
+              })}
             </div>
+          )}
+        </div>
+
+        <div className="rounded-[6px] border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-[14px] font-semibold text-foreground">
+              Repository environment variables
+            </h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Detected keys and saved workspace secrets are editable from this list.
+            </p>
           </div>
 
-          <div className="w-full shrink-0 space-y-3 lg:w-80">
-            <div>
-              <h4 className="text-[13px] font-semibold text-foreground">Add workspace secret</h4>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                {missingRuntimeCredentialKey
-                  ? `Paste the value for ${missingRuntimeCredentialKey}.`
-                  : "Optional: store an additional encrypted workspace secret."}
-              </p>
+          {repositoryVariables.length === 0 ? (
+            <p className="px-4 py-3 text-[13px] text-muted">
+              No repository env keys were detected.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {repositoryVariables.map((key) => {
+                const secret = secretByKey.get(key);
+                const draftValue = secretValueDrafts[key] ?? "";
+                const isSavingSecret = busyAction === secretBusyActionKey(key);
+                const canSaveVariable =
+                  data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
+                const scopeLabel = repositoryEnvKeyLabel(key, runtimeCredentialKeys);
+
+                return (
+                  <div
+                    className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-start"
+                    key={key}
+                  >
+                    <div className="flex min-w-0 gap-3">
+                      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-muted">
+                        <CodeIcon className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <code className="break-all font-mono text-[13px] font-medium text-foreground">
+                            {key}
+                          </code>
+                          <Badge tone={key.startsWith("NEXT_PUBLIC_") ? "neutral" : "accent"}>
+                            {scopeLabel}
+                          </Badge>
+                          <Badge tone={secret ? "success" : "warning"}>
+                            {secret ? "Saved" : "Needs value"}
+                          </Badge>
+                        </div>
+                        <p className="text-[12px] leading-5 text-muted">
+                          {envSuggestions.includes(key)
+                            ? "Detected from the repository profile"
+                            : "Saved workspace secret"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid min-w-0 gap-2">
+                      <label className="block min-w-0 space-y-1">
+                        <span className="flex items-center justify-between gap-2 text-[11px] font-medium text-muted">
+                          <span>Value</span>
+                          <span className="font-normal">{secretPreviewLabel(secret)}</span>
+                        </span>
+                        <input
+                          autoComplete="off"
+                          className="ui-input font-mono text-[13px]"
+                          disabled={busyAction !== null}
+                          onChange={(event) => handleSecretDraftChange(key, event.target.value)}
+                          placeholder={secret ? "Paste replacement value..." : "Paste value..."}
+                          type="password"
+                          value={draftValue}
+                        />
+                      </label>
+
+                      <button
+                        className={cn(
+                          "w-full whitespace-nowrap",
+                          canSaveVariable ? "ui-button-primary" : "ui-button",
+                        )}
+                        disabled={!canSaveVariable}
+                        onClick={() => void handleSaveSecret(key, draftValue)}
+                        type="button"
+                      >
+                        {isSavingSecret ? "Saving..." : secret ? "Update" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-muted">Secret key</span>
-              <input
-                autoCapitalize="characters"
-                autoComplete="off"
-                className="ui-input"
-                disabled={busyAction !== null}
-                onChange={(event) => setSecretKey(event.target.value)}
-                placeholder={missingRuntimeCredentialKey || "SECRET_KEY"}
-                spellCheck={false}
-                value={secretKey}
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-muted">Secret value</span>
-              <textarea
-                autoComplete="off"
-                className="ui-textarea min-h-24"
-                disabled={busyAction !== null}
-                onChange={(event) => setSecretValue(event.target.value)}
-                placeholder="Paste value..."
-                value={secretValue}
-              />
-            </label>
-            <button
-              className="ui-button-primary w-full"
-              disabled={!canSaveSecret}
-              onClick={() => void handleSaveSecret()}
-              type="button"
-            >
-              {busyAction === "secret" ? "Saving..." : "Save secret"}
-            </button>
+          )}
+
+          <div className="border-t border-border bg-surface-strong px-4 py-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-start">
+              <label className="block min-w-0 space-y-1">
+                <span className="flex items-center gap-2 text-[11px] font-medium text-muted">
+                  <PlusIcon className="h-3.5 w-3.5" />
+                  New variable
+                </span>
+                <input
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  className="ui-input font-mono text-[13px]"
+                  disabled={busyAction !== null}
+                  onChange={(event) => setNewSecretKey(event.target.value)}
+                  placeholder="SECRET_KEY"
+                  spellCheck={false}
+                  value={newSecretKey}
+                />
+              </label>
+              <div className="grid min-w-0 gap-2">
+                <label className="block min-w-0 space-y-1">
+                  <span className="text-[11px] font-medium text-muted">Value</span>
+                  <input
+                    autoComplete="off"
+                    className="ui-input font-mono text-[13px]"
+                    disabled={busyAction !== null}
+                    onChange={(event) => setNewSecretValue(event.target.value)}
+                    placeholder="Paste value..."
+                    type="password"
+                    value={newSecretValue}
+                  />
+                </label>
+                <button
+                  className={cn(
+                    "w-full whitespace-nowrap",
+                    canSaveNewSecret ? "ui-button-primary" : "ui-button",
+                  )}
+                  disabled={!canSaveNewSecret}
+                  onClick={() =>
+                    void handleSaveSecret(newSecretKey, newSecretValue, { clearNewRow: true })
+                  }
+                  type="button"
+                >
+                  {busyAction === secretBusyActionKey(newSecretKey) ? "Saving..." : "Add variable"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
