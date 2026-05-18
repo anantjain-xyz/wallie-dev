@@ -691,6 +691,9 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
     expect(html).toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
     expect(html).toContain("ui-textarea min-h-20");
+    expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
+    expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
+    expect(html).not.toContain('aria-label="Add variable"');
     expect(html).toContain("Not set");
     expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
     expect(html).not.toContain("Needs value");

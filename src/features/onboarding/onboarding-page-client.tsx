@@ -917,6 +917,10 @@ function RuntimeStep({
     data.workspaceSecrets,
     runtimeCredentialKeys,
   );
+  const repositorySecretDrafts = repositoryVariables
+    .map((key) => ({ key, value: secretValueDrafts[key] ?? "" }))
+    .filter((draft) => Boolean(draft.value.trim()));
+  const hasCompleteNewSecret = Boolean(newSecretKey.trim()) && Boolean(newSecretValue.trim());
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) =>
       data.agentConfig[key] === undefined &&
@@ -930,12 +934,11 @@ function RuntimeStep({
     fieldStatuses.some((status) => status.isDirty);
   const canApplyDefaults =
     data.canManage && !isSaving && busyAction === null && missingDefaultKeys.length > 0;
-  const canSaveNewSecret =
+  const canSaveRepositoryConfig =
     data.canManage &&
     !isSaving &&
     busyAction === null &&
-    Boolean(newSecretKey.trim()) &&
-    Boolean(newSecretValue.trim());
+    (repositorySecretDrafts.length > 0 || hasCompleteNewSecret);
 
   const canVerify =
     data.canManage &&
@@ -1052,7 +1055,28 @@ function RuntimeStep({
     setSecretValueDrafts((current) => ({ ...current, [normalizeSecretKey(key)]: value }));
   }
 
-  async function handleSaveSecret(key: string, value: string, options?: { clearNewRow?: boolean }) {
+  async function upsertWorkspaceSecret(key: string, value: string) {
+    const normalizedKey = normalizeSecretKey(key);
+    const response = await fetch("/api/secrets", {
+      body: JSON.stringify({
+        key: normalizedKey,
+        value,
+        workspaceId: data.workspace.id,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (UpsertWorkspaceSecretResponse & { error?: string })
+      | null;
+    if (!response.ok || !body) {
+      throw new Error(body?.error ?? "Workspace secret save failed.");
+    }
+
+    return body.secret;
+  }
+
+  async function handleSaveSecret(key: string, value: string) {
     const normalizedKey = normalizeSecretKey(key);
     if (!data.canManage || isSaving || busyAction !== null || !normalizedKey || !value.trim()) {
       return;
@@ -1063,33 +1087,66 @@ function RuntimeStep({
     setRuntimeMessage(null);
 
     try {
-      const response = await fetch("/api/secrets", {
-        body: JSON.stringify({
-          key: normalizedKey,
-          value,
-          workspaceId: data.workspace.id,
-        }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      });
-      const body = (await response.json().catch(() => null)) as
-        | (UpsertWorkspaceSecretResponse & { error?: string })
-        | null;
-      if (!response.ok || !body) {
-        throw new Error(body?.error ?? "Workspace secret save failed.");
-      }
-      onDataChange(updateSecretInData(data, body.secret));
+      const secret = await upsertWorkspaceSecret(normalizedKey, value);
+      onDataChange(updateSecretInData(data, secret));
       setSecretValueDrafts((current) => {
         const next = { ...current };
         delete next[key];
         delete next[normalizedKey];
         return next;
       });
-      if (options?.clearNewRow) {
+      setRuntimeMessage(`Saved preview for ${secret.key}.`);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSaveRepositoryConfig() {
+    if (!canSaveRepositoryConfig) return;
+
+    const entriesByKey = new Map<string, { key: string; value: string }>();
+    for (const draft of repositorySecretDrafts) {
+      entriesByKey.set(normalizeSecretKey(draft.key), draft);
+    }
+    if (hasCompleteNewSecret) {
+      entriesByKey.set(normalizeSecretKey(newSecretKey), {
+        key: newSecretKey,
+        value: newSecretValue,
+      });
+    }
+    const entries = [...entriesByKey.values()];
+    setBusyAction("repository-config");
+    setRuntimeError(null);
+    setRuntimeMessage(null);
+
+    try {
+      let nextData = data;
+      const savedKeys = new Set<string>();
+
+      for (const entry of entries) {
+        const secret = await upsertWorkspaceSecret(entry.key, entry.value);
+        savedKeys.add(entry.key);
+        savedKeys.add(normalizeSecretKey(entry.key));
+        nextData = updateSecretInData(nextData, secret);
+      }
+
+      onDataChange(nextData);
+      setSecretValueDrafts((current) => {
+        const next = { ...current };
+        for (const savedKey of savedKeys) {
+          delete next[savedKey];
+        }
+        return next;
+      });
+      if (hasCompleteNewSecret) {
         setNewSecretKey("");
         setNewSecretValue("");
       }
-      setRuntimeMessage(`Saved preview for ${body.secret.key}.`);
+      setRuntimeMessage(
+        `Saved ${entries.length} environment variable${entries.length === 1 ? "" : "s"}.`,
+      );
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
     } finally {
@@ -1336,9 +1393,6 @@ function RuntimeStep({
               {repositoryVariables.map((key) => {
                 const secret = secretByKey.get(key);
                 const draftValue = secretValueDrafts[key] ?? "";
-                const isSavingSecret = busyAction === secretBusyActionKey(key);
-                const canSaveVariable =
-                  data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
                 return (
                   <div className="space-y-2 px-4 py-3" key={key}>
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -1350,31 +1404,12 @@ function RuntimeStep({
                       </Badge>
                     </div>
 
-                    <div className="flex min-w-0 items-start gap-2">
-                      <SecretValueTextarea
-                        ariaLabel={`Value for ${key}`}
-                        disabled={busyAction !== null}
-                        onChange={(value) => handleSecretDraftChange(key, value)}
-                        value={draftValue}
-                      />
-                      <button
-                        aria-label={`${secret ? "Update" : "Save"} ${key}`}
-                        className={cn(
-                          "h-10 w-10 shrink-0 !px-0 !py-0",
-                          canSaveVariable ? "ui-button-primary" : "ui-button",
-                        )}
-                        disabled={!canSaveVariable}
-                        onClick={() => void handleSaveSecret(key, draftValue)}
-                        title={secret ? "Update" : "Save"}
-                        type="button"
-                      >
-                        {isSavingSecret ? (
-                          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
-                        ) : (
-                          <CheckIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
+                    <SecretValueTextarea
+                      ariaLabel={`Value for ${key}`}
+                      disabled={busyAction !== null}
+                      onChange={(value) => handleSecretDraftChange(key, value)}
+                      value={draftValue}
+                    />
                   </div>
                 );
               })}
@@ -1397,31 +1432,22 @@ function RuntimeStep({
                   value={newSecretKey}
                 />
               </div>
-              <div className="flex min-w-0 items-start gap-2">
+              <div>
                 <SecretValueTextarea
                   ariaLabel="New variable value"
                   disabled={busyAction !== null}
                   onChange={setNewSecretValue}
                   value={newSecretValue}
                 />
+              </div>
+              <div className="mt-4 flex justify-end border-t border-border pt-4">
                 <button
-                  aria-label="Add variable"
-                  className={cn(
-                    "h-10 w-10 shrink-0 !px-0 !py-0",
-                    canSaveNewSecret ? "ui-button-primary" : "ui-button",
-                  )}
-                  disabled={!canSaveNewSecret}
-                  onClick={() =>
-                    void handleSaveSecret(newSecretKey, newSecretValue, { clearNewRow: true })
-                  }
-                  title="Add variable"
+                  className="ui-button-primary"
+                  disabled={!canSaveRepositoryConfig}
+                  onClick={() => void handleSaveRepositoryConfig()}
                   type="button"
                 >
-                  {busyAction === secretBusyActionKey(newSecretKey) ? (
-                    <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
-                  ) : (
-                    <CheckIcon className="h-4 w-4" />
-                  )}
+                  {busyAction === "repository-config" ? "Saving..." : "Save config"}
                 </button>
               </div>
             </div>
