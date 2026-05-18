@@ -39,4 +39,15 @@ describe("buildWorkspaceOnboardingUpdatePayload", () => {
       status: "dismissed",
     });
   });
+
+  it("persists selected repository changes", () => {
+    expect(
+      buildWorkspaceOnboardingUpdatePayload(
+        { selectedGithubRepositoryId: "11111111-1111-4111-8111-111111111111" },
+        now,
+      ),
+    ).toEqual({
+      selected_github_repository_id: "11111111-1111-4111-8111-111111111111",
+    });
+  });
 });

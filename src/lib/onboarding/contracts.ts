@@ -27,6 +27,11 @@ export const workspaceOnboardingUpdatePayloadSchema = z
   .object({
     completedSteps: z.array(workspaceOnboardingStepSchema).optional(),
     currentStep: workspaceOnboardingStepSchema.optional(),
+    selectedGithubRepositoryId: z
+      .string()
+      .uuid("Selected repository id is invalid.")
+      .nullable()
+      .optional(),
     skippedSteps: z.array(workspaceOnboardingStepSchema).optional(),
     status: workspaceOnboardingStatusSchema.optional(),
   })
@@ -47,6 +52,7 @@ export type WorkspaceOnboardingState = {
   currentStep: WorkspaceOnboardingStep;
   dismissedAt: string | null;
   id: string;
+  selectedGithubRepositoryId: string | null;
   skippedSteps: WorkspaceOnboardingStep[];
   status: WorkspaceOnboardingStatus;
   updatedAt: string;
@@ -84,6 +90,12 @@ export type OnboardingSetupHealth = {
     updatedAt: string | null;
   };
   latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+  selectedRepository: {
+    configured: boolean;
+    fullName: string | null;
+    repositoryId: string | null;
+    status: Extract<SetupReadinessStatus, "missing" | "ready">;
+  };
   linearKey: {
     configured: boolean;
     status: SetupPresenceStatus;

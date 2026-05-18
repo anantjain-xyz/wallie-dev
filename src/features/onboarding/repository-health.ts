@@ -3,28 +3,44 @@ import type { OnboardingSetupHealth } from "@/lib/onboarding/contracts";
 
 export function buildRepositorySetupHealth(
   github: Pick<WorkspaceGitHubData, "primaryProfile" | "repositories">,
-): Pick<OnboardingSetupHealth, "primaryRepositoryProfile" | "repositorySetup"> {
+  selectedGithubRepositoryId?: string | null,
+): Pick<
+  OnboardingSetupHealth,
+  "primaryRepositoryProfile" | "repositorySetup" | "selectedRepository"
+> {
   const primaryProfile = github.primaryProfile;
-  const primaryRepository = primaryProfile
-    ? github.repositories.find((repository) => repository.id === primaryProfile.githubRepositoryId)
+  const effectiveSelectedRepositoryId =
+    selectedGithubRepositoryId ?? primaryProfile?.githubRepositoryId ?? null;
+  const selectedRepository = effectiveSelectedRepositoryId
+    ? github.repositories.find((repository) => repository.id === effectiveSelectedRepositoryId)
     : null;
-  const usablePrimaryRepository =
-    primaryRepository && !primaryRepository.isArchived ? primaryRepository : null;
-  const primaryRepositorySetup = usablePrimaryRepository?.onboarding ?? null;
-  const primaryRepositoryId =
-    primaryProfile && usablePrimaryRepository ? primaryProfile.githubRepositoryId : null;
+  const usableSelectedRepository =
+    selectedRepository && !selectedRepository.isArchived ? selectedRepository : null;
+  const selectedRepositorySetup = usableSelectedRepository?.onboarding ?? null;
+  const primaryProfileMatchesSelected =
+    Boolean(usableSelectedRepository) &&
+    primaryProfile?.githubRepositoryId === usableSelectedRepository?.id;
 
   return {
+    selectedRepository: {
+      configured: Boolean(usableSelectedRepository),
+      fullName: usableSelectedRepository?.fullName ?? null,
+      repositoryId: usableSelectedRepository?.id ?? null,
+      status: usableSelectedRepository ? "ready" : "missing",
+    },
     primaryRepositoryProfile: {
-      configured: Boolean(primaryRepositoryId),
-      fullName: usablePrimaryRepository?.fullName ?? null,
-      repositoryId: primaryRepositoryId,
-      status: primaryRepositoryId ? "ready" : "missing",
+      configured: primaryProfileMatchesSelected,
+      fullName: primaryProfileMatchesSelected ? (usableSelectedRepository?.fullName ?? null) : null,
+      repositoryId: primaryProfileMatchesSelected
+        ? (primaryProfile?.githubRepositoryId ?? null)
+        : null,
+      status: primaryProfileMatchesSelected ? "ready" : "missing",
     },
     repositorySetup: {
-      configured: primaryRepositorySetup?.status === "ready",
-      repositoryId: primaryRepositorySetup?.githubRepositoryId ?? primaryRepositoryId,
-      status: primaryRepositorySetup?.status ?? "placeholder",
+      configured: selectedRepositorySetup?.status === "ready",
+      repositoryId:
+        selectedRepositorySetup?.githubRepositoryId ?? usableSelectedRepository?.id ?? null,
+      status: selectedRepositorySetup?.status ?? "placeholder",
     },
   };
 }

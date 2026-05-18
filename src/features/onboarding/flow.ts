@@ -18,16 +18,16 @@ export type OnboardingStepDefinition = {
 
 export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
   {
-    description: "Confirm the GitHub App connection for this workspace.",
+    description: "Connect GitHub, choose a repository, and open the Wallie setup PR.",
     id: "github",
     shortTitle: "GitHub",
     title: "Connect GitHub",
   },
   {
-    description: "Choose the repository Wallie will prepare first.",
+    description: "Analyze the selected repository so Wallie can infer its setup.",
     id: "repository",
-    shortTitle: "Repo",
-    title: "Select repository",
+    shortTitle: "Analyze",
+    title: "Analyze repository",
   },
   {
     description: "Review the default phase pipeline before sessions start.",
@@ -76,6 +76,8 @@ type OnboardingResumeRow = { current_step: string; status: string } | null;
 const STEP_INDEX = new Map<WorkspaceOnboardingStep, number>(
   WORKSPACE_ONBOARDING_STEPS.map((step, index) => [step, index]),
 );
+
+const REPOSITORY_SELECTION_DEPENDENT_STEPS = ["repository", "runtime", "verify"] as const;
 
 export function onboardingStepIndex(step: WorkspaceOnboardingStep) {
   return STEP_INDEX.get(step) ?? 0;
@@ -174,6 +176,24 @@ export function buildOnboardingContinuePatch(
     completedSteps,
     currentStep: nextStep,
     skippedSteps,
+    status: "in_progress",
+  };
+}
+
+export function buildOnboardingRepositorySelectionPatch(
+  onboarding: WorkspaceOnboardingState,
+  repositoryId: string,
+): WorkspaceOnboardingUpdatePayload | null {
+  if (onboarding.selectedGithubRepositoryId === repositoryId) {
+    return null;
+  }
+
+  const dependentSteps = new Set<WorkspaceOnboardingStep>(REPOSITORY_SELECTION_DEPENDENT_STEPS);
+
+  return {
+    completedSteps: onboarding.completedSteps.filter((step) => !dependentSteps.has(step)),
+    selectedGithubRepositoryId: repositoryId,
+    skippedSteps: onboarding.skippedSteps.filter((step) => !dependentSteps.has(step)),
     status: "in_progress",
   };
 }
