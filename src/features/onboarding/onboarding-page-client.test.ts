@@ -366,6 +366,52 @@ describe("OnboardingPageClient", () => {
     expect(primaryFooterButton(readyToAdvance)).not.toContain("disabled");
   });
 
+  it("shows GitHub setup actions for the effective fallback selected repository", () => {
+    const primary = profile("repo-a");
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: primary,
+            repositories: [repository("repo-a", { profile: primary }), repository("repo-b")],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: [],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "github",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: null,
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: false,
+              repositoryId: "repo-a",
+              status: "not_set_up",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
+    expect(html).toContain("Mark setup complete");
+  });
+
   it("keeps repository setup controls out of the analysis step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

@@ -1679,7 +1679,7 @@ function StepBody({
           const repository = data.github.repositories.find((item) => item.id === repositoryId);
           if (repository) onSelectGithubRepository(repository);
         }}
-        selectedRepositoryId={data.onboarding.selectedGithubRepositoryId}
+        selectedRepositoryId={selectedRepositoryFromData(data)?.id ?? null}
         setupActionScope="selected"
         source="onboarding"
         workspaceId={data.workspace.id}
