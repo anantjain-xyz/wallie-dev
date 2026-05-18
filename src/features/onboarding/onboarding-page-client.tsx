@@ -46,7 +46,7 @@ import {
   type AgentConfigMap,
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
-import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
+import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type {
   OnboardingSetupHealth,
@@ -901,6 +901,14 @@ function RuntimeStep({
       validationError: validation.ok ? null : validation.error,
     };
   });
+  const providerFieldStatuses = fieldStatuses.filter(
+    (status) =>
+      status.field.configKey === "agent_provider" || status.field.configKey === "agent_model",
+  );
+  const executionFieldStatuses = fieldStatuses.filter(
+    (status) =>
+      status.field.configKey !== "agent_provider" && status.field.configKey !== "agent_model",
+  );
   const hasInvalidDrafts = fieldStatuses.some((status) => status.validationError !== null);
   const hasUnsavedDrafts = fieldStatuses.some((status) => status.isDirty);
   const draftConfig = useMemo(() => draftValueToConfigMap(drafts, fields), [drafts, fields]);
@@ -1266,7 +1274,53 @@ function RuntimeStep({
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {fieldStatuses.map((status) => (
+          {providerFieldStatuses.map((status) => (
+            <div className="block space-y-1.5" key={status.field.configKey}>
+              {status.field.type === "select" && status.field.options ? (
+                <SelectField
+                  disabled={busyAction !== null}
+                  label={status.field.label}
+                  onValueChange={(value) => handleFieldChange(status.field.configKey, value)}
+                  options={status.field.options.map((option) => ({ label: option, value: option }))}
+                  value={status.draft}
+                />
+              ) : (
+                <label className="block space-y-1.5">
+                  <span className="text-[12px] font-medium text-muted">{status.field.label}</span>
+                  <input
+                    autoComplete="off"
+                    className="ui-input"
+                    disabled={busyAction !== null}
+                    onChange={(event) =>
+                      handleFieldChange(status.field.configKey, event.target.value)
+                    }
+                    placeholder={status.field.placeholder}
+                    type={status.field.type === "number" ? "number" : "text"}
+                    value={status.draft}
+                  />
+                </label>
+              )}
+              {status.validationError ? (
+                <p className="text-[12px] leading-5 text-danger" role="alert">
+                  {status.validationError}
+                </p>
+              ) : (
+                <p className="text-[12px] leading-5 text-muted">{status.field.description}</p>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4">
+          <ProviderAccessPanel
+            provider={selectedProvider}
+            returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
+            variant="embedded"
+          />
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {executionFieldStatuses.map((status) => (
             <div className="block space-y-1.5" key={status.field.configKey}>
               {status.field.type === "select" && status.field.options ? (
                 <SelectField
@@ -1523,20 +1577,6 @@ function RuntimeStep({
           </div>
         </div>
       </div>
-
-      {selectedProvider === "codex" ? (
-        <div className="rounded-[6px] border border-border bg-surface p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-[14px] font-semibold text-foreground">Codex account</h3>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                Runtime checks the current user&apos;s Codex connection.
-              </p>
-            </div>
-          </div>
-          <CodexConnectionPanel returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`} />
-        </div>
-      ) : null}
 
       <div className="rounded-[6px] border border-border bg-surface p-4">
         <div>

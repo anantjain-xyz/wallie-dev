@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
-import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
 import { LinearRoutingEditor } from "@/features/settings/linear-routing-editor";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
@@ -29,7 +28,6 @@ const ANCHORS: SettingsAnchor[] = [
   { id: "linear-routing", label: "Linear routing" },
   { id: "coding-agent", label: "Coding agent" },
   { id: "cloud-execution", label: "Cloud execution" },
-  { id: "codex", label: "Codex account" },
 ];
 
 function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]) {
@@ -172,6 +170,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
 
             <AgentConfigSection
               canManage={isManager}
+              codexConnectFlash={searchState.codexStatus}
               initialAgentConfig={initialData.agentConfig}
               setFlashMessage={setFlashMessage}
               workspaceId={initialData.workspace.id}
@@ -189,14 +188,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 setFlashMessage={setFlashMessage}
                 workspaceId={initialData.workspace.id}
               />
-            </Section>
-
-            <Section
-              anchorId="codex"
-              tagline="Sessions you create use the Codex tokens stored here. Tokens are encrypted at rest and only decrypted inside the agent worker."
-              title="Codex account"
-            >
-              <CodexConnectionPanel connectFlash={searchState.codexStatus} />
             </Section>
           </div>
         </div>
