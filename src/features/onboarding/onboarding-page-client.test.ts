@@ -695,12 +695,12 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("ui-textarea min-h-20");
     expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
-    expect(html).not.toContain('aria-label="Add variable"');
+    expect(html).toContain("Add variable");
+    expect(html).not.toContain('aria-label="New variable name"');
     expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
     expect(html).toContain("Not set");
     expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
     expect(html).not.toContain("Needs value");
-    expect(html).toContain('placeholder="SECRET_KEY"');
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
     expect(html).not.toContain("Workspace secrets");

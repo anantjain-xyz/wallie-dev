@@ -9,7 +9,14 @@ import type {
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
-import { CheckIcon, CodeIcon, PlusIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
+import {
+  CheckIcon,
+  CodeIcon,
+  PlusIcon,
+  ProjectsIcon,
+  SparkIcon,
+  XIcon,
+} from "@/components/shared/icons";
 import { SelectField } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -108,6 +115,12 @@ type RuntimeCredentialDescriptor = {
   description: string;
   key: string;
   label: string;
+};
+
+type NewSecretDraftRow = {
+  id: string;
+  key: string;
+  value: string;
 };
 
 const badgeToneClasses: Record<HealthTone, string> = {
@@ -860,11 +873,11 @@ function RuntimeStep({
     buildAgentConfigDrafts(data.agentConfig),
   );
   const [secretValueDrafts, setSecretValueDrafts] = useState<Record<string, string>>({});
-  const [newSecretKey, setNewSecretKey] = useState("");
-  const [newSecretValue, setNewSecretValue] = useState("");
+  const [newSecretRows, setNewSecretRows] = useState<NewSecretDraftRow[]>([]);
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const nextNewSecretRowId = useRef(1);
   const [verifyState, setVerifyState] = useState<{
     isVerifying: boolean;
     result: VerifyAgentConfigResponse | null;
@@ -921,7 +934,14 @@ function RuntimeStep({
   const repositorySecretDrafts = repositoryVariables
     .map((key) => ({ key, value: secretValueDrafts[key] ?? "" }))
     .filter((draft) => Boolean(draft.value.trim()));
-  const hasCompleteNewSecret = Boolean(newSecretKey.trim()) && Boolean(newSecretValue.trim());
+  const completeNewSecretDrafts = newSecretRows.filter(
+    (row) => Boolean(row.key.trim()) && Boolean(row.value.trim()),
+  );
+  const hasPartialNewSecretDraft = newSecretRows.some((row) => {
+    const hasKey = Boolean(row.key.trim());
+    const hasValue = Boolean(row.value.trim());
+    return hasKey !== hasValue;
+  });
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) =>
       data.agentConfig[key] === undefined &&
@@ -939,7 +959,8 @@ function RuntimeStep({
     data.canManage &&
     !isSaving &&
     busyAction === null &&
-    (repositorySecretDrafts.length > 0 || hasCompleteNewSecret);
+    !hasPartialNewSecretDraft &&
+    (repositorySecretDrafts.length > 0 || completeNewSecretDrafts.length > 0);
 
   const canVerify =
     data.canManage &&
@@ -1056,6 +1077,26 @@ function RuntimeStep({
     setSecretValueDrafts((current) => ({ ...current, [normalizeSecretKey(key)]: value }));
   }
 
+  function handleAddNewSecretRow() {
+    const rowId = `new-secret-${nextNewSecretRowId.current}`;
+    nextNewSecretRowId.current += 1;
+    setNewSecretRows((current) => [...current, { id: rowId, key: "", value: "" }]);
+  }
+
+  function handleNewSecretRowChange(
+    id: string,
+    field: keyof Pick<NewSecretDraftRow, "key" | "value">,
+    value: string,
+  ) {
+    setNewSecretRows((current) =>
+      current.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  function handleRemoveNewSecretRow(id: string) {
+    setNewSecretRows((current) => current.filter((row) => row.id !== id));
+  }
+
   async function upsertWorkspaceSecret(key: string, value: string) {
     const normalizedKey = normalizeSecretKey(key);
     const response = await fetch("/api/secrets", {
@@ -1111,10 +1152,10 @@ function RuntimeStep({
     for (const draft of repositorySecretDrafts) {
       entriesByKey.set(normalizeSecretKey(draft.key), draft);
     }
-    if (hasCompleteNewSecret) {
-      entriesByKey.set(normalizeSecretKey(newSecretKey), {
-        key: newSecretKey,
-        value: newSecretValue,
+    for (const draft of completeNewSecretDrafts) {
+      entriesByKey.set(normalizeSecretKey(draft.key), {
+        key: draft.key,
+        value: draft.value,
       });
     }
     const entries = [...entriesByKey.values()];
@@ -1141,10 +1182,9 @@ function RuntimeStep({
         }
         return next;
       });
-      if (hasCompleteNewSecret) {
-        setNewSecretKey("");
-        setNewSecretValue("");
-      }
+      setNewSecretRows((current) =>
+        current.filter((row) => !savedKeys.has(normalizeSecretKey(row.key)) || !row.value.trim()),
+      );
       setRuntimeMessage(
         `Saved ${entries.length} environment variable${entries.length === 1 ? "" : "s"}.`,
       );
@@ -1417,40 +1457,68 @@ function RuntimeStep({
             </div>
           )}
 
-          <div className="border-t border-border px-4 py-4">
-            <div className="space-y-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <PlusIcon className="h-3.5 w-3.5 text-muted" />
-                <input
-                  aria-label="New variable name"
-                  autoCapitalize="characters"
-                  autoComplete="off"
-                  className="ui-input h-10 min-w-[220px] flex-1 font-mono text-[13px]"
-                  disabled={busyAction !== null}
-                  onChange={(event) => setNewSecretKey(event.target.value)}
-                  placeholder="SECRET_KEY"
-                  spellCheck={false}
-                  value={newSecretKey}
-                />
-              </div>
-              <div>
-                <SecretValueInput
-                  ariaLabel="New variable value"
-                  disabled={busyAction !== null}
-                  onChange={setNewSecretValue}
-                  value={newSecretValue}
-                />
-              </div>
-              <div className="mt-4 flex justify-end border-t border-border pt-4">
-                <button
-                  className="ui-button-primary"
-                  disabled={!canSaveRepositoryConfig}
-                  onClick={() => void handleSaveRepositoryConfig()}
-                  type="button"
-                >
-                  {busyAction === "repository-config" ? "Saving..." : "Save config"}
-                </button>
-              </div>
+          {newSecretRows.length > 0 ? (
+            <div className="divide-y divide-border border-t border-border">
+              {newSecretRows.map((row) => (
+                <div className="space-y-2 px-4 py-3" key={row.id}>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <input
+                      aria-label="New variable name"
+                      autoCapitalize="characters"
+                      autoComplete="off"
+                      className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                      disabled={busyAction !== null}
+                      onChange={(event) =>
+                        handleNewSecretRowChange(row.id, "key", event.target.value)
+                      }
+                      placeholder="SECRET_KEY"
+                      spellCheck={false}
+                      value={row.key}
+                    />
+                    <button
+                      aria-label="Remove variable row"
+                      className="ui-button h-10 w-10 shrink-0 !px-0 !py-0"
+                      disabled={busyAction !== null}
+                      onClick={() => handleRemoveNewSecretRow(row.id)}
+                      title="Remove row"
+                      type="button"
+                    >
+                      <XIcon className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <SecretValueInput
+                    ariaLabel="New variable value"
+                    disabled={busyAction !== null}
+                    onChange={(value) => handleNewSecretRowChange(row.id, "value", value)}
+                    value={row.value}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4">
+            <button
+              className="ui-button gap-1.5"
+              disabled={busyAction !== null}
+              onClick={handleAddNewSecretRow}
+              type="button"
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              Add variable
+            </button>
+            <div className="flex items-center gap-3">
+              {hasPartialNewSecretDraft ? (
+                <span className="text-[12px] text-muted">Finish each added row before saving.</span>
+              ) : null}
+              <button
+                className="ui-button-primary"
+                disabled={!canSaveRepositoryConfig}
+                onClick={() => void handleSaveRepositoryConfig()}
+                type="button"
+              >
+                {busyAction === "repository-config" ? "Saving..." : "Save config"}
+              </button>
             </div>
           </div>
         </div>
