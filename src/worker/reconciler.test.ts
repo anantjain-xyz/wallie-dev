@@ -19,6 +19,7 @@ type SessionRow = {
   pipeline_id?: string;
   phase_status: string;
   created_at: string;
+  archived_at?: string | null;
 };
 
 type SecretRow = { workspace_id: string; encrypted_value: string };
@@ -79,6 +80,10 @@ function buildAdmin(fixture: Fixture) {
         filters[`gt.${col}`] = val;
         return builder;
       },
+      is(col: string, val: unknown) {
+        filters[`is.${col}`] = val;
+        return builder;
+      },
       in(col: string, vals: unknown[]) {
         filters[`in.${col}`] = vals;
         return builder;
@@ -107,10 +112,12 @@ function buildAdmin(fixture: Fixture) {
       if (op === "select" && table === "sessions") {
         const eqPhaseStatus = filters["eq.phase_status"] as string | undefined;
         const inPhaseStatuses = filters["in.phase_status"] as string[] | undefined;
+        const isArchivedAt = filters["is.archived_at"];
         let rows = fixture.sessions
           .filter((s) => s.linear_issue_id !== null)
           .filter((s) => !eqPhaseStatus || s.phase_status === eqPhaseStatus)
           .filter((s) => !inPhaseStatuses || inPhaseStatuses.includes(s.phase_status))
+          .filter((s) => isArchivedAt !== null || s.archived_at == null)
           .sort((a, b) => a.created_at.localeCompare(b.created_at));
         if (cursorGt) rows = rows.filter((s) => s.created_at > cursorGt!);
         rows = rows.slice(0, limit);
@@ -717,6 +724,96 @@ describe("reconcileLinearState", () => {
         }),
       }),
     );
+  });
+
+  it("archives Done sessions when the configured monitor stage is missing", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+      ],
+      routingRows: [routingRow({ monitor_stage_slug: "monitor" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sDoneMissingMonitor",
+          current_stage_id: "stage-land",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iDoneMissingMonitor",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: {
+          issues: {
+            nodes: [{ id: "iDoneMissingMonitor", state: { name: "Done" } }],
+          },
+        },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(result.canceled).toBe(1);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          "eq.id": "sDoneMissingMonitor",
+          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+        }),
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({
+          archived_at: expect.any(String),
+          phase_status: "rejected",
+        }),
+      }),
+    );
+    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
+  });
+
+  it("does not reroute archived Done sessions back into monitor", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-monitor", pipeline_id: "pipe-1", position: 1, slug: "monitor" },
+      ],
+      routingRows: [routingRow({ monitor_stage_slug: "monitor" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sArchivedDone",
+          archived_at: "2026-05-01T00:00:00Z",
+          current_stage_id: "stage-monitor",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iArchivedDone",
+          phase_status: "rejected",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iArchivedDone", state: { name: "Done" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(0);
+    expect(result.canceled).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(calls.find((c) => c.table === "sessions" && c.op === "update")).toBeUndefined();
+    expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
   });
 
   it("queues rework when the session is awaiting review on the target stage", async () => {

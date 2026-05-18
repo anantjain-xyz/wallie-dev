@@ -83,6 +83,7 @@ export async function reconcileLinearState(
         "id, workspace_id, linear_issue_id, pipeline_id, current_stage_id, phase_status, created_at",
       )
       .not("linear_issue_id", "is", null)
+      .is("archived_at", null)
       .in("phase_status", RECONCILABLE_PHASE_STATUSES)
       .order("created_at", { ascending: true })
       .limit(RECONCILE_PAGE_SIZE);
@@ -164,11 +165,15 @@ export async function reconcileLinearState(
               case "land":
               case "monitor":
               case "rework":
-                await routeSessionToStage(admin, session, {
-                  route: classification.route,
-                  stageSlug: classification.stageSlug,
-                  statusName: classification.statusName,
-                });
+                if (
+                  (await routeSessionToStage(admin, session, {
+                    route: classification.route,
+                    stageSlug: classification.stageSlug,
+                    statusName: classification.statusName,
+                  })) === "archived"
+                ) {
+                  result.canceled++;
+                }
                 break;
               case "start_or_continue":
                 await ensureCurrentStageQueued(admin, session, classification.statusName);
@@ -258,11 +263,13 @@ async function cancelActiveWorkForSession(
   }
 }
 
+type StageRouteResult = "archived" | "routed" | "skipped";
+
 async function routeSessionToStage(
   admin: AdminClient,
   session: SessionRow,
   route: { route: "done" | "merging" | "rework"; stageSlug: string; statusName: string },
-): Promise<void> {
+): Promise<StageRouteResult> {
   const stages = await loadPipelineStages(admin, session.pipeline_id);
   const targetStage = stages.find((stage) => stage.slug === route.stageSlug);
   if (!targetStage) {
@@ -272,14 +279,18 @@ async function routeSessionToStage(
       sessionId: session.id,
       stageSlug: route.stageSlug,
     });
-    return;
+    if (route.route === "done") {
+      await archiveSessionForLinearRoute(admin, session, route.statusName);
+      return "archived";
+    }
+    return "skipped";
   }
 
   const hasActiveJob = await hasActivePipelineJob(admin, session.id);
   if (session.current_stage_id === targetStage.id) {
-    if (hasActiveJob) return;
+    if (hasActiveJob) return "skipped";
     await ensurePipelineJobQueued(admin, session, route.statusName);
-    return;
+    return "routed";
   }
 
   const resetStages = stages.filter((stage) => stage.position >= targetStage.position);
@@ -327,6 +338,7 @@ async function routeSessionToStage(
     .in("phase_status", RECONCILABLE_PHASE_STATUSES);
 
   await ensurePipelineJobQueued(admin, session, route.statusName);
+  return "routed";
 }
 
 async function ensureCurrentStageQueued(
