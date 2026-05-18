@@ -694,6 +694,7 @@ describe("OnboardingPageClient", () => {
     expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain('aria-label="Add variable"');
+    expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
     expect(html).toContain("Not set");
     expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
     expect(html).not.toContain("Needs value");

@@ -1416,7 +1416,7 @@ function RuntimeStep({
             </div>
           )}
 
-          <div className="border-t border-border bg-surface-strong px-4 py-4">
+          <div className="border-t border-border px-4 py-4">
             <div className="space-y-2">
               <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <PlusIcon className="h-3.5 w-3.5 text-muted" />
