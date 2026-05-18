@@ -4,6 +4,13 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  ArchiveIcon,
+  BranchIcon,
+  CodeIcon,
+  GlobeIcon,
+  LockIcon,
+} from "@/components/shared/icons";
 import type {
   GitHubInstallResponse,
   GitHubRepositorySummary,
@@ -38,6 +45,39 @@ type GitHubConnectionPanelProps = {
 
 function noopFlashMessage() {
   return undefined;
+}
+
+function RepoPropertyIcon({
+  type,
+}: {
+  type: "archived" | "branch" | "language" | "private" | "public";
+}) {
+  const className = "h-3.5 w-3.5 text-muted";
+
+  if (type === "language") return <CodeIcon className={className} />;
+  if (type === "branch") return <BranchIcon className={className} />;
+  if (type === "archived") return <ArchiveIcon className={className} />;
+  if (type === "private") return <LockIcon className={className} />;
+  return <GlobeIcon className={className} />;
+}
+
+function RepoPropertyPill({
+  icon,
+  label,
+  monospace = false,
+  value,
+}: {
+  icon: "archived" | "branch" | "language" | "private" | "public";
+  label: string;
+  monospace?: boolean;
+  value: string;
+}) {
+  return (
+    <span aria-label={`${label}: ${value}`} className="ui-pill" title={`${label}: ${value}`}>
+      <RepoPropertyIcon type={icon} />
+      <span className={monospace ? "font-mono" : undefined}>{value}</span>
+    </span>
+  );
 }
 
 function defaultOnboarding(repositoryId: string): RepositoryOnboardingState {
@@ -385,13 +425,28 @@ export function GitHubConnectionPanel({
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {repository.defaultProgrammingLanguage ? (
-                        <span className="ui-pill">{repository.defaultProgrammingLanguage}</span>
+                        <RepoPropertyPill
+                          icon="language"
+                          label="Language"
+                          value={repository.defaultProgrammingLanguage}
+                        />
                       ) : null}
                       {repository.defaultBranch ? (
-                        <span className="ui-pill font-mono">{repository.defaultBranch}</span>
+                        <RepoPropertyPill
+                          icon="branch"
+                          label="Default branch"
+                          monospace
+                          value={repository.defaultBranch}
+                        />
                       ) : null}
-                      <span className="ui-pill">{repository.isPrivate ? "Private" : "Public"}</span>
-                      {repository.isArchived ? <span className="ui-pill">Archived</span> : null}
+                      <RepoPropertyPill
+                        icon={repository.isPrivate ? "private" : "public"}
+                        label="Visibility"
+                        value={repository.isPrivate ? "Private" : "Public"}
+                      />
+                      {repository.isArchived ? (
+                        <RepoPropertyPill icon="archived" label="Status" value="Archived" />
+                      ) : null}
                     </div>
                     {repository.description ? (
                       <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
@@ -399,14 +454,14 @@ export function GitHubConnectionPanel({
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    {onSelectRepository ? (
+                    {onSelectRepository && !selected ? (
                       <button
-                        className={selected ? "ui-button-primary" : "ui-button"}
+                        className="ui-button"
                         disabled={!canManage}
                         onClick={() => onSelectRepository(repository.id)}
                         type="button"
                       >
-                        {selected ? "Selected" : "Select"}
+                        Select
                       </button>
                     ) : null}
                     {repository.onboarding.setupPrUrl ? (

@@ -74,7 +74,7 @@ export function OnboardingLinearStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <h3 className="text-[14px] font-semibold text-foreground">Linear key</h3>
         <div className="mt-3">
           <LinearKeyControls
@@ -97,7 +97,7 @@ export function OnboardingLinearStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <h3 className="text-[14px] font-semibold text-foreground">Linear routing</h3>
         <div className="mt-4">
           <LinearRoutingControls
