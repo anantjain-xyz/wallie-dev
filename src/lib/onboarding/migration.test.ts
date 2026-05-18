@@ -4,19 +4,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260516000100_workspace_onboarding.sql"),
+  join(process.cwd(), "supabase/migrations/20260422000000_init.sql"),
   "utf8",
 );
 
-describe("workspace onboarding migration", () => {
-  it("backfills exactly one onboarding row per existing workspace", () => {
+describe("workspace onboarding schema", () => {
+  it("creates exactly one onboarding row per workspace", () => {
     expect(migration).toContain("create table public.workspace_onboarding");
     expect(migration).toContain(
       "workspace_id uuid not null unique references public.workspaces(id) on delete cascade",
     );
-    expect(migration).toContain("insert into public.workspace_onboarding (workspace_id)");
-    expect(migration).toContain("select workspace_record.id");
-    expect(migration).toContain("on conflict (workspace_id) do nothing");
   });
 
   it("seeds onboarding state inside create_workspace", () => {
@@ -41,7 +38,7 @@ describe("workspace onboarding migration", () => {
     expect(migration).toContain(
       "grant insert, update on public.workspace_onboarding to authenticated",
     );
-    expect(migration).not.toContain("grant insert, update, delete");
+    expect(migration).not.toContain("grant insert, update, delete on public.workspace_onboarding");
     expect(migration).toContain("workspace_onboarding_select_membership");
     expect(migration).toContain("workspace_id in (select public.current_user_workspace_ids())");
     expect(migration).toContain("workspace_onboarding_insert_managers");

@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260516010000_workspace_repository_profiles.sql"),
+  join(process.cwd(), "supabase/migrations/20260422000000_init.sql"),
   "utf8",
 );
 
-describe("workspace repository profiles migration", () => {
+describe("workspace repository profiles schema", () => {
   it("creates one selected profile per repository and one primary per workspace", () => {
     expect(migration).toContain("create table public.workspace_repository_profiles");
     expect(migration).toContain("unique (workspace_id, github_repository_id)");
