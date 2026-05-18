@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   appendDraftStage,
+  keepKnownApproverIds,
   moveDraftStage,
   removeDraftStage,
   StageRowEditor,
@@ -79,6 +80,23 @@ describe("pipeline editor primitives", () => {
     ]);
     expect(moveDraftStage(initial, 0, 1).map((item) => item.slug)).toEqual(["design", "product"]);
     expect(removeDraftStage(initial, 1).map((item) => item.slug)).toEqual(["product"]);
+  });
+
+  it("drops approver ids that are no longer in the workspace member picker", () => {
+    const stages = [
+      stage({ approverMemberIds: ["member-1", "removed-member", "member-2"] }),
+      stage({ id: "stage-design", name: "Design", slug: "design" }),
+    ];
+
+    expect(
+      keepKnownApproverIds(stages, [
+        { email: "one@example.com", fullName: "One", id: "member-1", role: "owner" },
+        { email: "two@example.com", fullName: "Two", id: "member-2", role: "member" },
+      ]),
+    ).toEqual([
+      stage({ approverMemberIds: ["member-1", "member-2"] }),
+      stage({ id: "stage-design", name: "Design", slug: "design" }),
+    ]);
   });
 
   it("renders the compact stage row with all editable fields and controls", () => {

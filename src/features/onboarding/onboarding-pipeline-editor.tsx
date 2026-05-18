@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import {
   appendDraftStage,
+  keepKnownApproverIds,
   moveDraftStage,
   PipelineEditorControls,
   PipelineVariableHelp,
@@ -34,7 +35,7 @@ export function OnboardingPipelineEditor({
 }: OnboardingPipelineEditorProps) {
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [stages, setStages] = useState<DraftPipelineStage[]>(
-    () => pipeline?.stages.map(stageToDraft) ?? [],
+    () => keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -49,16 +50,18 @@ export function OnboardingPipelineEditor({
 
   async function savePipeline() {
     setError(null);
-    const validation = validatePipelineDraft({ name, stages });
+    const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
+    const validation = validatePipelineDraft({ name, stages: stagesToSave });
     if (!validation.ok) {
       setError(validation.message);
       return;
     }
 
+    setStages(stagesToSave);
     setIsSaving(true);
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
-        body: JSON.stringify({ name, stages }),
+        body: JSON.stringify({ name, stages: stagesToSave }),
         headers: { "Content-Type": "application/json" },
         method: "PUT",
       });
