@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
+import { SelectField } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -108,34 +109,31 @@ function AgentConfigField({
 }) {
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-medium text-foreground">{label}</span>
-        {trailing}
-      </div>
       {type === "select" && options ? (
-        <select
-          className="ui-input"
+        <SelectField
           disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-          value={draft}
-        >
-          <option value="">Not configured</option>
-          {options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          autoComplete="off"
-          className="ui-input"
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          type={type === "number" ? "number" : "text"}
+          emptyOption={{ label: "Not configured", value: "" }}
+          label={label}
+          onValueChange={onChange}
+          options={options.map((option) => ({ label: option, value: option }))}
           value={draft}
         />
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[13px] font-medium text-foreground">{label}</span>
+            {trailing}
+          </div>
+          <input
+            autoComplete="off"
+            className="ui-input"
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={placeholder}
+            type={type === "number" ? "number" : "text"}
+            value={draft}
+          />
+        </>
       )}
       {error ? (
         <p className="text-[12px] leading-5 text-danger" role="alert">

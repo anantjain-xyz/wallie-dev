@@ -1,20 +1,11 @@
 "use client";
 
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type FocusEvent,
-  type KeyboardEvent,
-} from "react";
+import { useMemo, useState } from "react";
 
-import { ChevronDownIcon } from "@/components/shared/icons";
+import { SelectField } from "@/components/ui/select";
 import type { PipelineStage } from "@/features/sessions/types";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
-import { cn } from "@/lib/utils";
 import {
   LINEAR_ROUTE_KEYS,
   LINEAR_ROUTE_LABELS,
@@ -153,6 +144,10 @@ export function LinearRoutingControls({
   const [draft, setDraft] = useState(() => routingDraftFromConfig(routing));
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);
+  const stageSelectOptions = useMemo(
+    () => stageOptions.map((option) => ({ label: option, value: option })),
+    [stageOptions],
+  );
 
   const saveRouting = useApiAction<LinearRoutingResponse>({
     call: () => {
@@ -255,26 +250,30 @@ export function LinearRoutingControls({
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
-          <StageSelect
+          <SelectField
             disabled={!canManage}
             label="Rework stage"
-            onChange={(value) => setDraft((current) => ({ ...current, reworkStageSlug: value }))}
-            options={stageOptions}
+            onValueChange={(value) =>
+              setDraft((current) => ({ ...current, reworkStageSlug: value }))
+            }
+            options={stageSelectOptions}
             value={draft.reworkStageSlug}
           />
-          <StageSelect
+          <SelectField
             disabled={!canManage}
             label="Land stage"
-            onChange={(value) => setDraft((current) => ({ ...current, landStageSlug: value }))}
-            options={stageOptions}
+            onValueChange={(value) => setDraft((current) => ({ ...current, landStageSlug: value }))}
+            options={stageSelectOptions}
             value={draft.landStageSlug}
           />
-          <StageSelect
-            allowEmpty
+          <SelectField
             disabled={!canManage}
+            emptyOption={{ label: "None", value: "" }}
             label="Monitor stage"
-            onChange={(value) => setDraft((current) => ({ ...current, monitorStageSlug: value }))}
-            options={stageOptions}
+            onValueChange={(value) =>
+              setDraft((current) => ({ ...current, monitorStageSlug: value }))
+            }
+            options={stageSelectOptions}
             value={draft.monitorStageSlug}
           />
         </div>
@@ -290,192 +289,6 @@ export function LinearRoutingControls({
           >
             {saveRouting.isBusy ? "Saving…" : "Save routing"}
           </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function StageSelect({
-  allowEmpty,
-  disabled,
-  label,
-  onChange,
-  options,
-  value,
-}: {
-  allowEmpty?: boolean;
-  disabled: boolean;
-  label: string;
-  onChange: (value: string) => void;
-  options: string[];
-  value: string;
-}) {
-  const buttonId = useId();
-  const listboxId = useId();
-  const selectedValueId = useId();
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const selectOptions = useMemo(
-    () => [
-      ...(allowEmpty ? [{ label: "None", value: "" }] : []),
-      ...options.map((option) => ({ label: option, value: option })),
-    ],
-    [allowEmpty, options],
-  );
-  const selectedOptionIndex = selectOptions.findIndex((option) => option.value === value);
-  const selectedIndex = selectedOptionIndex >= 0 ? selectedOptionIndex : 0;
-  const selectedOption =
-    selectedOptionIndex >= 0
-      ? selectOptions[selectedOptionIndex]
-      : { label: value || "None", value };
-  const activeOptionId = isOpen ? `${listboxId}-option-${activeIndex}` : undefined;
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [isOpen]);
-
-  function openMenu(nextActiveIndex = selectedIndex) {
-    if (disabled || selectOptions.length === 0) return;
-    setActiveIndex(nextActiveIndex);
-    setIsOpen(true);
-  }
-
-  function selectValue(nextValue: string) {
-    onChange(nextValue);
-    setIsOpen(false);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (disabled || selectOptions.length === 0) return;
-
-    switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault();
-        if (!isOpen) {
-          openMenu(selectedIndex);
-          return;
-        }
-        setActiveIndex((current) => (current + 1) % selectOptions.length);
-        break;
-      case "ArrowUp":
-        event.preventDefault();
-        if (!isOpen) {
-          openMenu(selectedIndex);
-          return;
-        }
-        setActiveIndex((current) => (current - 1 + selectOptions.length) % selectOptions.length);
-        break;
-      case "Enter":
-      case " ":
-        event.preventDefault();
-        if (!isOpen) {
-          openMenu(selectedIndex);
-          return;
-        }
-        selectValue(selectOptions[activeIndex]?.value ?? selectedOption?.value ?? "");
-        break;
-      case "Escape":
-        if (isOpen) {
-          event.preventDefault();
-          setIsOpen(false);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  function handleBlur(event: FocusEvent<HTMLDivElement>) {
-    const nextFocusedElement = event.relatedTarget;
-
-    if (
-      !(nextFocusedElement instanceof Node) ||
-      !event.currentTarget.contains(nextFocusedElement)
-    ) {
-      setIsOpen(false);
-    }
-  }
-
-  return (
-    <div className="relative block space-y-1.5" onBlur={handleBlur} ref={containerRef}>
-      <span className="text-[13px] font-medium text-foreground" id={buttonId}>
-        {label}
-      </span>
-      <button
-        aria-activedescendant={activeOptionId}
-        aria-controls={isOpen ? listboxId : undefined}
-        aria-expanded={isOpen}
-        aria-haspopup="listbox"
-        aria-labelledby={`${buttonId} ${selectedValueId}`}
-        className={cn(
-          "flex min-h-10 w-full items-center justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2.5 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150",
-          "focus-visible:border-accent/40 focus-visible:ring-4 focus-visible:ring-accent/10",
-          disabled
-            ? "cursor-not-allowed opacity-60"
-            : "cursor-pointer hover:border-border-strong hover:bg-surface-strong",
-        )}
-        disabled={disabled}
-        onClick={() => (isOpen ? setIsOpen(false) : openMenu(selectedIndex))}
-        onKeyDown={handleKeyDown}
-        role="combobox"
-        type="button"
-      >
-        <span className="min-w-0 truncate" id={selectedValueId}>
-          {selectedOption?.label ?? "None"}
-        </span>
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted">
-          <ChevronDownIcon
-            className={cn("h-4 w-4 transition-transform duration-150", isOpen ? "rotate-180" : "")}
-          />
-        </span>
-      </button>
-
-      {isOpen ? (
-        <div
-          className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-[8px] border border-border bg-surface py-1 [box-shadow:var(--shadow-elevated)]"
-          id={listboxId}
-          role="listbox"
-        >
-          {selectOptions.map((option, index) => {
-            const isSelected = option.value === value;
-            const isActive = index === activeIndex;
-            const optionId = `${listboxId}-option-${index}`;
-
-            return (
-              <button
-                aria-selected={isSelected}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-[color,background-color] duration-100",
-                  isActive ? "bg-surface-muted text-foreground" : "text-foreground",
-                  isSelected ? "font-semibold" : "font-medium",
-                )}
-                id={optionId}
-                key={option.value}
-                onClick={() => selectValue(option.value)}
-                onMouseEnter={() => setActiveIndex(index)}
-                role="option"
-                tabIndex={-1}
-                type="button"
-              >
-                <span aria-hidden="true" className="w-4 shrink-0 text-muted">
-                  {isSelected ? "✓" : ""}
-                </span>
-                <span className="min-w-0 truncate">{option.label}</span>
-              </button>
-            );
-          })}
         </div>
       ) : null}
     </div>

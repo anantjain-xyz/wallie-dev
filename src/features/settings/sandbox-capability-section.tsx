@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { SelectField } from "@/components/ui/select";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -23,6 +24,10 @@ export function SandboxCapabilitySection({
   workspaceId,
 }: SandboxCapabilitySectionProps) {
   const selectableRepositories = repositories.filter((repository) => !repository.isArchived);
+  const repositoryOptions = selectableRepositories.map((repository) => ({
+    label: repository.fullName,
+    value: repository.id,
+  }));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(
     selectableRepositories[0]?.id ?? "",
   );
@@ -51,24 +56,18 @@ export function SandboxCapabilitySection({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3">
-        <label className="min-w-64 flex-1 space-y-1.5">
-          <span className="text-[13px] font-medium text-foreground">Repository</span>
-          <select
-            className="ui-input"
-            disabled={!canManage || selectableRepositories.length === 0}
-            onChange={(event) => setSelectedRepositoryId(event.target.value)}
-            value={selectedRepositoryId}
-          >
-            {selectableRepositories.map((repository) => (
-              <option key={repository.id} value={repository.id}>
-                {repository.fullName}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectField
+          className="min-w-64 flex-1"
+          disabled={!canManage || repositoryOptions.length === 0}
+          fallbackLabel="No repositories available"
+          label="Repository"
+          onValueChange={setSelectedRepositoryId}
+          options={repositoryOptions}
+          value={selectedRepositoryId}
+        />
         <button
           className="ui-button-primary"
-          disabled={!canManage || selectableRepositories.length === 0 || runCheck.isBusy}
+          disabled={!canManage || repositoryOptions.length === 0 || runCheck.isBusy}
           onClick={() => void runCheck.run()}
           type="button"
         >
