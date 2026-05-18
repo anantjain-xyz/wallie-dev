@@ -410,6 +410,58 @@ describe("OnboardingPageClient", () => {
     expect(primaryFooterButton(html)).toContain("disabled");
   });
 
+  it("allows repository analysis progression when legacy state has a primary profile but no selected repo id", () => {
+    const primary = profile("repo-a");
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: primary,
+            repositories: [repository("repo-a", { profile: primary })],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "repository",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: null,
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Repository profile");
+    expect(primaryFooterButton(html)).not.toContain("disabled");
+  });
+
   it("allows fallback progression when the pipeline editor cannot render", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

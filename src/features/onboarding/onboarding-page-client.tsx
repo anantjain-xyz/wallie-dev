@@ -1920,7 +1920,8 @@ function canCompleteGitHubSetupStep(data: WorkspaceOnboardingData) {
 }
 
 function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {
-  const selectedRepositoryId = data.onboarding.selectedGithubRepositoryId;
+  const selectedRepositoryId =
+    data.onboarding.selectedGithubRepositoryId ?? data.github.primaryProfile?.githubRepositoryId;
   return (
     Boolean(selectedRepositoryId) &&
     data.setupHealth.primaryRepositoryProfile.configured &&
