@@ -32,10 +32,12 @@ type LinearRoutingDraft = {
   statusMappings: Record<LinearRouteKey, string>;
 };
 
-const LINEAR_ROUTE_ACTIONS: Record<Exclude<LinearRouteKey, "merging" | "rework">, string> = {
+const LINEAR_ROUTE_ACTIONS: Record<
+  Exclude<LinearRouteKey, "done" | "merging" | "rework">,
+  string
+> = {
   backlog: "Ignore",
   canceled: "Cancel and archive session",
-  done: "Archive session",
   in_progress: "Continue current stage",
   in_review: "Pause for review",
   todo: "Start current stage",
@@ -106,6 +108,10 @@ function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
   switch (key) {
     case "merging":
       return `Route to ${draft.landStageSlug} stage`;
+    case "done":
+      return draft.monitorStageSlug
+        ? `Route to ${draft.monitorStageSlug} stage`
+        : "Archive session";
     case "rework":
       return `Restart at ${draft.reworkStageSlug} stage`;
     default:

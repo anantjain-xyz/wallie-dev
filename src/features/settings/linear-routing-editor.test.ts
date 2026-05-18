@@ -30,6 +30,16 @@ const stages = [
     promptTemplateMd: "",
     slug: "land",
   },
+  {
+    approverMemberIds: [],
+    description: "Monitor",
+    id: "stage-monitor",
+    name: "Monitor",
+    pipelineId: "pipeline-1",
+    position: 3,
+    promptTemplateMd: "",
+    slug: "monitor",
+  },
 ];
 
 describe("Linear routing editor", () => {
@@ -59,7 +69,7 @@ describe("Linear routing editor", () => {
           monitorStageSlug: "monitor",
           reworkStageSlug: "engineering",
         },
-        stages.map((stage) => stage.slug),
+        stages.filter((stage) => stage.slug !== "monitor").map((stage) => stage.slug),
       ),
     ).toBe("Monitor stage must match a current default pipeline stage.");
     expect(
@@ -97,9 +107,29 @@ describe("Linear routing editor", () => {
     expect(html).not.toContain("<select");
     expect(html).toContain("Restart at engineering stage");
     expect(html).toContain("Route to land stage");
+    expect(html).toContain("Route to monitor stage");
     expect(html).toContain("Save routing");
     expect(html).toContain("engineering");
     expect(html).toContain("land");
+    expect(html).toContain("monitor");
+  });
+
+  it("renders monitor None as an explicit Done archive opt-out", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinearRoutingEditor, {
+        canManage: true,
+        routing: {
+          ...DEFAULT_LINEAR_ROUTING_CONFIG,
+          monitorStageSlug: null,
+        },
+        setFlashMessage: vi.fn(),
+        stages,
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+
+    expect(html).toContain("Archive session");
+    expect(html).toContain("None");
   });
 
   it("preserves unmatched saved stage slugs in the selector display", () => {
