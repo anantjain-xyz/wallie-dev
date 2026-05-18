@@ -95,7 +95,6 @@ export type OnboardingSetupHealth = {
     updatedAt: string | null;
   };
   workspaceSecrets: {
-    anthropicApiKeyConfigured: boolean;
     configuredKeys: string[];
   };
   primaryRepositoryProfile: {

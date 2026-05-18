@@ -197,11 +197,6 @@ function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvid
       return "npm install -g @openai/codex";
     case "claude-code":
       return "npm install -g @anthropic-ai/claude-code";
-    case "anthropic-api":
-      // No CLI to install — runner calls the Messages API directly.
-      // Pipeline normally skips sandbox provisioning for this provider; this
-      // branch only fires if a caller explicitly requests a sandbox anyway.
-      return "true";
   }
 }
 

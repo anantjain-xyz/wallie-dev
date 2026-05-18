@@ -182,7 +182,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
       latestSandboxCapabilityCheck: null,
       linearKey: { configured: false, status: "missing", updatedAt: null },
       linearRouting: { configured: false, status: "missing", updatedAt: null },
-      workspaceSecrets: { anthropicApiKeyConfigured: false, configuredKeys: [] },
+      workspaceSecrets: { configuredKeys: [] },
       primaryRepositoryProfile: {
         configured: false,
         fullName: null,

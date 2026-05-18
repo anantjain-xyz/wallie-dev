@@ -89,17 +89,12 @@ function resolveModel(config: AgentConfigMap): string {
 
 export function buildRuntimeReadiness(input: {
   agentConfig: AgentConfigMap;
-  anthropicApiKeyConfigured?: boolean;
   codexConnection: OnboardingSetupHealth["codexConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
-  secretKeys: readonly string[];
 }): RuntimeReadiness {
   const provider = resolveProvider(input.agentConfig);
   const model = resolveModel(input.agentConfig);
-  const secretKeySet = new Set(input.secretKeys);
-  const anthropicApiKeyConfigured =
-    input.anthropicApiKeyConfigured ?? secretKeySet.has("ANTHROPIC_API_KEY");
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) => input.agentConfig[key] === undefined,
   );
@@ -115,7 +110,7 @@ export function buildRuntimeReadiness(input: {
       error:
         provider === "codex"
           ? 'Model must start with "gpt-", "o1", "o3", or "o4" for Codex.'
-          : 'Model must start with "claude-" for Anthropic providers.',
+          : 'Model must start with "claude-" for Claude Code.',
     });
   }
 
@@ -143,22 +138,11 @@ export function buildRuntimeReadiness(input: {
         step: "runtime",
       });
       break;
-    case "anthropic-api":
-      requirements.push({
-        detail: anthropicApiKeyConfigured
-          ? "ANTHROPIC_API_KEY is stored in workspace secrets."
-          : "Add ANTHROPIC_API_KEY to workspace secrets.",
-        id: "anthropic-key",
-        label: "Anthropic API key",
-        passed: anthropicApiKeyConfigured,
-        step: "runtime",
-      });
-      break;
     case "claude-code":
       requirements.push(
         {
           detail: providerModelValid
-            ? "Claude Code model uses an Anthropic-compatible claude-* id."
+            ? "Claude Code model uses a claude-* id."
             : "Claude Code requires a claude-* model id.",
           id: "claude-model",
           label: "Claude model",
@@ -199,11 +183,9 @@ export function buildVerifyChecklist(input: {
 }): VerifyChecklistItem[] {
   const runtimeReadiness = buildRuntimeReadiness({
     agentConfig: input.agentConfig,
-    anthropicApiKeyConfigured: input.health.workspaceSecrets.anthropicApiKeyConfigured,
     codexConnection: input.health.codexConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,
-    secretKeys: input.health.workspaceSecrets.configuredKeys,
   });
   const completedSteps = new Set(input.onboarding.completedSteps);
   const skippedSteps = new Set(input.onboarding.skippedSteps);
