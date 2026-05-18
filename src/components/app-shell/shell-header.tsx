@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ThemeToggle } from "@/components/app-shell/theme-toggle";
 import { LogoutIcon, PlusIcon } from "@/components/shared/icons";
 import {
   shouldShowOnboardingResumeCta,
@@ -106,6 +107,7 @@ export function ShellHeader({ navItems, onboarding, viewerEmail, workspace }: Sh
             New session
           </button>
         )}
+        <ThemeToggle />
         <form action="/auth/signout" method="post">
           <button type="submit" className="ui-icon-button" aria-label={signOutLabel}>
             <LogoutIcon className="h-3.5 w-3.5" />

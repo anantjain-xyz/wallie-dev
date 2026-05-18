@@ -11,6 +11,24 @@ const newsreader = Newsreader({
   variable: "--font-newsreader",
 });
 
+const themeBootstrapScript = `
+(() => {
+  try {
+    const storedTheme = window.localStorage.getItem("wallie-theme");
+    const theme =
+      storedTheme === "light" || storedTheme === "dark"
+        ? storedTheme
+        : window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+
+    document.documentElement.dataset.theme = theme;
+  } catch {
+    document.documentElement.dataset.theme = "light";
+  }
+})();
+`;
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://wallie.cc"),
   title: {
@@ -26,8 +44,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`h-full antialiased ${newsreader.variable}`}>
+    <html
+      lang="en"
+      className={`h-full antialiased ${newsreader.variable}`}
+      suppressHydrationWarning
+    >
       <body className="min-h-full font-sans">
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         <a href="#main-content" className="ui-skip-link">
           Skip to Main Content
         </a>
