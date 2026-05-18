@@ -13,6 +13,7 @@ import {
   DEFAULT_WALLIE_SKILLS,
   WALLIE_AGENTS_INSTRUCTIONS_PATH,
   WALLIE_SKILL_VERSION,
+  wallieSkillManifestHash,
 } from "@/lib/repo-onboarding/skills";
 import type { Database } from "@/lib/supabase/database.types";
 import { asLooseSupabaseClient } from "@/lib/supabase/loose";
@@ -74,6 +75,10 @@ type GitHubFileContent = {
 };
 
 export type StartRepositoryOnboardingResult = {
+  onboarding: RepositoryOnboardingState;
+};
+
+export type MarkRepositoryOnboardingReadyResult = {
   onboarding: RepositoryOnboardingState;
 };
 
@@ -165,6 +170,30 @@ export async function getRepositoryOnboardingState(input: {
 }): Promise<RepositoryOnboardingState> {
   const row = await loadOnboardingRow(input);
   return mapOnboardingRow(row, input.repositoryId);
+}
+
+export async function markRepositoryOnboardingReady(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<MarkRepositoryOnboardingReadyResult> {
+  await loadRepository(input.admin, input);
+
+  const onboarding = await upsertOnboardingState({
+    admin: input.admin,
+    conflictReport: [],
+    installedSkillHash: wallieSkillManifestHash(),
+    installedSkillVersion: WALLIE_SKILL_VERSION,
+    lastError: null,
+    repositoryId: input.repositoryId,
+    setupBranchName: null,
+    setupPrNumber: null,
+    setupPrUrl: null,
+    status: "ready",
+    workspaceId: input.workspaceId,
+  });
+
+  return { onboarding };
 }
 
 async function loadOnboardingRow(input: {

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { repositoryOnboardingParamsSchema } from "@/lib/repo-onboarding/contracts";
+import {
+  repositoryOnboardingManualReadyPayloadSchema,
+  repositoryOnboardingParamsSchema,
+} from "@/lib/repo-onboarding/contracts";
 import {
   getRepositoryOnboardingState,
+  markRepositoryOnboardingReady,
   startRepositoryOnboarding,
 } from "@/lib/repo-onboarding/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -30,6 +34,21 @@ async function authorize(context: RouteContext) {
   }
 
   return { parsed: parsed.data, status: 200 as const };
+}
+
+function manualReadyErrorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : null;
+  if (message === "Repository not found.") {
+    return NextResponse.json({ error: message }, { status: 404 });
+  }
+  if (message === "Wallie setup is unavailable for archived repositories.") {
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+  if (message === "GitHub installation not found for repository.") {
+    return NextResponse.json({ error: message }, { status: 409 });
+  }
+
+  throw error;
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -60,6 +79,42 @@ export async function POST(_request: Request, context: RouteContext) {
     repositoryId: authorized.parsed.repositoryId,
     workspaceId: authorized.parsed.workspaceId,
   });
+
+  return NextResponse.json(result, { status: 200 });
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const authorized = await authorize(context);
+  if ("error" in authorized) {
+    return NextResponse.json({ error: authorized.error }, { status: authorized.status });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const parsed = repositoryOnboardingManualReadyPayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid onboarding action." },
+      { status: 400 },
+    );
+  }
+
+  const admin = createSupabaseAdminClient();
+  let result;
+  try {
+    result = await markRepositoryOnboardingReady({
+      admin,
+      repositoryId: authorized.parsed.repositoryId,
+      workspaceId: authorized.parsed.workspaceId,
+    });
+  } catch (caught) {
+    return manualReadyErrorResponse(caught);
+  }
 
   return NextResponse.json(result, { status: 200 });
 }

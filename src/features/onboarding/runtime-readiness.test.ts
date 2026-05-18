@@ -48,6 +48,12 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       id: "check-1",
       status: "success",
     },
+    selectedRepository: {
+      configured: true,
+      fullName: "acme/app",
+      repositoryId,
+      status: "ready",
+    },
     linearKey: { configured: true, status: "present", updatedAt: "2026-05-16T18:00:00.000Z" },
     linearRouting: { configured: true, status: "present", updatedAt: "2026-05-16T18:00:00.000Z" },
     primaryRepositoryProfile: {
@@ -76,6 +82,7 @@ function onboarding(overrides: Partial<WorkspaceOnboardingState> = {}): Workspac
     currentStep: "verify",
     dismissedAt: null,
     id: "onboarding-1",
+    selectedGithubRepositoryId: repositoryId,
     skippedSteps: [],
     status: "in_progress",
     updatedAt: "2026-05-16T18:00:00.000Z",

@@ -33,6 +33,14 @@ export type RepositoryOnboardingResponse = {
   onboarding: RepositoryOnboardingState;
 };
 
+export const repositoryOnboardingManualReadyPayloadSchema = z.object({
+  action: z.literal("mark_ready"),
+});
+
+export type RepositoryOnboardingManualReadyPayload = z.infer<
+  typeof repositoryOnboardingManualReadyPayloadSchema
+>;
+
 export const repositoryOnboardingParamsSchema = z.object({
   repositoryId: z.string().uuid("Repository id is invalid."),
   workspaceId: z.string().uuid("Workspace id is invalid."),

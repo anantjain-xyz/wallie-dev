@@ -31,8 +31,10 @@ type GitHubConnectionPanelProps = {
   onChange?: (github: WorkspaceGitHubData) => void;
   onSelectRepository?: (repositoryId: string) => void;
   renderRepositoryDetails?: (repository: WorkspaceGitHubRepository) => ReactNode;
+  allowManualSetupComplete?: boolean;
   selectedRepositoryId?: string | null;
   setFlashMessage?: (message: FlashMessage) => void;
+  setupActionScope?: "all" | "none" | "selected";
   source?: "onboarding" | "settings";
   workspaceId: string;
 };
@@ -170,8 +172,10 @@ export function GitHubConnectionPanel({
   onChange,
   onSelectRepository,
   renderRepositoryDetails,
+  allowManualSetupComplete = false,
   selectedRepositoryId,
   setFlashMessage = noopFlashMessage,
+  setupActionScope = "all",
   source = "settings",
   workspaceId,
 }: GitHubConnectionPanelProps) {
@@ -293,6 +297,29 @@ export function GitHubConnectionPanel({
           : "Wallie setup PR created.",
   });
 
+  const markOnboardingReady = useApiAction<RepositoryOnboardingResponse, [repositoryId: string]>({
+    call: (repositoryId) =>
+      fetch(`/api/workspaces/${workspaceId}/repositories/${repositoryId}/onboarding`, {
+        body: JSON.stringify({ action: "mark_ready" }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "PATCH",
+      }),
+    errorText: "Manual Wallie setup confirmation failed.",
+    onSuccess: (payload, [repositoryId]) => {
+      const nextRepositories = mergeRepositoryOnboardingState(
+        latestRepositoriesRef.current,
+        repositoryId,
+        payload.onboarding,
+      );
+      if (!isControlled) setLocalRepositories(nextRepositories);
+      emitChange({ repositories: nextRepositories });
+    },
+    setFlashMessage,
+    successText: "Repository marked ready for Wallie.",
+  });
+
   const visibleRepositories = useMemo(
     () =>
       hideArchivedRepositories
@@ -383,6 +410,13 @@ export function GitHubConnectionPanel({
         <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
           {visibleRepositories.map((repository) => {
             const selected = selectedRepositoryId === repository.id;
+            const showSetupAction =
+              setupActionScope === "all" || (setupActionScope === "selected" && selected);
+            const showManualSetupComplete =
+              allowManualSetupComplete &&
+              showSetupAction &&
+              repository.onboarding.status !== "ready";
+            const setupActionBusy = startOnboarding.isBusy || markOnboardingReady.isBusy;
             return (
               <li className="flex flex-col gap-3 px-5 py-4" key={repository.id}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -458,7 +492,7 @@ export function GitHubConnectionPanel({
                         Select
                       </button>
                     ) : null}
-                    {repository.onboarding.setupPrUrl ? (
+                    {showSetupAction && repository.onboarding.setupPrUrl ? (
                       <a
                         className="ui-button"
                         href={repository.onboarding.setupPrUrl}
@@ -468,19 +502,31 @@ export function GitHubConnectionPanel({
                         View setup PR
                       </a>
                     ) : null}
-                    <button
-                      className="ui-button-primary"
-                      disabled={
-                        !canManage ||
-                        repository.isArchived ||
-                        startOnboarding.isBusy ||
-                        repository.onboarding.status === "ready"
-                      }
-                      onClick={() => void startOnboarding.run(repository.id)}
-                      type="button"
-                    >
-                      {startOnboarding.isBusy ? "Setting up..." : "Set up Wallie"}
-                    </button>
+                    {showSetupAction ? (
+                      <button
+                        className="ui-button-primary"
+                        disabled={
+                          !canManage ||
+                          repository.isArchived ||
+                          setupActionBusy ||
+                          repository.onboarding.status === "ready"
+                        }
+                        onClick={() => void startOnboarding.run(repository.id)}
+                        type="button"
+                      >
+                        {startOnboarding.isBusy ? "Setting up..." : "Set up Wallie"}
+                      </button>
+                    ) : null}
+                    {showManualSetupComplete ? (
+                      <button
+                        className="ui-button"
+                        disabled={!canManage || repository.isArchived || setupActionBusy}
+                        onClick={() => void markOnboardingReady.run(repository.id)}
+                        type="button"
+                      >
+                        {markOnboardingReady.isBusy ? "Marking ready..." : "Mark setup complete"}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 

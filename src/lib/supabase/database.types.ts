@@ -1187,6 +1187,7 @@ export type Database = {
           current_step: string
           dismissed_at: string | null
           id: string
+          selected_github_repository_id: string | null
           skipped_steps: string[]
           status: string
           updated_at: string
@@ -1199,6 +1200,7 @@ export type Database = {
           current_step?: string
           dismissed_at?: string | null
           id?: string
+          selected_github_repository_id?: string | null
           skipped_steps?: string[]
           status?: string
           updated_at?: string
@@ -1211,12 +1213,20 @@ export type Database = {
           current_step?: string
           dismissed_at?: string | null
           id?: string
+          selected_github_repository_id?: string | null
           skipped_steps?: string[]
           status?: string
           updated_at?: string
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "workspace_onboarding_selected_github_repository_id_fkey"
+            columns: ["selected_github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "workspace_onboarding_workspace_id_fkey"
             columns: ["workspace_id"]

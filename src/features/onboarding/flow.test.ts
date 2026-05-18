@@ -5,6 +5,7 @@ import {
   buildOnboardingContinuePatch,
   buildOnboardingExitPatch,
   buildOnboardingRailNavigationPatch,
+  buildOnboardingRepositorySelectionPatch,
   buildOnboardingSkipPatch,
   getOnboardingStepRailItems,
   mapOnboardingResumeState,
@@ -22,6 +23,7 @@ function onboardingState(
     currentStep: "github",
     dismissedAt: null,
     id: "onboarding-1",
+    selectedGithubRepositoryId: null,
     skippedSteps: [],
     status: "not_started",
     updatedAt: "2026-05-16T18:00:00.000Z",
@@ -78,6 +80,51 @@ describe("onboarding flow helpers", () => {
     ).toEqual({
       currentStep: "linear",
       status: "in_progress",
+    });
+  });
+
+  it("selects a repository and clears stale repository-dependent completion", () => {
+    expect(
+      buildOnboardingRepositorySelectionPatch(
+        onboardingState({
+          completedSteps: ["github", "repository", "pipeline", "runtime", "verify"],
+          selectedGithubRepositoryId: "repo-old",
+          skippedSteps: ["linear", "runtime"],
+          status: "completed",
+        }),
+        "repo-new",
+      ),
+    ).toEqual({
+      completedSteps: ["github", "pipeline"],
+      selectedGithubRepositoryId: "repo-new",
+      skippedSteps: ["linear"],
+      status: "in_progress",
+    });
+  });
+
+  it("does not build a repository selection patch when the selected repo is unchanged", () => {
+    expect(
+      buildOnboardingRepositorySelectionPatch(
+        onboardingState({ selectedGithubRepositoryId: "repo-1" }),
+        "repo-1",
+      ),
+    ).toBeNull();
+  });
+
+  it("persists a fallback-equivalent repository selection without clearing progress", () => {
+    expect(
+      buildOnboardingRepositorySelectionPatch(
+        onboardingState({
+          completedSteps: ["github", "repository", "pipeline", "runtime", "verify"],
+          selectedGithubRepositoryId: null,
+          skippedSteps: ["linear"],
+          status: "completed",
+        }),
+        "repo-1",
+        "repo-1",
+      ),
+    ).toEqual({
+      selectedGithubRepositoryId: "repo-1",
     });
   });
 

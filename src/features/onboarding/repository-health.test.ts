@@ -67,12 +67,21 @@ function github(
 }
 
 describe("buildRepositorySetupHealth", () => {
-  it("marks an active primary repository profile as configured", () => {
+  it("marks a selected repository with a matching primary profile as configured", () => {
     const primary = profile("repo-1");
 
     expect(
-      buildRepositorySetupHealth(github(primary, [repository("repo-1", { profile: primary })])),
+      buildRepositorySetupHealth(
+        github(primary, [repository("repo-1", { profile: primary })]),
+        "repo-1",
+      ),
     ).toMatchObject({
+      selectedRepository: {
+        configured: true,
+        fullName: "acme/repo-1",
+        repositoryId: "repo-1",
+        status: "ready",
+      },
       primaryRepositoryProfile: {
         configured: true,
         fullName: "acme/repo-1",
@@ -87,14 +96,50 @@ describe("buildRepositorySetupHealth", () => {
     });
   });
 
-  it("treats an archived primary repository profile as missing", () => {
+  it("treats a selected repository profile as missing when primary points elsewhere", () => {
+    const primary = profile("repo-2");
+
+    expect(
+      buildRepositorySetupHealth(
+        github(primary, [repository("repo-1"), repository("repo-2", { profile: primary })]),
+        "repo-1",
+      ),
+    ).toMatchObject({
+      selectedRepository: {
+        configured: true,
+        fullName: "acme/repo-1",
+        repositoryId: "repo-1",
+        status: "ready",
+      },
+      primaryRepositoryProfile: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+      repositorySetup: {
+        configured: true,
+        repositoryId: "repo-1",
+        status: "ready",
+      },
+    });
+  });
+
+  it("treats an archived selected repository as missing", () => {
     const primary = profile("repo-1");
 
     expect(
       buildRepositorySetupHealth(
         github(primary, [repository("repo-1", { isArchived: true, profile: primary })]),
+        "repo-1",
       ),
     ).toMatchObject({
+      selectedRepository: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
       primaryRepositoryProfile: {
         configured: false,
         fullName: null,

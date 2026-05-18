@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   getRepositoryOnboardingState: vi.fn(),
+  markRepositoryOnboardingReady: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   startRepositoryOnboarding: vi.fn(),
 }));
@@ -17,10 +18,11 @@ vi.mock("@/lib/workspaces/access", () => ({
 
 vi.mock("@/lib/repo-onboarding/server", () => ({
   getRepositoryOnboardingState: mocked.getRepositoryOnboardingState,
+  markRepositoryOnboardingReady: mocked.markRepositoryOnboardingReady,
   startRepositoryOnboarding: mocked.startRepositoryOnboarding,
 }));
 
-import { GET, POST } from "./route";
+import { GET, PATCH, POST } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const REPOSITORY_ID = "11111111-1111-4111-8111-111111111111";
@@ -96,5 +98,74 @@ describe("repository onboarding route", () => {
       repositoryId: REPOSITORY_ID,
       workspaceId: WORKSPACE_ID,
     });
+  });
+
+  it("marks repository onboarding ready manually", async () => {
+    grantAccess();
+    const admin = {};
+    const readyOnboarding = {
+      ...onboarding,
+      setupBranchName: null,
+      setupPrNumber: null,
+      setupPrUrl: null,
+      status: "ready",
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.markRepositoryOnboardingReady.mockResolvedValue({ onboarding: readyOnboarding });
+
+    const response = await PATCH(
+      new Request("http://localhost", {
+        body: JSON.stringify({ action: "mark_ready" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ onboarding: readyOnboarding });
+    expect(mocked.markRepositoryOnboardingReady).toHaveBeenCalledWith({
+      admin,
+      repositoryId: REPOSITORY_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
+  it.each([
+    ["Repository not found.", 404],
+    ["Wallie setup is unavailable for archived repositories.", 400],
+    ["GitHub installation not found for repository.", 409],
+  ])("maps %s manual ready domain errors to client responses", async (message, status) => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValue({});
+    mocked.markRepositoryOnboardingReady.mockRejectedValue(new Error(message));
+
+    const response = await PATCH(
+      new Request("http://localhost", {
+        body: JSON.stringify({ action: "mark_ready" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: message });
+  });
+
+  it("rejects unknown manual onboarding actions", async () => {
+    grantAccess();
+
+    const response = await PATCH(
+      new Request("http://localhost", {
+        body: JSON.stringify({ action: "skip" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocked.markRepositoryOnboardingReady).not.toHaveBeenCalled();
   });
 });

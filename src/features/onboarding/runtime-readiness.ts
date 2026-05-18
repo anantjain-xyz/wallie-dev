@@ -210,18 +210,22 @@ export function buildVerifyChecklist(input: {
       step: "github",
     },
     {
-      detail:
-        input.health.primaryRepositoryProfile.fullName ?? "Save a primary repository profile.",
+      detail: input.health.primaryRepositoryProfile.configured
+        ? (input.health.primaryRepositoryProfile.fullName ?? "Primary repository profile saved.")
+        : input.health.selectedRepository.fullName
+          ? `Analyze and save a repository profile for ${input.health.selectedRepository.fullName}.`
+          : "Select a repository before saving a repository profile.",
       id: "repository-profile",
-      label: "Primary repository profile saved",
+      label: "Selected repository profile saved",
       passed: input.health.primaryRepositoryProfile.configured,
       step: "repository",
     },
     {
-      detail:
-        input.health.repositorySetup.status === "ready"
+      detail: input.health.selectedRepository.configured
+        ? input.health.repositorySetup.status === "ready"
           ? "Selected repository setup is ready."
-          : `Selected repository setup is ${input.health.repositorySetup.status}.`,
+          : `Selected repository setup is ${input.health.repositorySetup.status}.`
+        : "Select a repository before running Wallie setup.",
       id: "repository-setup",
       label: "Selected repository setup ready",
       passed:
