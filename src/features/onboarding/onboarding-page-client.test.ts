@@ -672,10 +672,10 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("No encrypted workspace secret is required for the selected codex");
     expect(html).toContain("Repository environment variables");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
-    expect(html).toContain("Public/deployment");
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
-    expect(html).toContain("Server env");
     expect(html).toContain('placeholder="SECRET_KEY"');
+    expect(html).not.toContain("Public/deployment");
+    expect(html).not.toContain("Server env");
     expect(html).not.toContain("Workspace secrets");
     expect(html).not.toContain("<select");
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
@@ -719,12 +719,12 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("ANTHROPIC_API_KEY");
-    expect(html).toContain("Server env");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
-    expect(html).toContain("Public/deployment");
     expect(html).toContain(
       "No encrypted workspace secret is required for the selected claude-code",
     );
+    expect(html).not.toContain("Public/deployment");
+    expect(html).not.toContain("Server env");
     expect(html).not.toContain("Anthropic API key");
     expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
   });

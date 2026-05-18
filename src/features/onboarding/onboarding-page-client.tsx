@@ -277,18 +277,6 @@ function presenceBadge(configured: boolean) {
     : { tone: "warning" as const, value: "Missing" };
 }
 
-function repositoryEnvKeyLabel(key: string, runtimeCredentialKeys: ReadonlySet<string>) {
-  if (runtimeCredentialKeys.has(key)) {
-    return "Runtime credential";
-  }
-
-  if (key.startsWith("NEXT_PUBLIC_")) {
-    return "Public/deployment";
-  }
-
-  return "Server env";
-}
-
 function secretBusyActionKey(key: string) {
   return `secret:${key.trim().toUpperCase()}`;
 }
@@ -1320,17 +1308,12 @@ function RuntimeStep({
                 const isSavingSecret = busyAction === secretBusyActionKey(key);
                 const canSaveVariable =
                   data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
-                const scopeLabel = repositoryEnvKeyLabel(key, runtimeCredentialKeys);
-
                 return (
                   <div className="space-y-2 px-4 py-3" key={key}>
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                       <code className="break-all font-mono text-[13px] font-medium text-foreground">
                         {key}
                       </code>
-                      <Badge tone={key.startsWith("NEXT_PUBLIC_") ? "neutral" : "accent"}>
-                        {scopeLabel}
-                      </Badge>
                       <Badge tone={secret ? "success" : "warning"}>
                         {secret ? secretPreviewLabel(secret) : "Needs value"}
                       </Badge>
