@@ -87,7 +87,7 @@ export function WorkspaceOnboardingForm() {
           autoComplete="organization"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="Northwind Labs"
+          placeholder="Acme Inc"
           className="ui-input"
         />
       </label>
@@ -108,7 +108,7 @@ export function WorkspaceOnboardingForm() {
           spellCheck={false}
           value={slug}
           onChange={(event) => setSlug(event.target.value)}
-          placeholder={slugifyWorkspaceName(name || "Northwind Labs")}
+          placeholder={slugifyWorkspaceName(name || "Acme Inc")}
           className="ui-input"
         />
       </label>
