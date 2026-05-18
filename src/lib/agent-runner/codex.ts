@@ -15,9 +15,10 @@ export interface CodexRunnerOptions {
 /**
  * Codex CLI agent runner.
  *
- * Runs `codex exec` inside a per-session sandbox. The credential is injected
- * only into the process environment, using the official CLI env var for the
- * saved credential type. Streams stdout line-by-line as AgentEvents.
+ * Runs `codex exec` inside a per-session sandbox. Platform API keys are
+ * injected only into the process environment; Codex access tokens are first
+ * logged into the fresh sandbox via the CLI so it can materialize auth.json.
+ * Streams stdout line-by-line as AgentEvents.
  *
  * Expects `codex` on PATH inside the sandbox (installed at sandbox boot).
  */
@@ -49,7 +50,9 @@ export class CodexRunner implements AgentRunner {
       "--json",
       "-",
     ];
-    const shellCmd = `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
+    const execCmd = `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
+    const loginCmd = codexCredentialLoginCommand(this.options.credential);
+    const shellCmd = [loginCmd, execCmd].filter(Boolean).join(" && ");
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
@@ -149,6 +152,15 @@ function codexCredentialEnv(credential: CodexCredential): Record<string, string>
       return { CODEX_ACCESS_TOKEN: credential.secret };
     case "platform_api_key":
       return { OPENAI_API_KEY: credential.secret };
+  }
+}
+
+function codexCredentialLoginCommand(credential: CodexCredential): string | null {
+  switch (credential.type) {
+    case "codex_access_token":
+      return `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token >/dev/stderr`;
+    case "platform_api_key":
+      return null;
   }
 }
 

@@ -43,7 +43,7 @@ describe("CodexRunner", () => {
     ).rejects.toThrow(/requires a sandbox/);
   });
 
-  it("injects a Codex access token env var and streams events from scripted stdout", async () => {
+  it("logs in with a Codex access token before streaming events from scripted stdout", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
       (c) => c.cmd === "bash",
@@ -84,6 +84,10 @@ describe("CodexRunner", () => {
     const [call] = sandbox.calls;
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
+    expect(call.args[1]).toContain(
+      `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token`,
+    );
+    expect(call.args[1]).toContain("&& codex 'exec' '--model' 'gpt-5.5'");
     expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.5'");
     expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
@@ -107,6 +111,7 @@ describe("CodexRunner", () => {
 
     expect(sandbox.calls[0]?.opts.env).toMatchObject({ OPENAI_API_KEY: "sk-test" });
     expect(sandbox.calls[0]?.opts.env).not.toHaveProperty("CODEX_ACCESS_TOKEN");
+    expect(sandbox.calls[0]?.args[1]).not.toContain("codex login --with-access-token");
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {
