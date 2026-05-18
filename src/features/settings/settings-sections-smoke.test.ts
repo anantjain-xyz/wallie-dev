@@ -157,6 +157,28 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain('href="#codex"');
   });
 
+  it("keeps provider access visible to non-admin workspace members", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentConfigSection, {
+        canManage: false,
+        initialAgentConfig: {
+          agent_model: "gpt-5-codex",
+          agent_provider: "codex",
+          concurrency_limit: 1,
+          max_retries: 3,
+          stall_timeout_ms: 300000,
+        },
+        setFlashMessage: vi.fn(),
+        workspaceId,
+      }),
+    );
+
+    expect(html).toContain("Workspace admins can configure coding agent settings");
+    expect(html).toContain("Provider access");
+    expect(html).toContain("Sessions run with the Codex account connected by the session creator");
+    expect(html).toContain("Checking connection");
+  });
+
   it("renders the sandbox repository picker with the shared combobox", () => {
     const html = renderToStaticMarkup(
       createElement(SandboxCapabilitySection, {

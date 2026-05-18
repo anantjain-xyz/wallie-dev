@@ -420,9 +420,12 @@ export function AgentConfigSection({
           </div>
         </div>
       ) : (
-        <p className="text-[13px] leading-6 text-muted">
-          Workspace admins can configure coding agent settings from this page.
-        </p>
+        <div className="space-y-4">
+          <p className="text-[13px] leading-6 text-muted">
+            Workspace admins can configure coding agent settings from this page.
+          </p>
+          <ProviderAccessPanel connectFlash={codexConnectFlash} provider={selectedAgentProvider} />
+        </div>
       )}
     </Section>
   );
