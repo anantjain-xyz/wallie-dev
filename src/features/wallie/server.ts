@@ -18,19 +18,21 @@ export async function loadWallieSessionData(input: {
   workspaceId: string;
 }) {
   const admin = createSupabaseAdminClient();
+  const runRowsPromise = input.supabase
+    .from("agent_runs")
+    .select(runSelect)
+    .eq("session_id", input.session.id)
+    .order("created_at", { ascending: false });
+  const secretRowsPromise =
+    WALLIE_REQUIRED_SECRET_KEYS.length > 0
+      ? admin
+          .from("workspace_secrets")
+          .select("key")
+          .eq("workspace_id", input.workspaceId)
+          .in("key", [...WALLIE_REQUIRED_SECRET_KEYS])
+      : Promise.resolve({ data: [], error: null });
   const [{ data: runRows, error: runError }, { data: secretRows, error: secretError }] =
-    await Promise.all([
-      input.supabase
-        .from("agent_runs")
-        .select(runSelect)
-        .eq("session_id", input.session.id)
-        .order("created_at", { ascending: false }),
-      admin
-        .from("workspace_secrets")
-        .select("key")
-        .eq("workspace_id", input.workspaceId)
-        .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]),
-    ]);
+    await Promise.all([runRowsPromise, secretRowsPromise]);
 
   if (runError) {
     throw runError;

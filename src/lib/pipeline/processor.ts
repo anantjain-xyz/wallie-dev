@@ -12,7 +12,6 @@ import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { CodexNotConnectedError, getCodexAccessTokenForSession } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
-import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest } from "./pull-request";
@@ -142,9 +141,7 @@ async function runStage(input: {
       session,
     });
 
-    // Sandbox-needing runners (codex, claude-code) require a GitHub repo to
-    // clone. Text-only runners (anthropic-api) skip both — saving the
-    // sandbox-spawn latency that the issue called out.
+    // CLI-backed runners require a GitHub repo to clone into the sandbox.
     if (resolvedRunner.runner.requiresSandbox) {
       github = await loadGitHubContext(admin, session.workspace_id);
       if (!github) {
@@ -511,20 +508,6 @@ async function insertArtifact(
   if (error) throw error;
 }
 
-async function loadAnthropicApiKey(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<string | null> {
-  const { data, error } = await admin
-    .from("workspace_secrets")
-    .select("encrypted_value")
-    .eq("workspace_id", workspaceId)
-    .eq("key", "ANTHROPIC_API_KEY")
-    .maybeSingle();
-  if (error) return null;
-  return data ? decryptSecretValue(data.encrypted_value) : null;
-}
-
 async function resolveAgentRunner(input: {
   admin: AdminClient;
   model?: string;
@@ -546,20 +529,6 @@ async function resolveAgentRunner(input: {
       }
       throw error;
     }
-  }
-
-  if (input.provider === "anthropic-api") {
-    const apiKey = await loadAnthropicApiKey(input.admin, input.session.workspace_id);
-    if (!apiKey) {
-      throw new Error(
-        "anthropic-api provider requires ANTHROPIC_API_KEY in workspace secrets. Add it under Settings → Integrations → Anthropic.",
-      );
-    }
-    return {
-      runner: createAgentRunner("anthropic-api", {
-        anthropic: { apiKey, model: input.model },
-      }),
-    };
   }
 
   return { runner: createAgentRunner(input.provider) };

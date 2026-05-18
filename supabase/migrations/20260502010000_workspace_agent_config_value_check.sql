@@ -8,7 +8,7 @@
 --   concurrency_limit  : integer in [1, 20]
 --   stall_timeout_ms   : integer in [30_000, 1_800_000]
 --   max_retries        : integer in [0, 10]
---   agent_provider     : one of {codex, claude_code, anthropic_api}
+--   agent_provider     : one of {codex, claude_code}
 --   agent_model        : non-empty string starting with claude-, gpt-, o1, o3, or o4
 --   (any other key)    : pass-through (forward-compatible for future config keys
 --                        until the schema is extended)
@@ -30,7 +30,7 @@ alter table public.workspace_agent_config
         and (value_json::text)::numeric between 0 and 10
       when 'agent_provider' then
         jsonb_typeof(value_json) = 'string'
-        and value_json #>> '{}' in ('codex', 'claude_code', 'anthropic_api')
+        and value_json #>> '{}' in ('codex', 'claude_code')
       when 'agent_model' then
         jsonb_typeof(value_json) = 'string'
         and length(value_json #>> '{}') between 1 and 100

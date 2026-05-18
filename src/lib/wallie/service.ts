@@ -317,6 +317,10 @@ async function loadRepositoryForRun(
 }
 
 async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
+  if (WALLIE_REQUIRED_SECRET_KEYS.length === 0) {
+    return [];
+  }
+
   const { data, error } = await admin
     .from("workspace_secrets")
     .select("key")

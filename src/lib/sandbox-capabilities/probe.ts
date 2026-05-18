@@ -31,8 +31,6 @@ function agentCliCommand(provider: AgentProvider): string {
       return "command -v codex && codex --version";
     case "claude-code":
       return "command -v claude && claude --version";
-    case "anthropic-api":
-      return "printf 'anthropic-api uses hosted API; no CLI required\\n'";
   }
 }
 

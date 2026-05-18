@@ -62,8 +62,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       status: "ready",
     },
     workspaceSecrets: {
-      anthropicApiKeyConfigured: true,
-      configuredKeys: ["ANTHROPIC_API_KEY", "LINEAR_API_KEY"],
+      configuredKeys: ["LINEAR_API_KEY"],
     },
     ...overrides,
   };
@@ -93,7 +92,6 @@ describe("buildRuntimeReadiness", () => {
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
-        secretKeys: [],
       }).canComplete,
     ).toBe(true);
 
@@ -103,36 +101,8 @@ describe("buildRuntimeReadiness", () => {
         codexConnection: { connected: false, expiresAt: null, status: "missing", updatedAt: null },
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
-        secretKeys: [],
       }).canComplete,
     ).toBe(false);
-  });
-
-  it("requires ANTHROPIC_API_KEY for anthropic-api", () => {
-    const base = {
-      agentConfig: { agent_model: "claude-sonnet-4-5", agent_provider: "anthropic-api" },
-      codexConnection: health().codexConnection,
-      primaryRepositoryId: repositoryId,
-      repositorySetup: health().repositorySetup,
-    };
-
-    expect(buildRuntimeReadiness({ ...base, secretKeys: ["ANTHROPIC_API_KEY"] }).canComplete).toBe(
-      true,
-    );
-    expect(buildRuntimeReadiness({ ...base, secretKeys: [] }).canComplete).toBe(false);
-  });
-
-  it("uses provider secret booleans when full key inventory is redacted", () => {
-    expect(
-      buildRuntimeReadiness({
-        agentConfig: { agent_model: "claude-sonnet-4-5", agent_provider: "anthropic-api" },
-        anthropicApiKeyConfigured: true,
-        codexConnection: health().codexConnection,
-        primaryRepositoryId: repositoryId,
-        repositorySetup: health().repositorySetup,
-        secretKeys: [],
-      }).canComplete,
-    ).toBe(true);
   });
 
   it("requires claude-* models and ready repository setup for claude-code", () => {
@@ -142,7 +112,6 @@ describe("buildRuntimeReadiness", () => {
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
-        secretKeys: [],
       }).canComplete,
     ).toBe(false);
 
@@ -152,7 +121,6 @@ describe("buildRuntimeReadiness", () => {
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: { configured: false, repositoryId, status: "not_set_up" },
-        secretKeys: [],
       }).canComplete,
     ).toBe(false);
   });

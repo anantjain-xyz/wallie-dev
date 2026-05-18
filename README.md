@@ -58,7 +58,7 @@ wallie-cc/
 ```
 Workspace (tenant)
   |-- Members (humans + "wallie" system agent)
-  |-- Secrets (encrypted: ANTHROPIC_API_KEY, LINEAR_API_KEY, ...)
+  |-- Secrets (encrypted: LINEAR_API_KEY, repository env keys, ...)
   |-- Pipelines (1..N; one flagged is_default)
   |    `-- Stages (position, slug, name, prompt_template_md,
   |                approver_member_ids[])
@@ -211,7 +211,7 @@ Everything else is UI glue or integration plumbing.
 | Auth            | Supabase Auth (email + OAuth)                  |
 | Realtime        | Supabase Realtime (live session updates)       |
 | Storage         | Supabase Storage (workspace avatars)           |
-| AI              | Claude Sonnet 4 via Anthropic SDK              |
+| AI              | Codex CLI or Claude Code CLI                   |
 | Integrations    | GitHub App (Octokit), Linear GraphQL           |
 | Testing         | Vitest, ESLint, Prettier                       |
 | Package manager | pnpm 10                                        |
@@ -265,7 +265,7 @@ supabase/
 - [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
 - A tunnel tool that exposes `localhost:3000` to the public internet. [ngrok](https://ngrok.com/) or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) both work. You only need this if you want to exercise GitHub webhooks; Supabase + Linear + the dev UI work without a tunnel.
 - Accounts/access:
-  - An Anthropic API key (for Claude Sonnet 4)
+  - Codex or Claude Code access for agent runs
   - A Linear workspace + personal API key (for product-spec source context)
   - A GitHub user or org where you can create a GitHub App (for GitHub integration)
 
@@ -326,11 +326,11 @@ Fill in the required values. Integration variables can be left blank until you c
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
-Workspace-scoped secrets (`ANTHROPIC_API_KEY`, `LINEAR_API_KEY`) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`.
+Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`.
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. The Codex runner defaults to `gpt-5-codex`. The Anthropic API runner defaults to `claude-opus-4-7`.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. The Codex runner defaults to `gpt-5-codex`.
 
 ### 5. Create a GitHub App
 
@@ -385,7 +385,6 @@ The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS cla
 1. Open `http://localhost:3000`, sign up / log in via Supabase Auth.
 2. Complete onboarding (pick a workspace slug).
 3. **Settings -> Integrations**:
-   - **Anthropic**: paste your `ANTHROPIC_API_KEY` (stored encrypted in `workspace_secrets`).
    - **Linear**: paste your Linear API key, verify.
    - **GitHub**: click Install -> GitHub App install -> back -> `github_installations` row created. Pick the repo(s) to track.
 4. Create a session from the sessions list, watch the worker claim its first job, then approve or reject the resulting artifact from the dashboard.
@@ -402,7 +401,7 @@ The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS cla
 ### Troubleshooting
 
 - **GitHub webhook 401** -- `GITHUB_WEBHOOK_SECRET` in `.env.local` doesn't match the value in the GitHub App. GitHub's Advanced -> Recent Deliveries panel shows the exact error.
-- **Session stays in `agent_generating` forever** -- worker isn't running, Anthropic key is missing or invalid on the workspace, or the worker can't reach `http://localhost:3000`. Check `pnpm worker` logs.
+- **Session stays in `agent_generating` forever** -- worker isn't running, agent credentials are missing or invalid, or the worker can't reach `http://localhost:3000`. Check `pnpm worker` logs.
 - **RLS errors during local dev** -- confirm `SUPABASE_SECRET_KEY` is the service role key (not the anon key) and that `supabase start` finished applying migrations.
 
 ## Scripts

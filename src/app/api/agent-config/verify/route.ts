@@ -7,7 +7,6 @@ import {
   modelMatchesProvider,
 } from "@/lib/agent-config/contracts";
 import { getCodexAccessTokenForUser, CodexNotConnectedError } from "@/lib/codex/tokens";
-import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -27,9 +26,7 @@ const requestSchema = z.object({
  *   - `{ ok: false, error }`      — provider rejected, secrets missing, etc.
  *   - `{ ok: "skipped", reason }` — reachability is not checkable here. Used
  *     for `claude-code`, which runs the `claude` CLI in a per-session sandbox
- *     at pipeline time and does NOT use workspace ANTHROPIC_API_KEY. Routing
- *     it through verifyAnthropic gave false negatives that told users to add
- *     credentials the runtime never reads.
+ *     at pipeline time.
  */
 export type VerifyAgentConfigResponse =
   | { ok: true }
@@ -65,9 +62,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // claude-code runs the `claude` CLI in a sandbox; it does not use the
-  // workspace ANTHROPIC_API_KEY. Short-circuit before the access check so we
-  // don't pretend we verified anything we can't actually verify here.
+  // claude-code runs the `claude` CLI in a sandbox. Short-circuit before the
+  // access check so we don't pretend we verified anything we can't actually
+  // verify here.
   if (provider === "claude-code") {
     return NextResponse.json(
       {
@@ -84,87 +81,15 @@ export async function POST(request: Request) {
     return verifyError(access.error, access.status);
   }
 
-  switch (provider) {
-    case "anthropic-api":
-      return verifyAnthropic(access.context.workspace.id, model);
-    case "codex":
-      return verifyCodex(access.context.user.id, model);
-  }
+  return verifyCodex(access.context.user.id, model);
 }
 
 function providerModelMismatchMessage(provider: AgentProvider) {
   switch (provider) {
-    case "anthropic-api":
     case "claude-code":
       return 'Model must start with "claude-" for this provider.';
     case "codex":
       return 'Model must start with "gpt-", "o1", "o3", or "o4" for the Codex provider.';
-  }
-}
-
-async function verifyAnthropic(
-  workspaceId: string,
-  model: string,
-): Promise<NextResponse<VerifyAgentConfigResponse>> {
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("workspace_secrets")
-    .select("encrypted_value")
-    .eq("workspace_id", workspaceId)
-    .eq("key", "ANTHROPIC_API_KEY")
-    .maybeSingle();
-
-  if (error) {
-    return NextResponse.json(
-      { ok: false, error: error.message } satisfies VerifyAgentConfigResponse,
-      { status: 200 },
-    );
-  }
-
-  if (!data) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "Add ANTHROPIC_API_KEY in workspace secrets first, then try Verify again.",
-      } satisfies VerifyAgentConfigResponse,
-      { status: 200 },
-    );
-  }
-
-  const apiKey = decryptSecretValue(data.encrypted_value);
-
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1,
-        messages: [{ role: "user", content: "ping" }],
-      }),
-    });
-
-    if (response.ok) {
-      return NextResponse.json({ ok: true } satisfies VerifyAgentConfigResponse, { status: 200 });
-    }
-
-    const errorMessage = await extractApiErrorMessage(response);
-    return NextResponse.json(
-      { ok: false, error: errorMessage } satisfies VerifyAgentConfigResponse,
-      { status: 200 },
-    );
-  } catch (cause) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: cause instanceof Error ? cause.message : "Anthropic verify call failed.",
-      } satisfies VerifyAgentConfigResponse,
-      { status: 200 },
-    );
   }
 }
 

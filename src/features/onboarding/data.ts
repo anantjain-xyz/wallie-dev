@@ -220,7 +220,7 @@ async function loadSetupHealth(
           .from("workspace_secrets")
           .select("key, updated_at")
           .eq("workspace_id", workspaceId)
-          .in("key", ["ANTHROPIC_API_KEY", "LINEAR_API_KEY"]),
+          .in("key", ["LINEAR_API_KEY"]),
     admin
       .from("workspace_linear_routing")
       .select("id, updated_at")
@@ -256,7 +256,6 @@ async function loadSetupHealth(
   );
   const configuredKeys = configuredAgentConfigKeys(agentConfig);
   const secretKeys = [...new Set((secretRows ?? []).map((row) => row.key))].sort();
-  const anthropicApiKeyConfigured = secretKeys.includes("ANTHROPIC_API_KEY");
   const linearSecret = (secretRows ?? []).find((row) => row.key === "LINEAR_API_KEY") ?? null;
   const linearRoutingUpdatedAt =
     typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
@@ -295,7 +294,6 @@ async function loadSetupHealth(
       updatedAt: linearRoutingUpdatedAt,
     },
     workspaceSecrets: {
-      anthropicApiKeyConfigured,
       configuredKeys: options.includeSecretKeyInventory ? secretKeys : [],
     },
     ...repositoryHealth,

@@ -31,7 +31,7 @@ describe("buildWallieBlockingReasons", () => {
   it("blocks when missing secret keys", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
-      missingSecretKeys: ["ANTHROPIC_API_KEY"],
+      missingSecretKeys: ["LINEAR_API_KEY"],
       mode: "project",
       repository: null,
     });

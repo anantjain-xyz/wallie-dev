@@ -332,18 +332,12 @@ export function isAgentConfigDraftDirty(
   return configValueToString(validation.value) !== savedDraft;
 }
 
-function workspaceSecretKeys(data: WorkspaceOnboardingData) {
-  return data.setupHealth.workspaceSecrets.configuredKeys;
-}
-
 function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = data.agentConfig) {
   return buildRuntimeReadiness({
     agentConfig,
-    anthropicApiKeyConfigured: data.setupHealth.workspaceSecrets.anthropicApiKeyConfigured,
     codexConnection: data.setupHealth.codexConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
-    secretKeys: workspaceSecretKeys(data),
   });
 }
 
@@ -380,10 +374,6 @@ function updateSecretInData(
 ): WorkspaceOnboardingData {
   const workspaceSecrets = upsertSecretPreview(currentData.workspaceSecrets, secret);
   const configuredKeys = [...new Set(workspaceSecrets.map((item) => item.key))].sort();
-  const anthropicApiKeyConfigured =
-    secret.key === "ANTHROPIC_API_KEY"
-      ? true
-      : currentData.setupHealth.workspaceSecrets.anthropicApiKeyConfigured;
 
   return {
     ...currentData,
@@ -399,7 +389,6 @@ function updateSecretInData(
             }
           : currentData.setupHealth.linearKey,
       workspaceSecrets: {
-        anthropicApiKeyConfigured,
         configuredKeys,
       },
     },
@@ -1189,7 +1178,7 @@ function RuntimeStep({
                 className="ui-input"
                 disabled={busyAction !== null}
                 onChange={(event) => setSecretKey(event.target.value)}
-                placeholder="ANTHROPIC_API_KEY"
+                placeholder="LINEAR_API_KEY"
                 spellCheck={false}
                 value={secretKey}
               />

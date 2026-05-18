@@ -112,7 +112,7 @@ export function SecretsSection({
                 className="ui-input"
                 name="secretKey"
                 onChange={(event) => setSecretKey(event.target.value)}
-                placeholder="ANTHROPIC_API_KEY…"
+                placeholder="LINEAR_API_KEY…"
                 spellCheck={false}
                 value={secretKey}
               />

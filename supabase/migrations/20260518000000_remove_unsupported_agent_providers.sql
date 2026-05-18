@@ -1,17 +1,17 @@
--- Canonicalize agent provider config values to the dashed AgentProvider ids.
--- Existing underscore aliases remain accepted at the API/contract boundary,
--- but persisted config should match the internal provider type.
+-- Remove any stale workspace agent provider values before narrowing the DB
+-- check constraint to the currently supported CLI runners.
 
 alter table public.workspace_agent_config
   drop constraint if exists workspace_agent_config_value_json_known_keys;
 
 update public.workspace_agent_config
-set value_json = to_jsonb(
-  case value_json #>> '{}'
-    when 'claude_code' then 'claude-code'
-    else value_json #>> '{}'
-  end
-)
+set value_json = to_jsonb('claude-code'::text)
+where key = 'agent_provider'
+  and jsonb_typeof(value_json) = 'string'
+  and value_json #>> '{}' not in ('codex', 'claude-code', 'claude_code');
+
+update public.workspace_agent_config
+set value_json = to_jsonb('claude-code'::text)
 where key = 'agent_provider'
   and jsonb_typeof(value_json) = 'string'
   and value_json #>> '{}' = 'claude_code';

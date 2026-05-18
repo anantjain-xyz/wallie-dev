@@ -204,7 +204,7 @@ function buildSupabaseMocks(opts: {
           select: () => ({
             eq: () => ({
               in: async () => ({
-                data: [{ key: "ANTHROPIC_API_KEY" }],
+                data: [],
                 error: null,
               }),
             }),
