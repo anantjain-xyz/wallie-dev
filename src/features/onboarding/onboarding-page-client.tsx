@@ -2214,6 +2214,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     const patch = buildOnboardingRepositorySelectionPatch(
       latestDataRef.current.onboarding,
       repository.id,
+      selectedRepositoryFromData(latestDataRef.current)?.id ?? null,
     );
     if (!patch) {
       selectedRepositoryIdRef.current = repository.id;

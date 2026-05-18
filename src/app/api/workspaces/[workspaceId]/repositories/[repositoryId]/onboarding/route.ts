@@ -36,6 +36,21 @@ async function authorize(context: RouteContext) {
   return { parsed: parsed.data, status: 200 as const };
 }
 
+function manualReadyErrorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : null;
+  if (message === "Repository not found.") {
+    return NextResponse.json({ error: message }, { status: 404 });
+  }
+  if (message === "Wallie setup is unavailable for archived repositories.") {
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+  if (message === "GitHub installation not found for repository.") {
+    return NextResponse.json({ error: message }, { status: 409 });
+  }
+
+  throw error;
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   const authorized = await authorize(context);
   if ("error" in authorized) {
@@ -90,11 +105,16 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  const result = await markRepositoryOnboardingReady({
-    admin,
-    repositoryId: authorized.parsed.repositoryId,
-    workspaceId: authorized.parsed.workspaceId,
-  });
+  let result;
+  try {
+    result = await markRepositoryOnboardingReady({
+      admin,
+      repositoryId: authorized.parsed.repositoryId,
+      workspaceId: authorized.parsed.workspaceId,
+    });
+  } catch (caught) {
+    return manualReadyErrorResponse(caught);
+  }
 
   return NextResponse.json(result, { status: 200 });
 }

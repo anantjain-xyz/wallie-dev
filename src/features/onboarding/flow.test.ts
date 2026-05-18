@@ -111,6 +111,23 @@ describe("onboarding flow helpers", () => {
     ).toBeNull();
   });
 
+  it("persists a fallback-equivalent repository selection without clearing progress", () => {
+    expect(
+      buildOnboardingRepositorySelectionPatch(
+        onboardingState({
+          completedSteps: ["github", "repository", "pipeline", "runtime", "verify"],
+          selectedGithubRepositoryId: null,
+          skippedSteps: ["linear"],
+          status: "completed",
+        }),
+        "repo-1",
+        "repo-1",
+      ),
+    ).toEqual({
+      selectedGithubRepositoryId: "repo-1",
+    });
+  });
+
   it("clears the skipped mark when a previously skipped step is completed", () => {
     expect(
       buildOnboardingContinuePatch(

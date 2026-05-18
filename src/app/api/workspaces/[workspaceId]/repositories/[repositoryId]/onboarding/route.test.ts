@@ -131,6 +131,28 @@ describe("repository onboarding route", () => {
     });
   });
 
+  it.each([
+    ["Repository not found.", 404],
+    ["Wallie setup is unavailable for archived repositories.", 400],
+    ["GitHub installation not found for repository.", 409],
+  ])("maps %s manual ready domain errors to client responses", async (message, status) => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValue({});
+    mocked.markRepositoryOnboardingReady.mockRejectedValue(new Error(message));
+
+    const response = await PATCH(
+      new Request("http://localhost", {
+        body: JSON.stringify({ action: "mark_ready" }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: message });
+  });
+
   it("rejects unknown manual onboarding actions", async () => {
     grantAccess();
 

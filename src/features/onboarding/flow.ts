@@ -183,8 +183,12 @@ export function buildOnboardingContinuePatch(
 export function buildOnboardingRepositorySelectionPatch(
   onboarding: WorkspaceOnboardingState,
   repositoryId: string,
+  effectiveSelectedRepositoryId = onboarding.selectedGithubRepositoryId,
 ): WorkspaceOnboardingUpdatePayload | null {
-  if (onboarding.selectedGithubRepositoryId === repositoryId) {
+  if (effectiveSelectedRepositoryId === repositoryId) {
+    if (onboarding.selectedGithubRepositoryId !== repositoryId) {
+      return { selectedGithubRepositoryId: repositoryId };
+    }
     return null;
   }
 

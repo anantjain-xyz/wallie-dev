@@ -553,7 +553,22 @@ const REPOSITORY_SELECTION_DEPENDENT_STEPS = new Set<WorkspaceOnboardingStep>([
   "verify",
 ]);
 
-async function normalizeWorkspaceOnboardingUpdatePayload(input: {
+async function loadPrimaryRepositoryProfileRepositoryId(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+) {
+  const { data, error } = await admin
+    .from("workspace_repository_profiles")
+    .select("github_repository_id")
+    .eq("workspace_id", workspaceId)
+    .eq("is_primary", true)
+    .maybeSingle();
+
+  if (error) throw error;
+  return typeof data?.github_repository_id === "string" ? data.github_repository_id : null;
+}
+
+export async function normalizeWorkspaceOnboardingUpdatePayload(input: {
   admin: ReturnType<typeof createSupabaseAdminClient>;
   currentRow: Tables<"workspace_onboarding">;
   payload: WorkspaceOnboardingUpdatePayload;
@@ -596,8 +611,28 @@ async function normalizeWorkspaceOnboardingUpdatePayload(input: {
     }
   }
 
-  if (selectedRepositoryId === input.currentRow.selected_github_repository_id) {
-    return { ok: true, payload: input.payload };
+  const currentSelectedRepositoryId =
+    input.currentRow.selected_github_repository_id ??
+    (await loadPrimaryRepositoryProfileRepositoryId(input.admin, input.workspaceId));
+
+  if (selectedRepositoryId === currentSelectedRepositoryId) {
+    if (selectedRepositoryId === input.currentRow.selected_github_repository_id) {
+      return { ok: true, payload: input.payload };
+    }
+
+    return {
+      ok: true,
+      payload: {
+        ...input.payload,
+        completedSteps: input.currentRow.completed_steps.map((step) =>
+          workspaceOnboardingStepSchema.parse(step),
+        ),
+        skippedSteps: input.currentRow.skipped_steps.map((step) =>
+          workspaceOnboardingStepSchema.parse(step),
+        ),
+        status: workspaceOnboardingStatusSchema.parse(input.currentRow.status),
+      },
+    };
   }
 
   return {
