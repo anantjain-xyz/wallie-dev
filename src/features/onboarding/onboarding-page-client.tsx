@@ -217,7 +217,7 @@ function Badge({ children, tone }: { children: string; tone: HealthTone }) {
   );
 }
 
-function SecretValueTextarea({
+function SecretValueInput({
   ariaLabel,
   disabled,
   onChange,
@@ -229,13 +229,14 @@ function SecretValueTextarea({
   value: string;
 }) {
   return (
-    <textarea
+    <input
       aria-label={ariaLabel}
       autoComplete="off"
-      className="ui-textarea min-h-20 min-w-0 flex-1 resize-y font-mono text-[13px]"
+      className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
       spellCheck={false}
+      type="password"
       value={value}
     />
   );
@@ -1343,7 +1344,7 @@ function RuntimeStep({
                     </div>
 
                     <div className="flex min-w-0 items-start gap-2">
-                      <SecretValueTextarea
+                      <SecretValueInput
                         ariaLabel={`Value for ${credential.key}`}
                         disabled={busyAction !== null}
                         onChange={(value) => handleSecretDraftChange(credential.key, value)}
@@ -1404,7 +1405,7 @@ function RuntimeStep({
                       </Badge>
                     </div>
 
-                    <SecretValueTextarea
+                    <SecretValueInput
                       ariaLabel={`Value for ${key}`}
                       disabled={busyAction !== null}
                       onChange={(value) => handleSecretDraftChange(key, value)}
@@ -1433,7 +1434,7 @@ function RuntimeStep({
                 />
               </div>
               <div>
-                <SecretValueTextarea
+                <SecretValueInput
                   ariaLabel="New variable value"
                   disabled={busyAction !== null}
                   onChange={setNewSecretValue}

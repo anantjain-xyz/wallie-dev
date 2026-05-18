@@ -689,8 +689,10 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Repository environment variables");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
-    expect(html).toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
-    expect(html).toContain("ui-textarea min-h-20");
+    expect(html).toContain('<input aria-label="Value for NEXT_PUBLIC_APP_URL"');
+    expect(html).toContain('type="password"');
+    expect(html).not.toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
+    expect(html).not.toContain("ui-textarea min-h-20");
     expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain('aria-label="Add variable"');
