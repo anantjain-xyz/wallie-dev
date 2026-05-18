@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ShellHeader } from "@/components/app-shell/shell-header";
+import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
 import { getWorkspaceNavItems } from "@/lib/routes";
 
 const mocked = vi.hoisted(() => ({
@@ -63,5 +64,36 @@ describe("ShellHeader", () => {
     expect(html).toContain("New session");
     expect(html).not.toContain("Resume setup");
     expect(html).toContain('data-dialog-state="open"');
+  });
+
+  it("renders the topbar theme toggle as an accessible icon button", () => {
+    const html = renderToStaticMarkup(
+      createElement(ShellHeader, {
+        navItems,
+        onboarding: { currentStep: "verify", status: "completed" },
+        viewerEmail: "owner@example.com",
+        workspace,
+      }),
+    );
+
+    expect(html).toContain('aria-label="Switch to dark mode"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('title="Switch to dark mode"');
+  });
+});
+
+describe("theme helpers", () => {
+  it("normalizes only supported stored theme values", () => {
+    expect(normalizeTheme("light")).toBe("light");
+    expect(normalizeTheme("dark")).toBe("dark");
+    expect(normalizeTheme("system")).toBeNull();
+    expect(normalizeTheme(null)).toBeNull();
+  });
+
+  it("resolves the first theme from storage before system preference", () => {
+    expect(resolveInitialTheme("dark", false)).toBe("dark");
+    expect(resolveInitialTheme("light", true)).toBe("light");
+    expect(resolveInitialTheme(null, true)).toBe("dark");
+    expect(resolveInitialTheme(undefined, false)).toBe("light");
   });
 });
