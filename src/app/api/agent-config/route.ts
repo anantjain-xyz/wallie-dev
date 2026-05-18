@@ -6,6 +6,7 @@ import {
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   type AgentConfigKey,
+  getRecommendedAgentConfigDefault,
   normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
@@ -179,7 +180,7 @@ export async function PATCH(request: Request) {
   const admin = createSupabaseAdminClient();
   const { data, error: loadError } = await admin
     .from("workspace_agent_config")
-    .select("key")
+    .select("key, value_json")
     .eq("workspace_id", access.context.workspace.id);
 
   if (loadError) {
@@ -188,6 +189,12 @@ export async function PATCH(request: Request) {
 
   const existingKeys = new Set((data ?? []).map((row) => row.key));
   const skippedKeys = new Set<AgentConfigKey>(envelope.data.skipKeys ?? []);
+  const existingProviderRow = (data ?? []).find((row) => row.key === "agent_provider");
+  const configuredProvider =
+    typeof existingProviderRow?.value_json === "string"
+      ? normalizeAgentProviderName(existingProviderRow.value_json)
+      : null;
+  const defaultsProvider = configuredProvider ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
   const missingDefaults = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) => !existingKeys.has(key) && !skippedKeys.has(key),
   );
@@ -201,7 +208,7 @@ export async function PATCH(request: Request) {
 
   const rows = missingDefaults.map((key) => ({
     key,
-    value_json: RECOMMENDED_AGENT_CONFIG_DEFAULTS[key] as Json,
+    value_json: getRecommendedAgentConfigDefault(key, defaultsProvider) as Json,
     workspace_id: access.context.workspace.id,
   }));
 
@@ -217,7 +224,7 @@ export async function PATCH(request: Request) {
     {
       applied: missingDefaults.map((key) => ({
         key,
-        value: RECOMMENDED_AGENT_CONFIG_DEFAULTS[key],
+        value: getRecommendedAgentConfigDefault(key, defaultsProvider),
       })),
       skippedKeys: [...skippedKeys],
     } satisfies ApplyAgentConfigDefaultsResponse,

@@ -531,7 +531,11 @@ async function resolveAgentRunner(input: {
     }
   }
 
-  return { runner: createAgentRunner(input.provider) };
+  return {
+    runner: createAgentRunner(input.provider, {
+      claudeCode: { model: input.model },
+    }),
+  };
 }
 
 interface GitHubContext {

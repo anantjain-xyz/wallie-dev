@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner/workspace-config";
-import { DEFAULT_AGENT_RUNNER_CONFIG } from "@/lib/agent-runner/types";
+import { DEFAULT_AGENT_RUNNER_CONFIG, DEFAULT_CLAUDE_CODE_MODEL } from "@/lib/agent-runner/types";
 
 type ConfigRow = { key: string; value_json: unknown };
 
@@ -47,6 +47,15 @@ describe("loadWorkspaceAgentConfig", () => {
     expect(config.model).toBe(DEFAULT_AGENT_RUNNER_CONFIG.model);
     expect(config.provider).toBe(DEFAULT_AGENT_RUNNER_CONFIG.provider);
     expect(config.maxTurns).toBeUndefined();
+  });
+
+  it("falls back to the selected provider's default model when only provider is configured", async () => {
+    const admin = buildAdmin([{ key: "agent_provider", value_json: "claude-code" }]);
+
+    const config = await loadWorkspaceAgentConfig(admin, "ws-1");
+
+    expect(config.model).toBe(DEFAULT_CLAUDE_CODE_MODEL);
+    expect(config.provider).toBe("claude-code");
   });
 
   it("never returns the legacy 'wallie-control-plane-stub' placeholder", async () => {

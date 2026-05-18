@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 
@@ -131,7 +132,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
 
   return {
     agentConfig: {
-      agent_model: "gpt-5-codex",
+      agent_model: "gpt-5.5",
       agent_provider: "codex",
     },
     canManage: true,
@@ -166,7 +167,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         configuredKeys: ["agent_model", "agent_provider"],
         status: "present",
         values: {
-          agent_model: "gpt-5-codex",
+          agent_model: "gpt-5.5",
           agent_provider: "codex",
         },
       },
@@ -747,7 +748,7 @@ describe("OnboardingPageClient", () => {
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           agentConfig: {
-            agent_model: "claude-sonnet-4-5",
+            agent_model: "claude-opus-4-7[1m]",
             agent_provider: "claude-code",
           },
           github: {
@@ -769,7 +770,7 @@ describe("OnboardingPageClient", () => {
               configuredKeys: ["agent_model", "agent_provider"],
               status: "present",
               values: {
-                agent_model: "claude-sonnet-4-5",
+                agent_model: "claude-opus-4-7[1m]",
                 agent_provider: "claude-code",
               },
             },
@@ -1029,6 +1030,27 @@ describe("OnboardingPageClient", () => {
     expect(isAgentConfigDraftDirty("concurrency_limit", "number", "01", "1")).toBe(false);
     expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "3e5", "300000")).toBe(false);
     expect(isAgentConfigDraftDirty("max_retries", "number", "2", "3")).toBe(true);
+  });
+
+  it("pairs Onboarding provider changes with the provider's recommended model", () => {
+    const currentDrafts = {
+      agent_model: "gpt-5.5",
+      agent_provider: "codex",
+      concurrency_limit: "1",
+      max_retries: "3",
+      stall_timeout_ms: "300000",
+    };
+
+    expect(
+      applyAgentConfigDraftChange(currentDrafts, "agent_provider", "claude-code"),
+    ).toMatchObject({
+      agent_model: "claude-opus-4-7[1m]",
+      agent_provider: "claude-code",
+    });
+    expect(applyAgentConfigDraftChange(currentDrafts, "agent_provider", "codex")).toMatchObject({
+      agent_model: "gpt-5.5",
+      agent_provider: "codex",
+    });
   });
 
   it("merges sandbox capability results into the latest onboarding data", () => {

@@ -8,6 +8,7 @@ import { LinearKeySection } from "@/features/settings/linear-key-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import { SettingsPageClient } from "@/features/settings/settings-page-client";
+import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
@@ -119,7 +120,7 @@ describe("Settings integration sections", () => {
       createElement(AgentConfigSection, {
         canManage: true,
         initialAgentConfig: {
-          agent_model: "gpt-5-codex",
+          agent_model: "gpt-5.5",
           agent_provider: "codex",
           concurrency_limit: 1,
           max_retries: 3,
@@ -177,6 +178,27 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Provider access");
     expect(html).toContain("Sessions run with the Codex account connected by the session creator");
     expect(html).toContain("Checking connection");
+  });
+
+  it("pairs Settings provider changes with the provider's recommended model", () => {
+    const currentDrafts = {
+      agent_model: "gpt-5.5",
+      agent_provider: "codex",
+      concurrency_limit: "1",
+      max_retries: "3",
+      stall_timeout_ms: "300000",
+    };
+
+    expect(
+      applyAgentConfigDraftChange(currentDrafts, "agent_provider", "claude-code"),
+    ).toMatchObject({
+      agent_model: "claude-opus-4-7[1m]",
+      agent_provider: "claude-code",
+    });
+    expect(applyAgentConfigDraftChange(currentDrafts, "agent_provider", "codex")).toMatchObject({
+      agent_model: "gpt-5.5",
+      agent_provider: "codex",
+    });
   });
 
   it("renders the sandbox repository picker with the shared combobox", () => {

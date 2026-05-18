@@ -59,8 +59,10 @@ import {
   AGENT_PROVIDERS,
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  getRecommendedAgentConfigDefault,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
+import { type AgentConfigDrafts, applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type {
   SandboxCapabilityCheckLatestResponse,
@@ -88,7 +90,6 @@ type HealthSummaryItem = {
 };
 
 type EditableProfile = RepositoryProfileState;
-type AgentConfigDrafts = Record<AgentConfigKey, string>;
 type FieldType = "number" | "select" | "text";
 type ProfileHintKind = "framework" | "language" | "package";
 type OnboardingDataUpdate =
@@ -923,6 +924,9 @@ function RuntimeStep({
     ]),
   });
   const selectedProvider = readiness.provider;
+  const defaultsProvider = runtimeReadinessFromData(data).provider;
+  const defaultDraftForKey = (key: AgentConfigKey) =>
+    configValueToString(getRecommendedAgentConfigDefault(key, defaultsProvider));
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
   const secretByKey = new Map(
     data.workspaceSecrets.map((secret) => [normalizeSecretKey(secret.key), secret]),
@@ -951,9 +955,7 @@ function RuntimeStep({
     return hasKey !== hasValue;
   });
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
-    (key) =>
-      data.agentConfig[key] === undefined &&
-      drafts[key] === configValueToString(RECOMMENDED_AGENT_CONFIG_DEFAULTS[key]),
+    (key) => data.agentConfig[key] === undefined && drafts[key] === defaultDraftForKey(key),
   );
   const canSaveConfig =
     data.canManage &&
@@ -990,7 +992,7 @@ function RuntimeStep({
   }, [hasInvalidDrafts, hasUnsavedDrafts, onRuntimeStateChange, readiness, readinessSignature]);
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
-    setDrafts((current) => ({ ...current, [key]: next }));
+    setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
     if (key === "agent_model" || key === "agent_provider") {
       setVerifyState({ isVerifying: false, result: null });
     }
@@ -1053,9 +1055,7 @@ function RuntimeStep({
       const response = await fetch("/api/agent-config", {
         body: JSON.stringify({
           skipKeys: ALLOWED_AGENT_CONFIG_KEYS.filter(
-            (key) =>
-              data.agentConfig[key] === undefined &&
-              drafts[key] !== configValueToString(RECOMMENDED_AGENT_CONFIG_DEFAULTS[key]),
+            (key) => data.agentConfig[key] === undefined && drafts[key] !== defaultDraftForKey(key),
           ),
           workspaceId: data.workspace.id,
         }),

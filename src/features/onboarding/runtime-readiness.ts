@@ -3,6 +3,7 @@ import {
   type AgentProvider,
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  getRecommendedAgentConfigDefault,
   isAgentConfigKey,
   modelMatchesProvider,
   normalizeAgentProviderName,
@@ -72,11 +73,11 @@ export function configuredAgentConfigKeys(config: AgentConfigMap): AgentConfigKe
 }
 
 export function resolveAgentConfigValue(key: AgentConfigKey, config: AgentConfigMap) {
-  return config[key] ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS[key];
+  return config[key] ?? getRecommendedAgentConfigDefault(key, resolveProvider(config));
 }
 
 function resolveProvider(config: AgentConfigMap): AgentProvider {
-  const rawProvider = resolveAgentConfigValue("agent_provider", config);
+  const rawProvider = config.agent_provider ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
   return typeof rawProvider === "string"
     ? (normalizeAgentProviderName(rawProvider) ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider)
     : RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
@@ -84,7 +85,9 @@ function resolveProvider(config: AgentConfigMap): AgentProvider {
 
 function resolveModel(config: AgentConfigMap): string {
   const rawModel = resolveAgentConfigValue("agent_model", config);
-  return typeof rawModel === "string" ? rawModel : RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model;
+  return typeof rawModel === "string"
+    ? rawModel
+    : getRecommendedAgentConfigDefault("agent_model", resolveProvider(config)).toString();
 }
 
 export function buildRuntimeReadiness(input: {

@@ -4,6 +4,11 @@
  * to the caller for persistence and real-time UI.
  */
 
+import {
+  RECOMMENDED_CLAUDE_CODE_EFFORT,
+  RECOMMENDED_CODEX_REASONING_EFFORT,
+  getRecommendedAgentModel,
+} from "@/lib/agent-config/contracts";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
@@ -87,13 +92,16 @@ export interface AgentRunner {
 export interface AgentRunnerConfig {
   /** Which provider to use: "codex" | "claude-code". */
   provider: AgentProvider;
-  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-5"). */
+  /** Model to use (provider-specific, e.g. "gpt-5.5" or "claude-opus-4-7[1m]"). */
   model?: string;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
-export const DEFAULT_CODEX_MODEL = "gpt-5-codex";
+export const DEFAULT_CODEX_MODEL = getRecommendedAgentModel("codex");
+export const DEFAULT_CLAUDE_CODE_MODEL = getRecommendedAgentModel("claude-code");
+export const DEFAULT_CODEX_REASONING_EFFORT = RECOMMENDED_CODEX_REASONING_EFFORT;
+export const DEFAULT_CLAUDE_CODE_EFFORT = RECOMMENDED_CLAUDE_CODE_EFFORT;
 
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
   provider: "codex",

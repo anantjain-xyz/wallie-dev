@@ -16,6 +16,14 @@ export const AGENT_PROVIDERS = ["codex", "claude-code"] as const satisfies reado
 
 export type { AgentProvider };
 
+export const RECOMMENDED_AGENT_MODELS = {
+  codex: "gpt-5.5",
+  "claude-code": "claude-opus-4-7[1m]",
+} as const satisfies Record<AgentProvider, string>;
+
+export const RECOMMENDED_CODEX_REASONING_EFFORT = "xhigh";
+export const RECOMMENDED_CLAUDE_CODE_EFFORT = "xhigh";
+
 const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
   claude_code: "claude-code",
   "claude-code": "claude-code",
@@ -35,11 +43,24 @@ export const AGENT_CONFIG_LIMITS = {
 
 export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
   agent_provider: "codex",
-  agent_model: "gpt-5-codex",
+  agent_model: RECOMMENDED_AGENT_MODELS.codex,
   concurrency_limit: 1,
   max_retries: 3,
   stall_timeout_ms: 300_000,
 } as const satisfies Record<AgentConfigKey, string | number>;
+
+export function getRecommendedAgentModel(provider: AgentProvider): string {
+  return RECOMMENDED_AGENT_MODELS[provider];
+}
+
+export function getRecommendedAgentConfigDefault(
+  key: AgentConfigKey,
+  provider: AgentProvider = RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider,
+): string | number {
+  return key === "agent_model"
+    ? getRecommendedAgentModel(provider)
+    : RECOMMENDED_AGENT_CONFIG_DEFAULTS[key];
+}
 
 /**
  * Model identifiers must match the prefix of a supported provider family.
@@ -55,6 +76,7 @@ export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
  */
 const CLAUDE_MODEL_PREFIX = "claude-";
 const CODEX_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"] as const;
+const CLAUDE_EXTENDED_CONTEXT_SUFFIX = "[1m]";
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
 const intInRange = (label: string, min: number, max: number) =>
@@ -103,9 +125,9 @@ const agentModelSchema = z
   .trim()
   .min(1, "Model is required.")
   .max(100, "Model must be 100 characters or fewer.")
-  .regex(
-    AGENT_MODEL_BODY_PATTERN,
-    "Model may only contain lowercase letters, numbers, dots, dashes, and underscores.",
+  .refine(
+    (model) => modelHasSupportedSyntax(model),
+    "Model may only contain lowercase letters, numbers, dots, dashes, underscores, and an optional Claude [1m] suffix.",
   )
   .refine(
     (model) => modelMatchesAnyProvider(model),
@@ -114,8 +136,24 @@ const agentModelSchema = z
 
 function modelMatchesAnyProvider(model: string): boolean {
   const trimmed = model.trim();
+  if (!modelHasSupportedSyntax(trimmed)) return false;
   if (trimmed.startsWith(CLAUDE_MODEL_PREFIX)) return true;
+  if (modelHasExtendedContextSuffix(trimmed)) return false;
   return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
+function modelHasSupportedSyntax(model: string): boolean {
+  const trimmed = model.trim();
+  if (trimmed.endsWith(CLAUDE_EXTENDED_CONTEXT_SUFFIX)) {
+    const baseModel = trimmed.slice(0, -CLAUDE_EXTENDED_CONTEXT_SUFFIX.length);
+    return baseModel.startsWith(CLAUDE_MODEL_PREFIX) && AGENT_MODEL_BODY_PATTERN.test(baseModel);
+  }
+  if (modelHasExtendedContextSuffix(trimmed)) return false;
+  return AGENT_MODEL_BODY_PATTERN.test(trimmed);
+}
+
+function modelHasExtendedContextSuffix(model: string): boolean {
+  return model.includes("[") || model.includes("]");
 }
 
 export const agentConfigValueSchemas = {
@@ -165,10 +203,14 @@ export function isAgentProvider(value: unknown): value is AgentProvider {
 export function modelMatchesProvider(provider: AgentProvider, model: string): boolean {
   const trimmed = model.trim();
   if (!trimmed) return false;
+  if (!modelHasSupportedSyntax(trimmed)) return false;
   switch (provider) {
     case "claude-code":
       return trimmed.startsWith(CLAUDE_MODEL_PREFIX);
     case "codex":
-      return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+      return (
+        !modelHasExtendedContextSuffix(trimmed) &&
+        CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
+      );
   }
 }

@@ -9,7 +9,13 @@ export type {
   AgentRunnerStartInput,
 } from "./types";
 
-export { DEFAULT_AGENT_RUNNER_CONFIG, DEFAULT_CODEX_MODEL } from "./types";
+export {
+  DEFAULT_AGENT_RUNNER_CONFIG,
+  DEFAULT_CLAUDE_CODE_EFFORT,
+  DEFAULT_CLAUDE_CODE_MODEL,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+} from "./types";
 export { ClaudeCodeRunner } from "./claude-code";
 export { CodexRunner } from "./codex";
 export { loadWorkspaceAgentConfig, type ResolvedWorkspaceAgentConfig } from "./workspace-config";
@@ -20,10 +26,12 @@ import {
   normalizeAgentProviderName,
   type AgentProvider,
 } from "@/lib/agent-config/contracts";
-import { ClaudeCodeRunner } from "./claude-code";
+import { ClaudeCodeRunner, type ClaudeCodeRunnerOptions } from "./claude-code";
 import { CodexRunner, type CodexRunnerOptions } from "./codex";
 
 export interface CreateAgentRunnerOptions {
+  /** Optional model override when provider resolves to "claude-code". */
+  claudeCode?: ClaudeCodeRunnerOptions;
   /** Required when provider resolves to "codex". */
   codex?: CodexRunnerOptions;
 }
@@ -45,7 +53,7 @@ export function createAgentRunner(
   const normalized = normalizeAgentProviderName(provider);
   switch (normalized) {
     case "claude-code":
-      return new ClaudeCodeRunner();
+      return new ClaudeCodeRunner(opts.claudeCode);
     case "codex":
       if (!opts.codex) {
         throw new Error(

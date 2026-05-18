@@ -1,6 +1,12 @@
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
+import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
 
 const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
+
+export interface ClaudeCodeRunnerOptions {
+  /** Model identifier or Claude Code alias, e.g. "claude-opus-4-7[1m]". */
+  model?: string;
+}
 
 /**
  * Claude Code CLI agent runner.
@@ -13,6 +19,8 @@ export class ClaudeCodeRunner implements AgentRunner {
   readonly provider = "claude-code";
   readonly requiresSandbox = true;
 
+  constructor(private readonly options: ClaudeCodeRunnerOptions = {}) {}
+
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
     if (!sandbox) {
@@ -23,8 +31,13 @@ export class ClaudeCodeRunner implements AgentRunner {
     // as a file and pipe it via bash redirection.
     await sandbox.writeFile(PROMPT_FILE, input.prompt);
 
+    const model = this.options.model ?? DEFAULT_CLAUDE_CODE_MODEL;
     const cliArgs = [
       "--print",
+      "--model",
+      model,
+      "--effort",
+      DEFAULT_CLAUDE_CODE_EFFORT,
       "--output-format",
       "stream-json",
       "--max-turns",

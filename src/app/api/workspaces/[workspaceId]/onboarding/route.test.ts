@@ -19,7 +19,7 @@ const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
 const onboardingData: WorkspaceOnboardingData = {
   agentConfig: {
-    agent_model: "gpt-5-codex",
+    agent_model: "gpt-5.5",
     agent_provider: "codex",
   },
   canManage: true,
@@ -80,7 +80,7 @@ const onboardingData: WorkspaceOnboardingData = {
       configuredKeys: ["agent_model", "agent_provider"],
       status: "present",
       values: {
-        agent_model: "gpt-5-codex",
+        agent_model: "gpt-5.5",
         agent_provider: "codex",
       },
     },

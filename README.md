@@ -330,7 +330,7 @@ Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) are **not
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. The Codex runner defaults to `gpt-5-codex`.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. Codex defaults to `gpt-5.5`; Claude Code defaults to `claude-opus-4-7[1m]`.
 
 ### 5. Create a GitHub App
 

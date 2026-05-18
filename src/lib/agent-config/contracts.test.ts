@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_CONFIG_LIMITS,
   AGENT_PROVIDERS,
+  RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  RECOMMENDED_AGENT_MODELS,
+  RECOMMENDED_CLAUDE_CODE_EFFORT,
+  RECOMMENDED_CODEX_REASONING_EFFORT,
+  getRecommendedAgentConfigDefault,
+  getRecommendedAgentModel,
   isAgentConfigKey,
   isAgentProvider,
   modelMatchesProvider,
@@ -125,18 +131,46 @@ describe("parseAgentConfigValue — agent_provider", () => {
   });
 });
 
+describe("provider-specific recommended defaults", () => {
+  it("uses GPT-5.5 for Codex and Opus 4.7 1M for Claude Code", () => {
+    expect(getRecommendedAgentModel("codex")).toBe("gpt-5.5");
+    expect(getRecommendedAgentModel("claude-code")).toBe("claude-opus-4-7[1m]");
+    expect(RECOMMENDED_AGENT_MODELS).toEqual({
+      codex: "gpt-5.5",
+      "claude-code": "claude-opus-4-7[1m]",
+    });
+  });
+
+  it("keeps the public agent config default provider on Codex", () => {
+    expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider).toBe("codex");
+    expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model).toBe("gpt-5.5");
+    expect(getRecommendedAgentConfigDefault("agent_model", "claude-code")).toBe(
+      "claude-opus-4-7[1m]",
+    );
+  });
+
+  it("uses extra-high effort for both CLI providers", () => {
+    expect(RECOMMENDED_CODEX_REASONING_EFFORT).toBe("xhigh");
+    expect(RECOMMENDED_CLAUDE_CODE_EFFORT).toBe("xhigh");
+  });
+});
+
 describe("parseAgentConfigValue — agent_model", () => {
   it("accepts known Claude model ids", () => {
     expect(parseAgentConfigValue("agent_model", "claude-sonnet-4-20250514")).toEqual({
       ok: true,
       value: "claude-sonnet-4-20250514",
     });
+    expect(parseAgentConfigValue("agent_model", "claude-opus-4-7[1m]")).toEqual({
+      ok: true,
+      value: "claude-opus-4-7[1m]",
+    });
   });
 
   it("accepts Codex / OpenAI ids", () => {
-    expect(parseAgentConfigValue("agent_model", "gpt-5-codex")).toEqual({
+    expect(parseAgentConfigValue("agent_model", "gpt-5.5")).toEqual({
       ok: true,
-      value: "gpt-5-codex",
+      value: "gpt-5.5",
     });
     expect(parseAgentConfigValue("agent_model", "o3-mini")).toEqual({
       ok: true,
@@ -177,6 +211,14 @@ describe("parseAgentConfigValue — agent_model", () => {
       ok: false,
       error: expect.stringContaining("letters, numbers"),
     });
+    expect(parseAgentConfigValue("agent_model", "claude-opus-4-7[2m]")).toEqual({
+      ok: false,
+      error: expect.stringContaining("optional Claude [1m] suffix"),
+    });
+    expect(parseAgentConfigValue("agent_model", "gpt-5.5[1m]")).toEqual({
+      ok: false,
+      error: expect.stringContaining("optional Claude [1m] suffix"),
+    });
   });
 
   it("rejects uppercase model ids so the DB CHECK can't desync from the schema", () => {
@@ -194,13 +236,15 @@ describe("parseAgentConfigValue — agent_model", () => {
 describe("modelMatchesProvider", () => {
   it("matches Claude Code to the claude- prefix", () => {
     expect(modelMatchesProvider("claude-code", "claude-haiku-4-5")).toBe(true);
+    expect(modelMatchesProvider("claude-code", "claude-opus-4-7[1m]")).toBe(true);
     expect(modelMatchesProvider("claude-code", "gpt-5-codex")).toBe(false);
   });
 
   it("matches Codex to gpt-/o-family prefixes", () => {
-    expect(modelMatchesProvider("codex", "gpt-5-codex")).toBe(true);
+    expect(modelMatchesProvider("codex", "gpt-5.5")).toBe(true);
     expect(modelMatchesProvider("codex", "o3-mini")).toBe(true);
     expect(modelMatchesProvider("codex", "claude-sonnet-4-5")).toBe(false);
+    expect(modelMatchesProvider("codex", "gpt-5.5[1m]")).toBe(false);
   });
 
   it("does not match uppercase-prefixed model ids — schema and DB CHECK both require lowercase", () => {

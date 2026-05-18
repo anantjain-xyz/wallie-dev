@@ -53,7 +53,7 @@ vi.mock("@/lib/agent-runner", () => ({
   createAgentRunner: mocked.createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG: {
     provider: "codex",
-    model: "gpt-5-codex",
+    model: "gpt-5.5",
     maxTurns: 5,
   },
   loadWorkspaceAgentConfig: mocked.loadWorkspaceAgentConfig,
@@ -199,7 +199,7 @@ function buildAdminMock(opts: MockOptions) {
   const resolvedProvider = rawProvider ? normalizeAgentProviderName(rawProvider) : "codex";
   const resolvedConfig = {
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
-    model: rawModel ?? "gpt-5-codex",
+    model: rawModel ?? "gpt-5.5",
     provider: resolvedProvider ?? "codex",
   };
   mocked.loadWorkspaceAgentConfig.mockResolvedValue(resolvedConfig);

@@ -15,9 +15,11 @@ import {
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
   AGENT_PROVIDERS,
+  getRecommendedAgentModel,
   normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
+import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 
 type AgentConfigVerifyResult =
   | { kind: "ok" }
@@ -227,7 +229,7 @@ export function AgentConfigSection({
         description:
           "Model identifier passed to the agent provider. Use Verify to check the model against the selected provider and your provider access.",
         label: "Agent model",
-        placeholder: "claude-sonnet-4-20250514",
+        placeholder: getRecommendedAgentModel(selectedAgentProvider),
         type: "text",
       },
       {
@@ -252,7 +254,7 @@ export function AgentConfigSection({
         type: "number",
       },
     ],
-    [],
+    [selectedAgentProvider],
   );
 
   const fieldStatuses = fields.map((field) => {
@@ -281,7 +283,7 @@ export function AgentConfigSection({
     !verifyState.isVerifying && drafts.agent_model.trim() !== "" && !saveAgentConfig.isBusy;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
-    setDrafts((current) => ({ ...current, [key]: next }));
+    setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
     if (key === "agent_model" || key === "agent_provider") {
       setVerifyState({ isVerifying: false, result: null });
     }
