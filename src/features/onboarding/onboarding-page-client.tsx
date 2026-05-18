@@ -9,7 +9,7 @@ import type {
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
-import { CodeIcon, LockIcon, PlusIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
+import { CheckIcon, CodeIcon, PlusIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
 import { SelectField } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -1250,56 +1250,45 @@ function RuntimeStep({
                   data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
 
                 return (
-                  <div
-                    className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-start"
-                    key={credential.key}
-                  >
-                    <div className="flex min-w-0 gap-3">
-                      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-muted">
-                        <LockIcon className="h-3.5 w-3.5" />
-                      </span>
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-[13px] font-medium text-foreground">
-                            {credential.label}
-                          </p>
-                          <Badge tone={configured ? "success" : "warning"}>
-                            {configured ? "Present" : "Missing"}
-                          </Badge>
-                        </div>
-                        <code className="block break-all font-mono text-[12px] text-foreground">
-                          {credential.key}
-                        </code>
-                        <p className="text-[12px] leading-5 text-muted">{credential.description}</p>
-                      </div>
+                  <div className="space-y-2 px-4 py-3" key={credential.key}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="text-[13px] font-medium text-foreground">{credential.label}</p>
+                      <code className="break-all font-mono text-[12px] text-foreground">
+                        {credential.key}
+                      </code>
+                      <Badge tone={configured ? "success" : "warning"}>
+                        {configured ? "Present" : "Missing"}
+                      </Badge>
                     </div>
 
-                    <div className="grid min-w-0 gap-2">
-                      <label className="block min-w-0 space-y-1">
-                        <span className="text-[11px] font-medium text-muted">Value</span>
-                        <input
-                          autoComplete="off"
-                          className="ui-input font-mono text-[13px]"
-                          disabled={busyAction !== null}
-                          onChange={(event) =>
-                            handleSecretDraftChange(credential.key, event.target.value)
-                          }
-                          placeholder={configured ? "Paste replacement value..." : "Paste value..."}
-                          type="password"
-                          value={draftValue}
-                        />
-                      </label>
-
+                    <div className="flex min-w-0 items-center gap-2">
+                      <input
+                        aria-label={`Value for ${credential.key}`}
+                        autoComplete="off"
+                        className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                        disabled={busyAction !== null}
+                        onChange={(event) =>
+                          handleSecretDraftChange(credential.key, event.target.value)
+                        }
+                        type="password"
+                        value={draftValue}
+                      />
                       <button
+                        aria-label={`${configured ? "Update" : "Save"} ${credential.key}`}
                         className={cn(
-                          "w-full whitespace-nowrap",
+                          "h-10 w-10 shrink-0 !px-0 !py-0",
                           canSaveCredential ? "ui-button-primary" : "ui-button",
                         )}
                         disabled={!canSaveCredential}
                         onClick={() => void handleSaveSecret(credential.key, draftValue)}
+                        title={configured ? "Update" : "Save"}
                         type="button"
                       >
-                        {isSavingSecret ? "Saving..." : configured ? "Update" : "Save"}
+                        {isSavingSecret ? (
+                          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+                        ) : (
+                          <CheckIcon className="h-4 w-4" />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -1334,61 +1323,45 @@ function RuntimeStep({
                 const scopeLabel = repositoryEnvKeyLabel(key, runtimeCredentialKeys);
 
                 return (
-                  <div
-                    className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-start"
-                    key={key}
-                  >
-                    <div className="flex min-w-0 gap-3">
-                      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-muted">
-                        <CodeIcon className="h-3.5 w-3.5" />
-                      </span>
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <code className="break-all font-mono text-[13px] font-medium text-foreground">
-                            {key}
-                          </code>
-                          <Badge tone={key.startsWith("NEXT_PUBLIC_") ? "neutral" : "accent"}>
-                            {scopeLabel}
-                          </Badge>
-                          <Badge tone={secret ? "success" : "warning"}>
-                            {secret ? "Saved" : "Needs value"}
-                          </Badge>
-                        </div>
-                        <p className="text-[12px] leading-5 text-muted">
-                          {envSuggestions.includes(key)
-                            ? "Detected from the repository profile"
-                            : "Saved workspace secret"}
-                        </p>
-                      </div>
+                  <div className="space-y-2 px-4 py-3" key={key}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <code className="break-all font-mono text-[13px] font-medium text-foreground">
+                        {key}
+                      </code>
+                      <Badge tone={key.startsWith("NEXT_PUBLIC_") ? "neutral" : "accent"}>
+                        {scopeLabel}
+                      </Badge>
+                      <Badge tone={secret ? "success" : "warning"}>
+                        {secret ? secretPreviewLabel(secret) : "Needs value"}
+                      </Badge>
                     </div>
 
-                    <div className="grid min-w-0 gap-2">
-                      <label className="block min-w-0 space-y-1">
-                        <span className="flex items-center justify-between gap-2 text-[11px] font-medium text-muted">
-                          <span>Value</span>
-                          <span className="font-normal">{secretPreviewLabel(secret)}</span>
-                        </span>
-                        <input
-                          autoComplete="off"
-                          className="ui-input font-mono text-[13px]"
-                          disabled={busyAction !== null}
-                          onChange={(event) => handleSecretDraftChange(key, event.target.value)}
-                          placeholder={secret ? "Paste replacement value..." : "Paste value..."}
-                          type="password"
-                          value={draftValue}
-                        />
-                      </label>
-
+                    <div className="flex min-w-0 items-center gap-2">
+                      <input
+                        aria-label={`Value for ${key}`}
+                        autoComplete="off"
+                        className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                        disabled={busyAction !== null}
+                        onChange={(event) => handleSecretDraftChange(key, event.target.value)}
+                        type="password"
+                        value={draftValue}
+                      />
                       <button
+                        aria-label={`${secret ? "Update" : "Save"} ${key}`}
                         className={cn(
-                          "w-full whitespace-nowrap",
+                          "h-10 w-10 shrink-0 !px-0 !py-0",
                           canSaveVariable ? "ui-button-primary" : "ui-button",
                         )}
                         disabled={!canSaveVariable}
                         onClick={() => void handleSaveSecret(key, draftValue)}
+                        title={secret ? "Update" : "Save"}
                         type="button"
                       >
-                        {isSavingSecret ? "Saving..." : secret ? "Update" : "Save"}
+                        {isSavingSecret ? (
+                          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+                        ) : (
+                          <CheckIcon className="h-4 w-4" />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -1398,48 +1371,49 @@ function RuntimeStep({
           )}
 
           <div className="border-t border-border bg-surface-strong px-4 py-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.9fr)] sm:items-start">
-              <label className="block min-w-0 space-y-1">
-                <span className="flex items-center gap-2 text-[11px] font-medium text-muted">
-                  <PlusIcon className="h-3.5 w-3.5" />
-                  New variable
-                </span>
+            <div className="space-y-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <PlusIcon className="h-3.5 w-3.5 text-muted" />
                 <input
+                  aria-label="New variable name"
                   autoCapitalize="characters"
                   autoComplete="off"
-                  className="ui-input font-mono text-[13px]"
+                  className="ui-input h-10 min-w-[220px] flex-1 font-mono text-[13px]"
                   disabled={busyAction !== null}
                   onChange={(event) => setNewSecretKey(event.target.value)}
                   placeholder="SECRET_KEY"
                   spellCheck={false}
                   value={newSecretKey}
                 />
-              </label>
-              <div className="grid min-w-0 gap-2">
-                <label className="block min-w-0 space-y-1">
-                  <span className="text-[11px] font-medium text-muted">Value</span>
-                  <input
-                    autoComplete="off"
-                    className="ui-input font-mono text-[13px]"
-                    disabled={busyAction !== null}
-                    onChange={(event) => setNewSecretValue(event.target.value)}
-                    placeholder="Paste value..."
-                    type="password"
-                    value={newSecretValue}
-                  />
-                </label>
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <input
+                  aria-label="New variable value"
+                  autoComplete="off"
+                  className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                  disabled={busyAction !== null}
+                  onChange={(event) => setNewSecretValue(event.target.value)}
+                  type="password"
+                  value={newSecretValue}
+                />
                 <button
+                  aria-label="Add variable"
                   className={cn(
-                    "w-full whitespace-nowrap",
+                    "h-10 w-10 shrink-0 !px-0 !py-0",
                     canSaveNewSecret ? "ui-button-primary" : "ui-button",
                   )}
                   disabled={!canSaveNewSecret}
                   onClick={() =>
                     void handleSaveSecret(newSecretKey, newSecretValue, { clearNewRow: true })
                   }
+                  title="Add variable"
                   type="button"
                 >
-                  {busyAction === secretBusyActionKey(newSecretKey) ? "Saving..." : "Add variable"}
+                  {busyAction === secretBusyActionKey(newSecretKey) ? (
+                    <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+                  ) : (
+                    <CheckIcon className="h-4 w-4" />
+                  )}
                 </button>
               </div>
             </div>
