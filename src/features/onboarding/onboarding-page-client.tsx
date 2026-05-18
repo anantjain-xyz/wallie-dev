@@ -9,6 +9,7 @@ import type {
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
+import { CodeIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -74,15 +75,10 @@ type HealthSummaryItem = {
   value: string;
 };
 
-type StepHealthItem = {
-  label: string;
-  tone: HealthTone;
-  value: string;
-};
-
 type EditableProfile = RepositoryProfileState;
 type AgentConfigDrafts = Record<AgentConfigKey, string>;
 type FieldType = "number" | "select" | "text";
+type ProfileHintKind = "framework" | "language" | "package";
 type OnboardingDataUpdate =
   | WorkspaceOnboardingData
   | ((currentData: WorkspaceOnboardingData) => WorkspaceOnboardingData);
@@ -103,14 +99,6 @@ type FieldDescriptor = {
   type: FieldType;
 };
 
-const stepStateLabels: Record<OnboardingStepDisplayState, string> = {
-  active: "Current",
-  available: "Available",
-  blocked: "Blocked",
-  completed: "Complete",
-  skipped: "Skipped",
-};
-
 const badgeToneClasses: Record<HealthTone, string> = {
   accent: "ui-badge-neutral",
   danger: "ui-badge-danger",
@@ -120,11 +108,80 @@ const badgeToneClasses: Record<HealthTone, string> = {
 };
 
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
-  active: "border-border-strong bg-background text-foreground shadow-sm",
-  available: "border-border bg-surface text-foreground hover:bg-surface-strong",
-  blocked: "border-border bg-surface-muted text-muted opacity-70",
-  completed: "border-border bg-surface text-muted hover:bg-surface-strong",
-  skipped: "border-border bg-surface text-muted hover:bg-surface-strong",
+  active: "bg-accent-soft text-accent",
+  available: "text-muted hover:bg-surface-strong hover:text-foreground",
+  blocked: "text-muted opacity-55",
+  completed: "text-muted hover:bg-surface-strong hover:text-foreground",
+  skipped: "text-muted hover:bg-surface-strong hover:text-foreground",
+};
+
+const profileHintLabel: Record<ProfileHintKind, string> = {
+  framework: "Framework",
+  language: "Language",
+  package: "Package manager",
+};
+
+const profileHintIconMap: Record<
+  ProfileHintKind,
+  Record<string, { bg: string; fg: string; text: string }>
+> = {
+  framework: {
+    angular: { bg: "#dd0031", fg: "#ffffff", text: "A" },
+    astro: { bg: "#2f2148", fg: "#ffffff", text: "A" },
+    django: { bg: "#092e20", fg: "#ffffff", text: "Dj" },
+    express: { bg: "#24292f", fg: "#ffffff", text: "Ex" },
+    flask: { bg: "#24292f", fg: "#ffffff", text: "Fl" },
+    nest: { bg: "#e0234e", fg: "#ffffff", text: "Ns" },
+    nestjs: { bg: "#e0234e", fg: "#ffffff", text: "Ns" },
+    next: { bg: "#111111", fg: "#ffffff", text: "N" },
+    nextjs: { bg: "#111111", fg: "#ffffff", text: "N" },
+    playwright: { bg: "#2ead33", fg: "#ffffff", text: "Pw" },
+    rails: { bg: "#cc0000", fg: "#ffffff", text: "Rl" },
+    react: { bg: "#149eca", fg: "#ffffff", text: "R" },
+    remix: { bg: "#111111", fg: "#ffffff", text: "Rx" },
+    svelte: { bg: "#ff3e00", fg: "#ffffff", text: "S" },
+    supabase: { bg: "#3ecf8e", fg: "#0b3727", text: "S" },
+    tailwind: { bg: "#38bdf8", fg: "#082f49", text: "Tw" },
+    tailwindcss: { bg: "#38bdf8", fg: "#082f49", text: "Tw" },
+    turbo: { bg: "#ef4444", fg: "#ffffff", text: "T" },
+    turborepo: { bg: "#ef4444", fg: "#ffffff", text: "T" },
+    vite: { bg: "#646cff", fg: "#ffffff", text: "V" },
+    vue: { bg: "#42b883", fg: "#0f2f24", text: "V" },
+  },
+  language: {
+    bash: { bg: "#4eaa25", fg: "#ffffff", text: "sh" },
+    c: { bg: "#555555", fg: "#ffffff", text: "C" },
+    cpp: { bg: "#00599c", fg: "#ffffff", text: "C++" },
+    csharp: { bg: "#68217a", fg: "#ffffff", text: "C#" },
+    css: { bg: "#1572b6", fg: "#ffffff", text: "CSS" },
+    dart: { bg: "#0175c2", fg: "#ffffff", text: "Da" },
+    go: { bg: "#00add8", fg: "#06262f", text: "Go" },
+    golang: { bg: "#00add8", fg: "#06262f", text: "Go" },
+    html: { bg: "#e34f26", fg: "#ffffff", text: "HT" },
+    java: { bg: "#e76f00", fg: "#ffffff", text: "Ja" },
+    javascript: { bg: "#f7df1e", fg: "#1d1f22", text: "JS" },
+    js: { bg: "#f7df1e", fg: "#1d1f22", text: "JS" },
+    kotlin: { bg: "#7f52ff", fg: "#ffffff", text: "Kt" },
+    php: { bg: "#777bb4", fg: "#ffffff", text: "PHP" },
+    python: { bg: "#3776ab", fg: "#ffffff", text: "Py" },
+    ruby: { bg: "#cc342d", fg: "#ffffff", text: "Rb" },
+    rust: { bg: "#b7410e", fg: "#ffffff", text: "Rs" },
+    shell: { bg: "#4eaa25", fg: "#ffffff", text: "sh" },
+    swift: { bg: "#f05138", fg: "#ffffff", text: "Sw" },
+    ts: { bg: "#3178c6", fg: "#ffffff", text: "TS" },
+    typescript: { bg: "#3178c6", fg: "#ffffff", text: "TS" },
+  },
+  package: {
+    bun: { bg: "#f0dbb4", fg: "#1d1f22", text: "B" },
+    cargo: { bg: "#b7410e", fg: "#ffffff", text: "Cg" },
+    go: { bg: "#00add8", fg: "#06262f", text: "Go" },
+    npm: { bg: "#cb3837", fg: "#ffffff", text: "npm" },
+    pip: { bg: "#3776ab", fg: "#ffffff", text: "pip" },
+    pnpm: { bg: "#f9ad00", fg: "#1d1f22", text: "pn" },
+    poetry: { bg: "#60a5fa", fg: "#082f49", text: "Po" },
+    uv: { bg: "#111827", fg: "#ffffff", text: "uv" },
+    yarn: { bg: "#2c8ebb", fg: "#ffffff", text: "Y" },
+  },
 };
 
 function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
@@ -133,7 +190,7 @@ function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
       aria-hidden="true"
       className={cn(
         "h-2 w-2 rounded-full",
-        state === "active" ? "bg-foreground" : "bg-muted/60",
+        state === "active" ? "bg-accent" : "bg-muted/60",
         state === "blocked" && "bg-border-strong",
       )}
     />
@@ -145,6 +202,60 @@ function Badge({ children, tone }: { children: string; tone: HealthTone }) {
     <span className={cn("ui-badge whitespace-nowrap", badgeToneClasses[tone])}>
       <span className="ui-badge-dot" />
       {children}
+    </span>
+  );
+}
+
+function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
+  return (
+    <span
+      className={cn(
+        "ui-badge whitespace-nowrap",
+        tone === "success" ? "ui-badge-success" : "ui-badge-neutral",
+      )}
+    >
+      <span className="ui-badge-dot" />
+      {children}
+    </span>
+  );
+}
+
+function normalizeProfileHint(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\.js$/u, "js")
+    .replace(/[^a-z0-9+#]+/gu, "");
+}
+
+function ProfileHintIcon({ kind, value }: { kind: ProfileHintKind; value: string }) {
+  const icon = profileHintIconMap[kind][normalizeProfileHint(value)];
+
+  if (icon) {
+    return (
+      <span
+        aria-hidden="true"
+        className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] px-1 text-[8px] font-bold leading-none"
+        style={{ backgroundColor: icon.bg, color: icon.fg }}
+      >
+        {icon.text}
+      </span>
+    );
+  }
+
+  const className = "h-3.5 w-3.5 text-muted";
+  if (kind === "package") return <ProjectsIcon className={className} />;
+  if (kind === "framework") return <SparkIcon className={className} />;
+  return <CodeIcon className={className} />;
+}
+
+function ProfileHintPill({ kind, value }: { kind: ProfileHintKind; value: string }) {
+  const label = `${profileHintLabel[kind]}: ${value}`;
+
+  return (
+    <span aria-label={label} className="ui-pill gap-1.5" title={label}>
+      <ProfileHintIcon kind={kind} value={value} />
+      {value}
     </span>
   );
 }
@@ -392,102 +503,6 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
   ];
 }
 
-function stepHealthItems(
-  step: WorkspaceOnboardingStep,
-  health: OnboardingSetupHealth,
-): StepHealthItem[] {
-  switch (step) {
-    case "github":
-      return [
-        {
-          label: "Installation",
-          tone: health.githubInstallation.connected ? "success" : "warning",
-          value: health.githubInstallation.connected ? "Connected" : "Missing",
-        },
-        {
-          label: "Target",
-          tone: health.githubInstallation.targetName ? "success" : "neutral",
-          value: health.githubInstallation.targetName ?? "Not selected",
-        },
-      ];
-    case "repository":
-      return [
-        {
-          label: "Repository setup",
-          tone:
-            health.repositorySetup.status === "ready"
-              ? "success"
-              : health.repositorySetup.status === "error"
-                ? "danger"
-                : health.repositorySetup.status === "conflict"
-                  ? "warning"
-                  : "neutral",
-          value: health.repositorySetup.status,
-        },
-        {
-          label: "Primary profile",
-          tone: health.primaryRepositoryProfile.configured ? "success" : "warning",
-          value: health.primaryRepositoryProfile.configured ? "Saved" : "Missing",
-        },
-      ];
-    case "pipeline":
-      return [
-        {
-          label: "Default pipeline",
-          tone: health.defaultPipeline.configured ? "success" : "warning",
-          value: health.defaultPipeline.configured ? "Ready" : "Missing",
-        },
-        {
-          label: "Stages",
-          tone: health.defaultPipeline.stageCount > 0 ? "success" : "warning",
-          value: String(health.defaultPipeline.stageCount),
-        },
-      ];
-    case "linear":
-      return [
-        {
-          label: "Linear key",
-          tone: health.linearKey.configured ? "success" : "warning",
-          value: health.linearKey.configured ? "Present" : "Missing",
-        },
-        {
-          label: "Routing",
-          tone: health.linearRouting.configured ? "success" : "warning",
-          value: health.linearRouting.configured ? "Mapped" : "Missing",
-        },
-      ];
-    case "runtime":
-      return [
-        {
-          label: "Agent config",
-          tone: health.agentConfig.configured ? "success" : "warning",
-          value: health.agentConfig.configured ? "Present" : "Missing",
-        },
-        {
-          label: "Codex",
-          tone: health.codexConnection.connected ? "success" : "warning",
-          value: health.codexConnection.connected ? "Connected" : "Missing",
-        },
-        {
-          label: "Sandbox",
-          tone:
-            health.latestSandboxCapabilityCheck?.status === "success"
-              ? "success"
-              : health.latestSandboxCapabilityCheck?.status === "error"
-                ? "danger"
-                : "neutral",
-          value: health.latestSandboxCapabilityCheck?.status ?? "No check",
-        },
-      ];
-    case "verify":
-      return setupHealthItems(health).map((item) => ({
-        label: item.label,
-        tone: item.tone,
-        value: item.value,
-      }));
-  }
-}
-
 function settingsHref(workspaceSlug: string, anchor: string) {
   return `${workspaceSettingsPath(workspaceSlug)}#${anchor}`;
 }
@@ -590,7 +605,6 @@ function ProfileField({
 function RepositoryProfileEditor({
   canManage,
   isBusy,
-  isDirty,
   onChange,
   onInfer,
   onSave,
@@ -598,43 +612,29 @@ function RepositoryProfileEditor({
 }: {
   canManage: boolean;
   isBusy: boolean;
-  isDirty: boolean;
   onChange: (profile: EditableProfile, dirty?: boolean) => void;
   onInfer: () => void;
   onSave: () => void;
   profile: EditableProfile;
 }) {
-  const confidence = isDirty ? "manual" : profile.inferenceConfidence;
-
   function update<K extends keyof EditableProfile>(key: K, value: EditableProfile[K]) {
     onChange({ ...profile, [key]: value, inferenceConfidence: "manual" }, true);
   }
 
   return (
-    <div className="rounded-[6px] border border-border bg-background p-4">
+    <div className="rounded-[6px] border border-border bg-surface p-4">
       <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-foreground">Repository profile</h3>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge
-              tone={
-                confidence === "high" ? "success" : confidence === "low" ? "warning" : "neutral"
-              }
-            >
-              {confidence}
-            </Badge>
             {profile.packageManager ? (
-              <span className="ui-pill">{profile.packageManager}</span>
+              <ProfileHintPill kind="package" value={profile.packageManager} />
             ) : null}
             {profile.languageHints.map((hint) => (
-              <span className="ui-pill" key={hint}>
-                {hint}
-              </span>
+              <ProfileHintPill kind="language" key={hint} value={hint} />
             ))}
             {profile.frameworkHints.map((hint) => (
-              <span className="ui-pill" key={hint}>
-                {hint}
-              </span>
+              <ProfileHintPill kind="framework" key={hint} value={hint} />
             ))}
           </div>
         </div>
@@ -645,7 +645,7 @@ function RepositoryProfileEditor({
             onClick={onInfer}
             type="button"
           >
-            {isBusy ? "Inferring..." : "Refresh inference"}
+            {isBusy ? "Analyzing..." : "Re-analyze"}
           </button>
           <button
             className="ui-button-primary"
@@ -747,7 +747,7 @@ function RuntimeRequirementList({
     <div className="space-y-2">
       {requirements.map((requirement) => (
         <div
-          className="flex items-start justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
+          className="flex items-start justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2"
           key={requirement.id}
         >
           <div className="min-w-0">
@@ -1043,7 +1043,7 @@ function RuntimeStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Agent config</h3>
@@ -1150,7 +1150,7 @@ function RuntimeStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
@@ -1165,7 +1165,7 @@ function RuntimeStep({
               ) : (
                 envSuggestions.map((key) => (
                   <div
-                    className="flex min-h-11 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
+                    className="flex min-h-11 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2"
                     key={key}
                   >
                     <span className="min-w-0 truncate font-mono text-[12px] text-foreground">
@@ -1218,7 +1218,7 @@ function RuntimeStep({
       </div>
 
       {selectedProvider === "codex" ? (
-        <div className="rounded-[6px] border border-border bg-background p-4">
+        <div className="rounded-[6px] border border-border bg-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h3 className="text-[14px] font-semibold text-foreground">Codex account</h3>
@@ -1231,7 +1231,7 @@ function RuntimeStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Runtime readiness</h3>
@@ -1384,7 +1384,7 @@ function VerifyStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Readiness checklist</h3>
@@ -1400,7 +1400,7 @@ function VerifyStep({
         <div className="mt-4 space-y-2">
           {checklist.map((item) => (
             <div
-              className="flex flex-col gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
+              className="flex flex-col gap-3 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
               key={item.id}
             >
               <div className="min-w-0">
@@ -1427,7 +1427,7 @@ function VerifyStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
@@ -1491,7 +1491,6 @@ function StepBody({
   onSelectStep,
   onSelectRepository,
   profileBusy,
-  profileDirty,
   profileDraft,
   profileError,
   selectedRepositoryId,
@@ -1509,14 +1508,12 @@ function StepBody({
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
   onSelectRepository: (repository: WorkspaceGitHubRepository) => void;
   profileBusy: boolean;
-  profileDirty: boolean;
   profileDraft: EditableProfile | null;
   profileError: string | null;
   selectedRepositoryId: string | null;
   step: WorkspaceOnboardingStep;
   updateProfileDraft: (profile: EditableProfile, dirty?: boolean) => void;
 }) {
-  const rows = stepHealthItems(step, data.setupHealth);
   const primaryHref =
     step === "github"
       ? settingsHref(data.workspace.slug, "github")
@@ -1573,14 +1570,13 @@ function StepBody({
               <RepositoryProfileEditor
                 canManage={data.canManage && !isSaving}
                 isBusy={profileBusy}
-                isDirty={profileDirty}
                 onChange={updateProfileDraft}
                 onInfer={() => onInferRepository(repository)}
                 onSave={onRepositoryProfileSaved}
                 profile={profileDraft}
               />
             ) : profileBusy && selectedRepositoryId === repository.id ? (
-              <div className="rounded-[6px] border border-border bg-background px-3 py-2 text-[13px] text-muted">
+              <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
                 Inferring repository setup...
               </div>
             ) : null
@@ -1632,18 +1628,11 @@ function StepBody({
     controls = <VerifyStep data={data} onDataChange={onDataChange} onSelectStep={onSelectStep} />;
   } else {
     controls = (
-      <div className="rounded-[6px] border border-border bg-background p-4">
+      <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold text-foreground">
-              {step === "verify" ? "Setup health" : "Controls"}
-            </h3>
-            <p className="mt-1 text-[13px] leading-5 text-muted">
-              {step === "verify"
-                ? "Review the health summary, then complete setup when the required signals are ready."
-                : "Use the linked settings area for now; this step will receive inline controls in a later integration issue."}
-            </p>
-          </div>
+          <p className="min-w-0 text-[13px] leading-5 text-muted">
+            Open the linked settings area to finish this step.
+          </p>
           {primaryHref ? (
             <Link className="ui-button shrink-0" href={primaryHref}>
               Open settings
@@ -1654,23 +1643,7 @@ function StepBody({
     );
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {rows.map((row) => (
-          <div
-            key={`${step}-${row.label}`}
-            className="flex min-h-12 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface-strong px-3 py-2"
-          >
-            <span className="min-w-0 text-[12px] font-medium text-muted">{row.label}</span>
-            <Badge tone={row.tone}>{row.value}</Badge>
-          </div>
-        ))}
-      </div>
-
-      {controls}
-    </div>
-  );
+  return <div className="space-y-5">{controls}</div>;
 }
 
 function StepRail({
@@ -1683,14 +1656,14 @@ function StepRail({
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
   return (
-    <ol className="space-y-2">
+    <ol className="space-y-1">
       {items.map((step) => (
         <li key={step.id}>
           <button
             type="button"
             aria-current={step.displayState === "active" ? "step" : undefined}
             className={cn(
-              "flex w-full items-center gap-3 rounded-[8px] border px-3 py-2.5 text-left transition-colors",
+              "flex w-full items-center gap-2 rounded-[6px] px-3 py-1.5 text-left text-[13px] font-medium transition-colors",
               railStateClasses[step.displayState],
               (!canManage || !step.isNavigable) && "cursor-not-allowed",
             )}
@@ -1699,10 +1672,7 @@ function StepRail({
           >
             <StepStateIcon state={step.displayState} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold">{step.title}</span>
-              <span className="mt-0.5 block text-[11px] text-current opacity-75">
-                {stepStateLabels[step.displayState]}
-              </span>
+              <span className="block truncate">{step.title}</span>
             </span>
           </button>
         </li>
@@ -1721,7 +1691,7 @@ function MobileStepControl({
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
   return (
-    <div className="border-b border-border bg-surface px-3 py-2 lg:hidden">
+    <div className="border-y border-border bg-surface px-4 py-2 lg:hidden">
       <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Setup steps">
         {items.map((step) => (
           <button
@@ -1729,7 +1699,7 @@ function MobileStepControl({
             type="button"
             aria-current={step.displayState === "active" ? "step" : undefined}
             className={cn(
-              "inline-flex h-9 min-w-[112px] items-center justify-center gap-1.5 rounded-[6px] border px-2 text-[12px] font-medium",
+              "inline-flex h-9 min-w-[112px] items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-[12px] font-medium",
               railStateClasses[step.displayState],
               (!canManage || !step.isNavigable) && "cursor-not-allowed",
             )}
@@ -1747,8 +1717,8 @@ function MobileStepControl({
 
 function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
   return (
-    <aside className="ui-panel h-fit p-4">
-      <h2 className="text-[14px] font-semibold text-foreground">Setup health</h2>
+    <aside className="h-fit min-w-0 lg:sticky lg:top-8">
+      <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Health</h2>
       <div className="mt-4 space-y-3">
         {setupHealthItems(health).map((item) => (
           <div key={item.label} className="flex items-start justify-between gap-3">
@@ -1756,7 +1726,7 @@ function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
               <p className="text-[12px] font-medium text-foreground">{item.label}</p>
               <p className="mt-0.5 truncate text-[11px] text-muted">{item.detail}</p>
             </div>
-            <Badge tone={item.tone}>{item.value}</Badge>
+            <HealthBadge tone={item.tone}>{item.value}</HealthBadge>
           </div>
         ))}
       </div>
@@ -2147,13 +2117,15 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex min-h-14 items-center justify-between gap-3 border-b border-border bg-surface px-4 sm:px-6">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium text-muted">Workspace setup</p>
-          <h1 className="truncate text-[15px] font-semibold text-foreground">
-            {data.workspace.name}
+    <div className="flex min-h-screen flex-col bg-surface text-foreground">
+      <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-6 pb-8 pt-10 sm:px-8">
+        <div className="min-w-0 space-y-2">
+          <h1 className="text-[28px] font-semibold tracking-tight text-foreground">
+            Set up {data.workspace.name}
           </h1>
+          <p className="max-w-2xl text-[14px] leading-6 text-muted">
+            Finish the required connections before starting sessions.
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {!data.canManage ? <Badge tone="neutral">Read only</Badge> : null}
@@ -2176,11 +2148,10 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
 
       <main
         id="main-content"
-        className="grid flex-1 grid-cols-1 gap-4 p-4 pb-24 lg:grid-cols-[220px_minmax(0,1fr)_280px] lg:p-6 lg:pb-24"
+        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-6 pb-28 sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
       >
         <aside className="hidden lg:block">
-          <div className="sticky top-6">
-            <p className="mb-3 text-[11px] font-medium text-muted">Progress</p>
+          <div className="sticky top-8">
             <StepRail
               canManage={data.canManage && !isSaving}
               items={railItems}
@@ -2189,51 +2160,16 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           </div>
         </aside>
 
-        <section className="ui-panel min-w-0 p-5 sm:p-6">
-          <div className="flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <section className="min-w-0">
+          <div className="settings-section-header mb-6">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge
-                  tone={
-                    isCompleted
-                      ? "success"
-                      : onboarding.status === "dismissed"
-                        ? "neutral"
-                        : "accent"
-                  }
-                >
-                  {isCompleted
-                    ? "Completed"
-                    : onboarding.status === "dismissed"
-                      ? "Dismissed"
-                      : onboarding.status === "not_started"
-                        ? "Not started"
-                        : "In progress"}
-                </Badge>
-                <span className="text-[12px] text-muted">
-                  Step {onboardingStepIndex(activeStep.id) + 1} of {ONBOARDING_STEPS.length}
-                </span>
-              </div>
-              <h2 className="mt-3 text-[24px] font-semibold text-foreground">{activeStep.title}</h2>
+              <h2 className="text-[18px] font-semibold tracking-tight text-foreground">
+                {activeStep.title}
+              </h2>
               <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
                 {activeStep.description}
               </p>
             </div>
-            <Badge
-              tone={
-                railItems.find((step) => step.id === activeStep.id)?.displayState === "completed"
-                  ? "success"
-                  : railItems.find((step) => step.id === activeStep.id)?.displayState === "skipped"
-                    ? "warning"
-                    : "accent"
-              }
-            >
-              {
-                stepStateLabels[
-                  railItems.find((step) => step.id === activeStep.id)?.displayState ?? "active"
-                ]
-              }
-            </Badge>
           </div>
 
           {error ? (
@@ -2263,7 +2199,6 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               onSelectStep={(step) => void selectStep(step)}
               onSelectRepository={(repository) => void selectRepository(repository)}
               profileBusy={profileBusy}
-              profileDirty={profileDirty}
               profileDraft={profileDraft}
               profileError={profileError}
               selectedRepositoryId={selectedRepositoryId}
@@ -2277,12 +2212,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       </main>
 
       <footer className="sticky bottom-0 z-20 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-[1280px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 text-[12px] text-muted">
-            {data.canManage
-              ? "Progress is saved to this workspace."
-              : "Ask a workspace admin to update setup progress."}
-          </div>
+        <div className="mx-auto flex max-w-[1180px] justify-end">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"

@@ -416,6 +416,126 @@ export function UsersIcon({ className, ...props }: IconProps) {
   );
 }
 
+export function CodeIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <path
+        d="M6 5 3.5 8 6 11"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m10 5 2.5 3-2.5 3"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="m8.75 4.5-1.5 7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function BranchIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="4.5" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="11.5" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="4.5" cy="12" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M4.5 5.5v5M6 4h2.2a3.3 3.3 0 0 1 3.3 3.3V10"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function LockIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <rect
+        x="3.75"
+        y="7"
+        width="8.5"
+        height="5.75"
+        rx="1.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M5.75 7V5.75a2.25 2.25 0 0 1 4.5 0V7"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function GlobeIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M3.25 8h9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path
+        d="M8 3c1.25 1.25 1.85 2.92 1.85 5S9.25 11.75 8 13M8 3C6.75 4.25 6.15 5.92 6.15 8S6.75 11.75 8 13"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function ArchiveIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <path
+        d="M3.5 5.75h9v6a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-6Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path d="M3 3.25h10v2.5H3z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M6.5 8h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Priority indicator icons                                          */
 /* ------------------------------------------------------------------ */

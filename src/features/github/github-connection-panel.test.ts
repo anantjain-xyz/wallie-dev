@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  GitHubConnectionPanel,
   mergeRefreshedRepositories,
   mergeRepositoryOnboardingState,
   primaryProfileForRepositories,
 } from "@/features/github/github-connection-panel";
+import type { WorkspaceGitHubData } from "@/features/github/data";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
@@ -133,5 +137,43 @@ describe("mergeRepositoryOnboardingState", () => {
     expect(nextRepositories).toHaveLength(2);
     expect(nextRepositories[0]?.onboarding).toBe(nextOnboarding);
     expect(nextRepositories[1]).toBe(repo2);
+  });
+});
+
+describe("GitHubConnectionPanel", () => {
+  it("does not render a duplicate Selected button for the selected repository", () => {
+    const repo1 = repository("repo-1", null);
+    const repo2 = repository("repo-2", null);
+    const github = {
+      installation: {
+        appId: 123,
+        id: "installation-1",
+        installationId: 456,
+        installationUrl: "https://github.com/settings/installations/456",
+        permissions: {},
+        suspended: false,
+        targetName: "acme",
+        targetType: "Organization",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [repo1, repo2],
+    } satisfies WorkspaceGitHubData;
+
+    const markup = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: true,
+        github,
+        onSelectRepository: () => undefined,
+        selectedRepositoryId: repo1.id,
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(markup).toContain("Selected");
+    expect(markup).toContain(">Select</button>");
+    expect(markup).not.toContain(">Selected</button>");
   });
 });
