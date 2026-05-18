@@ -87,6 +87,11 @@ describe("Linear routing editor", () => {
 
     expect(html).toContain("Rework stage");
     expect(html).toContain("Land stage");
+    expect(html).toContain("Linear status names");
+    expect(html).toContain("Wallie action");
+    expect(html).toContain("-&gt;");
+    expect(html).toContain("Restart at engineering stage");
+    expect(html).toContain("Route to land stage");
     expect(html).toContain("Save routing");
     expect(html).toContain("engineering");
     expect(html).toContain("land");

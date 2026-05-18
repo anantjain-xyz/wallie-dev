@@ -8,6 +8,7 @@ import { useApiAction } from "@/features/settings/use-api-action";
 import {
   LINEAR_ROUTE_KEYS,
   LINEAR_ROUTE_LABELS,
+  type LinearRouteKey,
   type LinearRoutingConfig,
 } from "@/lib/linear-routing/contracts";
 
@@ -27,7 +28,16 @@ type LinearRoutingDraft = {
   landStageSlug: string;
   monitorStageSlug: string;
   reworkStageSlug: string;
-  statusMappings: Record<(typeof LINEAR_ROUTE_KEYS)[number], string>;
+  statusMappings: Record<LinearRouteKey, string>;
+};
+
+const LINEAR_ROUTE_ACTIONS: Record<Exclude<LinearRouteKey, "merging" | "rework">, string> = {
+  backlog: "Ignore",
+  canceled: "Cancel and archive session",
+  done: "Archive session",
+  in_progress: "Continue current stage",
+  in_review: "Pause for review",
+  todo: "Start current stage",
 };
 
 export function joinStatuses(values: readonly string[]): string {
@@ -91,6 +101,17 @@ function buildRoutingPayload(draft: LinearRoutingDraft) {
   };
 }
 
+function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
+  switch (key) {
+    case "merging":
+      return `Route to ${draft.landStageSlug} stage`;
+    case "rework":
+      return `Restart at ${draft.reworkStageSlug} stage`;
+    default:
+      return LINEAR_ROUTE_ACTIONS[key];
+  }
+}
+
 export function LinearRoutingEditor({
   canManage,
   routing,
@@ -145,7 +166,7 @@ export function LinearRoutingControls({
     successText: "Linear routing saved.",
   });
 
-  function updateStatus(key: (typeof LINEAR_ROUTE_KEYS)[number], value: string) {
+  function updateStatus(key: LinearRouteKey, value: string) {
     setDraft((current) => ({
       ...current,
       statusMappings: { ...current.statusMappings, [key]: value },
@@ -154,20 +175,53 @@ export function LinearRoutingControls({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2">
-        {LINEAR_ROUTE_KEYS.map((key) => (
-          <label className="block space-y-1.5" key={key}>
-            <span className="text-[13px] font-medium text-foreground">
-              {LINEAR_ROUTE_LABELS[key]}
-            </span>
-            <input
-              className="ui-input"
-              disabled={!canManage}
-              onChange={(event) => updateStatus(key, event.target.value)}
-              value={draft.statusMappings[key]}
-            />
-          </label>
-        ))}
+      <div className="space-y-2">
+        <div className="hidden grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,0.75fr)] items-center gap-3 px-1 text-[11px] font-semibold uppercase text-muted md:grid">
+          <span>Linear status names</span>
+          <span className="sr-only">maps to</span>
+          <span>Wallie action</span>
+        </div>
+
+        <div className="divide-y divide-border border-y border-border">
+          {LINEAR_ROUTE_KEYS.map((key) => (
+            <div
+              className="grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,0.75fr)] md:items-center"
+              key={key}
+            >
+              <label className="block min-w-0 space-y-1.5">
+                <span className="block text-[12px] font-semibold uppercase text-muted md:hidden">
+                  Linear status names
+                </span>
+                <span className="block text-[13px] font-medium text-foreground">
+                  {LINEAR_ROUTE_LABELS[key]}
+                </span>
+                <input
+                  aria-label={`${LINEAR_ROUTE_LABELS[key]} Linear status names`}
+                  className="ui-input"
+                  disabled={!canManage}
+                  onChange={(event) => updateStatus(key, event.target.value)}
+                  value={draft.statusMappings[key]}
+                />
+              </label>
+
+              <div
+                aria-hidden="true"
+                className="flex h-6 items-center text-[12px] font-semibold text-muted md:justify-center"
+              >
+                -&gt;
+              </div>
+
+              <div className="min-w-0">
+                <span className="block text-[12px] font-semibold uppercase text-muted md:hidden">
+                  Wallie action
+                </span>
+                <p className="text-sm font-medium text-foreground">
+                  {actionLabelForRoute(key, draft)}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
