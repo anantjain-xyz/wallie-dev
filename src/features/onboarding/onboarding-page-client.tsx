@@ -217,6 +217,30 @@ function Badge({ children, tone }: { children: string; tone: HealthTone }) {
   );
 }
 
+function SecretValueTextarea({
+  ariaLabel,
+  disabled,
+  onChange,
+  value,
+}: {
+  ariaLabel: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <textarea
+      aria-label={ariaLabel}
+      autoComplete="off"
+      className="ui-textarea min-h-20 min-w-0 flex-1 resize-y font-mono text-[13px]"
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      spellCheck={false}
+      value={value}
+    />
+  );
+}
+
 function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
   return (
     <span
@@ -277,8 +301,12 @@ function presenceBadge(configured: boolean) {
     : { tone: "warning" as const, value: "Missing" };
 }
 
+function normalizeSecretKey(key: string) {
+  return key.trim().toUpperCase();
+}
+
 function secretBusyActionKey(key: string) {
-  return `secret:${key.trim().toUpperCase()}`;
+  return `secret:${normalizeSecretKey(key)}`;
 }
 
 function secretPreviewLabel(secret: WorkspaceSecretPreview | undefined) {
@@ -296,8 +324,9 @@ function repositoryVariableKeys(
 ) {
   const keys = new Set<string>();
   const rows: string[] = [];
-  const addKey = (key: string) => {
-    if (key === "LINEAR_API_KEY" || runtimeCredentialKeys.has(key) || keys.has(key)) {
+  const addKey = (rawKey: string) => {
+    const key = normalizeSecretKey(rawKey);
+    if (!key || key === "LINEAR_API_KEY" || runtimeCredentialKeys.has(key) || keys.has(key)) {
       return;
     }
     keys.add(key);
@@ -873,10 +902,16 @@ function RuntimeStep({
   });
   const selectedProvider = readiness.provider;
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
-  const secretByKey = new Map(data.workspaceSecrets.map((secret) => [secret.key, secret]));
-  const configuredSecretKeys = new Set(data.workspaceSecrets.map((secret) => secret.key));
+  const secretByKey = new Map(
+    data.workspaceSecrets.map((secret) => [normalizeSecretKey(secret.key), secret]),
+  );
+  const configuredSecretKeys = new Set(
+    data.workspaceSecrets.map((secret) => normalizeSecretKey(secret.key)),
+  );
   const runtimeCredentials: RuntimeCredentialDescriptor[] = [];
-  const runtimeCredentialKeys = new Set(runtimeCredentials.map((credential) => credential.key));
+  const runtimeCredentialKeys = new Set(
+    runtimeCredentials.map((credential) => normalizeSecretKey(credential.key)),
+  );
   const repositoryVariables = repositoryVariableKeys(
     envSuggestions,
     data.workspaceSecrets,
@@ -1014,11 +1049,11 @@ function RuntimeStep({
   }
 
   function handleSecretDraftChange(key: string, value: string) {
-    setSecretValueDrafts((current) => ({ ...current, [key]: value }));
+    setSecretValueDrafts((current) => ({ ...current, [normalizeSecretKey(key)]: value }));
   }
 
   async function handleSaveSecret(key: string, value: string, options?: { clearNewRow?: boolean }) {
-    const normalizedKey = key.trim().toUpperCase();
+    const normalizedKey = normalizeSecretKey(key);
     if (!data.canManage || isSaving || busyAction !== null || !normalizedKey || !value.trim()) {
       return;
     }
@@ -1046,6 +1081,7 @@ function RuntimeStep({
       onDataChange(updateSecretInData(data, body.secret));
       setSecretValueDrafts((current) => {
         const next = { ...current };
+        delete next[key];
         delete next[normalizedKey];
         return next;
       });
@@ -1232,7 +1268,7 @@ function RuntimeStep({
             <div className="divide-y divide-border">
               {runtimeCredentials.map((credential) => {
                 const configured = configuredSecretKeys.has(credential.key);
-                const draftValue = secretValueDrafts[credential.key] ?? "";
+                const draftValue = secretValueDrafts[normalizeSecretKey(credential.key)] ?? "";
                 const isSavingSecret = busyAction === secretBusyActionKey(credential.key);
                 const canSaveCredential =
                   data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
@@ -1249,16 +1285,11 @@ function RuntimeStep({
                       </Badge>
                     </div>
 
-                    <div className="flex min-w-0 items-center gap-2">
-                      <input
-                        aria-label={`Value for ${credential.key}`}
-                        autoComplete="off"
-                        className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                    <div className="flex min-w-0 items-start gap-2">
+                      <SecretValueTextarea
+                        ariaLabel={`Value for ${credential.key}`}
                         disabled={busyAction !== null}
-                        onChange={(event) =>
-                          handleSecretDraftChange(credential.key, event.target.value)
-                        }
-                        type="password"
+                        onChange={(value) => handleSecretDraftChange(credential.key, value)}
                         value={draftValue}
                       />
                       <button
@@ -1319,14 +1350,11 @@ function RuntimeStep({
                       </Badge>
                     </div>
 
-                    <div className="flex min-w-0 items-center gap-2">
-                      <input
-                        aria-label={`Value for ${key}`}
-                        autoComplete="off"
-                        className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                    <div className="flex min-w-0 items-start gap-2">
+                      <SecretValueTextarea
+                        ariaLabel={`Value for ${key}`}
                         disabled={busyAction !== null}
-                        onChange={(event) => handleSecretDraftChange(key, event.target.value)}
-                        type="password"
+                        onChange={(value) => handleSecretDraftChange(key, value)}
                         value={draftValue}
                       />
                       <button
@@ -1369,14 +1397,11 @@ function RuntimeStep({
                   value={newSecretKey}
                 />
               </div>
-              <div className="flex min-w-0 items-center gap-2">
-                <input
-                  aria-label="New variable value"
-                  autoComplete="off"
-                  className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+              <div className="flex min-w-0 items-start gap-2">
+                <SecretValueTextarea
+                  ariaLabel="New variable value"
                   disabled={busyAction !== null}
-                  onChange={(event) => setNewSecretValue(event.target.value)}
-                  type="password"
+                  onChange={setNewSecretValue}
                   value={newSecretValue}
                 />
                 <button

@@ -95,6 +95,22 @@ function profile(githubRepositoryId: string, overrides: Partial<RepositoryProfil
   } satisfies RepositoryProfileState;
 }
 
+function workspaceSecret(
+  key: string,
+  overrides: Partial<WorkspaceOnboardingData["workspaceSecrets"][number]> = {},
+) {
+  return {
+    createdAt: "2026-05-16T18:00:00.000Z",
+    createdByMemberId: "member-1",
+    id: `secret-${key.toLowerCase()}`,
+    key,
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    valuePreview: "...value",
+    workspaceId: "workspace-1",
+    ...overrides,
+  } satisfies WorkspaceOnboardingData["workspaceSecrets"][number];
+}
+
 type OnboardingDataOverrides = Omit<
   Partial<WorkspaceOnboardingData>,
   "onboarding" | "setupHealth" | "workspace"
@@ -673,6 +689,8 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Repository environment variables");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
+    expect(html).toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
+    expect(html).toContain("ui-textarea min-h-20");
     expect(html).toContain("Not set");
     expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
     expect(html).not.toContain("Needs value");
@@ -683,6 +701,34 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("<select");
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("truncate font-mono");
+  });
+
+  it("normalizes repository env keys before rendering saved state", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: null,
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: profile("repo-a", {
+              envKeySuggestions: ["api_key", "API_KEY"],
+            }),
+            repositories: [],
+          },
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline"],
+            currentStep: "runtime",
+          },
+          workspaceSecrets: [workspaceSecret("API_KEY")],
+        }),
+      }),
+    );
+
+    expect(html.match(/<code[^>]*>API_KEY<\/code>/g) ?? []).toHaveLength(1);
+    expect(html).toContain("Stored ...value");
+    expect(html).not.toContain(">api_key<");
+    expect(html).not.toContain("Not set");
   });
 
   it("keeps provider-like env keys as repository notes for the Claude Code runner", () => {
