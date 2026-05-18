@@ -46,7 +46,7 @@ describe("CodexRunner", () => {
       ],
     );
 
-    const runner = new CodexRunner({ accessToken: "tok", model: "gpt-5-codex" });
+    const runner = new CodexRunner({ accessToken: "tok" });
     const events = [];
     for await (const ev of runner.start({
       sessionId: "s1",
@@ -74,7 +74,8 @@ describe("CodexRunner", () => {
     const [call] = sandbox.calls;
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
-    expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5-codex'");
+    expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.5'");
+    expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
     expect(call.opts.env).toMatchObject({ CODEX_HOME: "/vercel/sandbox/.codex" });
   });

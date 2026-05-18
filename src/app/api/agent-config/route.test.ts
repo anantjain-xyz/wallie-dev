@@ -241,4 +241,41 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
       expect.anything(),
     );
   });
+
+  it("uses the configured provider's recommended model for missing agent_model defaults", async () => {
+    grantAccess();
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [{ key: "agent_provider", value_json: "claude-code" }],
+            error: null,
+          }),
+        }),
+        upsert,
+      }),
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/agent-config", {
+        body: JSON.stringify({ workspaceId: WORKSPACE_ID }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { applied: Array<{ key: string; value: unknown }> };
+    expect(payload.applied).toContainEqual({
+      key: "agent_model",
+      value: "claude-opus-4-7[1m]",
+    });
+    expect(upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        { key: "agent_model", value_json: "claude-opus-4-7[1m]", workspace_id: WORKSPACE_ID },
+      ]),
+      { onConflict: "workspace_id,key" },
+    );
+  });
 });

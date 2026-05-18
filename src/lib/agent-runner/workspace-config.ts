@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   AGENT_PROVIDERS,
+  getRecommendedAgentModel,
   normalizeAgentProviderName,
   type AgentProvider,
 } from "@/lib/agent-config/contracts";
@@ -48,13 +49,9 @@ export async function loadWorkspaceAgentConfig(
 
   const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
   const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
-  const defaultModel = DEFAULT_AGENT_RUNNER_CONFIG.model;
   const provider = rawProvider
     ? normalizeAgentProviderName(rawProvider)
     : DEFAULT_AGENT_RUNNER_CONFIG.provider;
-  if (!defaultModel) {
-    throw new Error("DEFAULT_AGENT_RUNNER_CONFIG.model must be set.");
-  }
   if (!provider) {
     throw new Error(
       `Unknown agent provider: "${rawProvider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
@@ -63,7 +60,7 @@ export async function loadWorkspaceAgentConfig(
 
   return {
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
-    model: rawModel ?? defaultModel,
+    model: rawModel ?? getRecommendedAgentModel(provider),
     provider,
   };
 }
