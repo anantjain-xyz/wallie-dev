@@ -37,7 +37,7 @@ export const DEFAULT_LINEAR_STATUS_MAPPINGS: Record<LinearRouteKey, string[]> = 
 
 export const DEFAULT_LINEAR_ROUTING_CONFIG = {
   landStageSlug: "land",
-  monitorStageSlug: null as string | null,
+  monitorStageSlug: "monitor" as string | null,
   reworkStageSlug: "engineering",
   statusMappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
 };
@@ -89,6 +89,7 @@ export type LinearRouteClassification =
   | { action: "pause"; route: "in_review"; statusName: string }
   | { action: "rework"; route: "rework"; stageSlug: string; statusName: string }
   | { action: "land"; route: "merging"; stageSlug: string; statusName: string }
+  | { action: "monitor"; route: "done"; stageSlug: string; statusName: string }
   | { action: "archive"; route: "done" | "canceled"; statusName: string }
   | { action: "unmapped"; route: null; statusName: string };
 
@@ -152,6 +153,10 @@ export function classifyLinearStatus(
       case "merging":
         return { action: "land", route, stageSlug: config.landStageSlug, statusName };
       case "done":
+        if (config.monitorStageSlug) {
+          return { action: "monitor", route, stageSlug: config.monitorStageSlug, statusName };
+        }
+        return { action: "archive", route, statusName };
       case "canceled":
         return { action: "archive", route, statusName };
     }

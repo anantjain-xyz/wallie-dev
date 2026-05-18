@@ -56,9 +56,9 @@ class RateLimitedError extends Error {
 /**
  * Reconciliation sweep: for every active session that was triggered from a
  * Linear issue, check the issue's current status and run it through the
- * workspace's configurable Linear status router. Terminal routes archive the
- * session and cancel active work; Rework/Merging routes reset to the configured
- * stage and enqueue a fresh pipeline job.
+ * workspace's configurable Linear status router. Archive routes cancel active
+ * work; Rework/Merging/Done routes reset to the configured stage and enqueue a
+ * fresh pipeline job.
  *
  * Sessions are grouped by workspace and queried in a single GraphQL `issues`
  * batch per workspace, so a workspace with N active sessions costs one
@@ -162,6 +162,7 @@ export async function reconcileLinearState(
                 result.canceled++;
                 break;
               case "land":
+              case "monitor":
               case "rework":
                 await routeSessionToStage(admin, session, {
                   route: classification.route,
@@ -260,7 +261,7 @@ async function cancelActiveWorkForSession(
 async function routeSessionToStage(
   admin: AdminClient,
   session: SessionRow,
-  route: { route: "merging" | "rework"; stageSlug: string; statusName: string },
+  route: { route: "done" | "merging" | "rework"; stageSlug: string; statusName: string },
 ): Promise<void> {
   const stages = await loadPipelineStages(admin, session.pipeline_id);
   const targetStage = stages.find((stage) => stage.slug === route.stageSlug);

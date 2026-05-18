@@ -207,7 +207,7 @@ function makeFetchResponse(body: unknown, init: { status?: number; headers?: Hea
 function routingRow(overrides: Partial<RoutingRow> = {}): RoutingRow {
   return {
     land_stage_slug: "land",
-    monitor_stage_slug: null,
+    monitor_stage_slug: "monitor",
     rework_stage_slug: "engineering",
     status_mappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
     workspace_id: "wA",
@@ -469,10 +469,11 @@ describe("reconcileLinearState", () => {
     }
   });
 
-  it("uses workspace routing config to classify custom terminal status names", async () => {
+  it("archives custom done statuses when monitor routing is disabled", async () => {
     const fixture: Fixture = {
       routingRows: [
         routingRow({
+          monitor_stage_slug: null,
           status_mappings: {
             ...DEFAULT_LINEAR_STATUS_MAPPINGS,
             done: ["Ready to Archive"],
@@ -654,6 +655,64 @@ describe("reconcileLinearState", () => {
         update: expect.objectContaining({
           dedupe_key: "pipeline:iMerge:active",
           session_id: "sMerge",
+          trigger_type: "assignment",
+        }),
+      }),
+    );
+  });
+
+  it("routes Done to the configured monitor stage", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+        { id: "stage-monitor", pipeline_id: "pipe-1", position: 3, slug: "monitor" },
+      ],
+      routingRows: [routingRow({ monitor_stage_slug: "monitor" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      sessions: [
+        {
+          id: "sDone",
+          current_stage_id: "stage-land",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iDone",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iDone", state: { name: "Done" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(result.canceled).toBe(0);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({ "eq.id": "sDone" }),
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({
+          archived_at: null,
+          current_stage_id: "stage-monitor",
+          phase_status: "rejected",
+        }),
+      }),
+    );
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+        update: expect.objectContaining({
+          dedupe_key: "pipeline:iDone:active",
+          session_id: "sDone",
           trigger_type: "assignment",
         }),
       }),
@@ -962,7 +1021,7 @@ describe("reconcileLinearState", () => {
       )
       .mockResolvedValueOnce(
         makeFetchResponse({
-          data: { issues: { nodes: [{ id: "i1", state: { type: "done" } }] } },
+          data: { issues: { nodes: [{ id: "i1", state: { type: "canceled" } }] } },
         }),
       );
 
