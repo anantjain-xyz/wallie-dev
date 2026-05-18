@@ -674,6 +674,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
     expect(html).toContain("Not set");
+    expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
     expect(html).not.toContain("Needs value");
     expect(html).toContain('placeholder="SECRET_KEY"');
     expect(html).not.toContain("Public/deployment");

@@ -1314,7 +1314,7 @@ function RuntimeStep({
                       <code className="break-all font-mono text-[13px] font-medium text-foreground">
                         {key}
                       </code>
-                      <Badge tone={secret ? "success" : "warning"}>
+                      <Badge tone={secret ? "success" : "neutral"}>
                         {secret ? secretPreviewLabel(secret) : "Not set"}
                       </Badge>
                     </div>
