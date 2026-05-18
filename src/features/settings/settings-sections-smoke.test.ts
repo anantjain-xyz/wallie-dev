@@ -2,8 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { LinearKeySection } from "@/features/settings/linear-key-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
+import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 
@@ -62,5 +64,71 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Linear");
     expect(html).toContain("••••1234");
     expect(html).toContain("Test connection");
+  });
+
+  it("renders Settings agent config selects with the shared combobox", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentConfigSection, {
+        canManage: true,
+        initialAgentConfig: {
+          agent_model: "gpt-5-codex",
+          agent_provider: "codex",
+          concurrency_limit: 1,
+          max_retries: 3,
+          stall_timeout_ms: 300000,
+        },
+        setFlashMessage: vi.fn(),
+        workspaceId,
+      }),
+    );
+
+    expect(html).toContain("Agent provider");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-haspopup="listbox"');
+    expect(html).not.toContain("<select");
+  });
+
+  it("renders the sandbox repository picker with the shared combobox", () => {
+    const html = renderToStaticMarkup(
+      createElement(SandboxCapabilitySection, {
+        canManage: true,
+        initialCheck: null,
+        repositories: [
+          {
+            defaultBranch: "main",
+            defaultProgrammingLanguage: "TypeScript",
+            description: null,
+            fullName: "acme/repo-a",
+            htmlUrl: "https://github.com/acme/repo-a",
+            id: "repo-a",
+            isArchived: false,
+            isPrivate: false,
+            name: "repo-a",
+            onboarding: {
+              conflictReport: [],
+              githubRepositoryId: "repo-a",
+              installedSkillHash: null,
+              installedSkillVersion: null,
+              lastError: null,
+              setupBranchName: null,
+              setupPrNumber: null,
+              setupPrUrl: null,
+              status: "not_set_up",
+              updatedAt: null,
+            },
+            profile: null,
+            repoId: 1,
+          },
+        ],
+        setFlashMessage: vi.fn(),
+        workspaceId,
+      }),
+    );
+
+    expect(html).toContain("Repository");
+    expect(html).toContain("acme/repo-a");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-haspopup="listbox"');
+    expect(html).not.toContain("<select");
   });
 });

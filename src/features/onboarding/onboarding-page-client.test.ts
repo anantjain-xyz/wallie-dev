@@ -666,6 +666,8 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("Runtime credentials");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-haspopup="listbox"');
     expect(html).toContain("No encrypted workspace secret is required for the selected codex");
     expect(html).toContain("Repository environment variables");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
@@ -674,6 +676,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Server env");
     expect(html).toContain('placeholder="SECRET_KEY"');
     expect(html).not.toContain("Workspace secrets");
+    expect(html).not.toContain("<select");
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("truncate font-mono");
   });

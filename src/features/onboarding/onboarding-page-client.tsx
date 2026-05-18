@@ -10,6 +10,7 @@ import type {
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
 import { CodeIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
+import { SelectField } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -1076,35 +1077,30 @@ function RuntimeStep({
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {fieldStatuses.map((status) => (
-            <label className="block space-y-1.5" key={status.field.configKey}>
-              <span className="text-[12px] font-medium text-muted">{status.field.label}</span>
+            <div className="block space-y-1.5" key={status.field.configKey}>
               {status.field.type === "select" && status.field.options ? (
-                <select
-                  className="ui-input"
+                <SelectField
                   disabled={busyAction !== null}
-                  onChange={(event) =>
-                    handleFieldChange(status.field.configKey, event.target.value)
-                  }
-                  value={status.draft}
-                >
-                  {status.field.options.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  autoComplete="off"
-                  className="ui-input"
-                  disabled={busyAction !== null}
-                  onChange={(event) =>
-                    handleFieldChange(status.field.configKey, event.target.value)
-                  }
-                  placeholder={status.field.placeholder}
-                  type={status.field.type === "number" ? "number" : "text"}
+                  label={status.field.label}
+                  onValueChange={(value) => handleFieldChange(status.field.configKey, value)}
+                  options={status.field.options.map((option) => ({ label: option, value: option }))}
                   value={status.draft}
                 />
+              ) : (
+                <label className="block space-y-1.5">
+                  <span className="text-[12px] font-medium text-muted">{status.field.label}</span>
+                  <input
+                    autoComplete="off"
+                    className="ui-input"
+                    disabled={busyAction !== null}
+                    onChange={(event) =>
+                      handleFieldChange(status.field.configKey, event.target.value)
+                    }
+                    placeholder={status.field.placeholder}
+                    type={status.field.type === "number" ? "number" : "text"}
+                    value={status.draft}
+                  />
+                </label>
               )}
               {status.validationError ? (
                 <p className="text-[12px] leading-5 text-danger" role="alert">
@@ -1113,7 +1109,7 @@ function RuntimeStep({
               ) : (
                 <p className="text-[12px] leading-5 text-muted">{status.field.description}</p>
               )}
-            </label>
+            </div>
           ))}
         </div>
 
