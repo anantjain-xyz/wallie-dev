@@ -87,9 +87,13 @@ describe("Linear routing editor", () => {
 
     expect(html).toContain("Rework stage");
     expect(html).toContain("Land stage");
+    expect(html).toContain("Status mappings");
+    expect(html).toContain("Stage routing");
     expect(html).toContain("Linear status names");
     expect(html).toContain("Wallie action");
-    expect(html).toContain("-&gt;");
+    expect(html).toContain("→");
+    expect(html).toContain('aria-haspopup="listbox"');
+    expect(html).not.toContain("<select");
     expect(html).toContain("Restart at engineering stage");
     expect(html).toContain("Route to land stage");
     expect(html).toContain("Save routing");
