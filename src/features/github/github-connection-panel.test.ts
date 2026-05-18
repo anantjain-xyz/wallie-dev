@@ -217,8 +217,8 @@ describe("GitHubConnectionPanel", () => {
       }),
     );
 
-    expect(selectedOnly.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
-    expect(hidden).not.toContain("Set up Wallie");
+    expect(selectedOnly.match(/>Install skills<\/button>/g) ?? []).toHaveLength(1);
+    expect(hidden).not.toContain("Install skills");
   });
 
   it("renders manual setup completion only when explicitly enabled", () => {
@@ -263,7 +263,46 @@ describe("GitHubConnectionPanel", () => {
       }),
     );
 
-    expect(enabled).toContain("Mark setup complete");
-    expect(disabled).not.toContain("Mark setup complete");
+    expect(enabled).toContain("Mark skills as installed");
+    expect(disabled).not.toContain("Mark skills as installed");
+  });
+
+  it("does not render the install action after skills are ready", () => {
+    const repo1 = {
+      ...repository("repo-1", null),
+      onboarding: readyOnboarding("repo-1"),
+    } satisfies WorkspaceGitHubRepository;
+    const github = {
+      installation: {
+        appId: 123,
+        id: "installation-1",
+        installationId: 456,
+        installationUrl: "https://github.com/settings/installations/456",
+        permissions: {},
+        suspended: false,
+        targetName: "acme",
+        targetType: "Organization",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [repo1],
+    } satisfies WorkspaceGitHubData;
+
+    const html = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        allowManualSetupComplete: true,
+        canManage: true,
+        github,
+        onSelectRepository: () => undefined,
+        selectedRepositoryId: repo1.id,
+        setupActionScope: "selected",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(html).not.toContain("Install skills");
+    expect(html).not.toContain("Mark skills as installed");
   });
 });
