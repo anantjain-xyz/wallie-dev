@@ -43,8 +43,8 @@ type AgentProviderName = AgentProvider | "claude_code";
  * Accepts the legacy underscore aliases at this boundary, then runs internally
  * on the canonical dashed provider ids.
  *
- * Codex requires caller-supplied OAuth credentials; resolve them with
- * getCodexAccessTokenForUser from "@/lib/codex/tokens" before calling.
+ * Codex requires caller-supplied credentials; resolve them with
+ * getCodexCredentialForUser from "@/lib/codex/tokens" before calling.
  */
 export function createAgentRunner(
   provider: AgentProviderName,
@@ -57,7 +57,7 @@ export function createAgentRunner(
     case "codex":
       if (!opts.codex) {
         throw new Error(
-          "codex provider requires codex auth (pass opts.codex to createAgentRunner).",
+          "codex provider requires codex credentials (pass opts.codex to createAgentRunner).",
         );
       }
       return new CodexRunner(opts.codex);

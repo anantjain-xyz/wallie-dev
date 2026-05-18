@@ -28,7 +28,7 @@ export function ProviderAccessPanel({
           <div className="mb-3 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
             <p className="mt-1 text-[12px] leading-5 text-muted">
-              Sessions run with the Codex account connected by the session creator.
+              Sessions run with the Codex credential saved by the session creator.
             </p>
           </div>
           <CodexConnectionPanel connectFlash={connectFlash} returnTo={returnTo} />

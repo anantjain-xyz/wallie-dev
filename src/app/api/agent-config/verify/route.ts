@@ -6,7 +6,8 @@ import {
   type AgentProvider,
   modelMatchesProvider,
 } from "@/lib/agent-config/contracts";
-import { getCodexAccessTokenForUser, CodexNotConnectedError } from "@/lib/codex/tokens";
+import type { CodexCredential } from "@/lib/codex/contracts";
+import { getCodexCredentialForUser, CodexNotConnectedError } from "@/lib/codex/tokens";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -98,15 +99,15 @@ async function verifyCodex(
   model: string,
 ): Promise<NextResponse<VerifyAgentConfigResponse>> {
   const admin = createSupabaseAdminClient();
-  let accessToken: string;
+  let credential: CodexCredential;
   try {
-    accessToken = await getCodexAccessTokenForUser(admin, userId);
+    credential = await getCodexCredentialForUser(admin, userId);
   } catch (cause) {
     if (cause instanceof CodexNotConnectedError) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Connect your Codex account in Settings first, then try Verify again.",
+          error: "Connect a Codex credential in Settings first, then try Verify again.",
         } satisfies VerifyAgentConfigResponse,
         { status: 200 },
       );
@@ -120,21 +121,29 @@ async function verifyCodex(
     );
   }
 
+  if (credential.type === "codex_access_token") {
+    return NextResponse.json(
+      {
+        ok: "skipped",
+        reason:
+          "Codex access tokens are verified by the Codex CLI inside the per-session sandbox when a pipeline run starts.",
+      } satisfies VerifyAgentConfigResponse,
+      { status: 200 },
+    );
+  }
+
   try {
-    const response = await fetch("https://chatgpt.com/backend-api/codex/responses", {
+    const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
-        authorization: `Bearer ${accessToken}`,
+        authorization: `Bearer ${credential.secret}`,
         "content-type": "application/json",
-        originator: "codex_cli_rs",
       },
       body: JSON.stringify({
         model,
-        instructions: "Reply with the single word: ok.",
-        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "ping" }] }],
+        input: "Reply with the single word: ok.",
         max_output_tokens: 1,
         store: false,
-        stream: false,
       }),
     });
 

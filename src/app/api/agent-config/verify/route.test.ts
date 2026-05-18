@@ -10,7 +10,7 @@ const mocked = vi.hoisted(() => {
   return {
     createSupabaseAdminClient: vi.fn(),
     requireWorkspaceAccessById: vi.fn(),
-    getCodexAccessTokenForUser: vi.fn(),
+    getCodexCredentialForUser: vi.fn(),
     CodexNotConnectedError: CodexNotConnectedErrorMock,
   };
 });
@@ -24,7 +24,7 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 vi.mock("@/lib/codex/tokens", () => ({
-  getCodexAccessTokenForUser: mocked.getCodexAccessTokenForUser,
+  getCodexCredentialForUser: mocked.getCodexCredentialForUser,
   CodexNotConnectedError: mocked.CodexNotConnectedError,
 }));
 
@@ -152,7 +152,7 @@ describe("POST /api/agent-config/verify — codex", () => {
   it("explains when Codex isn't connected", async () => {
     grantAccess();
     mocked.createSupabaseAdminClient.mockReturnValueOnce({});
-    mocked.getCodexAccessTokenForUser.mockRejectedValue(
+    mocked.getCodexCredentialForUser.mockRejectedValue(
       new mocked.CodexNotConnectedError("not connected"),
     );
 
@@ -163,13 +163,37 @@ describe("POST /api/agent-config/verify — codex", () => {
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { ok: boolean; error?: string };
     expect(payload.ok).toBe(false);
-    expect(payload.error).toMatch(/Connect your Codex account/);
+    expect(payload.error).toMatch(/Connect a Codex credential/);
   });
 
-  it("returns ok:true when the Codex backend accepts the call", async () => {
+  it("returns ok:'skipped' for Codex access tokens", async () => {
     grantAccess();
     mocked.createSupabaseAdminClient.mockReturnValueOnce({});
-    mocked.getCodexAccessTokenForUser.mockResolvedValue("oauth-token");
+    mocked.getCodexCredentialForUser.mockResolvedValue({
+      expiresAt: null,
+      secret: "codex-token",
+      type: "codex_access_token",
+    });
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+
+    const response = await POST(
+      postWith({ workspaceId: WORKSPACE_ID, provider: "codex", model: "gpt-5.5" }),
+    );
+
+    const payload = (await response.json()) as { ok: unknown; reason?: string };
+    expect(payload.ok).toBe("skipped");
+    expect(payload.reason).toMatch(/Codex CLI/);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns ok:true when the official Responses API accepts a platform API key", async () => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce({});
+    mocked.getCodexCredentialForUser.mockResolvedValue({
+      expiresAt: null,
+      secret: "sk-test",
+      type: "platform_api_key",
+    });
     globalThis.fetch = vi.fn(
       async () => new Response(JSON.stringify({ id: "resp" }), { status: 200 }),
     ) as unknown as typeof fetch;
@@ -180,10 +204,10 @@ describe("POST /api/agent-config/verify — codex", () => {
 
     expect(await response.json()).toEqual({ ok: true });
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      "https://chatgpt.com/backend-api/codex/responses",
+      "https://api.openai.com/v1/responses",
       expect.objectContaining({
         method: "POST",
-        headers: expect.objectContaining({ authorization: "Bearer oauth-token" }),
+        headers: expect.objectContaining({ authorization: "Bearer sk-test" }),
       }),
     );
   });

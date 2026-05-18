@@ -133,7 +133,7 @@ describe("Settings integration sections", () => {
 
     expect(html).toContain("Agent provider");
     expect(html).toContain("Provider access");
-    expect(html).toContain("Sessions run with the Codex account connected by the session creator");
+    expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).not.toContain("<select");
@@ -176,7 +176,7 @@ describe("Settings integration sections", () => {
 
     expect(html).toContain("Workspace admins can configure coding agent settings");
     expect(html).toContain("Provider access");
-    expect(html).toContain("Sessions run with the Codex account connected by the session creator");
+    expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
   });
 

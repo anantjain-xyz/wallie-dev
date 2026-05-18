@@ -17,7 +17,11 @@ const mocked = vi.hoisted(() => ({
     stop: vi.fn().mockResolvedValue(undefined),
     writeFile: vi.fn(),
   }),
-  getCodexAccessTokenForSession: vi.fn().mockResolvedValue("codex-token"),
+  getCodexCredentialForSession: vi.fn().mockResolvedValue({
+    expiresAt: null,
+    secret: "codex-token",
+    type: "codex_access_token",
+  }),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
@@ -70,7 +74,7 @@ vi.mock("@/lib/codex/tokens", () => ({
       this.name = "CodexNotConnectedError";
     }
   },
-  getCodexAccessTokenForSession: mocked.getCodexAccessTokenForSession,
+  getCodexCredentialForSession: mocked.getCodexCredentialForSession,
 }));
 
 vi.mock("@/features/github/config", () => ({

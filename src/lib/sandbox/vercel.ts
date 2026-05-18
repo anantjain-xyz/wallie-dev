@@ -10,7 +10,6 @@ import type {
 } from "./types";
 
 const REPO_PATH = "/vercel/sandbox";
-const CODEX_HOME = `${REPO_PATH}/.codex`;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 
 /**
@@ -78,8 +77,8 @@ class VercelSandboxHandle implements SandboxHandle {
 
 /**
  * Boot a Vercel Sandbox for a session: clone the repo with the GH App token,
- * check out the working branch, install the chosen agent CLI, and (for Codex)
- * materialise an auth.json containing the OAuth access token.
+ * check out the working branch and install the chosen agent CLI. Provider
+ * credentials are injected by the runner only for the process that needs them.
  */
 export async function createVercelSessionSandbox(
   input: CreateSessionSandboxInput,
@@ -115,20 +114,6 @@ export async function createVercelSessionSandbox(
 
   try {
     await runSetup(handle, input, mode.kind);
-
-    if (input.agentProvider === "codex") {
-      if (!input.codexAccessToken) {
-        throw new Error("Codex provider requires codexAccessToken");
-      }
-      await handle.writeFile(
-        `${CODEX_HOME}/auth.json`,
-        JSON.stringify({
-          OPENAI_API_KEY: null,
-          tokens: { access_token: input.codexAccessToken },
-        }),
-        { mode: 0o600 },
-      );
-    }
   } catch (err) {
     await handle.stop();
     throw err;

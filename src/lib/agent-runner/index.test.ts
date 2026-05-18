@@ -25,15 +25,17 @@ describe("createAgentRunner", () => {
     expect(runner.provider).toBe("claude-code");
   });
 
-  it("creates a CodexRunner for 'codex' when auth is provided", () => {
-    const runner = createAgentRunner("codex", { codex: { accessToken: "tok" } });
+  it("creates a CodexRunner for 'codex' when credentials are provided", () => {
+    const runner = createAgentRunner("codex", {
+      codex: { credential: { expiresAt: null, secret: "tok", type: "codex_access_token" } },
+    });
     expect(runner).toBeInstanceOf(CodexRunner);
     expect(runner.provider).toBe("codex");
     expect(runner.requiresSandbox).toBe(true);
   });
 
-  it("throws when codex is selected without auth", () => {
-    expect(() => createAgentRunner("codex")).toThrow(/codex auth/);
+  it("throws when codex is selected without credentials", () => {
+    expect(() => createAgentRunner("codex")).toThrow(/codex credentials/);
   });
 
   it("throws for unknown provider", () => {

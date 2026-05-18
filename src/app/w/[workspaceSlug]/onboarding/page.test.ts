@@ -82,6 +82,7 @@ const onboardingData = {
     agentConfig: { configured: false, configuredKeys: [], status: "missing", values: {} },
     codexConnection: {
       connected: false,
+      credentialType: null,
       expiresAt: null,
       status: "missing",
       updatedAt: null,

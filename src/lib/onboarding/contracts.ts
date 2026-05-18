@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AgentConfigKey } from "@/lib/agent-config/contracts";
+import type { CodexCredentialType } from "@/lib/codex/contracts";
 import type { RepositoryOnboardingStatus } from "@/lib/repo-onboarding/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 
@@ -71,6 +72,7 @@ export type OnboardingSetupHealth = {
   };
   codexConnection: {
     connected: boolean;
+    credentialType: CodexCredentialType | null;
     expiresAt: string | null;
     status: "connected" | "expired" | "missing";
     updatedAt: string | null;

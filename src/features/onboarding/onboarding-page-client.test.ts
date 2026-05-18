@@ -173,6 +173,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
       },
       codexConnection: {
         connected: false,
+        credentialType: null,
         expiresAt: null,
         status: "missing",
         updatedAt: null,
@@ -685,7 +686,7 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("Runtime credentials");
     expect(html).toContain("Provider access");
-    expect(html).toContain("Sessions run with the Codex account connected by the session creator");
+    expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
@@ -882,6 +883,7 @@ describe("OnboardingPageClient", () => {
           setupHealth: {
             codexConnection: {
               connected: true,
+              credentialType: "codex_access_token",
               expiresAt: "2026-05-16T20:00:00.000Z",
               status: "connected",
               updatedAt: "2026-05-16T18:00:00.000Z",
