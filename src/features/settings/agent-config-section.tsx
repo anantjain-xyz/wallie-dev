@@ -6,6 +6,7 @@ import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
 import { SelectField } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
+import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -27,6 +28,7 @@ type AgentConfigVerifyResult =
 
 type AgentConfigSectionProps = {
   canManage: boolean;
+  codexConnectFlash?: string | null;
   initialAgentConfig: AgentConfigMap;
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
@@ -150,6 +152,7 @@ function AgentConfigField({
 
 export function AgentConfigSection({
   canManage,
+  codexConnectFlash,
   initialAgentConfig,
   setFlashMessage,
   workspaceId,
@@ -224,7 +227,7 @@ export function AgentConfigSection({
       {
         configKey: "agent_model",
         description:
-          "Model identifier passed to the agent provider. Use Verify to send a 1-token test call with this workspace's stored credentials.",
+          "Model identifier passed to the agent provider. Use Verify to check the model against the selected provider and your provider access.",
         label: "Agent model",
         placeholder: getRecommendedAgentModel(selectedAgentProvider),
         type: "text",
@@ -263,6 +266,14 @@ export function AgentConfigSection({
     const validationError = validation && !validation.ok ? validation.error : null;
     return { field, draft, isDirty, validation, validationError };
   });
+  const providerFieldStatuses = fieldStatuses.filter(
+    (status) =>
+      status.field.configKey === "agent_provider" || status.field.configKey === "agent_model",
+  );
+  const executionFieldStatuses = fieldStatuses.filter(
+    (status) =>
+      status.field.configKey !== "agent_provider" && status.field.configKey !== "agent_model",
+  );
 
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
@@ -327,7 +338,7 @@ export function AgentConfigSection({
       {canManage ? (
         <div className="space-y-6">
           <div className="space-y-6">
-            {fieldStatuses.map((status) => (
+            {providerFieldStatuses.map((status) => (
               <AgentConfigField
                 key={status.field.configKey}
                 description={status.field.description}
@@ -375,12 +386,24 @@ export function AgentConfigSection({
             ))}
           </div>
 
-          {selectedAgentProvider === "codex" ? (
-            <p className="text-[12px] leading-5 text-muted">
-              Each session runs with its creator&apos;s Codex account. Connect yours below under
-              &ldquo;Codex account&rdquo;.
-            </p>
-          ) : null}
+          <ProviderAccessPanel connectFlash={codexConnectFlash} provider={selectedAgentProvider} />
+
+          <div className="space-y-6">
+            {executionFieldStatuses.map((status) => (
+              <AgentConfigField
+                key={status.field.configKey}
+                description={status.field.description}
+                disabled={saveAgentConfig.isBusy}
+                draft={status.draft}
+                error={status.validationError}
+                label={status.field.label}
+                onChange={(next) => handleFieldChange(status.field.configKey, next)}
+                options={status.field.options}
+                placeholder={status.field.placeholder}
+                type={status.field.type}
+              />
+            ))}
+          </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
             <p className="text-[12px] text-muted">
@@ -399,9 +422,12 @@ export function AgentConfigSection({
           </div>
         </div>
       ) : (
-        <p className="text-[13px] leading-6 text-muted">
-          Workspace admins can configure coding agent settings from this page.
-        </p>
+        <div className="space-y-4">
+          <p className="text-[13px] leading-6 text-muted">
+            Workspace admins can configure coding agent settings from this page.
+          </p>
+          <ProviderAccessPanel connectFlash={codexConnectFlash} provider={selectedAgentProvider} />
+        </div>
       )}
     </Section>
   );

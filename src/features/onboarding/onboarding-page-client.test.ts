@@ -684,6 +684,9 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("Runtime credentials");
+    expect(html).toContain("Provider access");
+    expect(html).toContain("Sessions run with the Codex account connected by the session creator");
+    expect(html).toContain("Checking connection");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).toContain("No encrypted workspace secret is required for the selected codex");
@@ -705,6 +708,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
     expect(html).not.toContain("Workspace secrets");
+    expect(html).not.toContain("Runtime checks the current user");
     expect(html).not.toContain("<select");
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("truncate font-mono");
@@ -777,6 +781,8 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("ANTHROPIC_API_KEY");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
+    expect(html).toContain("Provider access");
+    expect(html).toContain("Claude Code account connection is not managed in Wallie yet");
     expect(html).toContain(
       "No encrypted workspace secret is required for the selected claude-code",
     );
