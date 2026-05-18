@@ -57,6 +57,18 @@ export function stageToDraft(stage: PipelineStage): DraftPipelineStage {
   };
 }
 
+export function keepKnownApproverIds(
+  stages: DraftPipelineStage[],
+  workspaceMembers: WorkspaceMemberSummary[],
+): DraftPipelineStage[] {
+  const knownMemberIds = new Set(workspaceMembers.map((member) => member.id));
+  return stages.map((stage) => {
+    const approverMemberIds = stage.approverMemberIds.filter((id) => knownMemberIds.has(id));
+    if (approverMemberIds.length === stage.approverMemberIds.length) return stage;
+    return { ...stage, approverMemberIds };
+  });
+}
+
 export function nextUniqueSlug(base: string, stages: DraftPipelineStage[]): string {
   const existing = new Set(stages.map((stage) => stage.slug));
   if (!existing.has(base)) return base;

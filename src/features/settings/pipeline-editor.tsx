@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 
 import {
   appendDraftStage,
+  keepKnownApproverIds,
   moveDraftStage,
   PipelineEditorControls,
   PipelineVariableHelp,
@@ -31,8 +32,8 @@ export function PipelineEditor({
   workspaceMembers,
 }: PipelineEditorProps) {
   const [name, setName] = useState(pipeline?.name ?? "Default");
-  const [stages, setStages] = useState<DraftPipelineStage[]>(
-    () => pipeline?.stages.map(stageToDraft) ?? [],
+  const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
+    keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -48,8 +49,11 @@ export function PipelineEditor({
   }
 
   async function savePipeline() {
+    const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
+    setStages(stagesToSave);
+
     const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
-      body: JSON.stringify({ name, stages }),
+      body: JSON.stringify({ name, stages: stagesToSave }),
       headers: { "Content-Type": "application/json" },
       method: "PUT",
     });
@@ -65,11 +69,14 @@ export function PipelineEditor({
 
   function handleSave() {
     setError(null);
-    const validation = validatePipelineDraft({ name, stages });
+    const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
+    const validation = validatePipelineDraft({ name, stages: stagesToSave });
     if (!validation.ok) {
       setError(validation.message);
       return;
     }
+
+    setStages(stagesToSave);
 
     startTransition(async () => {
       await savePipeline().catch((caught: unknown) => {
