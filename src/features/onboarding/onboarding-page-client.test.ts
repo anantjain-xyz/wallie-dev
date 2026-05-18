@@ -729,7 +729,8 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html.match(/<code[^>]*>API_KEY<\/code>/g) ?? []).toHaveLength(1);
-    expect(html).toContain("Stored ...value");
+    expect(html).toContain("Stored");
+    expect(html).not.toContain("Stored ...value");
     expect(html).not.toContain(">api_key<");
     expect(html).not.toContain("Not set");
   });

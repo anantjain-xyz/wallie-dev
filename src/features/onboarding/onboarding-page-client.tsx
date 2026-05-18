@@ -314,7 +314,7 @@ function secretPreviewLabel(secret: WorkspaceSecretPreview | undefined) {
     return "Not saved";
   }
 
-  return secret.valuePreview ? `Stored ${secret.valuePreview}` : "Stored value";
+  return "Stored";
 }
 
 function repositoryVariableKeys(
