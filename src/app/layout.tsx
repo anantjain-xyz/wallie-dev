@@ -13,19 +13,24 @@ const newsreader = Newsreader({
 
 const themeBootstrapScript = `
 (() => {
-  try {
-    const storedTheme = window.localStorage.getItem("wallie-theme");
-    const theme =
-      storedTheme === "light" || storedTheme === "dark"
-        ? storedTheme
-        : window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
+  const systemTheme = () => {
+    try {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  };
 
-    document.documentElement.dataset.theme = theme;
+  let storedTheme;
+
+  try {
+    storedTheme = window.localStorage.getItem("wallie-theme");
   } catch {
-    document.documentElement.dataset.theme = "light";
+    storedTheme = null;
   }
+
+  document.documentElement.dataset.theme =
+    storedTheme === "light" || storedTheme === "dark" ? storedTheme : systemTheme();
 })();
 `;
 
