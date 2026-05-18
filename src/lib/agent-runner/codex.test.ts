@@ -6,22 +6,33 @@ import { CodexRunner, parseCodexLine } from "./codex";
 
 describe("CodexRunner", () => {
   it("has the correct provider name", () => {
-    const runner = new CodexRunner({ accessToken: "test-token" });
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "test-token", type: "codex_access_token" },
+    });
     expect(runner.provider).toBe("codex");
     expect(runner.requiresSandbox).toBe(true);
   });
 
   it("implements the AgentRunner interface", () => {
-    const runner = new CodexRunner({ accessToken: "test-token" });
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "test-token", type: "codex_access_token" },
+    });
     expect(typeof runner.start).toBe("function");
   });
 
-  it("throws when constructed without an access token", () => {
-    expect(() => new CodexRunner({ accessToken: "" })).toThrow(/accessToken/);
+  it("throws when constructed without a credential", () => {
+    expect(
+      () =>
+        new CodexRunner({
+          credential: { expiresAt: null, secret: "", type: "codex_access_token" },
+        }),
+    ).toThrow(/credential/);
   });
 
   it("throws when started without a sandbox", async () => {
-    const runner = new CodexRunner({ accessToken: "tok" });
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+    });
     const iter = runner.start({ sessionId: "s", prompt: "p" });
     await expect(
       (async () => {
@@ -32,7 +43,7 @@ describe("CodexRunner", () => {
     ).rejects.toThrow(/requires a sandbox/);
   });
 
-  it("writes auth.json + prompt file and streams events from scripted stdout", async () => {
+  it("injects a Codex access token env var and streams events from scripted stdout", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
       (c) => c.cmd === "bash",
@@ -46,7 +57,9 @@ describe("CodexRunner", () => {
       ],
     );
 
-    const runner = new CodexRunner({ accessToken: "tok" });
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+    });
     const events = [];
     for await (const ev of runner.start({
       sessionId: "s1",
@@ -63,10 +76,7 @@ describe("CodexRunner", () => {
       { type: "completion", taskComplete: true, summary: "Codex session completed" },
     ]);
 
-    // auth.json and prompt must land in the sandbox.
-    expect(await sandbox.readFile("/vercel/sandbox/.codex/auth.json")).toContain(
-      `"access_token":"tok"`,
-    );
+    expect(await sandbox.readFile("/vercel/sandbox/.codex/auth.json")).toBeNull();
     expect(await sandbox.readFile("/vercel/sandbox/.wallie-prompt.txt")).toBe("Hello Codex");
 
     // CLI invocation uses bash -lc to redirect the prompt file as stdin.
@@ -77,7 +87,26 @@ describe("CodexRunner", () => {
     expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.5'");
     expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
-    expect(call.opts.env).toMatchObject({ CODEX_HOME: "/vercel/sandbox/.codex" });
+    expect(call.opts.env).toMatchObject({
+      CODEX_ACCESS_TOKEN: "tok",
+      CODEX_HOME: "/vercel/sandbox/.codex",
+    });
+    expect(call.opts.env).not.toHaveProperty("OPENAI_API_KEY");
+  });
+
+  it("injects an OpenAI API key env var for platform API credentials", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec("bash", []);
+
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "sk-test", type: "platform_api_key" },
+    });
+    for await (const _ of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      void _;
+    }
+
+    expect(sandbox.calls[0]?.opts.env).toMatchObject({ OPENAI_API_KEY: "sk-test" });
+    expect(sandbox.calls[0]?.opts.env).not.toHaveProperty("CODEX_ACCESS_TOKEN");
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {
@@ -86,7 +115,9 @@ describe("CodexRunner", () => {
       exitCode: 1,
     });
 
-    const runner = new CodexRunner({ accessToken: "tok" });
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+    });
     const events = [];
     for await (const ev of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
       events.push(ev);

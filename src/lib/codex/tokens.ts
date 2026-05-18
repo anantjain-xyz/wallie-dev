@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { CodexCredential, CodexCredentialType } from "@/lib/codex/contracts";
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import { refreshAccessToken } from "@/lib/codex/oauth";
-import { decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -14,7 +14,7 @@ export class CodexNotConnectedError extends Error {
 }
 
 /**
- * Resolve the session owner's auth.uid so we can look up their Codex tokens.
+ * Resolve the session owner's auth.uid so we can look up their Codex credential.
  * Sessions carry creator_member_id, which joins to workspace_members.user_id.
  */
 export async function resolveSessionOwnerUserId(
@@ -32,67 +32,59 @@ export async function resolveSessionOwnerUserId(
 }
 
 /**
- * Resolve a fresh Codex access token for the user who created the session.
+ * Resolve a Codex credential for the user who created the session.
  * Throws CodexNotConnectedError when the session has no human owner or the
  * owner has not connected Codex.
  */
-export async function getCodexAccessTokenForSession(
+export async function getCodexCredentialForSession(
   admin: AdminClient,
   session: Pick<Tables<"sessions">, "creator_member_id">,
-): Promise<string> {
+): Promise<CodexCredential> {
   const userId = await resolveSessionOwnerUserId(admin, session);
   if (!userId) {
-    throw new CodexNotConnectedError("Session has no human owner with a connected Codex account.");
+    throw new CodexNotConnectedError(
+      "Session has no human owner with a connected Codex credential.",
+    );
   }
-  return getCodexAccessTokenForUser(admin, userId);
+  return getCodexCredentialForUser(admin, userId);
 }
 
-/** Refresh the token if it expires within this many ms from now. */
-const REFRESH_LEEWAY_MS = 60_000;
-
 /**
- * Return a valid Codex access token for the given user, refreshing it first
- * if it is near expiry. Throws CodexNotConnectedError if the user has not
- * connected Codex.
+ * Return a valid Codex credential for the given user. Throws
+ * CodexNotConnectedError if the user has not connected Codex or if the saved
+ * credential has expired.
  */
-export async function getCodexAccessTokenForUser(
+export async function getCodexCredentialForUser(
   admin: AdminClient,
   userId: string,
-): Promise<string> {
+): Promise<CodexCredential> {
   const { data, error } = await admin
     .from("user_codex_credentials")
-    .select("encrypted_access_token, encrypted_refresh_token, access_token_expires_at")
+    .select("credential_type, encrypted_credential, access_token_expires_at")
     .eq("user_id", userId)
     .maybeSingle();
 
   if (error) throw error;
   if (!data) {
     throw new CodexNotConnectedError(
-      `Codex is not connected for user ${userId}. Ask the session owner to connect Codex in their profile.`,
+      `Codex is not connected for user ${userId}. Ask the session owner to connect a Codex credential in their profile.`,
     );
   }
 
-  const expiresAt = new Date(data.access_token_expires_at).getTime();
-  if (Number.isFinite(expiresAt) && expiresAt - Date.now() > REFRESH_LEEWAY_MS) {
-    return decryptSecretValue(data.encrypted_access_token);
+  const credentialType = data.credential_type as CodexCredentialType;
+  const expiresAt = data.access_token_expires_at;
+  if (expiresAt) {
+    const expiresAtMs = new Date(expiresAt).getTime();
+    if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
+      throw new CodexNotConnectedError(
+        "The saved Codex credential has expired. Update the Codex credential in Settings.",
+      );
+    }
   }
 
-  const refreshToken = decryptSecretValue(data.encrypted_refresh_token);
-  const refreshed = await refreshAccessToken(refreshToken);
-
-  const newExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
-  const { error: updateError } = await admin
-    .from("user_codex_credentials")
-    .update({
-      encrypted_access_token: encryptSecretValue(refreshed.access_token),
-      encrypted_refresh_token: encryptSecretValue(refreshed.refresh_token),
-      access_token_expires_at: newExpiresAt,
-      scope: refreshed.scope ?? null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("user_id", userId);
-
-  if (updateError) throw updateError;
-
-  return refreshed.access_token;
+  return {
+    expiresAt,
+    secret: decryptSecretValue(data.encrypted_credential),
+    type: credentialType,
+  };
 }

@@ -9,7 +9,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { AGENT_PROVIDERS, normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
-import { CodexNotConnectedError, getCodexAccessTokenForSession } from "@/lib/codex/tokens";
+import { CodexNotConnectedError, getCodexCredentialForSession } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
@@ -158,7 +158,6 @@ async function runStage(input: {
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
         branch,
-        codexAccessToken: resolvedRunner.codexAccessToken,
         installationToken,
         repoFullName: github.repo.full_name,
         sessionId: session.id,
@@ -513,14 +512,13 @@ async function resolveAgentRunner(input: {
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
-}): Promise<{ codexAccessToken?: string; runner: AgentRunner }> {
+}): Promise<{ runner: AgentRunner }> {
   if (input.provider === "codex") {
     try {
-      const accessToken = await getCodexAccessTokenForSession(input.admin, input.session);
+      const credential = await getCodexCredentialForSession(input.admin, input.session);
       return {
-        codexAccessToken: accessToken,
         runner: createAgentRunner("codex", {
-          codex: { accessToken, model: input.model },
+          codex: { credential, model: input.model },
         }),
       };
     } catch (error) {

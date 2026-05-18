@@ -92,8 +92,6 @@ export interface CreateSessionSandboxInput {
   /** Short-lived GitHub App installation token — passed as clone credentials + push credentials. */
   installationToken: string;
   agentProvider: AgentProvider;
-  /** Codex OAuth access token; written to auth.json inside the VM at start. */
-  codexAccessToken?: string;
   mode?: SandboxCheckoutMode;
   /** VM wall-clock timeout. Vercel caps at 45min Hobby / 5h Pro. Default: 30min. */
   timeoutMs?: number;

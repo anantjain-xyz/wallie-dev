@@ -22,6 +22,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
     },
     codexConnection: {
       connected: true,
+      credentialType: "codex_access_token",
       expiresAt: "2026-05-16T20:00:00.000Z",
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
@@ -105,7 +106,13 @@ describe("buildRuntimeReadiness", () => {
     expect(
       buildRuntimeReadiness({
         agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
-        codexConnection: { connected: false, expiresAt: null, status: "missing", updatedAt: null },
+        codexConnection: {
+          connected: false,
+          credentialType: null,
+          expiresAt: null,
+          status: "missing",
+          updatedAt: null,
+        },
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).canComplete,

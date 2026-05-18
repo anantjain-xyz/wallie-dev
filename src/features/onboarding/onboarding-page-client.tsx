@@ -576,7 +576,9 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
       value: agentConfig.value,
     },
     {
-      detail: health.codexConnection.updatedAt ? "Token available" : "Account connection required",
+      detail: health.codexConnection.updatedAt
+        ? "Credential available"
+        : "Provider credential required",
       label: "Codex",
       tone: codex.tone,
       value: codex.value,

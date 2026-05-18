@@ -978,34 +978,34 @@ export type Database = {
       }
       user_codex_credentials: {
         Row: {
-          access_token_expires_at: string
+          access_token_expires_at: string | null
           account_email: string | null
           account_id: string | null
           created_at: string
-          encrypted_access_token: string
-          encrypted_refresh_token: string
+          credential_type: "codex_access_token" | "platform_api_key"
+          encrypted_credential: string
           scope: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
-          access_token_expires_at: string
+          access_token_expires_at?: string | null
           account_email?: string | null
           account_id?: string | null
           created_at?: string
-          encrypted_access_token: string
-          encrypted_refresh_token: string
+          credential_type?: "codex_access_token" | "platform_api_key"
+          encrypted_credential: string
           scope?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
-          access_token_expires_at?: string
+          access_token_expires_at?: string | null
           account_email?: string | null
           account_id?: string | null
           created_at?: string
-          encrypted_access_token?: string
-          encrypted_refresh_token?: string
+          credential_type?: "codex_access_token" | "platform_api_key"
+          encrypted_credential?: string
           scope?: string | null
           updated_at?: string
           user_id?: string

@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
-import { getCodexAccessTokenForUser } from "@/lib/codex/tokens";
+import { getCodexCredentialForUser } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider } from "@/lib/sandbox/types";
 import { asLooseSupabaseClient } from "@/lib/supabase/loose";
@@ -224,16 +224,14 @@ export async function completeSandboxCapabilityCheck(input: {
     const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspaceId);
     const provider = agentConfig.provider as AgentProvider;
     const installationToken = await mintInstallationToken(input.admin, input.repository);
-    const codexAccessToken =
-      provider === "codex"
-        ? await getCodexAccessTokenForUser(input.admin, input.userId)
-        : undefined;
+    if (provider === "codex") {
+      await getCodexCredentialForUser(input.admin, input.userId);
+    }
 
     sandbox = await createSessionSandbox({
       agentProvider: provider,
       baseBranch: input.repository.default_branch ?? "main",
       branch: `wallie/capability-check-${randomUUID().slice(0, 8)}`,
-      codexAccessToken,
       installationToken,
       repoFullName: input.repository.full_name,
       sessionId: randomUUID(),

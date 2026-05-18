@@ -133,10 +133,10 @@ export function buildRuntimeReadiness(input: {
     case "codex":
       requirements.push({
         detail: input.codexConnection.connected
-          ? "Current user has a connected Codex account."
-          : "Connect the current user's Codex account.",
+          ? "Current user has a connected Codex credential."
+          : "Connect the current user's Codex credential.",
         id: "codex-connection",
-        label: "Codex account",
+        label: "Codex credential",
         passed: input.codexConnection.connected,
         step: "runtime",
       });

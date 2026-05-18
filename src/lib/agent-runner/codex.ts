@@ -1,3 +1,4 @@
+import type { CodexCredential } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 
@@ -5,8 +6,8 @@ const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
 const CODEX_HOME = "/vercel/sandbox/.codex";
 
 export interface CodexRunnerOptions {
-  /** OAuth access token fetched via getCodexAccessTokenForUser. */
-  accessToken: string;
+  /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
+  credential: CodexCredential;
   /** Model identifier (e.g. "gpt-5.5"). */
   model?: string;
 }
@@ -14,10 +15,9 @@ export interface CodexRunnerOptions {
 /**
  * Codex CLI agent runner.
  *
- * Runs `codex exec` inside a per-session sandbox. The OAuth access token is
- * materialised as `{CODEX_HOME}/auth.json` either by the sandbox factory
- * (first turn) or here on demand (subsequent turns or if the factory skipped
- * it). Streams stdout line-by-line as AgentEvents.
+ * Runs `codex exec` inside a per-session sandbox. The credential is injected
+ * only into the process environment, using the official CLI env var for the
+ * saved credential type. Streams stdout line-by-line as AgentEvents.
  *
  * Expects `codex` on PATH inside the sandbox (installed at sandbox boot).
  */
@@ -26,8 +26,8 @@ export class CodexRunner implements AgentRunner {
   readonly requiresSandbox = true;
 
   constructor(private readonly options: CodexRunnerOptions) {
-    if (!options.accessToken) {
-      throw new Error("CodexRunner requires an accessToken.");
+    if (!options.credential?.secret) {
+      throw new Error("CodexRunner requires a Codex credential.");
     }
   }
 
@@ -37,17 +37,6 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner requires a sandbox.");
     }
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
-
-    // Ensure auth.json exists. Idempotent; overwrites are fine because the
-    // token is fetched (and refreshed) per phase by the caller.
-    await sandbox.writeFile(
-      `${CODEX_HOME}/auth.json`,
-      JSON.stringify({
-        OPENAI_API_KEY: null,
-        tokens: { access_token: this.options.accessToken },
-      }),
-      { mode: 0o600 },
-    );
 
     await sandbox.writeFile(PROMPT_FILE, input.prompt);
 
@@ -64,7 +53,7 @@ export class CodexRunner implements AgentRunner {
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CODEX_HOME },
+      env: { CI: "1", CODEX_HOME, ...codexCredentialEnv(this.options.credential) },
     });
 
     let stdoutBuf = "";
@@ -151,6 +140,15 @@ export function parseCodexLine(raw: string): AgentEvent | null {
     return null;
   } catch {
     return { type: "text", text: trimmed };
+  }
+}
+
+function codexCredentialEnv(credential: CodexCredential): Record<string, string> {
+  switch (credential.type) {
+    case "codex_access_token":
+      return { CODEX_ACCESS_TOKEN: credential.secret };
+    case "platform_api_key":
+      return { OPENAI_API_KEY: credential.secret };
   }
 }
 
