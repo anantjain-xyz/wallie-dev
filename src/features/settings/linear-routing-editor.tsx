@@ -325,11 +325,13 @@ function StageSelect({
     ],
     [allowEmpty, options],
   );
-  const selectedIndex = Math.max(
-    0,
-    selectOptions.findIndex((option) => option.value === value),
-  );
-  const selectedOption = selectOptions[selectedIndex] ?? selectOptions[0];
+  const selectedOptionIndex = selectOptions.findIndex((option) => option.value === value);
+  const selectedIndex = selectedOptionIndex >= 0 ? selectedOptionIndex : 0;
+  const selectedOption =
+    selectedOptionIndex >= 0
+      ? selectOptions[selectedOptionIndex]
+      : { label: value || "None", value };
+  const activeOptionId = isOpen ? `${listboxId}-option-${activeIndex}` : undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -412,6 +414,7 @@ function StageSelect({
         {label}
       </span>
       <button
+        aria-activedescendant={activeOptionId}
         aria-controls={isOpen ? listboxId : undefined}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
@@ -426,6 +429,7 @@ function StageSelect({
         disabled={disabled}
         onClick={() => (isOpen ? setIsOpen(false) : openMenu(selectedIndex))}
         onKeyDown={handleKeyDown}
+        role="combobox"
         type="button"
       >
         <span className="min-w-0 truncate" id={selectedValueId}>
@@ -447,6 +451,7 @@ function StageSelect({
           {selectOptions.map((option, index) => {
             const isSelected = option.value === value;
             const isActive = index === activeIndex;
+            const optionId = `${listboxId}-option-${index}`;
 
             return (
               <button
@@ -456,10 +461,12 @@ function StageSelect({
                   isActive ? "bg-surface-muted text-foreground" : "text-foreground",
                   isSelected ? "font-semibold" : "font-medium",
                 )}
+                id={optionId}
                 key={option.value}
                 onClick={() => selectValue(option.value)}
                 onMouseEnter={() => setActiveIndex(index)}
                 role="option"
+                tabIndex={-1}
                 type="button"
               >
                 <span aria-hidden="true" className="w-4 shrink-0 text-muted">
