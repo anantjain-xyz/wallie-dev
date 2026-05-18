@@ -16,7 +16,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       configuredKeys: ["agent_model", "agent_provider"],
       status: "present",
       values: {
-        agent_model: "gpt-5-codex",
+        agent_model: "gpt-5.5",
         agent_provider: "codex",
       },
     },
@@ -95,7 +95,7 @@ describe("buildRuntimeReadiness", () => {
   it("requires Codex connection for the codex provider", () => {
     expect(
       buildRuntimeReadiness({
-        agentConfig: { agent_model: "gpt-5-codex", agent_provider: "codex" },
+        agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
@@ -104,7 +104,7 @@ describe("buildRuntimeReadiness", () => {
 
     expect(
       buildRuntimeReadiness({
-        agentConfig: { agent_model: "gpt-5-codex", agent_provider: "codex" },
+        agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
         codexConnection: { connected: false, expiresAt: null, status: "missing", updatedAt: null },
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
@@ -124,12 +124,23 @@ describe("buildRuntimeReadiness", () => {
 
     expect(
       buildRuntimeReadiness({
-        agentConfig: { agent_model: "claude-sonnet-4-5", agent_provider: "claude-code" },
+        agentConfig: { agent_model: "claude-opus-4-7[1m]", agent_provider: "claude-code" },
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: { configured: false, repositoryId, status: "not_set_up" },
       }).canComplete,
     ).toBe(false);
+  });
+
+  it("resolves an unset model from the selected provider", () => {
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_provider: "claude-code" },
+        codexConnection: health().codexConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
+      }).model,
+    ).toBe("claude-opus-4-7[1m]");
   });
 });
 
@@ -146,7 +157,7 @@ describe("buildVerifyChecklist", () => {
 
   it("links blockers to their owning onboarding steps", () => {
     const checklist = buildVerifyChecklist({
-      agentConfig: { agent_model: "gpt-5-codex", agent_provider: "codex" },
+      agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
       health: health({
         latestSandboxCapabilityCheck: null,
         repositorySetup: { configured: false, repositoryId, status: "conflict" },

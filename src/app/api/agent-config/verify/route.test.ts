@@ -65,7 +65,7 @@ afterEach(() => {
 describe("POST /api/agent-config/verify — provider/model mismatches", () => {
   it("rejects removed providers before any access lookup", async () => {
     const response = await POST(
-      postWith({ workspaceId: WORKSPACE_ID, provider: "openai", model: "gpt-5-codex" }),
+      postWith({ workspaceId: WORKSPACE_ID, provider: "openai", model: "gpt-5.5" }),
     );
 
     expect(response.status).toBe(400);
@@ -105,7 +105,7 @@ describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
       postWith({
         workspaceId: WORKSPACE_ID,
         provider: "claude-code",
-        model: "claude-sonnet-4-5",
+        model: "claude-opus-4-7[1m]",
       }),
     );
 
@@ -157,7 +157,7 @@ describe("POST /api/agent-config/verify — codex", () => {
     );
 
     const response = await POST(
-      postWith({ workspaceId: WORKSPACE_ID, provider: "codex", model: "gpt-5-codex" }),
+      postWith({ workspaceId: WORKSPACE_ID, provider: "codex", model: "gpt-5.5" }),
     );
 
     expect(response.status).toBe(200);
@@ -175,7 +175,7 @@ describe("POST /api/agent-config/verify — codex", () => {
     ) as unknown as typeof fetch;
 
     const response = await POST(
-      postWith({ workspaceId: WORKSPACE_ID, provider: "codex", model: "gpt-5-codex" }),
+      postWith({ workspaceId: WORKSPACE_ID, provider: "codex", model: "gpt-5.5" }),
     );
 
     expect(await response.json()).toEqual({ ok: true });

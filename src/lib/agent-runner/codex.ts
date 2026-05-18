@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
-import { DEFAULT_CODEX_MODEL } from "./types";
+import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 
 const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
 const CODEX_HOME = "/vercel/sandbox/.codex";
@@ -7,7 +7,7 @@ const CODEX_HOME = "/vercel/sandbox/.codex";
 export interface CodexRunnerOptions {
   /** OAuth access token fetched via getCodexAccessTokenForUser. */
   accessToken: string;
-  /** Model identifier (e.g. "gpt-5-codex"). */
+  /** Model identifier (e.g. "gpt-5.5"). */
   model?: string;
 }
 
@@ -51,7 +51,15 @@ export class CodexRunner implements AgentRunner {
 
     await sandbox.writeFile(PROMPT_FILE, input.prompt);
 
-    const cliArgs = ["exec", "--model", model, "--json", "-"];
+    const cliArgs = [
+      "exec",
+      "--model",
+      model,
+      "-c",
+      `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+      "--json",
+      "-",
+    ];
     const shellCmd = `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
