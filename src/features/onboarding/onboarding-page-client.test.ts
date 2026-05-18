@@ -644,6 +644,87 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("lin_api_plaintext");
   });
 
+  it("separates repository env suggestions from codex runtime credentials", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: null,
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: profile("repo-a", {
+              envKeySuggestions: ["NEXT_PUBLIC_APP_URL", "VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64"],
+            }),
+            repositories: [],
+          },
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline"],
+            currentStep: "runtime",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Runtime credentials");
+    expect(html).toContain("No encrypted workspace secret is required for the selected codex");
+    expect(html).toContain("Repository environment variables");
+    expect(html).toContain("NEXT_PUBLIC_APP_URL");
+    expect(html).toContain("Public/deployment");
+    expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
+    expect(html).toContain("Server env");
+    expect(html).toContain('placeholder="SECRET_KEY"');
+    expect(html).not.toContain("Workspace secrets");
+    expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
+    expect(html).not.toContain("truncate font-mono");
+  });
+
+  it("keeps provider-like env keys as repository notes for the Claude Code runner", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          agentConfig: {
+            agent_model: "claude-sonnet-4-5",
+            agent_provider: "claude-code",
+          },
+          github: {
+            installation: null,
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: profile("repo-a", {
+              envKeySuggestions: ["ANTHROPIC_API_KEY", "NEXT_PUBLIC_APP_URL"],
+            }),
+            repositories: [],
+          },
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline"],
+            currentStep: "runtime",
+          },
+          setupHealth: {
+            agentConfig: {
+              configured: true,
+              configuredKeys: ["agent_model", "agent_provider"],
+              status: "present",
+              values: {
+                agent_model: "claude-sonnet-4-5",
+                agent_provider: "claude-code",
+              },
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("ANTHROPIC_API_KEY");
+    expect(html).toContain("Server env");
+    expect(html).toContain("NEXT_PUBLIC_APP_URL");
+    expect(html).toContain("Public/deployment");
+    expect(html).toContain(
+      "No encrypted workspace secret is required for the selected claude-code",
+    );
+    expect(html).not.toContain("Anthropic API key");
+    expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
+  });
+
   it("renders Verify blockers with links to owning steps and disables completion", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
