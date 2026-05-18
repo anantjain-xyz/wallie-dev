@@ -778,6 +778,24 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
   });
 
+  it("does not render a section-level runtime readiness badge", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Runtime readiness");
+    expect(html).not.toMatch(
+      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-badge/,
+    );
+  });
+
   it("renders Verify blockers with links to owning steps and disables completion", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

@@ -1444,16 +1444,13 @@ function RuntimeStep({
       ) : null}
 
       <div className="rounded-[6px] border border-border bg-surface p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Runtime readiness</h3>
             <p className="mt-1 text-[12px] leading-5 text-muted">
               Provider-specific requirements must pass before this step can complete.
             </p>
           </div>
-          <Badge tone={canCompleteRuntime ? "success" : "warning"}>
-            {canCompleteRuntime ? "Ready" : "Blocked"}
-          </Badge>
         </div>
         <div className="mt-4">
           <RuntimeRequirementList requirements={readiness.requirements} />
