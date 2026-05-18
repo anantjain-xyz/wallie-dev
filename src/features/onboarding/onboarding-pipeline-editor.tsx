@@ -47,8 +47,6 @@ export function OnboardingPipelineEditor({
     );
   }
 
-  const currentPipeline = pipeline;
-
   async function savePipeline() {
     setError(null);
     const validation = validatePipelineDraft({ name, stages });
@@ -74,29 +72,6 @@ export function OnboardingPipelineEditor({
       await onCompleted("pipeline:save");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleUseCurrentPipeline() {
-    setError(null);
-    const currentStages = currentPipeline.stages.map(stageToDraft);
-    const validation = validatePipelineDraft({
-      name: currentPipeline.name,
-      stages: currentStages,
-    });
-
-    if (!validation.ok) {
-      setError(validation.message);
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      await onCompleted("pipeline:current");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to complete pipeline setup.");
     } finally {
       setIsSaving(false);
     }
@@ -153,19 +128,6 @@ export function OnboardingPipelineEditor({
         onAddStage={() => setStages((current) => appendDraftStage(current))}
         onSave={() => void savePipeline()}
       />
-
-      {canManage ? (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            className="ui-button"
-            disabled={isSaving}
-            onClick={() => void handleUseCurrentPipeline()}
-          >
-            Use current pipeline
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

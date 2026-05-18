@@ -284,6 +284,8 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
+    expect(html).toContain("Save pipeline");
+    expect(html).not.toContain("Use current pipeline");
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete in step</button>");
   });
