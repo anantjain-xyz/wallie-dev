@@ -87,13 +87,35 @@ describe("Linear routing editor", () => {
 
     expect(html).toContain("Rework stage");
     expect(html).toContain("Land stage");
+    expect(html).toContain("Status mappings");
+    expect(html).toContain("Stage routing");
     expect(html).toContain("Linear status names");
     expect(html).toContain("Wallie action");
-    expect(html).toContain("-&gt;");
+    expect(html).toContain("→");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-haspopup="listbox"');
+    expect(html).not.toContain("<select");
     expect(html).toContain("Restart at engineering stage");
     expect(html).toContain("Route to land stage");
     expect(html).toContain("Save routing");
     expect(html).toContain("engineering");
     expect(html).toContain("land");
+  });
+
+  it("preserves unmatched saved stage slugs in the selector display", () => {
+    const html = renderToStaticMarkup(
+      createElement(LinearRoutingEditor, {
+        canManage: true,
+        routing: {
+          ...DEFAULT_LINEAR_ROUTING_CONFIG,
+          reworkStageSlug: "renamed-stage",
+        },
+        setFlashMessage: vi.fn(),
+        stages,
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+
+    expect(html.match(/renamed-stage/g)).toHaveLength(2);
   });
 });
