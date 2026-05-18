@@ -76,6 +76,18 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
+create table public.user_codex_credentials (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  encrypted_access_token text not null,
+  encrypted_refresh_token text not null,
+  access_token_expires_at timestamptz not null,
+  scope text,
+  account_id text,
+  account_email text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table public.workspaces (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
@@ -168,8 +180,10 @@ create table public.pipeline_stages (
   constraint pipeline_stages_position_positive check (position > 0),
   constraint pipeline_stages_slug_format
     check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
-  constraint pipeline_stages_pipeline_slug_unique unique (pipeline_id, slug),
-  constraint pipeline_stages_pipeline_position_unique unique (pipeline_id, position)
+  constraint pipeline_stages_pipeline_slug_unique
+    unique (pipeline_id, slug) deferrable initially deferred,
+  constraint pipeline_stages_pipeline_position_unique
+    unique (pipeline_id, position) deferrable initially deferred
 );
 
 create table public.workspace_secrets (
@@ -237,12 +251,28 @@ create table public.session_artifacts (
   stage_slug text not null,
   version integer not null,
   artifact_json jsonb not null,
-  feedback_text text,
   created_at timestamptz not null default now(),
   constraint session_artifacts_version_positive_check
     check (version > 0),
   constraint session_artifacts_unique_version
     unique (session_id, stage_slug, version)
+);
+
+create table public.session_artifact_feedback (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  session_id uuid not null references public.sessions(id) on delete cascade,
+  -- stage_id may be null after a stage is deleted; stage_slug snapshot keeps
+  -- the history readable. Inserts always set both.
+  stage_id uuid references public.pipeline_stages(id) on delete set null,
+  stage_slug text not null,
+  target_version integer not null,
+  feedback_text text not null,
+  created_at timestamptz not null default now(),
+  constraint session_artifact_feedback_target_version_positive_check
+    check (target_version > 0),
+  constraint session_artifact_feedback_unique_target
+    unique (session_id, stage_id, target_version)
 );
 
 create table public.session_phase_completions (
@@ -291,7 +321,8 @@ create table public.agent_jobs (
   finished_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint agent_jobs_attempt_count_nonnegative_check check (attempt_count >= 0)
+  constraint agent_jobs_attempt_count_nonnegative_check check (attempt_count >= 0),
+  constraint agent_jobs_job_type_pipeline_only_check check (job_type = 'session')
 );
 
 create table public.agent_runs (
@@ -308,6 +339,7 @@ create table public.agent_runs (
   input_tokens bigint,
   output_tokens bigint,
   total_cost_usd numeric(12, 6),
+  sandbox_id text,
   started_at timestamptz,
   finished_at timestamptz,
   created_at timestamptz not null default now(),
@@ -339,7 +371,37 @@ create table public.workspace_agent_config (
   value_json jsonb not null default '{}',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint workspace_agent_config_workspace_key_unique unique (workspace_id, key)
+  constraint workspace_agent_config_workspace_key_unique unique (workspace_id, key),
+  constraint workspace_agent_config_value_json_known_keys check (
+    case key
+      when 'concurrency_limit' then
+        jsonb_typeof(value_json) = 'number'
+        and (value_json::text)::numeric = floor((value_json::text)::numeric)
+        and (value_json::text)::numeric between 1 and 20
+      when 'stall_timeout_ms' then
+        jsonb_typeof(value_json) = 'number'
+        and (value_json::text)::numeric = floor((value_json::text)::numeric)
+        and (value_json::text)::numeric between 30000 and 1800000
+      when 'max_retries' then
+        jsonb_typeof(value_json) = 'number'
+        and (value_json::text)::numeric = floor((value_json::text)::numeric)
+        and (value_json::text)::numeric between 0 and 10
+      when 'agent_provider' then
+        jsonb_typeof(value_json) = 'string'
+        and value_json #>> '{}' in ('codex', 'claude-code')
+      when 'agent_model' then
+        jsonb_typeof(value_json) = 'string'
+        and length(value_json #>> '{}') between 1 and 100
+        and (
+          value_json #>> '{}' like 'claude-%'
+          or value_json #>> '{}' like 'gpt-%'
+          or value_json #>> '{}' like 'o1%'
+          or value_json #>> '{}' like 'o3%'
+          or value_json #>> '{}' like 'o4%'
+        )
+      else true
+    end
+  )
 );
 
 create table public.worker_heartbeats (
@@ -350,6 +412,134 @@ create table public.worker_heartbeats (
   active_job_id uuid references public.agent_jobs(id) on delete set null,
   metadata jsonb not null default '{}',
   constraint worker_heartbeats_worker_id_unique unique (worker_id)
+);
+
+create table public.repository_onboarding_status (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  github_repository_id uuid not null references public.github_repositories(id) on delete cascade,
+  status text not null default 'not_set_up',
+  setup_branch_name text,
+  setup_pr_number integer,
+  setup_pr_url text,
+  installed_skill_version integer,
+  installed_skill_hash text,
+  conflict_report jsonb not null default '[]'::jsonb,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint repository_onboarding_status_known_status check (
+    status in ('not_set_up', 'pr_open', 'ready', 'conflict', 'error')
+  ),
+  constraint repository_onboarding_status_version_positive check (
+    installed_skill_version is null or installed_skill_version > 0
+  ),
+  constraint repository_onboarding_status_workspace_repo_unique
+    unique (workspace_id, github_repository_id)
+);
+
+create table public.workspace_linear_routing (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  status_mappings jsonb not null default '{
+    "backlog": ["backlog"],
+    "todo": ["todo"],
+    "in_progress": ["in progress"],
+    "in_review": ["in review"],
+    "rework": ["rework"],
+    "merging": ["merging"],
+    "done": ["done"],
+    "canceled": ["canceled", "cancelled", "duplicate"]
+  }'::jsonb,
+  rework_stage_slug text not null default 'engineering',
+  land_stage_slug text not null default 'land',
+  monitor_stage_slug text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint workspace_linear_routing_workspace_unique unique (workspace_id),
+  constraint workspace_linear_routing_status_mappings_object check (
+    jsonb_typeof(status_mappings) = 'object'
+  ),
+  constraint workspace_linear_routing_rework_slug_format check (
+    rework_stage_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+  ),
+  constraint workspace_linear_routing_land_slug_format check (
+    land_stage_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+  ),
+  constraint workspace_linear_routing_monitor_slug_format check (
+    monitor_stage_slug is null or monitor_stage_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+  )
+);
+
+create table public.sandbox_capability_checks (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  github_repository_id uuid references public.github_repositories(id) on delete set null,
+  status text not null default 'running',
+  capabilities jsonb not null default '{}'::jsonb,
+  error_text text,
+  checked_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint sandbox_capability_checks_known_status check (
+    status in ('running', 'success', 'error')
+  ),
+  constraint sandbox_capability_checks_capabilities_object check (
+    jsonb_typeof(capabilities) = 'object'
+  )
+);
+
+create table public.workspace_onboarding (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null unique references public.workspaces(id) on delete cascade,
+  status text not null default 'not_started',
+  current_step text not null default 'github',
+  selected_github_repository_id uuid references public.github_repositories(id) on delete set null,
+  completed_steps text[] not null default '{}',
+  skipped_steps text[] not null default '{}',
+  dismissed_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint workspace_onboarding_known_status check (
+    status in ('not_started', 'in_progress', 'dismissed', 'completed')
+  ),
+  constraint workspace_onboarding_known_current_step check (
+    current_step in ('github', 'repository', 'pipeline', 'linear', 'runtime', 'verify')
+  ),
+  constraint workspace_onboarding_known_completed_steps check (
+    completed_steps <@ array['github', 'repository', 'pipeline', 'linear', 'runtime', 'verify']::text[]
+  ),
+  constraint workspace_onboarding_known_skipped_steps check (
+    skipped_steps <@ array['github', 'repository', 'pipeline', 'linear', 'runtime', 'verify']::text[]
+  )
+);
+
+create table public.workspace_repository_profiles (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  github_repository_id uuid not null references public.github_repositories(id) on delete cascade,
+  is_primary boolean not null default true,
+  package_manager text,
+  language_hints text[] not null default '{}',
+  framework_hints text[] not null default '{}',
+  install_command text,
+  build_command text,
+  test_command text,
+  env_key_suggestions text[] not null default '{}',
+  setup_notes text not null default '',
+  inference_confidence text not null default 'low',
+  inference_sources jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint workspace_repository_profiles_workspace_repo_unique
+    unique (workspace_id, github_repository_id),
+  constraint workspace_repository_profiles_known_confidence check (
+    inference_confidence in ('low', 'medium', 'high', 'manual')
+  ),
+  constraint workspace_repository_profiles_inference_sources_array check (
+    jsonb_typeof(inference_sources) = 'array'
+  )
 );
 
 -- ---------------------------------------------------------------------------
@@ -408,6 +598,9 @@ create unique index sessions_workspace_linear_issue_idx
 create index session_artifacts_session_id_idx
   on public.session_artifacts (session_id);
 
+create index session_artifact_feedback_session_stage_version_idx
+  on public.session_artifact_feedback (session_id, stage_id, target_version desc);
+
 create index session_phase_completions_session_id_idx
   on public.session_phase_completions (session_id);
 
@@ -416,11 +609,11 @@ create index session_pull_requests_session_created_at_idx
 
 create unique index agent_jobs_active_dedupe_key_idx
   on public.agent_jobs (workspace_id, dedupe_key)
-  where dedupe_key is not null and status in ('queued', 'running');
+  where dedupe_key is not null and status in ('queued', 'started', 'running');
 
 create index agent_jobs_job_type_status_idx
   on public.agent_jobs (job_type, status)
-  where status in ('queued', 'running');
+  where status in ('queued', 'started', 'running');
 
 create index agent_jobs_session_id_idx
   on public.agent_jobs (session_id);
@@ -432,11 +625,37 @@ create index agent_runs_stall_sweep_idx
   on public.agent_runs (last_activity_at)
   where status in ('queued', 'started', 'running');
 
+create index agent_runs_sandbox_id_active_idx
+  on public.agent_runs (sandbox_id)
+  where sandbox_id is not null and status in ('queued', 'started', 'running');
+
 create index agent_run_messages_agent_run_created_at_idx
   on public.agent_run_messages (agent_run_id, created_at);
 
 create index worker_heartbeats_last_heartbeat_idx
   on public.worker_heartbeats (last_heartbeat_at);
+
+create index repository_onboarding_status_workspace_idx
+  on public.repository_onboarding_status (workspace_id);
+
+create index repository_onboarding_status_repository_idx
+  on public.repository_onboarding_status (github_repository_id);
+
+create index sandbox_capability_checks_workspace_checked_idx
+  on public.sandbox_capability_checks (workspace_id, checked_at desc);
+
+create index workspace_onboarding_selected_repository_idx
+  on public.workspace_onboarding (selected_github_repository_id);
+
+create unique index workspace_repository_profiles_one_primary_per_workspace
+  on public.workspace_repository_profiles (workspace_id)
+  where is_primary;
+
+create index workspace_repository_profiles_workspace_idx
+  on public.workspace_repository_profiles (workspace_id);
+
+create index workspace_repository_profiles_repository_idx
+  on public.workspace_repository_profiles (github_repository_id);
 
 -- ---------------------------------------------------------------------------
 -- Helper functions
@@ -714,6 +933,18 @@ begin
 end;
 $$;
 
+create or replace function internal.enforce_session_artifact_feedback_refs()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform internal.assert_workspace_match(new.workspace_id, 'public.sessions', new.session_id, 'session_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.pipeline_stages', new.stage_id, 'stage_id');
+  return new;
+end;
+$$;
+
 create or replace function internal.enforce_session_phase_completion_refs()
 returns trigger
 language plpgsql
@@ -739,6 +970,58 @@ begin
 end;
 $$;
 
+create or replace function internal.seed_workspace_linear_routing()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  insert into public.workspace_linear_routing (workspace_id)
+  values (new.id)
+  on conflict (workspace_id) do nothing;
+
+  return new;
+end;
+$$;
+
+create or replace function internal.enforce_workspace_onboarding_selected_repository_ref()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.selected_github_repository_id is null then
+    return new;
+  end if;
+
+  perform internal.assert_workspace_match(
+    new.workspace_id,
+    'public.github_repositories',
+    new.selected_github_repository_id,
+    'selected_github_repository_id'
+  );
+
+  return new;
+end;
+$$;
+
+create or replace function internal.enforce_workspace_repository_profile_refs()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform internal.assert_workspace_match(
+    new.workspace_id,
+    'public.github_repositories',
+    new.github_repository_id,
+    'github_repository_id'
+  );
+
+  return new;
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Triggers
 -- ---------------------------------------------------------------------------
@@ -748,10 +1031,20 @@ before update on public.profiles
 for each row
 execute function internal.touch_updated_at();
 
+create trigger user_codex_credentials_touch_updated_at
+before update on public.user_codex_credentials
+for each row
+execute function internal.touch_updated_at();
+
 create trigger workspaces_touch_updated_at
 before update on public.workspaces
 for each row
 execute function internal.touch_updated_at();
+
+create trigger workspaces_seed_linear_routing
+after insert on public.workspaces
+for each row
+execute function internal.seed_workspace_linear_routing();
 
 create trigger workspace_members_touch_updated_at
 before update on public.workspace_members
@@ -823,6 +1116,11 @@ before insert or update on public.session_artifacts
 for each row
 execute function internal.enforce_session_artifact_refs();
 
+create trigger session_artifact_feedback_enforce_refs
+before insert or update on public.session_artifact_feedback
+for each row
+execute function internal.enforce_session_artifact_feedback_refs();
+
 create trigger session_phase_completions_enforce_refs
 before insert or update on public.session_phase_completions
 for each row
@@ -872,6 +1170,41 @@ create trigger workspace_agent_config_touch_updated_at
 before update on public.workspace_agent_config
 for each row
 execute function internal.touch_updated_at();
+
+create trigger repository_onboarding_status_touch_updated_at
+before update on public.repository_onboarding_status
+for each row
+execute function internal.touch_updated_at();
+
+create trigger workspace_linear_routing_touch_updated_at
+before update on public.workspace_linear_routing
+for each row
+execute function internal.touch_updated_at();
+
+create trigger sandbox_capability_checks_touch_updated_at
+before update on public.sandbox_capability_checks
+for each row
+execute function internal.touch_updated_at();
+
+create trigger workspace_onboarding_touch_updated_at
+before update on public.workspace_onboarding
+for each row
+execute function internal.touch_updated_at();
+
+create trigger workspace_onboarding_enforce_selected_repository_ref
+before insert or update on public.workspace_onboarding
+for each row
+execute function internal.enforce_workspace_onboarding_selected_repository_ref();
+
+create trigger workspace_repository_profiles_touch_updated_at
+before update on public.workspace_repository_profiles
+for each row
+execute function internal.touch_updated_at();
+
+create trigger workspace_repository_profiles_enforce_refs
+before insert or update on public.workspace_repository_profiles
+for each row
+execute function internal.enforce_workspace_repository_profile_refs();
 
 -- ---------------------------------------------------------------------------
 -- Public RPCs
@@ -1150,7 +1483,302 @@ begin
     s.prompt_template_md
   from internal.default_pipeline_stages() s;
 
+  insert into public.workspace_onboarding (workspace_id)
+  values (created_workspace.id);
+
   return created_workspace;
+end;
+$$;
+
+create or replace function public.rewrite_default_pipeline(
+  target_workspace_id uuid,
+  pipeline_name text,
+  stage_payload jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  target_pipeline_id uuid;
+  duplicate_stage_ids uuid[];
+  duplicate_stage_slugs text[];
+  invalid_member_ids uuid[];
+  delete_stage_ids uuid[];
+  blocking_session_numbers integer[];
+begin
+  if coalesce(jsonb_typeof(stage_payload), '') <> 'array'
+     or jsonb_array_length(stage_payload) = 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'invalid_stage_payload'
+    );
+  end if;
+
+  select p.id
+  into target_pipeline_id
+  from public.pipelines p
+  where p.workspace_id = target_workspace_id
+    and p.is_default = true
+  for update;
+
+  if target_pipeline_id is null then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'pipeline_not_found'
+    );
+  end if;
+
+  create temporary table if not exists pipeline_rewrite_stages (
+    input_index integer primary key,
+    id uuid,
+    slug text not null,
+    name text not null,
+    description text not null,
+    prompt_template_md text not null,
+    approver_member_ids uuid[] not null
+  ) on commit drop;
+
+  truncate table pg_temp.pipeline_rewrite_stages;
+
+  insert into pg_temp.pipeline_rewrite_stages (
+    input_index,
+    id,
+    slug,
+    name,
+    description,
+    prompt_template_md,
+    approver_member_ids
+  )
+  select
+    payload.ordinality::integer,
+    nullif(payload.stage ->> 'id', '')::uuid,
+    payload.stage ->> 'slug',
+    payload.stage ->> 'name',
+    coalesce(payload.stage ->> 'description', ''),
+    coalesce(payload.stage ->> 'promptTemplateMd', ''),
+    array(
+      select ids.member_id::uuid
+      from jsonb_array_elements_text(
+        coalesce(payload.stage -> 'approverMemberIds', '[]'::jsonb)
+      ) with ordinality as ids(member_id, member_ordinality)
+      order by ids.member_ordinality
+    )::uuid[]
+  from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality);
+
+  select coalesce(array_agg(duplicate_ids.id order by duplicate_ids.id), '{}'::uuid[])
+  into duplicate_stage_ids
+  from (
+    select i.id
+    from pg_temp.pipeline_rewrite_stages i
+    where i.id is not null
+    group by i.id
+    having count(*) > 1
+  ) duplicate_ids;
+
+  if cardinality(duplicate_stage_ids) > 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'duplicate_stage_id',
+      'duplicate_stage_ids', to_jsonb(duplicate_stage_ids)
+    );
+  end if;
+
+  select coalesce(array_agg(duplicate_slugs.slug order by duplicate_slugs.slug), '{}'::text[])
+  into duplicate_stage_slugs
+  from (
+    select i.slug
+    from pg_temp.pipeline_rewrite_stages i
+    group by i.slug
+    having count(*) > 1
+  ) duplicate_slugs;
+
+  if cardinality(duplicate_stage_slugs) > 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'duplicate_stage_slug',
+      'duplicate_stage_slugs', to_jsonb(duplicate_stage_slugs)
+    );
+  end if;
+
+  select coalesce(array_agg(distinct ids.member_id order by ids.member_id), '{}'::uuid[])
+  into invalid_member_ids
+  from (
+    select unnest(i.approver_member_ids) as member_id
+    from pg_temp.pipeline_rewrite_stages i
+  ) ids
+  where not exists (
+    select 1
+    from public.workspace_members wm
+    where wm.id = ids.member_id
+      and wm.workspace_id = target_workspace_id
+  );
+
+  if cardinality(invalid_member_ids) > 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'unknown_approver_member_ids',
+      'invalid_approver_member_ids', to_jsonb(invalid_member_ids)
+    );
+  end if;
+
+  select coalesce(array_agg(ps.id order by ps.position), '{}'::uuid[])
+  into delete_stage_ids
+  from public.pipeline_stages ps
+  where ps.pipeline_id = target_pipeline_id
+    and not exists (
+      select 1
+      from pg_temp.pipeline_rewrite_stages i
+      where i.id = ps.id
+    );
+
+  select coalesce(array_agg(s.number order by s.number), '{}'::integer[])
+  into blocking_session_numbers
+  from public.sessions s
+  where s.workspace_id = target_workspace_id
+    and s.archived_at is null
+    and s.current_stage_id = any(delete_stage_ids);
+
+  if cardinality(blocking_session_numbers) > 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error_code', 'stage_delete_blocked',
+      'blocking_session_numbers', to_jsonb(blocking_session_numbers)
+    );
+  end if;
+
+  set constraints
+    public.pipeline_stages_pipeline_slug_unique,
+    public.pipeline_stages_pipeline_position_unique
+    deferred;
+
+  update public.pipelines p
+  set name = coalesce(pipeline_name, 'Default')
+  where p.id = target_pipeline_id;
+
+  update public.pipeline_stages ps
+  set
+    approver_member_ids = i.approver_member_ids,
+    description = i.description,
+    name = i.name,
+    position = i.input_index,
+    prompt_template_md = i.prompt_template_md,
+    slug = i.slug
+  from pg_temp.pipeline_rewrite_stages i
+  where ps.id = i.id
+    and ps.pipeline_id = target_pipeline_id;
+
+  insert into public.pipeline_stages (
+    pipeline_id,
+    workspace_id,
+    position,
+    slug,
+    name,
+    description,
+    prompt_template_md,
+    approver_member_ids
+  )
+  select
+    target_pipeline_id,
+    target_workspace_id,
+    i.input_index,
+    i.slug,
+    i.name,
+    i.description,
+    i.prompt_template_md,
+    i.approver_member_ids
+  from pg_temp.pipeline_rewrite_stages i
+  where i.id is null
+    or not exists (
+      select 1
+      from public.pipeline_stages ps
+      where ps.id = i.id
+        and ps.pipeline_id = target_pipeline_id
+    );
+
+  delete from public.pipeline_stages ps
+  where ps.pipeline_id = target_pipeline_id
+    and ps.id = any(delete_stage_ids);
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+create or replace function public.save_workspace_repository_profile(
+  target_workspace_id uuid,
+  target_github_repository_id uuid,
+  selected_package_manager text,
+  selected_language_hints text[],
+  selected_framework_hints text[],
+  selected_install_command text,
+  selected_build_command text,
+  selected_test_command text,
+  selected_env_key_suggestions text[],
+  selected_setup_notes text,
+  selected_inference_confidence text,
+  selected_inference_sources jsonb
+)
+returns public.workspace_repository_profiles
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  saved_profile public.workspace_repository_profiles;
+begin
+  update public.workspace_repository_profiles
+     set is_primary = false
+   where workspace_id = target_workspace_id
+     and github_repository_id <> target_github_repository_id
+     and is_primary;
+
+  insert into public.workspace_repository_profiles (
+    workspace_id,
+    github_repository_id,
+    is_primary,
+    package_manager,
+    language_hints,
+    framework_hints,
+    install_command,
+    build_command,
+    test_command,
+    env_key_suggestions,
+    setup_notes,
+    inference_confidence,
+    inference_sources
+  )
+  values (
+    target_workspace_id,
+    target_github_repository_id,
+    true,
+    selected_package_manager,
+    selected_language_hints,
+    selected_framework_hints,
+    selected_install_command,
+    selected_build_command,
+    selected_test_command,
+    selected_env_key_suggestions,
+    selected_setup_notes,
+    selected_inference_confidence,
+    selected_inference_sources
+  )
+  on conflict (workspace_id, github_repository_id)
+  do update set
+    is_primary = true,
+    package_manager = excluded.package_manager,
+    language_hints = excluded.language_hints,
+    framework_hints = excluded.framework_hints,
+    install_command = excluded.install_command,
+    build_command = excluded.build_command,
+    test_command = excluded.test_command,
+    env_key_suggestions = excluded.env_key_suggestions,
+    setup_notes = excluded.setup_notes,
+    inference_confidence = excluded.inference_confidence,
+    inference_sources = excluded.inference_sources
+  returning * into saved_profile;
+
+  return saved_profile;
 end;
 $$;
 
@@ -1281,16 +1909,16 @@ begin
   limit 1;
 
   if next_stage_id is null then
-    update public.sessions
+    update public.sessions s
     set archived_at = approved_at_now
-    where id = target_session_id;
+    where s.id = target_session_id;
   else
-    update public.sessions
+    update public.sessions s
     set current_stage_id = next_stage_id,
         phase_status = 'agent_generating',
         current_artifact_version = 0,
         rejection_count = 0
-    where id = target_session_id;
+    where s.id = target_session_id;
   end if;
 
   return query
@@ -1418,6 +2046,7 @@ $$;
 -- ---------------------------------------------------------------------------
 
 alter table public.profiles enable row level security;
+alter table public.user_codex_credentials enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
 alter table public.github_installations enable row level security;
@@ -1428,6 +2057,7 @@ alter table public.pipelines enable row level security;
 alter table public.pipeline_stages enable row level security;
 alter table public.sessions enable row level security;
 alter table public.session_artifacts enable row level security;
+alter table public.session_artifact_feedback enable row level security;
 alter table public.session_phase_completions enable row level security;
 alter table public.session_pull_requests enable row level security;
 alter table public.agent_jobs enable row level security;
@@ -1435,6 +2065,11 @@ alter table public.agent_runs enable row level security;
 alter table public.agent_run_messages enable row level security;
 alter table public.workspace_agent_config enable row level security;
 alter table public.worker_heartbeats enable row level security;
+alter table public.repository_onboarding_status enable row level security;
+alter table public.workspace_linear_routing enable row level security;
+alter table public.sandbox_capability_checks enable row level security;
+alter table public.workspace_onboarding enable row level security;
+alter table public.workspace_repository_profiles enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -1444,6 +2079,7 @@ grant usage on schema public to anon, authenticated, service_role;
 grant usage on schema internal to authenticated, service_role;
 
 revoke all on public.profiles from anon, authenticated;
+revoke all on public.user_codex_credentials from anon, authenticated;
 revoke all on public.workspaces from anon, authenticated;
 revoke all on public.workspace_members from anon, authenticated;
 revoke all on public.github_installations from anon, authenticated;
@@ -1454,11 +2090,18 @@ revoke all on public.pipelines from anon, authenticated;
 revoke all on public.pipeline_stages from anon, authenticated;
 revoke all on public.sessions from anon, authenticated;
 revoke all on public.session_artifacts from anon, authenticated;
+revoke all on public.session_artifact_feedback from anon, authenticated;
 revoke all on public.session_phase_completions from anon, authenticated;
 revoke all on public.session_pull_requests from anon, authenticated;
 revoke all on public.agent_jobs from anon, authenticated;
 revoke all on public.agent_runs from anon, authenticated;
 revoke all on public.agent_run_messages from anon, authenticated;
+revoke all on public.worker_heartbeats from anon, authenticated;
+revoke all on public.repository_onboarding_status from anon, authenticated;
+revoke all on public.workspace_linear_routing from anon, authenticated;
+revoke all on public.sandbox_capability_checks from anon, authenticated;
+revoke all on public.workspace_onboarding from anon, authenticated;
+revoke all on public.workspace_repository_profiles from anon, authenticated;
 
 grant all on all tables in schema public to service_role;
 grant all on all tables in schema internal to service_role;
@@ -1466,6 +2109,7 @@ grant all on all functions in schema public to service_role;
 grant all on all functions in schema internal to service_role;
 
 grant select, insert, update on public.profiles to authenticated;
+grant select, delete on public.user_codex_credentials to authenticated;
 grant select on public.workspaces to authenticated;
 grant select on public.workspace_members to authenticated;
 grant update (preferences) on public.workspace_members to authenticated;
@@ -1475,7 +2119,19 @@ grant select on public.github_issue_branches to authenticated;
 grant select on public.pipelines to authenticated;
 grant select on public.pipeline_stages to authenticated;
 grant select on public.sessions to authenticated;
+grant insert (
+  workspace_id,
+  number,
+  title,
+  prompt_md,
+  linear_issue_id,
+  linear_issue_url,
+  pipeline_id,
+  current_stage_id,
+  phase_status
+) on public.sessions to authenticated;
 grant select on public.session_artifacts to authenticated;
+grant select on public.session_artifact_feedback to authenticated;
 grant select on public.session_phase_completions to authenticated;
 grant select on public.session_pull_requests to authenticated;
 grant select on public.agent_runs to authenticated;
@@ -1484,6 +2140,16 @@ grant select on public.workspace_agent_config to authenticated;
 grant insert (workspace_id, key, value_json) on public.workspace_agent_config to authenticated;
 grant update (key, value_json) on public.workspace_agent_config to authenticated;
 grant delete on public.workspace_agent_config to authenticated;
+grant select on public.repository_onboarding_status to authenticated;
+grant insert, update, delete on public.repository_onboarding_status to authenticated;
+grant select on public.workspace_linear_routing to authenticated;
+grant insert, update, delete on public.workspace_linear_routing to authenticated;
+grant select on public.sandbox_capability_checks to authenticated;
+grant insert, update, delete on public.sandbox_capability_checks to authenticated;
+grant select on public.workspace_onboarding to authenticated;
+grant insert, update on public.workspace_onboarding to authenticated;
+grant select on public.workspace_repository_profiles to authenticated;
+grant insert, update, delete on public.workspace_repository_profiles to authenticated;
 
 grant execute on function internal.current_workspace_member_id(uuid) to authenticated;
 grant execute on function public.current_user_workspace_ids() to authenticated;
@@ -1493,6 +2159,24 @@ grant execute on function public.create_workspace(text, text) to authenticated;
 
 revoke all on function public.approve_session_stage(uuid, uuid, integer, uuid) from public;
 grant execute on function public.approve_session_stage(uuid, uuid, integer, uuid) to service_role;
+
+revoke all on function public.rewrite_default_pipeline(uuid, text, jsonb) from public;
+grant execute on function public.rewrite_default_pipeline(uuid, text, jsonb) to service_role;
+
+grant execute on function public.save_workspace_repository_profile(
+  uuid,
+  uuid,
+  text,
+  text[],
+  text[],
+  text,
+  text,
+  text,
+  text[],
+  text,
+  text,
+  jsonb
+) to authenticated;
 
 revoke all on function public.schedule_job_retry(uuid, int, int) from public;
 grant execute on function public.schedule_job_retry(uuid, int, int) to service_role;
@@ -1519,6 +2203,18 @@ create policy profiles_update_self
   to authenticated
   using (id = auth.uid())
   with check (id = auth.uid());
+
+create policy user_codex_credentials_select_self
+  on public.user_codex_credentials
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+create policy user_codex_credentials_delete_self
+  on public.user_codex_credentials
+  for delete
+  to authenticated
+  using (user_id = auth.uid());
 
 create policy workspaces_select_membership
   on public.workspaces
@@ -1575,8 +2271,31 @@ create policy sessions_select_membership
   to authenticated
   using (workspace_id in (select public.current_user_workspace_ids()));
 
+create policy sessions_insert_membership
+  on public.sessions
+  for insert
+  to authenticated
+  with check (
+    workspace_id in (select public.current_user_workspace_ids())
+    and workspace_id in (
+      select onboarding.workspace_id
+      from public.workspace_onboarding onboarding
+      where onboarding.status = 'completed'
+    )
+    and phase_status = 'agent_generating'
+    and current_artifact_version = 0
+    and rejection_count = 0
+    and archived_at is null
+  );
+
 create policy session_artifacts_select_membership
   on public.session_artifacts
+  for select
+  to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy session_artifact_feedback_select_membership
+  on public.session_artifact_feedback
   for select
   to authenticated
   using (workspace_id in (select public.current_user_workspace_ids()));
@@ -1650,7 +2369,90 @@ create policy pipeline_stages_delete_manager
 create policy worker_heartbeats_select
   on public.worker_heartbeats
   for select
-  using (true);
+  using (false);
+
+create policy repository_onboarding_status_select_membership
+  on public.repository_onboarding_status
+  for select
+  to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy repository_onboarding_status_manage
+  on public.repository_onboarding_status
+  for all
+  to authenticated
+  using (public.can_manage_workspace(workspace_id))
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_linear_routing_select_membership
+  on public.workspace_linear_routing
+  for select
+  to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy workspace_linear_routing_manage
+  on public.workspace_linear_routing
+  for all
+  to authenticated
+  using (public.can_manage_workspace(workspace_id))
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy sandbox_capability_checks_select_membership
+  on public.sandbox_capability_checks
+  for select
+  to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy sandbox_capability_checks_manage
+  on public.sandbox_capability_checks
+  for all
+  to authenticated
+  using (public.can_manage_workspace(workspace_id))
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_onboarding_select_membership
+  on public.workspace_onboarding
+  for select
+  to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy workspace_onboarding_insert_managers
+  on public.workspace_onboarding
+  for insert
+  to authenticated
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_onboarding_update_managers
+  on public.workspace_onboarding
+  for update
+  to authenticated
+  using (public.can_manage_workspace(workspace_id))
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_repository_profiles_select_membership
+  on public.workspace_repository_profiles
+  for select
+  to authenticated
+  using (workspace_id in (select public.current_user_workspace_ids()));
+
+create policy workspace_repository_profiles_insert_managers
+  on public.workspace_repository_profiles
+  for insert
+  to authenticated
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_repository_profiles_update_managers
+  on public.workspace_repository_profiles
+  for update
+  to authenticated
+  using (public.can_manage_workspace(workspace_id))
+  with check (public.can_manage_workspace(workspace_id));
+
+create policy workspace_repository_profiles_delete_managers
+  on public.workspace_repository_profiles
+  for delete
+  to authenticated
+  using (public.can_manage_workspace(workspace_id));
 
 -- ---------------------------------------------------------------------------
 -- Realtime publication

@@ -63,6 +63,13 @@ DECLARE
   gh_br1_id   uuid := '13b2c3d4-0001-4000-8000-000000000001';
   gh_br2_id   uuid := '13b2c3d4-0002-4000-8000-000000000002';
   gh_br3_id   uuid := '13b2c3d4-0003-4000-8000-000000000003';
+  repo_setup1_id uuid := '14b2c3d4-0001-4000-8000-000000000001';
+  repo_setup2_id uuid := '14b2c3d4-0002-4000-8000-000000000002';
+  repo_profile1_id uuid := '15b2c3d4-0001-4000-8000-000000000001';
+  repo_profile2_id uuid := '15b2c3d4-0002-4000-8000-000000000002';
+  routing_id uuid := '16b2c3d4-0001-4000-8000-000000000001';
+  onboarding_id uuid := '17b2c3d4-0001-4000-8000-000000000001';
+  sandbox_check_id uuid := '18b2c3d4-0001-4000-8000-000000000001';
 
   -- Agent jobs & runs (pipeline work on session #2)
   job1_id  uuid := '21b2c3d4-0001-4000-8000-000000000001';
@@ -219,7 +226,76 @@ BEGIN
      'Go', 'main', false, now() - interval '13 days');
 
   -- -------------------------------------------------------------------------
-  -- 7. Sessions (one per phase for a realistic tour of the pipeline)
+  -- 7. Workspace setup state
+  -- -------------------------------------------------------------------------
+  INSERT INTO public.workspace_linear_routing
+    (id, workspace_id, created_at)
+  VALUES
+    (routing_id, ws_id, now() - interval '13 days');
+
+  INSERT INTO public.workspace_repository_profiles
+    (id, workspace_id, github_repository_id, is_primary, package_manager,
+     language_hints, framework_hints, install_command, build_command,
+     test_command, env_key_suggestions, setup_notes, inference_confidence,
+     inference_sources, created_at)
+  VALUES
+    (repo_profile1_id, ws_id, gh_repo1_id, true, 'pnpm',
+     array['TypeScript'], array['Next.js', 'Supabase'],
+     'pnpm install', 'pnpm build', 'pnpm test',
+     array['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'],
+     'Next.js App Router application with Supabase data access and a pnpm workspace.',
+     'high',
+     '[{"kind":"package_json","path":"package.json"},{"kind":"source_scan","path":"src/"}]'::jsonb,
+     now() - interval '13 days'),
+    (repo_profile2_id, ws_id, gh_repo2_id, false, 'go',
+     array['Go'], array['HTTP API'],
+     'go mod download', 'go build ./...', 'go test ./...',
+     array['DATABASE_URL'],
+     'Go service with conventional module commands.',
+     'medium',
+     '[{"kind":"go_mod","path":"go.mod"}]'::jsonb,
+     now() - interval '13 days');
+
+  INSERT INTO public.repository_onboarding_status
+    (id, workspace_id, github_repository_id, status, setup_branch_name,
+     setup_pr_number, setup_pr_url, installed_skill_version,
+     installed_skill_hash, conflict_report, created_at)
+  VALUES
+    (repo_setup1_id, ws_id, gh_repo1_id, 'ready', 'wallie/setup',
+     22, 'https://github.com/acme-corp/webapp/pull/22', 1,
+     'seed-skill-hash-webapp', '[]'::jsonb, now() - interval '13 days'),
+    (repo_setup2_id, ws_id, gh_repo2_id, 'not_set_up', null,
+     null, null, null, null, '[]'::jsonb, now() - interval '13 days');
+
+  INSERT INTO public.workspace_agent_config
+    (workspace_id, key, value_json, created_at)
+  VALUES
+    (ws_id, 'agent_provider', to_jsonb('claude-code'::text), now() - interval '13 days'),
+    (ws_id, 'agent_model', to_jsonb('claude-sonnet-4-5'::text), now() - interval '13 days'),
+    (ws_id, 'concurrency_limit', to_jsonb(1), now() - interval '13 days'),
+    (ws_id, 'max_retries', to_jsonb(3), now() - interval '13 days'),
+    (ws_id, 'stall_timeout_ms', to_jsonb(300000), now() - interval '13 days');
+
+  INSERT INTO public.sandbox_capability_checks
+    (id, workspace_id, github_repository_id, status, capabilities, checked_at, created_at)
+  VALUES
+    (sandbox_check_id, ws_id, gh_repo1_id, 'success',
+     '{"packageInstall":true,"build":true,"test":true,"network":true}'::jsonb,
+     now() - interval '12 days 20 hours',
+     now() - interval '12 days 20 hours');
+
+  INSERT INTO public.workspace_onboarding
+    (id, workspace_id, status, current_step, selected_github_repository_id,
+     completed_steps, skipped_steps, completed_at, created_at)
+  VALUES
+    (onboarding_id, ws_id, 'completed', 'verify', gh_repo1_id,
+     array['github', 'repository', 'pipeline', 'runtime', 'verify']::text[],
+     array['linear']::text[],
+     now() - interval '12 days',
+     now() - interval '13 days');
+
+  -- -------------------------------------------------------------------------
+  -- 8. Sessions (one per phase for a realistic tour of the pipeline)
   -- -------------------------------------------------------------------------
 
   -- Session 1: product / awaiting_review — agent just finished the spec
@@ -819,7 +895,7 @@ BEGIN
     (sess18_id, ws_id, stage_land_id, 'land',        now() - interval '6 days 12 hours',  mem1_id);
 
   -- -------------------------------------------------------------------------
-  -- 8. GitHub branches / PRs (linked to sessions)
+  -- 9. GitHub branches / PRs (linked to sessions)
   -- -------------------------------------------------------------------------
   INSERT INTO public.github_issue_branches
     (id, workspace_id, session_id, github_repository_id, branch_name,
@@ -839,7 +915,7 @@ BEGIN
      now() - interval '1 day');
 
   -- -------------------------------------------------------------------------
-  -- 9. Agent jobs + runs (pipeline work on sessions #4 and #2)
+  -- 10. Agent jobs + runs (pipeline work on sessions #4 and #2)
   -- -------------------------------------------------------------------------
 
   -- Job 1: successful run on session #4
