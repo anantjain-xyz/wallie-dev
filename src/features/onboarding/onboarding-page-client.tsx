@@ -99,12 +99,18 @@ type FieldDescriptor = {
   type: FieldType;
 };
 
+type RuntimeCredential = {
+  description: string;
+  key: string;
+  label: string;
+};
+
 const badgeToneClasses: Record<HealthTone, string> = {
   accent: "ui-badge-neutral",
   danger: "ui-badge-danger",
   neutral: "ui-badge-neutral",
-  success: "ui-badge-neutral",
-  warning: "ui-badge-neutral",
+  success: "ui-badge-success",
+  warning: "ui-badge-warning",
 };
 
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
@@ -266,6 +272,41 @@ function presenceBadge(configured: boolean) {
     : { tone: "warning" as const, value: "Missing" };
 }
 
+function runtimeCredentialsForProvider(
+  provider: RuntimeReadiness["provider"],
+): RuntimeCredential[] {
+  if (provider !== "anthropic-api") {
+    return [];
+  }
+
+  return [
+    {
+      description: "Used by the Anthropic API runner when Wallie executes agent phases.",
+      key: "ANTHROPIC_API_KEY",
+      label: "Anthropic API key",
+    },
+  ];
+}
+
+function firstMissingRuntimeCredentialKey(
+  credentials: RuntimeCredential[],
+  configuredSecretKeys: ReadonlySet<string>,
+) {
+  return credentials.find((credential) => !configuredSecretKeys.has(credential.key))?.key ?? "";
+}
+
+function repositoryEnvKeyLabel(key: string, runtimeCredentialKeys: ReadonlySet<string>) {
+  if (runtimeCredentialKeys.has(key)) {
+    return "Runtime credential";
+  }
+
+  if (key.startsWith("NEXT_PUBLIC_")) {
+    return "Public/deployment";
+  }
+
+  return "Server env";
+}
+
 function configValueToString(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
@@ -334,6 +375,19 @@ export function isAgentConfigDraftDirty(
 
 function workspaceSecretKeys(data: WorkspaceOnboardingData) {
   return data.setupHealth.workspaceSecrets.configuredKeys;
+}
+
+function knownConfiguredSecretKeys(data: WorkspaceOnboardingData) {
+  const keys = new Set(data.workspaceSecrets.map((secret) => secret.key));
+
+  if (data.setupHealth.workspaceSecrets.anthropicApiKeyConfigured) {
+    keys.add("ANTHROPIC_API_KEY");
+  }
+  if (data.setupHealth.linearKey.configured) {
+    keys.add("LINEAR_API_KEY");
+  }
+
+  return keys;
 }
 
 function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = data.agentConfig) {
@@ -776,20 +830,20 @@ function RuntimeStep({
   onDataChange: OnboardingDataChange;
   onRuntimeStateChange: (state: RuntimeCompletionState) => void;
 }) {
+  const initialConfiguredSecretKeys = knownConfiguredSecretKeys(data);
+  const initialSecretKey = firstMissingRuntimeCredentialKey(
+    runtimeCredentialsForProvider(runtimeReadinessFromData(data).provider),
+    initialConfiguredSecretKeys,
+  );
   const [drafts, setDrafts] = useState<AgentConfigDrafts>(() =>
     buildAgentConfigDrafts(data.agentConfig),
   );
-  const [secretKey, setSecretKey] = useState(
-    data.github.primaryProfile?.envKeySuggestions.find(
-      (key) => !data.setupHealth.workspaceSecrets.configuredKeys.includes(key),
-    ) ??
-      data.github.primaryProfile?.envKeySuggestions[0] ??
-      "",
-  );
+  const [secretKey, setSecretKey] = useState(initialSecretKey);
   const [secretValue, setSecretValue] = useState("");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const lastAutoSecretKeyRef = useRef<string | null>(initialSecretKey || null);
   const [verifyState, setVerifyState] = useState<{
     isVerifying: boolean;
     result: VerifyAgentConfigResponse | null;
@@ -828,7 +882,13 @@ function RuntimeStep({
   });
   const selectedProvider = readiness.provider;
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
-  const configuredSecretKeys = new Set(data.workspaceSecrets.map((secret) => secret.key));
+  const configuredSecretKeys = knownConfiguredSecretKeys(data);
+  const runtimeCredentials = runtimeCredentialsForProvider(selectedProvider);
+  const runtimeCredentialKeys = new Set(runtimeCredentials.map((credential) => credential.key));
+  const missingRuntimeCredentialKey = firstMissingRuntimeCredentialKey(
+    runtimeCredentials,
+    configuredSecretKeys,
+  );
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) =>
       data.agentConfig[key] === undefined &&
@@ -848,6 +908,26 @@ function RuntimeStep({
     busyAction === null &&
     Boolean(secretKey.trim()) &&
     Boolean(secretValue.trim());
+
+  useEffect(() => {
+    if (secretValue.trim()) {
+      return;
+    }
+
+    const normalizedSecretKey = secretKey.trim().toUpperCase();
+    const lastAutoSecretKey = lastAutoSecretKeyRef.current;
+    const canReplaceSecretKey =
+      normalizedSecretKey.length === 0 ||
+      (lastAutoSecretKey !== null && normalizedSecretKey === lastAutoSecretKey);
+
+    if (canReplaceSecretKey && missingRuntimeCredentialKey !== normalizedSecretKey) {
+      setSecretKey(missingRuntimeCredentialKey);
+      lastAutoSecretKeyRef.current = missingRuntimeCredentialKey || null;
+    } else if (missingRuntimeCredentialKey && missingRuntimeCredentialKey === normalizedSecretKey) {
+      lastAutoSecretKeyRef.current = missingRuntimeCredentialKey;
+    }
+  }, [missingRuntimeCredentialKey, secretKey, secretValue]);
+
   const canVerify =
     data.canManage &&
     !isSaving &&
@@ -1151,36 +1231,87 @@ function RuntimeStep({
       </div>
 
       <div className="rounded-[6px] border border-border bg-surface p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
-              Values are encrypted server-side; only previews are returned.
-            </p>
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {envSuggestions.length === 0 ? (
-                <p className="text-[13px] text-muted">
-                  No env keys suggested by the repository profile.
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1 space-y-4">
+            <div>
+              <h3 className="text-[14px] font-semibold text-foreground">Runtime credentials</h3>
+              <p className="mt-1 text-[12px] leading-5 text-muted">
+                Agent-only secrets are encrypted server-side; only previews are returned.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {runtimeCredentials.length === 0 ? (
+                <p className="rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-[13px] leading-5 text-muted">
+                  No encrypted workspace secret is required for the selected {selectedProvider}{" "}
+                  runner.
                 </p>
               ) : (
-                envSuggestions.map((key) => (
-                  <div
-                    className="flex min-h-11 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2"
-                    key={key}
-                  >
-                    <span className="min-w-0 truncate font-mono text-[12px] text-foreground">
-                      {key}
-                    </span>
-                    <Badge tone={configuredSecretKeys.has(key) ? "success" : "warning"}>
-                      {configuredSecretKeys.has(key) ? "Present" : "Missing"}
-                    </Badge>
-                  </div>
-                ))
+                runtimeCredentials.map((credential) => {
+                  const configured = configuredSecretKeys.has(credential.key);
+
+                  return (
+                    <div
+                      className="flex min-h-11 flex-col gap-2 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
+                      key={credential.key}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <p className="text-[12px] font-medium text-foreground">
+                          {credential.label}
+                        </p>
+                        <code className="block break-all font-mono text-[12px] text-foreground">
+                          {credential.key}
+                        </code>
+                        <p className="text-[12px] leading-5 text-muted">{credential.description}</p>
+                      </div>
+                      <Badge tone={configured ? "success" : "warning"}>
+                        {configured ? "Present" : "Missing"}
+                      </Badge>
+                    </div>
+                  );
+                })
               )}
+            </div>
+
+            <div className="border-t border-border pt-4">
+              <h4 className="text-[13px] font-semibold text-foreground">
+                Repository environment variables
+              </h4>
+              <p className="mt-1 text-[12px] leading-5 text-muted">
+                Detected from the repository profile. Configure deployment values outside this
+                encrypted secret store unless they are listed above as runtime credentials.
+              </p>
+              <div className="mt-3 space-y-2">
+                {envSuggestions.length === 0 ? (
+                  <p className="text-[13px] text-muted">No repository env keys were detected.</p>
+                ) : (
+                  envSuggestions.map((key) => (
+                    <div
+                      className="flex min-h-10 flex-col gap-2 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                      key={key}
+                    >
+                      <code className="min-w-0 break-all font-mono text-[12px] text-foreground">
+                        {key}
+                      </code>
+                      <Badge tone={runtimeCredentialKeys.has(key) ? "success" : "neutral"}>
+                        {repositoryEnvKeyLabel(key, runtimeCredentialKeys)}
+                      </Badge>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="w-full shrink-0 space-y-3 lg:w-72">
+          <div className="w-full shrink-0 space-y-3 lg:w-80">
+            <div>
+              <h4 className="text-[13px] font-semibold text-foreground">Add workspace secret</h4>
+              <p className="mt-1 text-[12px] leading-5 text-muted">
+                {missingRuntimeCredentialKey
+                  ? `Paste the value for ${missingRuntimeCredentialKey}.`
+                  : "Optional: store an additional encrypted workspace secret."}
+              </p>
+            </div>
             <label className="block space-y-1.5">
               <span className="text-[12px] font-medium text-muted">Secret key</span>
               <input
@@ -1189,7 +1320,7 @@ function RuntimeStep({
                 className="ui-input"
                 disabled={busyAction !== null}
                 onChange={(event) => setSecretKey(event.target.value)}
-                placeholder="ANTHROPIC_API_KEY"
+                placeholder={missingRuntimeCredentialKey || "SECRET_KEY"}
                 spellCheck={false}
                 value={secretKey}
               />
