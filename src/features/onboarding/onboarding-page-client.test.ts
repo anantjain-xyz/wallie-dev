@@ -95,6 +95,22 @@ function profile(githubRepositoryId: string, overrides: Partial<RepositoryProfil
   } satisfies RepositoryProfileState;
 }
 
+function workspaceSecret(
+  key: string,
+  overrides: Partial<WorkspaceOnboardingData["workspaceSecrets"][number]> = {},
+) {
+  return {
+    createdAt: "2026-05-16T18:00:00.000Z",
+    createdByMemberId: "member-1",
+    id: `secret-${key.toLowerCase()}`,
+    key,
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    valuePreview: "...value",
+    workspaceId: "workspace-1",
+    ...overrides,
+  } satisfies WorkspaceOnboardingData["workspaceSecrets"][number];
+}
+
 type OnboardingDataOverrides = Omit<
   Partial<WorkspaceOnboardingData>,
   "onboarding" | "setupHealth" | "workspace"
@@ -672,14 +688,54 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("No encrypted workspace secret is required for the selected codex");
     expect(html).toContain("Repository environment variables");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
-    expect(html).toContain("Public/deployment");
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
-    expect(html).toContain("Server env");
-    expect(html).toContain('placeholder="SECRET_KEY"');
+    expect(html).toContain('<input aria-label="Value for NEXT_PUBLIC_APP_URL"');
+    expect(html).toContain('type="password"');
+    expect(html).not.toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
+    expect(html).not.toContain("ui-textarea min-h-20");
+    expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
+    expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
+    expect(html).toContain("Add variable");
+    expect(html).not.toContain('aria-label="New variable name"');
+    expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
+    expect(html).toContain("Not set");
+    expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
+    expect(html).not.toContain("Needs value");
+    expect(html).not.toContain("Public/deployment");
+    expect(html).not.toContain("Server env");
     expect(html).not.toContain("Workspace secrets");
     expect(html).not.toContain("<select");
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("truncate font-mono");
+  });
+
+  it("normalizes repository env keys before rendering saved state", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: null,
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: profile("repo-a", {
+              envKeySuggestions: ["api_key", "API_KEY"],
+            }),
+            repositories: [],
+          },
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline"],
+            currentStep: "runtime",
+          },
+          workspaceSecrets: [workspaceSecret("API_KEY")],
+        }),
+      }),
+    );
+
+    expect(html.match(/<code[^>]*>API_KEY<\/code>/g) ?? []).toHaveLength(1);
+    expect(html).toContain("Stored");
+    expect(html).not.toContain("Stored ...value");
+    expect(html).not.toContain(">api_key<");
+    expect(html).not.toContain("Not set");
   });
 
   it("keeps provider-like env keys as repository notes for the Claude Code runner", () => {
@@ -719,14 +775,32 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("ANTHROPIC_API_KEY");
-    expect(html).toContain("Server env");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
-    expect(html).toContain("Public/deployment");
     expect(html).toContain(
       "No encrypted workspace secret is required for the selected claude-code",
     );
+    expect(html).not.toContain("Public/deployment");
+    expect(html).not.toContain("Server env");
     expect(html).not.toContain("Anthropic API key");
     expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
+  });
+
+  it("does not render a section-level runtime readiness badge", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Runtime readiness");
+    expect(html).not.toMatch(
+      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-badge/,
+    );
   });
 
   it("renders Verify blockers with links to owning steps and disables completion", () => {

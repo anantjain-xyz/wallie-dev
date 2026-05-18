@@ -9,7 +9,14 @@ import type {
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
-import { CodeIcon, ProjectsIcon, SparkIcon } from "@/components/shared/icons";
+import {
+  CheckIcon,
+  CodeIcon,
+  PlusIcon,
+  ProjectsIcon,
+  SparkIcon,
+  XIcon,
+} from "@/components/shared/icons";
 import { SelectField } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -60,7 +67,10 @@ import type {
   SandboxCapabilityCheckResponse,
   SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
-import type { UpsertWorkspaceSecretResponse } from "@/lib/secrets/contracts";
+import type {
+  UpsertWorkspaceSecretResponse,
+  WorkspaceSecretPreview,
+} from "@/lib/secrets/contracts";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -99,6 +109,18 @@ type FieldDescriptor = {
   options?: readonly string[];
   placeholder?: string;
   type: FieldType;
+};
+
+type RuntimeCredentialDescriptor = {
+  description: string;
+  key: string;
+  label: string;
+};
+
+type NewSecretDraftRow = {
+  id: string;
+  key: string;
+  value: string;
 };
 
 const badgeToneClasses: Record<HealthTone, string> = {
@@ -208,6 +230,31 @@ function Badge({ children, tone }: { children: string; tone: HealthTone }) {
   );
 }
 
+function SecretValueInput({
+  ariaLabel,
+  disabled,
+  onChange,
+  value,
+}: {
+  ariaLabel: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <input
+      aria-label={ariaLabel}
+      autoComplete="off"
+      className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      spellCheck={false}
+      type="password"
+      value={value}
+    />
+  );
+}
+
 function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
   return (
     <span
@@ -268,16 +315,46 @@ function presenceBadge(configured: boolean) {
     : { tone: "warning" as const, value: "Missing" };
 }
 
-function repositoryEnvKeyLabel(key: string, runtimeCredentialKeys: ReadonlySet<string>) {
-  if (runtimeCredentialKeys.has(key)) {
-    return "Runtime credential";
+function normalizeSecretKey(key: string) {
+  return key.trim().toUpperCase();
+}
+
+function secretBusyActionKey(key: string) {
+  return `secret:${normalizeSecretKey(key)}`;
+}
+
+function secretPreviewLabel(secret: WorkspaceSecretPreview | undefined) {
+  if (!secret) {
+    return "Not saved";
   }
 
-  if (key.startsWith("NEXT_PUBLIC_")) {
-    return "Public/deployment";
+  return "Stored";
+}
+
+function repositoryVariableKeys(
+  envSuggestions: readonly string[],
+  workspaceSecrets: readonly WorkspaceSecretPreview[],
+  runtimeCredentialKeys: ReadonlySet<string>,
+) {
+  const keys = new Set<string>();
+  const rows: string[] = [];
+  const addKey = (rawKey: string) => {
+    const key = normalizeSecretKey(rawKey);
+    if (!key || key === "LINEAR_API_KEY" || runtimeCredentialKeys.has(key) || keys.has(key)) {
+      return;
+    }
+    keys.add(key);
+    rows.push(key);
+  };
+
+  for (const key of envSuggestions) {
+    addKey(key);
+  }
+  for (const secret of workspaceSecrets) {
+    addKey(secret.key);
   }
 
-  return "Server env";
+  return rows;
 }
 
 function configValueToString(value: unknown): string {
@@ -795,11 +872,12 @@ function RuntimeStep({
   const [drafts, setDrafts] = useState<AgentConfigDrafts>(() =>
     buildAgentConfigDrafts(data.agentConfig),
   );
-  const [secretKey, setSecretKey] = useState("");
-  const [secretValue, setSecretValue] = useState("");
+  const [secretValueDrafts, setSecretValueDrafts] = useState<Record<string, string>>({});
+  const [newSecretRows, setNewSecretRows] = useState<NewSecretDraftRow[]>([]);
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const nextNewSecretRowId = useRef(1);
   const [verifyState, setVerifyState] = useState<{
     isVerifying: boolean;
     result: VerifyAgentConfigResponse | null;
@@ -838,10 +916,32 @@ function RuntimeStep({
   });
   const selectedProvider = readiness.provider;
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
-  const configuredSecretKeys = new Set(data.workspaceSecrets.map((secret) => secret.key));
-  const runtimeCredentials: Array<{ description: string; key: string; label: string }> = [];
-  const runtimeCredentialKeys = new Set(runtimeCredentials.map((credential) => credential.key));
-  const missingRuntimeCredentialKey = "";
+  const secretByKey = new Map(
+    data.workspaceSecrets.map((secret) => [normalizeSecretKey(secret.key), secret]),
+  );
+  const configuredSecretKeys = new Set(
+    data.workspaceSecrets.map((secret) => normalizeSecretKey(secret.key)),
+  );
+  const runtimeCredentials: RuntimeCredentialDescriptor[] = [];
+  const runtimeCredentialKeys = new Set(
+    runtimeCredentials.map((credential) => normalizeSecretKey(credential.key)),
+  );
+  const repositoryVariables = repositoryVariableKeys(
+    envSuggestions,
+    data.workspaceSecrets,
+    runtimeCredentialKeys,
+  );
+  const repositorySecretDrafts = repositoryVariables
+    .map((key) => ({ key, value: secretValueDrafts[key] ?? "" }))
+    .filter((draft) => Boolean(draft.value.trim()));
+  const completeNewSecretDrafts = newSecretRows.filter(
+    (row) => Boolean(row.key.trim()) && Boolean(row.value.trim()),
+  );
+  const hasPartialNewSecretDraft = newSecretRows.some((row) => {
+    const hasKey = Boolean(row.key.trim());
+    const hasValue = Boolean(row.value.trim());
+    return hasKey !== hasValue;
+  });
   const missingDefaultKeys = ALLOWED_AGENT_CONFIG_KEYS.filter(
     (key) =>
       data.agentConfig[key] === undefined &&
@@ -855,12 +955,12 @@ function RuntimeStep({
     fieldStatuses.some((status) => status.isDirty);
   const canApplyDefaults =
     data.canManage && !isSaving && busyAction === null && missingDefaultKeys.length > 0;
-  const canSaveSecret =
+  const canSaveRepositoryConfig =
     data.canManage &&
     !isSaving &&
     busyAction === null &&
-    Boolean(secretKey.trim()) &&
-    Boolean(secretValue.trim());
+    !hasPartialNewSecretDraft &&
+    (repositorySecretDrafts.length > 0 || completeNewSecretDrafts.length > 0);
 
   const canVerify =
     data.canManage &&
@@ -973,31 +1073,121 @@ function RuntimeStep({
     }
   }
 
-  async function handleSaveSecret() {
-    if (!canSaveSecret) return;
-    setBusyAction("secret");
+  function handleSecretDraftChange(key: string, value: string) {
+    setSecretValueDrafts((current) => ({ ...current, [normalizeSecretKey(key)]: value }));
+  }
+
+  function handleAddNewSecretRow() {
+    const rowId = `new-secret-${nextNewSecretRowId.current}`;
+    nextNewSecretRowId.current += 1;
+    setNewSecretRows((current) => [...current, { id: rowId, key: "", value: "" }]);
+  }
+
+  function handleNewSecretRowChange(
+    id: string,
+    field: keyof Pick<NewSecretDraftRow, "key" | "value">,
+    value: string,
+  ) {
+    setNewSecretRows((current) =>
+      current.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  function handleRemoveNewSecretRow(id: string) {
+    setNewSecretRows((current) => current.filter((row) => row.id !== id));
+  }
+
+  async function upsertWorkspaceSecret(key: string, value: string) {
+    const normalizedKey = normalizeSecretKey(key);
+    const response = await fetch("/api/secrets", {
+      body: JSON.stringify({
+        key: normalizedKey,
+        value,
+        workspaceId: data.workspace.id,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (UpsertWorkspaceSecretResponse & { error?: string })
+      | null;
+    if (!response.ok || !body) {
+      throw new Error(body?.error ?? "Workspace secret save failed.");
+    }
+
+    return body.secret;
+  }
+
+  async function handleSaveSecret(key: string, value: string) {
+    const normalizedKey = normalizeSecretKey(key);
+    if (!data.canManage || isSaving || busyAction !== null || !normalizedKey || !value.trim()) {
+      return;
+    }
+
+    setBusyAction(secretBusyActionKey(normalizedKey));
     setRuntimeError(null);
     setRuntimeMessage(null);
 
     try {
-      const response = await fetch("/api/secrets", {
-        body: JSON.stringify({
-          key: secretKey.trim().toUpperCase(),
-          value: secretValue,
-          workspaceId: data.workspace.id,
-        }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
+      const secret = await upsertWorkspaceSecret(normalizedKey, value);
+      onDataChange(updateSecretInData(data, secret));
+      setSecretValueDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        delete next[normalizedKey];
+        return next;
       });
-      const body = (await response.json().catch(() => null)) as
-        | (UpsertWorkspaceSecretResponse & { error?: string })
-        | null;
-      if (!response.ok || !body) {
-        throw new Error(body?.error ?? "Workspace secret save failed.");
+      setRuntimeMessage(`Saved preview for ${secret.key}.`);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSaveRepositoryConfig() {
+    if (!canSaveRepositoryConfig) return;
+
+    const entriesByKey = new Map<string, { key: string; value: string }>();
+    for (const draft of repositorySecretDrafts) {
+      entriesByKey.set(normalizeSecretKey(draft.key), draft);
+    }
+    for (const draft of completeNewSecretDrafts) {
+      entriesByKey.set(normalizeSecretKey(draft.key), {
+        key: draft.key,
+        value: draft.value,
+      });
+    }
+    const entries = [...entriesByKey.values()];
+    setBusyAction("repository-config");
+    setRuntimeError(null);
+    setRuntimeMessage(null);
+
+    try {
+      let nextData = data;
+      const savedKeys = new Set<string>();
+
+      for (const entry of entries) {
+        const secret = await upsertWorkspaceSecret(entry.key, entry.value);
+        savedKeys.add(entry.key);
+        savedKeys.add(normalizeSecretKey(entry.key));
+        nextData = updateSecretInData(nextData, secret);
       }
-      onDataChange(updateSecretInData(data, body.secret));
-      setSecretValue("");
-      setRuntimeMessage(`Saved preview for ${body.secret.key}.`);
+
+      onDataChange(nextData);
+      setSecretValueDrafts((current) => {
+        const next = { ...current };
+        for (const savedKey of savedKeys) {
+          delete next[savedKey];
+        }
+        return next;
+      });
+      setNewSecretRows((current) =>
+        current.filter((row) => !savedKeys.has(normalizeSecretKey(row.key)) || !row.value.trim()),
+      );
+      setRuntimeMessage(
+        `Saved ${entries.length} environment variable${entries.length === 1 ? "" : "s"}.`,
+      );
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
     } finally {
@@ -1159,120 +1349,177 @@ function RuntimeStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1 space-y-4">
-            <div>
-              <h3 className="text-[14px] font-semibold text-foreground">Runtime credentials</h3>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                Agent-only secrets are encrypted server-side; only previews are returned.
-              </p>
-            </div>
+      <div className="space-y-4">
+        <div className="rounded-[6px] border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-[14px] font-semibold text-foreground">Runtime credentials</h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Agent-only secrets are encrypted server-side; only previews are returned.
+            </p>
+          </div>
 
-            <div className="space-y-2">
-              {runtimeCredentials.length === 0 ? (
-                <p className="rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-[13px] leading-5 text-muted">
-                  No encrypted workspace secret is required for the selected {selectedProvider}{" "}
-                  runner.
-                </p>
-              ) : (
-                runtimeCredentials.map((credential) => {
-                  const configured = configuredSecretKeys.has(credential.key);
+          {runtimeCredentials.length === 0 ? (
+            <p className="px-4 py-3 text-[13px] leading-5 text-muted">
+              No encrypted workspace secret is required for the selected {selectedProvider} runner.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {runtimeCredentials.map((credential) => {
+                const configured = configuredSecretKeys.has(credential.key);
+                const draftValue = secretValueDrafts[normalizeSecretKey(credential.key)] ?? "";
+                const isSavingSecret = busyAction === secretBusyActionKey(credential.key);
+                const canSaveCredential =
+                  data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
 
-                  return (
-                    <div
-                      className="flex min-h-11 flex-col gap-2 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
-                      key={credential.key}
-                    >
-                      <div className="min-w-0 space-y-1">
-                        <p className="text-[12px] font-medium text-foreground">
-                          {credential.label}
-                        </p>
-                        <code className="block break-all font-mono text-[12px] text-foreground">
-                          {credential.key}
-                        </code>
-                        <p className="text-[12px] leading-5 text-muted">{credential.description}</p>
-                      </div>
+                return (
+                  <div className="space-y-2 px-4 py-3" key={credential.key}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <p className="text-[13px] font-medium text-foreground">{credential.label}</p>
+                      <code className="break-all font-mono text-[12px] text-foreground">
+                        {credential.key}
+                      </code>
                       <Badge tone={configured ? "success" : "warning"}>
                         {configured ? "Present" : "Missing"}
                       </Badge>
                     </div>
-                  );
-                })
-              )}
-            </div>
 
-            <div className="border-t border-border pt-4">
-              <h4 className="text-[13px] font-semibold text-foreground">
-                Repository environment variables
-              </h4>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                Detected from the repository profile. Configure deployment values outside this
-                encrypted secret store unless they are listed above as runtime credentials.
-              </p>
-              <div className="mt-3 space-y-2">
-                {envSuggestions.length === 0 ? (
-                  <p className="text-[13px] text-muted">No repository env keys were detected.</p>
-                ) : (
-                  envSuggestions.map((key) => (
-                    <div
-                      className="flex min-h-10 flex-col gap-2 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                      key={key}
-                    >
-                      <code className="min-w-0 break-all font-mono text-[12px] text-foreground">
-                        {key}
-                      </code>
-                      <Badge tone={runtimeCredentialKeys.has(key) ? "success" : "neutral"}>
-                        {repositoryEnvKeyLabel(key, runtimeCredentialKeys)}
-                      </Badge>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <SecretValueInput
+                        ariaLabel={`Value for ${credential.key}`}
+                        disabled={busyAction !== null}
+                        onChange={(value) => handleSecretDraftChange(credential.key, value)}
+                        value={draftValue}
+                      />
+                      <button
+                        aria-label={`${configured ? "Update" : "Save"} ${credential.key}`}
+                        className={cn(
+                          "h-10 w-10 shrink-0 !px-0 !py-0",
+                          canSaveCredential ? "ui-button-primary" : "ui-button",
+                        )}
+                        disabled={!canSaveCredential}
+                        onClick={() => void handleSaveSecret(credential.key, draftValue)}
+                        title={configured ? "Update" : "Save"}
+                        type="button"
+                      >
+                        {isSavingSecret ? (
+                          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+                        ) : (
+                          <CheckIcon className="h-4 w-4" />
+                        )}
+                      </button>
                     </div>
-                  ))
-                )}
-              </div>
+                  </div>
+                );
+              })}
             </div>
+          )}
+        </div>
+
+        <div className="rounded-[6px] border border-border bg-surface">
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-[14px] font-semibold text-foreground">
+              Repository environment variables
+            </h3>
+            <p className="mt-1 text-[12px] leading-5 text-muted">
+              Detected keys and saved workspace secrets are editable from this list.
+            </p>
           </div>
 
-          <div className="w-full shrink-0 space-y-3 lg:w-80">
-            <div>
-              <h4 className="text-[13px] font-semibold text-foreground">Add workspace secret</h4>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
-                {missingRuntimeCredentialKey
-                  ? `Paste the value for ${missingRuntimeCredentialKey}.`
-                  : "Optional: store an additional encrypted workspace secret."}
-              </p>
+          {repositoryVariables.length === 0 ? (
+            <p className="px-4 py-3 text-[13px] text-muted">
+              No repository env keys were detected.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {repositoryVariables.map((key) => {
+                const secret = secretByKey.get(key);
+                const draftValue = secretValueDrafts[key] ?? "";
+                return (
+                  <div className="space-y-2 px-4 py-3" key={key}>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                      <code className="break-all font-mono text-[13px] font-medium text-foreground">
+                        {key}
+                      </code>
+                      <Badge tone={secret ? "success" : "neutral"}>
+                        {secret ? secretPreviewLabel(secret) : "Not set"}
+                      </Badge>
+                    </div>
+
+                    <SecretValueInput
+                      ariaLabel={`Value for ${key}`}
+                      disabled={busyAction !== null}
+                      onChange={(value) => handleSecretDraftChange(key, value)}
+                      value={draftValue}
+                    />
+                  </div>
+                );
+              })}
             </div>
-            <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-muted">Secret key</span>
-              <input
-                autoCapitalize="characters"
-                autoComplete="off"
-                className="ui-input"
-                disabled={busyAction !== null}
-                onChange={(event) => setSecretKey(event.target.value)}
-                placeholder={missingRuntimeCredentialKey || "SECRET_KEY"}
-                spellCheck={false}
-                value={secretKey}
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-muted">Secret value</span>
-              <textarea
-                autoComplete="off"
-                className="ui-textarea min-h-24"
-                disabled={busyAction !== null}
-                onChange={(event) => setSecretValue(event.target.value)}
-                placeholder="Paste value..."
-                value={secretValue}
-              />
-            </label>
+          )}
+
+          {newSecretRows.length > 0 ? (
+            <div className="divide-y divide-border border-t border-border">
+              {newSecretRows.map((row) => (
+                <div className="space-y-2 px-4 py-3" key={row.id}>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <input
+                      aria-label="New variable name"
+                      autoCapitalize="characters"
+                      autoComplete="off"
+                      className="ui-input h-10 min-w-0 flex-1 font-mono text-[13px]"
+                      disabled={busyAction !== null}
+                      onChange={(event) =>
+                        handleNewSecretRowChange(row.id, "key", event.target.value)
+                      }
+                      placeholder="SECRET_KEY"
+                      spellCheck={false}
+                      value={row.key}
+                    />
+                    <button
+                      aria-label="Remove variable row"
+                      className="ui-button h-10 w-10 shrink-0 !px-0 !py-0"
+                      disabled={busyAction !== null}
+                      onClick={() => handleRemoveNewSecretRow(row.id)}
+                      title="Remove row"
+                      type="button"
+                    >
+                      <XIcon className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <SecretValueInput
+                    ariaLabel="New variable value"
+                    disabled={busyAction !== null}
+                    onChange={(value) => handleNewSecretRowChange(row.id, "value", value)}
+                    value={row.value}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4">
             <button
-              className="ui-button-primary w-full"
-              disabled={!canSaveSecret}
-              onClick={() => void handleSaveSecret()}
+              className="ui-button gap-1.5"
+              disabled={busyAction !== null}
+              onClick={handleAddNewSecretRow}
               type="button"
             >
-              {busyAction === "secret" ? "Saving..." : "Save secret"}
+              <PlusIcon className="h-3.5 w-3.5" />
+              Add variable
             </button>
+            <div className="flex items-center gap-3">
+              {hasPartialNewSecretDraft ? (
+                <span className="text-[12px] text-muted">Finish each added row before saving.</span>
+              ) : null}
+              <button
+                className="ui-button-primary"
+                disabled={!canSaveRepositoryConfig}
+                onClick={() => void handleSaveRepositoryConfig()}
+                type="button"
+              >
+                {busyAction === "repository-config" ? "Saving..." : "Save config"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1292,16 +1539,13 @@ function RuntimeStep({
       ) : null}
 
       <div className="rounded-[6px] border border-border bg-surface p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Runtime readiness</h3>
             <p className="mt-1 text-[12px] leading-5 text-muted">
               Provider-specific requirements must pass before this step can complete.
             </p>
           </div>
-          <Badge tone={canCompleteRuntime ? "success" : "warning"}>
-            {canCompleteRuntime ? "Ready" : "Blocked"}
-          </Badge>
         </div>
         <div className="mt-4">
           <RuntimeRequirementList requirements={readiness.requirements} />

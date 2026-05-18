@@ -204,6 +204,41 @@ export function PlusIcon({ className, ...props }: IconProps) {
   );
 }
 
+export function CheckIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <path
+        d="m3.5 8.25 3 3 6-6.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function XIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <path d="m4.5 4.5 7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="m11.5 4.5-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function InboxIcon({ className, ...props }: IconProps) {
   return (
     <svg
