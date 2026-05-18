@@ -32,8 +32,8 @@ export function PipelineEditor({
   workspaceMembers,
 }: PipelineEditorProps) {
   const [name, setName] = useState(pipeline?.name ?? "Default");
-  const [stages, setStages] = useState<DraftPipelineStage[]>(
-    () => keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
+  const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
+    keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
