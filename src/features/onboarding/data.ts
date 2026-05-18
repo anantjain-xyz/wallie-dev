@@ -99,6 +99,29 @@ function mapOnboardingRow(row: Tables<"workspace_onboarding">): WorkspaceOnboard
   };
 }
 
+async function loadOrCreateOnboardingRow(
+  context: WorkspaceAccessContext,
+  admin = createSupabaseAdminClient(),
+): Promise<Tables<"workspace_onboarding">> {
+  const { data: existingRow, error: existingError } = await context.supabase
+    .from("workspace_onboarding")
+    .select(onboardingSelect)
+    .eq("workspace_id", context.workspace.id)
+    .maybeSingle();
+
+  if (existingError) throw existingError;
+  if (existingRow) return existingRow;
+
+  const { data: repairedRow, error: repairError } = await admin
+    .from("workspace_onboarding")
+    .upsert({ workspace_id: context.workspace.id }, { onConflict: "workspace_id" })
+    .select(onboardingSelect)
+    .single();
+
+  if (repairError) throw repairError;
+  return repairedRow;
+}
+
 function mapSandboxCapabilityCheck(
   row: SandboxCapabilityCheckRow | null | undefined,
 ): SandboxCapabilityCheckState | null {
@@ -395,21 +418,14 @@ async function buildWorkspaceOnboardingData(
   },
 ): Promise<WorkspaceOnboardingData> {
   let onboardingRow = options?.onboardingRow;
+  const admin = createSupabaseAdminClient();
 
   if (!onboardingRow) {
-    const { data, error } = await context.supabase
-      .from("workspace_onboarding")
-      .select(onboardingSelect)
-      .eq("workspace_id", context.workspace.id)
-      .single();
-
-    if (error) throw error;
-    onboardingRow = data;
+    onboardingRow = await loadOrCreateOnboardingRow(context, admin);
   }
 
   const canManage =
     context.currentMember.role === "owner" || context.currentMember.role === "admin";
-  const admin = createSupabaseAdminClient();
   const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
   const [
     setupHealth,

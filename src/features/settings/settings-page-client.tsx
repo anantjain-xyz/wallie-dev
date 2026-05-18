@@ -1,12 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
-import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
 import { LinearRoutingEditor } from "@/features/settings/linear-routing-editor";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
@@ -19,7 +17,6 @@ import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
 import { WorkspaceSecretsSections } from "@/features/settings/workspace-secrets-sections";
-import { workspaceOnboardingPath } from "@/lib/routes";
 
 const ANCHORS: SettingsAnchor[] = [
   { id: "workspace", label: "Workspace" },
@@ -67,26 +64,17 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
     initialFlashMessage(searchState),
   );
   const isManager = initialData.canManage;
-  const showResumeSetup = shouldShowOnboardingResumeCta(initialData.onboarding);
 
   return (
     <div className="min-h-full">
       <div className="mx-auto max-w-[1080px] px-6 pb-24 pt-10 sm:px-8">
-        <header className="mb-10 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <header className="mb-10">
           <div className="min-w-0 space-y-2">
             <h1 className="text-[28px] font-semibold tracking-tight text-foreground">Settings</h1>
             <p className="max-w-2xl text-[14px] leading-6 text-muted">
               Manage workspace identity, integrations, pipeline, and encrypted secrets.
             </p>
           </div>
-          {showResumeSetup ? (
-            <Link
-              className="ui-button-primary shrink-0"
-              href={workspaceOnboardingPath(initialData.workspace.slug)}
-            >
-              Resume setup
-            </Link>
-          ) : null}
         </header>
 
         {flashMessage ? (

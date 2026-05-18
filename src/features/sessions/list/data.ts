@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { WorkspaceSummary } from "@/lib/auth";
+import { mapOnboardingResumeState, type OnboardingResumeState } from "@/features/onboarding/flow";
 import { loadSessionWorkspaceContext } from "@/features/sessions/server";
 import { mapSessionRow } from "@/features/sessions/model";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/features/sessions/types";
 
 export type SessionListPageData = {
+  onboarding: OnboardingResumeState | null;
   queryState: SessionListQueryState;
   sessions: SessionSummary[];
   totalCount: number;
@@ -74,6 +76,15 @@ export async function loadSessionListPageData(
 ): Promise<SessionListPageData> {
   const context = await loadSessionWorkspaceContext(workspaceSlug);
   const queryState = parseSessionListQueryState(searchParams);
+
+  const { data: onboardingRow, error: onboardingError } = await context.supabase
+    .from("workspace_onboarding")
+    .select("current_step, status")
+    .eq("workspace_id", context.workspace.id)
+    .maybeSingle();
+  if (onboardingError) {
+    throw onboardingError;
+  }
 
   const { data, error } = await context.supabase
     .from("sessions")
@@ -164,6 +175,7 @@ export async function loadSessionListPageData(
   const filtered = sessions.filter((session) => matchesQueryState(session, queryState));
 
   return {
+    onboarding: mapOnboardingResumeState(onboardingRow),
     queryState,
     sessions: filtered,
     totalCount: sessions.length,

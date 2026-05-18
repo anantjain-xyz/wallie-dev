@@ -15,6 +15,8 @@ interface InsertedRow {
 }
 
 interface MockOptions {
+  onboardingError?: { message: string } | null;
+  onboardingRow?: { status: string } | null;
   nextNumber?: number;
   nextNumberError?: { message: string } | null;
   pipelineRow?: { id: string } | null;
@@ -36,6 +38,19 @@ function buildSupabaseMock(opts: MockOptions = {}) {
       return { data: opts.nextNumber ?? 7, error: null };
     }),
     from(table: string) {
+      if (table === "workspace_onboarding") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data:
+                  opts.onboardingRow === undefined ? { status: "completed" } : opts.onboardingRow,
+                error: opts.onboardingError ?? null,
+              }),
+            }),
+          }),
+        };
+      }
       if (table === "pipelines") {
         return {
           select: () => {
@@ -112,6 +127,18 @@ describe("createSessionFromClient", () => {
         workspaceId: "ws-1",
       }),
     ).rejects.toMatchObject({ message: "rpc broke" });
+  });
+
+  it("requires completed workspace setup before allocating a session number", async () => {
+    const { supabase } = buildSupabaseMock({ onboardingRow: { status: "in_progress" } });
+    await expect(
+      createSessionFromClient(supabase, {
+        promptMd: "Add SSO",
+        workspaceId: "ws-1",
+      }),
+    ).rejects.toThrow("Complete workspace setup before starting a session.");
+
+    expect((supabase as { rpc: ReturnType<typeof vi.fn> }).rpc).not.toHaveBeenCalled();
   });
 
   it("derives the title from the first non-empty prompt line when no title is supplied", async () => {

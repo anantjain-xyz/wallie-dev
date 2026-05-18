@@ -2,12 +2,8 @@ import "server-only";
 
 import { notFound, redirect } from "next/navigation";
 
-import type { OnboardingResumeState } from "@/features/onboarding/flow";
+import { mapOnboardingResumeState, type OnboardingResumeState } from "@/features/onboarding/flow";
 import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/auth";
-import {
-  workspaceOnboardingStatusSchema,
-  workspaceOnboardingStepSchema,
-} from "@/lib/onboarding/contracts";
 import { loginPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -49,17 +45,6 @@ export type PipelineDashboardData = {
   onboarding: OnboardingResumeState | null;
   workspace: { id: string; name: string; slug: string };
 };
-
-function mapOnboardingResumeState(
-  row: { current_step: string; status: string } | null,
-): OnboardingResumeState | null {
-  if (!row) return null;
-
-  return {
-    currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
-    status: workspaceOnboardingStatusSchema.parse(row.status),
-  };
-}
 
 export async function loadPipelineDashboardData(
   workspaceSlug: string,

@@ -25,6 +25,18 @@ export async function createSessionFromClient(
 
   const title = input.title?.trim() || deriveSessionTitleFromPrompt(trimmedPrompt);
 
+  const { data: onboardingRow, error: onboardingError } = await supabase
+    .from("workspace_onboarding")
+    .select("status")
+    .eq("workspace_id", input.workspaceId)
+    .maybeSingle();
+  if (onboardingError) {
+    throw onboardingError;
+  }
+  if (onboardingRow?.status !== "completed") {
+    throw new Error("Complete workspace setup before starting a session.");
+  }
+
   const { data: number, error: numberError } = await supabase.rpc("next_session_number", {
     target_workspace_id: input.workspaceId,
   });

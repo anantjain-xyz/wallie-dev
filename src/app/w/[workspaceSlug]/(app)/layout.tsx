@@ -12,10 +12,10 @@ type WorkspaceAppLayoutProps = {
 
 export default async function WorkspaceAppLayout({ children, params }: WorkspaceAppLayoutProps) {
   const { workspaceSlug } = await params;
-  const { user, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
+  const { onboarding, user, workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
 
   return (
-    <AppShell viewerEmail={user.email ?? null} workspace={workspace}>
+    <AppShell onboarding={onboarding} viewerEmail={user.email ?? null} workspace={workspace}>
       {children}
     </AppShell>
   );

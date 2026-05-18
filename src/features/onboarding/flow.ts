@@ -3,7 +3,11 @@ import type {
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
-import { WORKSPACE_ONBOARDING_STEPS } from "@/lib/onboarding/contracts";
+import {
+  WORKSPACE_ONBOARDING_STEPS,
+  workspaceOnboardingStatusSchema,
+  workspaceOnboardingStepSchema,
+} from "@/lib/onboarding/contracts";
 
 export type OnboardingStepDefinition = {
   description: string;
@@ -67,6 +71,7 @@ export type OnboardingStepRailItem = OnboardingStepDefinition & {
 };
 
 export type OnboardingResumeState = Pick<WorkspaceOnboardingState, "currentStep" | "status">;
+type OnboardingResumeRow = { current_step: string; status: string } | null;
 
 const STEP_INDEX = new Map<WorkspaceOnboardingStep, number>(
   WORKSPACE_ONBOARDING_STEPS.map((step, index) => [step, index]),
@@ -78,6 +83,20 @@ export function onboardingStepIndex(step: WorkspaceOnboardingStep) {
 
 export function shouldShowOnboardingResumeCta(onboarding: OnboardingResumeState | null) {
   return Boolean(onboarding && onboarding.status !== "completed");
+}
+
+export function mapOnboardingResumeState(row: OnboardingResumeRow): OnboardingResumeState | null {
+  if (!row) {
+    return {
+      currentStep: "github",
+      status: "not_started",
+    };
+  }
+
+  return {
+    currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
+    status: workspaceOnboardingStatusSchema.parse(row.status),
+  };
 }
 
 export function canSkipOnboardingStep(step: WorkspaceOnboardingStep) {

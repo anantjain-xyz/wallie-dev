@@ -2,16 +2,21 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { LogoutIcon, PlusIcon } from "@/components/shared/icons";
+import {
+  shouldShowOnboardingResumeCta,
+  type OnboardingResumeState,
+} from "@/features/onboarding/flow";
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
 import type { WorkspaceSummary } from "@/lib/auth";
-import { type WorkspaceNavItem, workspaceBasePath } from "@/lib/routes";
+import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type ShellHeaderProps = {
   navItems: WorkspaceNavItem[];
+  onboarding: OnboardingResumeState | null;
   viewerEmail: string | null;
   workspace: WorkspaceSummary;
 };
@@ -26,18 +31,26 @@ function isActive(pathname: string, workspaceSlug: string, item: WorkspaceNavIte
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function ShellHeader({ navItems, viewerEmail, workspace }: ShellHeaderProps) {
+export function ShellHeader({ navItems, onboarding, viewerEmail, workspace }: ShellHeaderProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
   const signOutLabel = viewerEmail ? `Sign out ${viewerEmail}` : "Sign out";
+  const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
+  const onboardingHref = workspaceOnboardingPath(workspace.slug);
 
   // `?create=1` is a deep-link entrypoint (legacy redirect targets, bookmarks)
   // that auto-opens the dialog regardless of which page in the workspace the
   // user lands on.
   const createFromUrl = searchParams?.get("create") === "1";
   const [userCreateOpen, setUserCreateOpen] = useState(false);
-  const createOpen = userCreateOpen || createFromUrl;
+  const createOpen = !shouldResumeSetup && (userCreateOpen || createFromUrl);
+
+  useEffect(() => {
+    if (shouldResumeSetup && createFromUrl) {
+      router.replace(onboardingHref);
+    }
+  }, [createFromUrl, onboardingHref, router, shouldResumeSetup]);
 
   function handleCreateClose() {
     setUserCreateOpen(false);
@@ -79,14 +92,20 @@ export function ShellHeader({ navItems, viewerEmail, workspace }: ShellHeaderPro
       </nav>
 
       <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          className="ui-button-primary inline-flex items-center gap-2"
-          onClick={() => setUserCreateOpen(true)}
-        >
-          <PlusIcon className="h-3.5 w-3.5" />
-          New session
-        </button>
+        {shouldResumeSetup ? (
+          <Link className="ui-button-primary" href={onboardingHref}>
+            Resume setup
+          </Link>
+        ) : (
+          <button
+            type="button"
+            className="ui-button-primary inline-flex items-center gap-2"
+            onClick={() => setUserCreateOpen(true)}
+          >
+            <PlusIcon className="h-3.5 w-3.5" />
+            New session
+          </button>
+        )}
         <form action="/auth/signout" method="post">
           <button type="submit" className="ui-icon-button" aria-label={signOutLabel}>
             <LogoutIcon className="h-3.5 w-3.5" />
