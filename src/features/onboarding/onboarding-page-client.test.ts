@@ -22,6 +22,7 @@ import {
   isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
+  RepositoryProfileEditor,
   updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
@@ -461,6 +462,24 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("Repository profile");
     expect(primaryFooterButton(html)).not.toContain("disabled");
+  });
+
+  it("keeps repository analyze and save loading labels separate", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryProfileEditor, {
+        canManage: true,
+        isAnalyzing: false,
+        isSaving: true,
+        onChange: () => undefined,
+        onInfer: () => undefined,
+        onSave: () => undefined,
+        profile: profile("repo-a"),
+      }),
+    );
+
+    expect(html).toContain(">Re-analyze</button>");
+    expect(html).toContain(">Saving...</button>");
+    expect(html).not.toContain(">Analyzing...</button>");
   });
 
   it("allows fallback progression when the pipeline editor cannot render", () => {

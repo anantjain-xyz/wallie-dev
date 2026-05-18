@@ -610,9 +610,10 @@ function ProfileField({
   );
 }
 
-function RepositoryProfileEditor({
+export function RepositoryProfileEditor({
   canManage,
-  isBusy,
+  isAnalyzing,
+  isSaving,
   onChange,
   onInfer,
   onSave,
@@ -620,13 +621,16 @@ function RepositoryProfileEditor({
   reanalyzeLabel = "Re-analyze",
 }: {
   canManage: boolean;
-  isBusy: boolean;
+  isAnalyzing: boolean;
+  isSaving: boolean;
   onChange: (profile: EditableProfile, dirty?: boolean) => void;
   onInfer: () => void;
   onSave: () => void;
   profile: EditableProfile;
   reanalyzeLabel?: string;
 }) {
+  const actionsDisabled = isAnalyzing || isSaving;
+
   function update<K extends keyof EditableProfile>(key: K, value: EditableProfile[K]) {
     onChange({ ...profile, [key]: value, inferenceConfidence: "manual" }, true);
   }
@@ -651,19 +655,19 @@ function RepositoryProfileEditor({
         <div className="flex shrink-0 flex-wrap gap-2">
           <button
             className="ui-button"
-            disabled={!canManage || isBusy}
+            disabled={!canManage || actionsDisabled}
             onClick={onInfer}
             type="button"
           >
-            {isBusy ? "Analyzing..." : reanalyzeLabel}
+            {isAnalyzing ? "Analyzing..." : reanalyzeLabel}
           </button>
           <button
             className="ui-button-primary"
-            disabled={!canManage || isBusy}
+            disabled={!canManage || actionsDisabled}
             onClick={onSave}
             type="button"
           >
-            {isBusy ? "Saving..." : "Save profile"}
+            {isSaving ? "Saving..." : "Save profile"}
           </button>
         </div>
       </div>
@@ -1495,9 +1499,10 @@ function RepositoryAnalysisStep({
   onInferRepository,
   onRepositoryProfileSaved,
   onSelectStep,
-  profileBusy,
+  profileAnalyzing,
   profileDraft,
   profileError,
+  profileSaving,
   updateProfileDraft,
 }: {
   data: WorkspaceOnboardingData;
@@ -1505,9 +1510,10 @@ function RepositoryAnalysisStep({
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
   onRepositoryProfileSaved: () => void;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
-  profileBusy: boolean;
+  profileAnalyzing: boolean;
   profileDraft: EditableProfile | null;
   profileError: string | null;
+  profileSaving: boolean;
   updateProfileDraft: (profile: EditableProfile, dirty?: boolean) => void;
 }) {
   const selectedRepository = selectedRepositoryFromData(data);
@@ -1567,7 +1573,7 @@ function RepositoryAnalysisStep({
             </div>
           </div>
 
-          {!profileDraft && !profileBusy ? (
+          {!profileDraft && !profileAnalyzing ? (
             <button
               className="ui-button-primary shrink-0"
               disabled={!data.canManage || isSaving}
@@ -1587,15 +1593,16 @@ function RepositoryAnalysisStep({
       {profileDraft ? (
         <RepositoryProfileEditor
           canManage={data.canManage && !isSaving}
-          isBusy={profileBusy}
+          isAnalyzing={profileAnalyzing}
+          isSaving={profileSaving}
           onChange={updateProfileDraft}
           onInfer={() => onInferRepository(selectedRepository)}
           onSave={onRepositoryProfileSaved}
           profile={profileDraft}
         />
-      ) : profileBusy ? (
+      ) : profileAnalyzing ? (
         <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
-          Inferring repository setup...
+          Analyzing repository...
         </div>
       ) : null}
     </div>
@@ -1613,9 +1620,10 @@ function StepBody({
   onRuntimeStateChange,
   onSelectStep,
   onSelectGithubRepository,
-  profileBusy,
+  profileAnalyzing,
   profileDraft,
   profileError,
+  profileSaving,
   step,
   updateProfileDraft,
 }: {
@@ -1629,9 +1637,10 @@ function StepBody({
   onRuntimeStateChange: (state: RuntimeCompletionState) => void;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
   onSelectGithubRepository: (repository: WorkspaceGitHubRepository) => void;
-  profileBusy: boolean;
+  profileAnalyzing: boolean;
   profileDraft: EditableProfile | null;
   profileError: string | null;
+  profileSaving: boolean;
   step: WorkspaceOnboardingStep;
   updateProfileDraft: (profile: EditableProfile, dirty?: boolean) => void;
 }) {
@@ -1686,9 +1695,10 @@ function StepBody({
         onInferRepository={onInferRepository}
         onRepositoryProfileSaved={onRepositoryProfileSaved}
         onSelectStep={onSelectStep}
-        profileBusy={profileBusy}
+        profileAnalyzing={profileAnalyzing}
         profileDraft={profileDraft}
         profileError={profileError}
+        profileSaving={profileSaving}
         updateProfileDraft={updateProfileDraft}
       />
     );
@@ -1934,7 +1944,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const router = useRouter();
   const [data, setData] = useState(initialData);
   const [error, setError] = useState<string | null>(null);
-  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileAction, setProfileAction] = useState<"analyzing" | "saving" | null>(null);
   const [profileDirty, setProfileDirty] = useState(false);
   const [profileDraft, setProfileDraft] = useState<EditableProfile | null>(() =>
     initialProfileDraft(initialData),
@@ -1974,6 +1984,9 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
+  const profileAnalyzing = profileAction === "analyzing";
+  const profileSaving = profileAction === "saving";
+  const profileBusy = profileAction !== null;
   const activeStepAlreadyResolved =
     onboarding.completedSteps.includes(activeStep.id) ||
     onboarding.skippedSteps.includes(activeStep.id);
@@ -2167,7 +2180,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     setProfileDraft(null);
     setProfileDirty(false);
     setProfileError(null);
-    setProfileBusy(true);
+    setProfileAction("analyzing");
 
     try {
       const response = await fetch(
@@ -2190,7 +2203,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       );
     } finally {
       if (isRepositorySelectionCurrent(selectedRepositoryIdRef.current, repository.id)) {
-        setProfileBusy(false);
+        setProfileAction(null);
       }
     }
   }
@@ -2206,7 +2219,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       selectedRepositoryIdRef.current = repository.id;
       setSelectedRepositoryId(repository.id);
       setProfileDirty(false);
-      setProfileBusy(false);
+      setProfileAction(null);
       setProfileDraft(repository.profile ?? null);
       return;
     }
@@ -2217,7 +2230,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     selectedRepositoryIdRef.current = repository.id;
     setSelectedRepositoryId(repository.id);
     setProfileDirty(false);
-    setProfileBusy(false);
+    setProfileAction(null);
     const selectedRepository = nextData.github.repositories.find(
       (item) => item.id === repository.id,
     );
@@ -2229,7 +2242,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
 
     const repositoryIdToSave = selectedRepositoryId;
     const profileToSave = profileDraft;
-    setProfileBusy(true);
+    setProfileAction("saving");
     setProfileError(null);
 
     try {
@@ -2277,7 +2290,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         caught instanceof Error ? caught.message : "Failed to save repository profile.",
       );
     } finally {
-      setProfileBusy(false);
+      setProfileAction(null);
     }
   }
 
@@ -2363,9 +2376,10 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               onRuntimeStateChange={setRuntimeCompletionState}
               onSelectStep={(step) => void selectStep(step)}
               onSelectGithubRepository={(repository) => void selectGithubRepository(repository)}
-              profileBusy={profileBusy}
+              profileAnalyzing={profileAnalyzing}
               profileDraft={profileDraft}
               profileError={profileError}
+              profileSaving={profileSaving}
               step={activeStep.id}
               updateProfileDraft={updateProfileDraft}
             />
