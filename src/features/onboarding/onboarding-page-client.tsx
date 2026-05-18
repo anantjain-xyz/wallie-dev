@@ -1315,7 +1315,7 @@ function RuntimeStep({
                         {key}
                       </code>
                       <Badge tone={secret ? "success" : "warning"}>
-                        {secret ? secretPreviewLabel(secret) : "Needs value"}
+                        {secret ? secretPreviewLabel(secret) : "Not set"}
                       </Badge>
                     </div>
 
