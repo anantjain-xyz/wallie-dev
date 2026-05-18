@@ -52,8 +52,8 @@ export interface AgentRunnerStartInput {
   sessionId: string;
   /**
    * Sandbox the agent CLI runs inside. Owned by the phase; reused across turns.
-   * Optional because text-only runners (e.g. anthropic-api) skip sandbox provisioning.
-   * CLI-based runners (codex, claude-code) require it and assert at start.
+   * Optional at the interface boundary; current CLI runners (codex,
+   * claude-code) require it and assert at start.
    */
   sandbox?: SandboxHandle;
   prompt: string;
@@ -85,16 +85,15 @@ export interface AgentRunner {
 // ---------------------------------------------------------------------------
 
 export interface AgentRunnerConfig {
-  /** Which provider to use: "codex" | "claude-code" | "anthropic-api". */
+  /** Which provider to use: "codex" | "claude-code". */
   provider: AgentProvider;
-  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-opus-4-7"). */
+  /** Model to use (provider-specific, e.g. "gpt-5-codex" or "claude-sonnet-4-5"). */
   model?: string;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
 export const DEFAULT_CODEX_MODEL = "gpt-5-codex";
-export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
 
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
   provider: "codex",

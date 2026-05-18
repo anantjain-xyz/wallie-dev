@@ -10,7 +10,6 @@ const mocked = vi.hoisted(() => {
   return {
     createSupabaseAdminClient: vi.fn(),
     requireWorkspaceAccessById: vi.fn(),
-    decryptSecretValue: vi.fn(),
     getCodexAccessTokenForUser: vi.fn(),
     CodexNotConnectedError: CodexNotConnectedErrorMock,
   };
@@ -22,10 +21,6 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
-}));
-
-vi.mock("@/lib/secrets/crypto", () => ({
-  decryptSecretValue: mocked.decryptSecretValue,
 }));
 
 vi.mock("@/lib/codex/tokens", () => ({
@@ -57,20 +52,6 @@ function grantAccess() {
   });
 }
 
-function mockSecretRow(value: { encrypted_value: string } | null) {
-  mocked.createSupabaseAdminClient.mockReturnValueOnce({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            maybeSingle: vi.fn().mockResolvedValue({ data: value, error: null }),
-          }),
-        }),
-      }),
-    }),
-  });
-}
-
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
@@ -82,15 +63,15 @@ afterEach(() => {
 });
 
 describe("POST /api/agent-config/verify — provider/model mismatches", () => {
-  it("rejects gpt-* models when provider is anthropic-api before any network call", async () => {
+  it("rejects removed providers before any access lookup", async () => {
     const response = await POST(
-      postWith({ workspaceId: WORKSPACE_ID, provider: "anthropic-api", model: "gpt-5-codex" }),
+      postWith({ workspaceId: WORKSPACE_ID, provider: "openai", model: "gpt-5-codex" }),
     );
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const payload = (await response.json()) as { ok: boolean; error?: string };
     expect(payload.ok).toBe(false);
-    expect(payload.error).toMatch(/claude-/);
+    expect(payload.error).toMatch(/Provider must be one of: codex, claude-code/);
     expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
   });
 
@@ -116,80 +97,8 @@ describe("POST /api/agent-config/verify — provider/model mismatches", () => {
   });
 });
 
-describe("POST /api/agent-config/verify — anthropic", () => {
-  it("returns 200 ok:false when ANTHROPIC_API_KEY is missing", async () => {
-    grantAccess();
-    mockSecretRow(null);
-
-    const response = await POST(
-      postWith({
-        workspaceId: WORKSPACE_ID,
-        provider: "anthropic-api",
-        model: "claude-sonnet-4-5",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as { ok: boolean; error?: string };
-    expect(payload.ok).toBe(false);
-    expect(payload.error).toMatch(/ANTHROPIC_API_KEY/);
-  });
-
-  it("returns ok:true when Anthropic responds 200", async () => {
-    grantAccess();
-    mockSecretRow({ encrypted_value: "ENC" });
-    mocked.decryptSecretValue.mockReturnValue("sk-ant-test");
-    globalThis.fetch = vi.fn(
-      async () => new Response(JSON.stringify({ id: "msg" }), { status: 200 }),
-    ) as unknown as typeof fetch;
-
-    const response = await POST(
-      postWith({
-        workspaceId: WORKSPACE_ID,
-        provider: "anthropic-api",
-        model: "claude-sonnet-4-5",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "https://api.anthropic.com/v1/messages",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ "x-api-key": "sk-ant-test" }),
-      }),
-    );
-  });
-
-  it("surfaces the Anthropic error message on a 401", async () => {
-    grantAccess();
-    mockSecretRow({ encrypted_value: "ENC" });
-    mocked.decryptSecretValue.mockReturnValue("sk-ant-bad");
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({ error: { type: "authentication_error", message: "invalid x-api-key" } }),
-          { status: 401 },
-        ),
-    ) as unknown as typeof fetch;
-
-    const response = await POST(
-      postWith({
-        workspaceId: WORKSPACE_ID,
-        provider: "anthropic-api",
-        model: "claude-sonnet-4-5",
-      }),
-    );
-
-    const payload = (await response.json()) as { ok: boolean; error?: string };
-    expect(payload.ok).toBe(false);
-    expect(payload.error).toBe("invalid x-api-key");
-  });
-});
-
 describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
-  it("returns ok:'skipped' without touching ANTHROPIC_API_KEY or the access check", async () => {
+  it("returns ok:'skipped' without touching the access check", async () => {
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
 
     const response = await POST(

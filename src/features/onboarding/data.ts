@@ -22,6 +22,7 @@ import {
   type OnboardingSetupHealth,
   WORKSPACE_ONBOARDING_STEPS,
   type WorkspaceOnboardingState,
+  type WorkspaceOnboardingStep,
   type WorkspaceOnboardingUpdatePayload,
   workspaceOnboardingStatusSchema,
   workspaceOnboardingStepSchema,
@@ -29,7 +30,7 @@ import {
 import { type WorkspaceAccessContext, requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 const onboardingSelect =
-  "id, workspace_id, status, current_step, completed_steps, skipped_steps, dismissed_at, completed_at, created_at, updated_at";
+  "id, workspace_id, status, current_step, selected_github_repository_id, completed_steps, skipped_steps, dismissed_at, completed_at, created_at, updated_at";
 
 type OnboardingAccessFailure = {
   error: string;
@@ -92,6 +93,10 @@ function mapOnboardingRow(row: Tables<"workspace_onboarding">): WorkspaceOnboard
     currentStep: workspaceOnboardingStepSchema.parse(row.current_step),
     dismissedAt: row.dismissed_at,
     id: row.id,
+    selectedGithubRepositoryId:
+      typeof row.selected_github_repository_id === "string"
+        ? row.selected_github_repository_id
+        : null,
     skippedSteps: row.skipped_steps.map((step) => workspaceOnboardingStepSchema.parse(step)),
     status: workspaceOnboardingStatusSchema.parse(row.status),
     updatedAt: row.updated_at,
@@ -181,11 +186,12 @@ function codexConnectionStatus(
 async function loadSetupHealth(
   context: WorkspaceAccessContext,
   github: WorkspaceGitHubData,
+  selectedGithubRepositoryId: string | null,
   admin = createSupabaseAdminClient(),
   options: { includeSecretKeyInventory?: boolean } = {},
 ): Promise<OnboardingSetupHealth> {
   const workspaceId = context.workspace.id;
-  const repositoryHealth = buildRepositorySetupHealth(github);
+  const repositoryHealth = buildRepositorySetupHealth(github, selectedGithubRepositoryId);
   const primaryRepositoryId = repositoryHealth.primaryRepositoryProfile.repositoryId;
   let sandboxQuery = admin
     .from("sandbox_capability_checks")
@@ -220,7 +226,7 @@ async function loadSetupHealth(
           .from("workspace_secrets")
           .select("key, updated_at")
           .eq("workspace_id", workspaceId)
-          .in("key", ["ANTHROPIC_API_KEY", "LINEAR_API_KEY"]),
+          .in("key", ["LINEAR_API_KEY"]),
     admin
       .from("workspace_linear_routing")
       .select("id, updated_at")
@@ -256,7 +262,6 @@ async function loadSetupHealth(
   );
   const configuredKeys = configuredAgentConfigKeys(agentConfig);
   const secretKeys = [...new Set((secretRows ?? []).map((row) => row.key))].sort();
-  const anthropicApiKeyConfigured = secretKeys.includes("ANTHROPIC_API_KEY");
   const linearSecret = (secretRows ?? []).find((row) => row.key === "LINEAR_API_KEY") ?? null;
   const linearRoutingUpdatedAt =
     typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
@@ -295,7 +300,6 @@ async function loadSetupHealth(
       updatedAt: linearRoutingUpdatedAt,
     },
     workspaceSecrets: {
-      anthropicApiKeyConfigured,
       configuredKeys: options.includeSecretKeyInventory ? secretKeys : [],
     },
     ...repositoryHealth,
@@ -424,6 +428,7 @@ async function buildWorkspaceOnboardingData(
     onboardingRow = await loadOrCreateOnboardingRow(context, admin);
   }
 
+  const onboarding = mapOnboardingRow(onboardingRow);
   const canManage =
     context.currentMember.role === "owner" || context.currentMember.role === "admin";
   const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
@@ -436,7 +441,9 @@ async function buildWorkspaceOnboardingData(
     workspaceSecrets,
     agentConfig,
   ] = await Promise.all([
-    loadSetupHealth(context, github, admin, { includeSecretKeyInventory: canManage }),
+    loadSetupHealth(context, github, onboarding.selectedGithubRepositoryId, admin, {
+      includeSecretKeyInventory: canManage,
+    }),
     loadDefaultPipeline(context),
     loadWorkspaceMembers(context),
     loadLinearRoutingConfig(admin, context.workspace.id),
@@ -455,7 +462,7 @@ async function buildWorkspaceOnboardingData(
     github,
     linearRouting,
     linearSecret,
-    onboarding: mapOnboardingRow(onboardingRow),
+    onboarding,
     pipeline,
     setupHealth,
     workspace: {
@@ -501,7 +508,27 @@ export async function updateWorkspaceOnboardingData(
     };
   }
 
-  const updatePayload = buildWorkspaceOnboardingUpdatePayload(payload);
+  const admin = createSupabaseAdminClient();
+  const { data: currentRow, error: currentError } = await access.context.supabase
+    .from("workspace_onboarding")
+    .select(onboardingSelect)
+    .eq("workspace_id", access.context.workspace.id)
+    .single();
+
+  if (currentError) throw currentError;
+
+  const normalizedPayload = await normalizeWorkspaceOnboardingUpdatePayload({
+    admin,
+    currentRow,
+    payload,
+    workspaceId: access.context.workspace.id,
+  });
+
+  if (!normalizedPayload.ok) {
+    return normalizedPayload;
+  }
+
+  const updatePayload = buildWorkspaceOnboardingUpdatePayload(normalizedPayload.payload);
 
   const { data, error } = await access.context.supabase
     .from("workspace_onboarding")
@@ -515,6 +542,109 @@ export async function updateWorkspaceOnboardingData(
   return {
     data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
     ok: true,
+  };
+}
+
+const REPOSITORY_SELECTION_DEPENDENT_STEPS = new Set<WorkspaceOnboardingStep>([
+  "repository",
+  "runtime",
+  "verify",
+]);
+
+async function loadPrimaryRepositoryProfileRepositoryId(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+) {
+  const { data, error } = await admin
+    .from("workspace_repository_profiles")
+    .select("github_repository_id")
+    .eq("workspace_id", workspaceId)
+    .eq("is_primary", true)
+    .maybeSingle();
+
+  if (error) throw error;
+  return typeof data?.github_repository_id === "string" ? data.github_repository_id : null;
+}
+
+export async function normalizeWorkspaceOnboardingUpdatePayload(input: {
+  admin: ReturnType<typeof createSupabaseAdminClient>;
+  currentRow: Tables<"workspace_onboarding">;
+  payload: WorkspaceOnboardingUpdatePayload;
+  workspaceId: string;
+}): Promise<
+  | { ok: true; payload: WorkspaceOnboardingUpdatePayload }
+  | {
+      error: string;
+      ok: false;
+      status: 400 | 404;
+    }
+> {
+  const selectedRepositoryId = input.payload.selectedGithubRepositoryId;
+  if (selectedRepositoryId === undefined) {
+    return { ok: true, payload: input.payload };
+  }
+
+  if (selectedRepositoryId !== null) {
+    const { data: repository, error } = await input.admin
+      .from("github_repositories")
+      .select("id, is_archived")
+      .eq("id", selectedRepositoryId)
+      .eq("workspace_id", input.workspaceId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!repository) {
+      return {
+        error: "Repository not found.",
+        ok: false,
+        status: 404,
+      };
+    }
+    if (repository.is_archived) {
+      return {
+        error: "Archived repositories cannot be selected.",
+        ok: false,
+        status: 400,
+      };
+    }
+  }
+
+  const currentSelectedRepositoryId =
+    input.currentRow.selected_github_repository_id ??
+    (await loadPrimaryRepositoryProfileRepositoryId(input.admin, input.workspaceId));
+
+  if (selectedRepositoryId === currentSelectedRepositoryId) {
+    if (selectedRepositoryId === input.currentRow.selected_github_repository_id) {
+      return { ok: true, payload: input.payload };
+    }
+
+    return {
+      ok: true,
+      payload: {
+        ...input.payload,
+        completedSteps: input.currentRow.completed_steps.map((step) =>
+          workspaceOnboardingStepSchema.parse(step),
+        ),
+        skippedSteps: input.currentRow.skipped_steps.map((step) =>
+          workspaceOnboardingStepSchema.parse(step),
+        ),
+        status: workspaceOnboardingStatusSchema.parse(input.currentRow.status),
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    payload: {
+      ...input.payload,
+      completedSteps: (input.payload.completedSteps ?? input.currentRow.completed_steps)
+        .map((step) => workspaceOnboardingStepSchema.parse(step))
+        .filter((step) => !REPOSITORY_SELECTION_DEPENDENT_STEPS.has(step)),
+      status: input.payload.status ?? "in_progress",
+      skippedSteps: (input.payload.skippedSteps ?? input.currentRow.skipped_steps)
+        .map((step) => workspaceOnboardingStepSchema.parse(step))
+        .filter((step) => !REPOSITORY_SELECTION_DEPENDENT_STEPS.has(step)),
+    },
   };
 }
 
@@ -609,6 +739,9 @@ export function buildWorkspaceOnboardingUpdatePayload(
     }
   }
   if (payload.currentStep !== undefined) updatePayload.current_step = payload.currentStep;
+  if (payload.selectedGithubRepositoryId !== undefined) {
+    updatePayload.selected_github_repository_id = payload.selectedGithubRepositoryId;
+  }
   if (payload.completedSteps !== undefined) updatePayload.completed_steps = payload.completedSteps;
   if (payload.skippedSteps !== undefined) updatePayload.skipped_steps = payload.skippedSteps;
 

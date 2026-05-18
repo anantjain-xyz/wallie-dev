@@ -51,6 +51,7 @@ const onboardingData: WorkspaceOnboardingData = {
     currentStep: "repository",
     dismissedAt: null,
     id: "onboarding-1",
+    selectedGithubRepositoryId: null,
     skippedSteps: [],
     status: "in_progress",
     updatedAt: "2026-05-16T18:00:00.000Z",
@@ -104,6 +105,12 @@ const onboardingData: WorkspaceOnboardingData = {
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     latestSandboxCapabilityCheck: null,
+    selectedRepository: {
+      configured: false,
+      fullName: null,
+      repositoryId: null,
+      status: "missing",
+    },
     linearKey: {
       configured: true,
       status: "present",
@@ -115,7 +122,6 @@ const onboardingData: WorkspaceOnboardingData = {
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     workspaceSecrets: {
-      anthropicApiKeyConfigured: false,
       configuredKeys: ["LINEAR_API_KEY"],
     },
     primaryRepositoryProfile: {
@@ -218,6 +224,25 @@ describe("workspace onboarding route", () => {
     });
   });
 
+  it("accepts selected repository updates", async () => {
+    mocked.updateWorkspaceOnboardingData.mockResolvedValue({ data: onboardingData, ok: true });
+
+    const repositoryId = "11111111-1111-4111-8111-111111111111";
+    const response = await PATCH(
+      patchRequest({
+        selectedGithubRepositoryId: repositoryId,
+        status: "in_progress",
+      }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocked.updateWorkspaceOnboardingData).toHaveBeenCalledWith(WORKSPACE_ID, {
+      selectedGithubRepositoryId: repositoryId,
+      status: "in_progress",
+    });
+  });
+
   it("rejects malformed workspace ids before updating onboarding state", async () => {
     const response = await PATCH(patchRequest({ status: "dismissed" }), routeContext("not-a-uuid"));
 
@@ -270,6 +295,16 @@ describe("workspace onboarding route", () => {
   it("rejects invalid skipped step arrays", async () => {
     const response = await PATCH(
       patchRequest({ skippedSteps: ["runtime", "billing"] }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocked.updateWorkspaceOnboardingData).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid selected repository ids", async () => {
+    const response = await PATCH(
+      patchRequest({ selectedGithubRepositoryId: "not-a-uuid" }),
       routeContext(),
     );
 

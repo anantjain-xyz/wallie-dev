@@ -16,7 +16,7 @@ type AdminClient = SupabaseClient<Database>;
 export interface ResolvedWorkspaceAgentConfig {
   /** Workspace-configured model, or the runner default. Always set. */
   model: string;
-  /** Canonical provider id ("codex" | "claude-code" | "anthropic-api"), normalized from the underscore form persisted by the settings UI. Always set. */
+  /** Canonical provider id ("codex" | "claude-code"), normalized from the underscore form persisted by the settings UI. Always set. */
   provider: AgentProvider;
   /** Workspace-configured max turns, or undefined if unset. */
   maxTurns?: number;

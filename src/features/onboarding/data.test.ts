@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { buildWorkspaceOnboardingUpdatePayload } from "@/features/onboarding/data";
+import {
+  buildWorkspaceOnboardingUpdatePayload,
+  normalizeWorkspaceOnboardingUpdatePayload,
+} from "@/features/onboarding/data";
 
 describe("buildWorkspaceOnboardingUpdatePayload", () => {
   const now = new Date("2026-05-16T18:00:00.000Z");
@@ -37,6 +40,75 @@ describe("buildWorkspaceOnboardingUpdatePayload", () => {
     expect(buildWorkspaceOnboardingUpdatePayload({ status: "dismissed" }, now)).toEqual({
       dismissed_at: "2026-05-16T18:00:00.000Z",
       status: "dismissed",
+    });
+  });
+
+  it("persists selected repository changes", () => {
+    expect(
+      buildWorkspaceOnboardingUpdatePayload(
+        { selectedGithubRepositoryId: "11111111-1111-4111-8111-111111111111" },
+        now,
+      ),
+    ).toEqual({
+      selected_github_repository_id: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+});
+
+describe("normalizeWorkspaceOnboardingUpdatePayload", () => {
+  function query(result: { data: unknown; error: unknown }) {
+    return {
+      eq() {
+        return this;
+      },
+      maybeSingle: async () => result,
+      select() {
+        return this;
+      },
+    };
+  }
+
+  function adminWithPrimaryRepository(repositoryId: string) {
+    return {
+      from(table: string) {
+        if (table === "github_repositories") {
+          return query({ data: { id: repositoryId, is_archived: false }, error: null });
+        }
+        if (table === "workspace_repository_profiles") {
+          return query({ data: { github_repository_id: repositoryId }, error: null });
+        }
+        throw new Error(`Unexpected table: ${table}`);
+      },
+    };
+  }
+
+  it("preserves dependent-step progress when selecting the effective fallback repository", async () => {
+    const repositoryId = "11111111-1111-4111-8111-111111111111";
+    const result = await normalizeWorkspaceOnboardingUpdatePayload({
+      admin: adminWithPrimaryRepository(repositoryId) as never,
+      currentRow: {
+        completed_steps: ["github", "repository", "pipeline", "runtime", "verify"],
+        selected_github_repository_id: null,
+        skipped_steps: ["linear"],
+        status: "completed",
+      } as never,
+      payload: {
+        completedSteps: ["github", "pipeline"],
+        selectedGithubRepositoryId: repositoryId,
+        skippedSteps: [],
+        status: "in_progress",
+      },
+      workspaceId: "workspace-1",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      payload: {
+        completedSteps: ["github", "repository", "pipeline", "runtime", "verify"],
+        selectedGithubRepositoryId: repositoryId,
+        skippedSteps: ["linear"],
+        status: "completed",
+      },
     });
   });
 });

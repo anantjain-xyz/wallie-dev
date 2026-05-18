@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import {
   appendDraftStage,
+  keepKnownApproverIds,
   moveDraftStage,
   PipelineEditorControls,
   PipelineVariableHelp,
@@ -33,8 +34,8 @@ export function OnboardingPipelineEditor({
   workspaceMembers,
 }: OnboardingPipelineEditorProps) {
   const [name, setName] = useState(pipeline?.name ?? "Default");
-  const [stages, setStages] = useState<DraftPipelineStage[]>(
-    () => pipeline?.stages.map(stageToDraft) ?? [],
+  const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
+    keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -47,20 +48,20 @@ export function OnboardingPipelineEditor({
     );
   }
 
-  const currentPipeline = pipeline;
-
   async function savePipeline() {
     setError(null);
-    const validation = validatePipelineDraft({ name, stages });
+    const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
+    const validation = validatePipelineDraft({ name, stages: stagesToSave });
     if (!validation.ok) {
       setError(validation.message);
       return;
     }
 
+    setStages(stagesToSave);
     setIsSaving(true);
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
-        body: JSON.stringify({ name, stages }),
+        body: JSON.stringify({ name, stages: stagesToSave }),
         headers: { "Content-Type": "application/json" },
         method: "PUT",
       });
@@ -74,29 +75,6 @@ export function OnboardingPipelineEditor({
       await onCompleted("pipeline:save");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  async function handleUseCurrentPipeline() {
-    setError(null);
-    const currentStages = currentPipeline.stages.map(stageToDraft);
-    const validation = validatePipelineDraft({
-      name: currentPipeline.name,
-      stages: currentStages,
-    });
-
-    if (!validation.ok) {
-      setError(validation.message);
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      await onCompleted("pipeline:current");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to complete pipeline setup.");
     } finally {
       setIsSaving(false);
     }
@@ -153,19 +131,6 @@ export function OnboardingPipelineEditor({
         onAddStage={() => setStages((current) => appendDraftStage(current))}
         onSave={() => void savePipeline()}
       />
-
-      {canManage ? (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            className="ui-button"
-            disabled={isSaving}
-            onClick={() => void handleUseCurrentPipeline()}
-          >
-            Use current pipeline
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

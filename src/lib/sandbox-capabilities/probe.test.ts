@@ -17,8 +17,8 @@ function scriptBaseSuccess(sandbox: FakeSandbox) {
     [{ data: "npm 10.0.0\n", stream: "stdout" }],
   );
   sandbox.scriptExec(
-    (call) => call.args.join(" ").includes("anthropic-api uses hosted API"),
-    [{ data: "anthropic-api uses hosted API; no CLI required\n", stream: "stdout" }],
+    (call) => call.args.join(" ").includes("claude --version"),
+    [{ data: "1.0.0\n", stream: "stdout" }],
   );
 }
 
@@ -40,7 +40,7 @@ describe("probeSandboxCapabilities", () => {
     );
 
     const report = await probeSandboxCapabilities({
-      agentProvider: "anthropic-api",
+      agentProvider: "claude-code",
       sandbox,
     });
 
@@ -61,7 +61,7 @@ describe("probeSandboxCapabilities", () => {
     );
 
     const report = await probeSandboxCapabilities({
-      agentProvider: "anthropic-api",
+      agentProvider: "claude-code",
       bootstrapPlaywright: false,
       sandbox,
     });
@@ -93,7 +93,7 @@ describe("probeSandboxCapabilities", () => {
     );
 
     const report = await probeSandboxCapabilities({
-      agentProvider: "anthropic-api",
+      agentProvider: "claude-code",
       sandbox,
     });
 

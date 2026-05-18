@@ -130,19 +130,19 @@ describe("POST /api/agent-config — value validation", () => {
     expect(payload.entry).toEqual({ key: "stall_timeout_ms", value: 600_000 });
   });
 
-  it("normalizes legacy agent_provider aliases before persisting", async () => {
+  it("normalizes the legacy claude_code agent_provider alias before persisting", async () => {
     grantAccess();
     const upsert = setupSuccessfulUpsert();
 
     const response = await POST(
-      postWith({ key: "agent_provider", value: "anthropic_api", workspaceId: WORKSPACE_ID }),
+      postWith({ key: "agent_provider", value: "claude_code", workspaceId: WORKSPACE_ID }),
     );
 
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { entry: { key: string; value: unknown } };
-    expect(payload.entry).toEqual({ key: "agent_provider", value: "anthropic-api" });
+    expect(payload.entry).toEqual({ key: "agent_provider", value: "claude-code" });
     expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "agent_provider", value_json: "anthropic-api" }),
+      expect.objectContaining({ key: "agent_provider", value_json: "claude-code" }),
       { onConflict: "workspace_id,key" },
     );
   });

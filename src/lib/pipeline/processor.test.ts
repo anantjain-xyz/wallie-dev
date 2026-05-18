@@ -8,7 +8,6 @@ import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-conf
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
-  decryptSecretValue: vi.fn((v: string) => v),
   createAgentRunner: vi.fn(),
   createSessionSandbox: vi.fn().mockResolvedValue({
     id: "sandbox-1",
@@ -35,10 +34,6 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
-}));
-
-vi.mock("@/lib/secrets/crypto", () => ({
-  decryptSecretValue: mocked.decryptSecretValue,
 }));
 
 vi.mock("./stages", () => ({
@@ -158,7 +153,6 @@ interface MockOptions {
   pointerUpdateError?: { message: string } | null;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
-  workspaceSecrets?: Record<string, string>;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
     default_branch: string | null;
@@ -310,21 +304,6 @@ function buildAdminMock(opts: MockOptions) {
     }),
   } as const;
 
-  const workspaceSecretsTable = {
-    select: () => ({
-      eq: () => ({
-        eq: (_col: string, key: string) => ({
-          maybeSingle: async () => ({
-            data: opts.workspaceSecrets?.[key]
-              ? { encrypted_value: opts.workspaceSecrets[key] }
-              : null,
-            error: null,
-          }),
-        }),
-      }),
-    }),
-  } as const;
-
   const githubInstallation =
     opts.githubInstallation === undefined
       ? { id: "ghi-1", installation_id: 123 }
@@ -406,7 +385,6 @@ function buildAdminMock(opts: MockOptions) {
     agent_run_messages: agentRunMessagesTable,
     agent_jobs: agentJobsTable,
     workspace_members: workspaceMembersTable,
-    workspace_secrets: workspaceSecretsTable,
     github_installations: githubInstallationsTable,
     github_repositories: githubRepositoriesTable,
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
@@ -598,53 +576,6 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
     expect(result.result).toBe("success");
-  });
-
-  it("skips sandbox + GitHub provisioning when the runner is anthropic-api", async () => {
-    const session = baseSession();
-    const job = baseJob();
-    const { admin, insertedArtifacts } = buildAdminMock({
-      session,
-      agentConfig: [{ key: "agent_provider", value_json: "anthropic_api" }],
-      workspaceSecrets: { ANTHROPIC_API_KEY: "sk-ant-…" },
-      githubInstallation: null,
-    });
-
-    mocked.createAgentRunner.mockReturnValue(
-      makeRunner(
-        [
-          { type: "text", text: "Hello from API" },
-          { type: "completion", taskComplete: true, summary: "Done" },
-        ],
-        { provider: "anthropic-api", requiresSandbox: false },
-      ),
-    );
-
-    const result = await processPipelineJob({ admin, job });
-
-    expect(result.result).toBe("success");
-    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
-    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(mocked.createAgentRunner).toHaveBeenCalledWith(
-      "anthropic-api",
-      expect.objectContaining({ anthropic: expect.objectContaining({ apiKey: "sk-ant-…" }) }),
-    );
-    expect(insertedArtifacts).toHaveLength(1);
-    expect((insertedArtifacts[0] as { artifact_json: string }).artifact_json).toContain(
-      "Hello from API",
-    );
-  });
-
-  it("errors when anthropic-api is selected but ANTHROPIC_API_KEY is missing", async () => {
-    const session = baseSession();
-    const { admin } = buildAdminMock({
-      session,
-      agentConfig: [{ key: "agent_provider", value_json: "anthropic_api" }],
-      workspaceSecrets: {},
-    });
-    const result = await processPipelineJob({ admin, job: baseJob() });
-    expect(result.result).toBe("error");
-    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
   });
 
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {

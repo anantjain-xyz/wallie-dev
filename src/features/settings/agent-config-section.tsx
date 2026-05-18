@@ -216,8 +216,7 @@ export function AgentConfigSection({
     () => [
       {
         configKey: "agent_provider",
-        description:
-          "Which agent CLI or API to use for coding tasks. Anthropic API skips the sandbox (faster for text-only stages).",
+        description: "Which agent CLI to use for coding tasks.",
         label: "Agent provider",
         options: AGENT_PROVIDERS,
         type: "select",
@@ -380,12 +379,6 @@ export function AgentConfigSection({
             <p className="text-[12px] leading-5 text-muted">
               Each session runs with its creator&apos;s Codex account. Connect yours below under
               &ldquo;Codex account&rdquo;.
-            </p>
-          ) : null}
-          {selectedAgentProvider === "anthropic-api" ? (
-            <p className="text-[12px] leading-5 text-muted">
-              Calls Anthropic&apos;s Messages API directly — no sandbox spawn, no GitHub repo
-              required. Add your <code>ANTHROPIC_API_KEY</code> under Secrets above.
             </p>
           ) : null}
 

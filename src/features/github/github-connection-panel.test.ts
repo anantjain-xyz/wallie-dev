@@ -176,4 +176,94 @@ describe("GitHubConnectionPanel", () => {
     expect(markup).toContain(">Select</button>");
     expect(markup).not.toContain(">Selected</button>");
   });
+
+  it("can scope setup actions to only the selected repository", () => {
+    const repo1 = repository("repo-1", null);
+    const repo2 = repository("repo-2", null);
+    const github = {
+      installation: {
+        appId: 123,
+        id: "installation-1",
+        installationId: 456,
+        installationUrl: "https://github.com/settings/installations/456",
+        permissions: {},
+        suspended: false,
+        targetName: "acme",
+        targetType: "Organization",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [repo1, repo2],
+    } satisfies WorkspaceGitHubData;
+
+    const selectedOnly = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: true,
+        github,
+        onSelectRepository: () => undefined,
+        selectedRepositoryId: repo1.id,
+        setupActionScope: "selected",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    const hidden = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: true,
+        github,
+        setupActionScope: "none",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(selectedOnly.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
+    expect(hidden).not.toContain("Set up Wallie");
+  });
+
+  it("renders manual setup completion only when explicitly enabled", () => {
+    const repo1 = repository("repo-1", null);
+    const github = {
+      installation: {
+        appId: 123,
+        id: "installation-1",
+        installationId: 456,
+        installationUrl: "https://github.com/settings/installations/456",
+        permissions: {},
+        suspended: false,
+        targetName: "acme",
+        targetType: "Organization",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [repo1],
+    } satisfies WorkspaceGitHubData;
+
+    const enabled = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        allowManualSetupComplete: true,
+        canManage: true,
+        github,
+        onSelectRepository: () => undefined,
+        selectedRepositoryId: repo1.id,
+        setupActionScope: "selected",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    const disabled = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: true,
+        github,
+        onSelectRepository: () => undefined,
+        selectedRepositoryId: repo1.id,
+        setupActionScope: "selected",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(enabled).toContain("Mark setup complete");
+    expect(disabled).not.toContain("Mark setup complete");
+  });
 });

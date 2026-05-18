@@ -64,7 +64,7 @@ describe("secret encryption", () => {
 
 describe("secret previews", () => {
   it("keeps only the trailing portion of long secrets", () => {
-    expect(buildSecretPreview("anthropic-secret-value")).toBe("...-value");
+    expect(buildSecretPreview("provider-secret-value")).toBe("...-value");
   });
 
   it("returns the whole value for short secrets and null for empty input", () => {

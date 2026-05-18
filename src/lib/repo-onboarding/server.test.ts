@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { startRepositoryOnboarding } from "@/lib/repo-onboarding/server";
+import {
+  markRepositoryOnboardingReady,
+  startRepositoryOnboarding,
+} from "@/lib/repo-onboarding/server";
+import { WALLIE_SKILL_VERSION, wallieSkillManifestHash } from "@/lib/repo-onboarding/skills";
 
 function buildAdmin(input: {
   onboardingRow: Record<string, unknown> | null;
@@ -105,5 +109,45 @@ describe("startRepositoryOnboarding", () => {
       expect.anything(),
     );
     expect(upserts).toHaveLength(0);
+  });
+});
+
+describe("markRepositoryOnboardingReady", () => {
+  it("records a manual ready state for a valid repository", async () => {
+    const { admin, upserts } = buildAdmin({
+      onboardingRow: null,
+    });
+
+    const result = await markRepositoryOnboardingReady({
+      admin: admin as never,
+      repositoryId: "repo-1",
+      workspaceId: "ws-1",
+    });
+
+    expect(result.onboarding).toMatchObject({
+      conflictReport: [],
+      githubRepositoryId: "repo-1",
+      installedSkillHash: wallieSkillManifestHash(),
+      installedSkillVersion: WALLIE_SKILL_VERSION,
+      lastError: null,
+      setupBranchName: null,
+      setupPrNumber: null,
+      setupPrUrl: null,
+      status: "ready",
+    });
+    expect(upserts).toMatchObject([
+      {
+        conflict_report: [],
+        github_repository_id: "repo-1",
+        installed_skill_hash: wallieSkillManifestHash(),
+        installed_skill_version: WALLIE_SKILL_VERSION,
+        last_error: null,
+        setup_branch_name: null,
+        setup_pr_number: null,
+        setup_pr_url: null,
+        status: "ready",
+        workspace_id: "ws-1",
+      },
+    ]);
   });
 });

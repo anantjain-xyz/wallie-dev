@@ -12,17 +12,11 @@ export const ALLOWED_AGENT_CONFIG_KEYS = [
 
 export type AgentConfigKey = (typeof ALLOWED_AGENT_CONFIG_KEYS)[number];
 
-export const AGENT_PROVIDERS = [
-  "codex",
-  "claude-code",
-  "anthropic-api",
-] as const satisfies readonly AgentProvider[];
+export const AGENT_PROVIDERS = ["codex", "claude-code"] as const satisfies readonly AgentProvider[];
 
 export type { AgentProvider };
 
 const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
-  anthropic_api: "anthropic-api",
-  "anthropic-api": "anthropic-api",
   claude_code: "claude-code",
   "claude-code": "claude-code",
   codex: "codex",
@@ -59,7 +53,7 @@ export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
  * keeps UI / API / DB validation aligned so a value can't pass the UI gate
  * and then fail the DB constraint with a 500.
  */
-const ANTHROPIC_MODEL_PREFIX = "claude-";
+const CLAUDE_MODEL_PREFIX = "claude-";
 const CODEX_MODEL_PREFIXES = ["gpt-", "o1", "o3", "o4"] as const;
 const AGENT_MODEL_BODY_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/;
 
@@ -115,12 +109,12 @@ const agentModelSchema = z
   )
   .refine(
     (model) => modelMatchesAnyProvider(model),
-    `Model must start with "${ANTHROPIC_MODEL_PREFIX}" or one of: ${CODEX_MODEL_PREFIXES.join(", ")}.`,
+    `Model must start with "${CLAUDE_MODEL_PREFIX}" or one of: ${CODEX_MODEL_PREFIXES.join(", ")}.`,
   );
 
 function modelMatchesAnyProvider(model: string): boolean {
   const trimmed = model.trim();
-  if (trimmed.startsWith(ANTHROPIC_MODEL_PREFIX)) return true;
+  if (trimmed.startsWith(CLAUDE_MODEL_PREFIX)) return true;
   return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
@@ -163,8 +157,8 @@ export function isAgentProvider(value: unknown): value is AgentProvider {
 }
 
 /**
- * Some providers only accept a subset of model identifiers — Anthropic
- * rejects `gpt-*`, OpenAI rejects `claude-*`. The Verify endpoint uses this
+ * Some providers only accept a subset of model identifiers — Claude Code
+ * expects `claude-*`, Codex expects OpenAI-family ids. The Verify endpoint uses this
  * to short-circuit before paying for a network round-trip, and the UI uses
  * it to surface a helpful inline warning.
  */
@@ -172,9 +166,8 @@ export function modelMatchesProvider(provider: AgentProvider, model: string): bo
   const trimmed = model.trim();
   if (!trimmed) return false;
   switch (provider) {
-    case "anthropic-api":
     case "claude-code":
-      return trimmed.startsWith(ANTHROPIC_MODEL_PREFIX);
+      return trimmed.startsWith(CLAUDE_MODEL_PREFIX);
     case "codex":
       return CODEX_MODEL_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
   }

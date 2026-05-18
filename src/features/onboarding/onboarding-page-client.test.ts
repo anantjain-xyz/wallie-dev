@@ -22,6 +22,7 @@ import {
   isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
+  RepositoryProfileEditor,
   updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
@@ -135,6 +136,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
       currentStep: "pipeline",
       dismissedAt: null,
       id: "onboarding-1",
+      selectedGithubRepositoryId: null,
       skippedSteps: [],
       status: "in_progress",
       updatedAt: "2026-05-16T18:00:00.000Z",
@@ -180,9 +182,15 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         updatedAt: "2026-05-16T18:00:00.000Z",
       },
       latestSandboxCapabilityCheck: null,
+      selectedRepository: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
       linearKey: { configured: false, status: "missing", updatedAt: null },
       linearRouting: { configured: false, status: "missing", updatedAt: null },
-      workspaceSecrets: { anthropicApiKeyConfigured: false, configuredKeys: [] },
+      workspaceSecrets: { configuredKeys: [] },
       primaryRepositoryProfile: {
         configured: false,
         fullName: null,
@@ -210,6 +218,83 @@ function primaryFooterButton(html: string) {
     throw new Error("Primary footer button was not rendered.");
   }
   return footerButton;
+}
+
+function connectedInstallation() {
+  return {
+    appId: 123,
+    id: "installation-1",
+    installationId: 456,
+    installationUrl: "https://github.com/settings/installations/456",
+    permissions: {},
+    suspended: false,
+    targetName: "acme",
+    targetType: "Organization",
+    updatedAt: "2026-05-16T18:00:00.000Z",
+  };
+}
+
+function onboardingWithSelectedRepository(
+  setupStatus: WorkspaceGitHubRepository["onboarding"]["status"],
+) {
+  const repo = repository("repo-a", {
+    onboarding: {
+      conflictReport: [],
+      githubRepositoryId: "repo-a",
+      installedSkillHash: null,
+      installedSkillVersion: null,
+      lastError: null,
+      setupBranchName: setupStatus === "pr_open" ? "wallie/setup-repo-a" : null,
+      setupPrNumber: setupStatus === "pr_open" ? 12 : null,
+      setupPrUrl: setupStatus === "pr_open" ? "https://github.com/acme/repo-a/pull/12" : null,
+      status: setupStatus,
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    },
+  });
+
+  return onboardingData({
+    github: {
+      installation: connectedInstallation(),
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [repo, repository("repo-b")],
+    },
+    onboarding: {
+      completedAt: null,
+      completedSteps: [],
+      createdAt: "2026-05-16T18:00:00.000Z",
+      currentStep: "github",
+      dismissedAt: null,
+      id: "onboarding-1",
+      selectedGithubRepositoryId: "repo-a",
+      skippedSteps: [],
+      status: "in_progress",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+      workspaceId: "workspace-1",
+    },
+    setupHealth: {
+      githubInstallation: {
+        connected: true,
+        installationId: 456,
+        status: "present",
+        suspended: false,
+        targetName: "acme",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
+      selectedRepository: {
+        configured: true,
+        fullName: "acme/repo-a",
+        repositoryId: "repo-a",
+        status: "ready",
+      },
+      repositorySetup: {
+        configured: setupStatus === "ready",
+        repositoryId: "repo-a",
+        status: setupStatus,
+      },
+    },
+  });
 }
 
 describe("OnboardingPageClient", () => {
@@ -263,6 +348,186 @@ describe("OnboardingPageClient", () => {
     expect(buildRepositoryProfileAutoContinuePatch(linearStep)).toBeNull();
   });
 
+  it("blocks the GitHub step until the selected repository setup PR is open or ready", () => {
+    const blocked = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingWithSelectedRepository("not_set_up"),
+      }),
+    );
+    const readyToAdvance = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingWithSelectedRepository("pr_open"),
+      }),
+    );
+
+    expect(blocked.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
+    expect(blocked).toContain("Mark setup complete");
+    expect(primaryFooterButton(blocked)).toContain("disabled");
+    expect(primaryFooterButton(readyToAdvance)).not.toContain("disabled");
+  });
+
+  it("shows GitHub setup actions for the effective fallback selected repository", () => {
+    const primary = profile("repo-a");
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: primary,
+            repositories: [repository("repo-a", { profile: primary }), repository("repo-b")],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: [],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "github",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: null,
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: false,
+              repositoryId: "repo-a",
+              status: "not_set_up",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
+    expect(html).toContain("Mark setup complete");
+  });
+
+  it("keeps repository setup controls out of the analysis step", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [repository("repo-a")],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "repository",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: "repo-a",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: false,
+              repositoryId: "repo-a",
+              status: "pr_open",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Analyze repository");
+    expect(html).not.toContain("Set up Wallie");
+    expect(primaryFooterButton(html)).toContain("disabled");
+  });
+
+  it("allows repository analysis progression when legacy state has a primary profile but no selected repo id", () => {
+    const primary = profile("repo-a");
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: primary,
+            repositories: [repository("repo-a", { profile: primary })],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "repository",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: null,
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Repository profile");
+    expect(primaryFooterButton(html)).not.toContain("disabled");
+  });
+
+  it("keeps repository analyze and save loading labels separate", () => {
+    const html = renderToStaticMarkup(
+      createElement(RepositoryProfileEditor, {
+        canManage: true,
+        isAnalyzing: false,
+        isSaving: true,
+        onChange: () => undefined,
+        onInfer: () => undefined,
+        onSave: () => undefined,
+        profile: profile("repo-a"),
+      }),
+    );
+
+    expect(html).toContain(">Re-analyze</button>");
+    expect(html).toContain(">Saving...</button>");
+    expect(html).not.toContain(">Analyzing...</button>");
+  });
+
   it("allows fallback progression when the pipeline editor cannot render", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
@@ -284,6 +549,8 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
+    expect(html).toContain("Save pipeline");
+    expect(html).not.toContain("Use current pipeline");
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete in step</button>");
   });
@@ -411,20 +678,20 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("truncate font-mono");
   });
 
-  it("shows ANTHROPIC_API_KEY as the missing credential for the Anthropic API runner", () => {
+  it("keeps provider-like env keys as repository notes for the Claude Code runner", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           agentConfig: {
             agent_model: "claude-sonnet-4-5",
-            agent_provider: "anthropic-api",
+            agent_provider: "claude-code",
           },
           github: {
             installation: null,
             missingAppKeys: [],
             missingWebhookKeys: [],
             primaryProfile: profile("repo-a", {
-              envKeySuggestions: ["NEXT_PUBLIC_APP_URL"],
+              envKeySuggestions: ["ANTHROPIC_API_KEY", "NEXT_PUBLIC_APP_URL"],
             }),
             repositories: [],
           },
@@ -439,24 +706,23 @@ describe("OnboardingPageClient", () => {
               status: "present",
               values: {
                 agent_model: "claude-sonnet-4-5",
-                agent_provider: "anthropic-api",
+                agent_provider: "claude-code",
               },
-            },
-            workspaceSecrets: {
-              anthropicApiKeyConfigured: false,
-              configuredKeys: [],
             },
           },
         }),
       }),
     );
 
-    expect(html).toContain("Anthropic API key");
     expect(html).toContain("ANTHROPIC_API_KEY");
-    expect(html).toContain("Missing");
-    expect(html).toContain('value="ANTHROPIC_API_KEY"');
+    expect(html).toContain("Server env");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("Public/deployment");
+    expect(html).toContain(
+      "No encrypted workspace secret is required for the selected claude-code",
+    );
+    expect(html).not.toContain("Anthropic API key");
+    expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
   });
 
   it("renders Verify blockers with links to owning steps and disables completion", () => {
