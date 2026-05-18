@@ -360,6 +360,7 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(blocked.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
+    expect(blocked).toContain("Mark setup complete");
     expect(primaryFooterButton(blocked)).toContain("disabled");
     expect(primaryFooterButton(readyToAdvance)).not.toContain("disabled");
   });

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { repositoryOnboardingParamsSchema } from "@/lib/repo-onboarding/contracts";
+import {
+  repositoryOnboardingManualReadyPayloadSchema,
+  repositoryOnboardingParamsSchema,
+} from "@/lib/repo-onboarding/contracts";
 import {
   getRepositoryOnboardingState,
+  markRepositoryOnboardingReady,
   startRepositoryOnboarding,
 } from "@/lib/repo-onboarding/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -56,6 +60,37 @@ export async function POST(_request: Request, context: RouteContext) {
 
   const admin = createSupabaseAdminClient();
   const result = await startRepositoryOnboarding({
+    admin,
+    repositoryId: authorized.parsed.repositoryId,
+    workspaceId: authorized.parsed.workspaceId,
+  });
+
+  return NextResponse.json(result, { status: 200 });
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  const authorized = await authorize(context);
+  if ("error" in authorized) {
+    return NextResponse.json({ error: authorized.error }, { status: authorized.status });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const parsed = repositoryOnboardingManualReadyPayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid onboarding action." },
+      { status: 400 },
+    );
+  }
+
+  const admin = createSupabaseAdminClient();
+  const result = await markRepositoryOnboardingReady({
     admin,
     repositoryId: authorized.parsed.repositoryId,
     workspaceId: authorized.parsed.workspaceId,

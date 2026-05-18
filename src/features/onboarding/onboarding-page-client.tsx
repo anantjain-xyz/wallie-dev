@@ -1661,6 +1661,7 @@ function StepBody({
   if (step === "github") {
     return (
       <GitHubConnectionPanel
+        allowManualSetupComplete
         canManage={data.canManage && !isSaving}
         github={data.github}
         hideArchivedRepositories
