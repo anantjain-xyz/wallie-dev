@@ -1643,11 +1643,7 @@ function StepBody({
     );
   }
 
-  return (
-    <div className="space-y-5">
-      {controls}
-    </div>
-  );
+  return <div className="space-y-5">{controls}</div>;
 }
 
 function StepRail({

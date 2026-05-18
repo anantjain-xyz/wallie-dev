@@ -475,7 +475,15 @@ export function LockIcon({ className, ...props }: IconProps) {
       fill="none"
       {...props}
     >
-      <rect x="3.75" y="7" width="8.5" height="5.75" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <rect
+        x="3.75"
+        y="7"
+        width="8.5"
+        height="5.75"
+        rx="1.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
       <path
         d="M5.75 7V5.75a2.25 2.25 0 0 1 4.5 0V7"
         stroke="currentColor"

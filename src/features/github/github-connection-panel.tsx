@@ -4,13 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  ArchiveIcon,
-  BranchIcon,
-  CodeIcon,
-  GlobeIcon,
-  LockIcon,
-} from "@/components/shared/icons";
+import { ArchiveIcon, BranchIcon, CodeIcon, GlobeIcon, LockIcon } from "@/components/shared/icons";
 import type {
   GitHubInstallResponse,
   GitHubRepositorySummary,
