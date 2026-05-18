@@ -9,14 +9,7 @@ import type {
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
-import {
-  CheckIcon,
-  CodeIcon,
-  PlusIcon,
-  ProjectsIcon,
-  SparkIcon,
-  XIcon,
-} from "@/components/shared/icons";
+import { CodeIcon, PlusIcon, ProjectsIcon, SparkIcon, XIcon } from "@/components/shared/icons";
 import { SelectField } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -110,12 +103,6 @@ type FieldDescriptor = {
   options?: readonly string[];
   placeholder?: string;
   type: FieldType;
-};
-
-type RuntimeCredentialDescriptor = {
-  description: string;
-  key: string;
-  label: string;
 };
 
 type NewSecretDraftRow = {
@@ -320,10 +307,6 @@ function normalizeSecretKey(key: string) {
   return key.trim().toUpperCase();
 }
 
-function secretBusyActionKey(key: string) {
-  return `secret:${normalizeSecretKey(key)}`;
-}
-
 function secretPreviewLabel(secret: WorkspaceSecretPreview | undefined) {
   if (!secret) {
     return "Not saved";
@@ -335,13 +318,12 @@ function secretPreviewLabel(secret: WorkspaceSecretPreview | undefined) {
 function repositoryVariableKeys(
   envSuggestions: readonly string[],
   workspaceSecrets: readonly WorkspaceSecretPreview[],
-  runtimeCredentialKeys: ReadonlySet<string>,
 ) {
   const keys = new Set<string>();
   const rows: string[] = [];
   const addKey = (rawKey: string) => {
     const key = normalizeSecretKey(rawKey);
-    if (!key || key === "LINEAR_API_KEY" || runtimeCredentialKeys.has(key) || keys.has(key)) {
+    if (!key || key === "LINEAR_API_KEY" || keys.has(key)) {
       return;
     }
     keys.add(key);
@@ -933,18 +915,7 @@ function RuntimeStep({
   const secretByKey = new Map(
     data.workspaceSecrets.map((secret) => [normalizeSecretKey(secret.key), secret]),
   );
-  const configuredSecretKeys = new Set(
-    data.workspaceSecrets.map((secret) => normalizeSecretKey(secret.key)),
-  );
-  const runtimeCredentials: RuntimeCredentialDescriptor[] = [];
-  const runtimeCredentialKeys = new Set(
-    runtimeCredentials.map((credential) => normalizeSecretKey(credential.key)),
-  );
-  const repositoryVariables = repositoryVariableKeys(
-    envSuggestions,
-    data.workspaceSecrets,
-    runtimeCredentialKeys,
-  );
+  const repositoryVariables = repositoryVariableKeys(envSuggestions, data.workspaceSecrets);
   const repositorySecretDrafts = repositoryVariables
     .map((key) => ({ key, value: secretValueDrafts[key] ?? "" }))
     .filter((draft) => Boolean(draft.value.trim()));
@@ -1128,33 +1099,6 @@ function RuntimeStep({
     return body.secret;
   }
 
-  async function handleSaveSecret(key: string, value: string) {
-    const normalizedKey = normalizeSecretKey(key);
-    if (!data.canManage || isSaving || busyAction !== null || !normalizedKey || !value.trim()) {
-      return;
-    }
-
-    setBusyAction(secretBusyActionKey(normalizedKey));
-    setRuntimeError(null);
-    setRuntimeMessage(null);
-
-    try {
-      const secret = await upsertWorkspaceSecret(normalizedKey, value);
-      onDataChange(updateSecretInData(data, secret));
-      setSecretValueDrafts((current) => {
-        const next = { ...current };
-        delete next[key];
-        delete next[normalizedKey];
-        return next;
-      });
-      setRuntimeMessage(`Saved preview for ${secret.key}.`);
-    } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : "Workspace secret save failed.");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function handleSaveRepositoryConfig() {
     if (!canSaveRepositoryConfig) return;
 
@@ -1313,14 +1257,6 @@ function RuntimeStep({
           ))}
         </div>
 
-        <div className="mt-4">
-          <ProviderAccessPanel
-            provider={selectedProvider}
-            returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
-            variant="embedded"
-          />
-        </div>
-
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {executionFieldStatuses.map((status) => (
             <div className="block space-y-1.5" key={status.field.configKey}>
@@ -1403,74 +1339,17 @@ function RuntimeStep({
             </button>
           </div>
         </div>
+
+        <div className="mt-4">
+          <ProviderAccessPanel
+            provider={selectedProvider}
+            returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
+            variant="embedded"
+          />
+        </div>
       </div>
 
       <div className="space-y-4">
-        <div className="rounded-[6px] border border-border bg-surface">
-          <div className="border-b border-border px-4 py-3">
-            <h3 className="text-[14px] font-semibold text-foreground">Runtime credentials</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
-              Agent-only secrets are encrypted server-side; only previews are returned.
-            </p>
-          </div>
-
-          {runtimeCredentials.length === 0 ? (
-            <p className="px-4 py-3 text-[13px] leading-5 text-muted">
-              No encrypted workspace secret is required for the selected {selectedProvider} runner.
-            </p>
-          ) : (
-            <div className="divide-y divide-border">
-              {runtimeCredentials.map((credential) => {
-                const configured = configuredSecretKeys.has(credential.key);
-                const draftValue = secretValueDrafts[normalizeSecretKey(credential.key)] ?? "";
-                const isSavingSecret = busyAction === secretBusyActionKey(credential.key);
-                const canSaveCredential =
-                  data.canManage && !isSaving && busyAction === null && Boolean(draftValue.trim());
-
-                return (
-                  <div className="space-y-2 px-4 py-3" key={credential.key}>
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                      <p className="text-[13px] font-medium text-foreground">{credential.label}</p>
-                      <code className="break-all font-mono text-[12px] text-foreground">
-                        {credential.key}
-                      </code>
-                      <Badge tone={configured ? "success" : "warning"}>
-                        {configured ? "Present" : "Missing"}
-                      </Badge>
-                    </div>
-
-                    <div className="flex min-w-0 items-start gap-2">
-                      <SecretValueInput
-                        ariaLabel={`Value for ${credential.key}`}
-                        disabled={busyAction !== null}
-                        onChange={(value) => handleSecretDraftChange(credential.key, value)}
-                        value={draftValue}
-                      />
-                      <button
-                        aria-label={`${configured ? "Update" : "Save"} ${credential.key}`}
-                        className={cn(
-                          "h-10 w-10 shrink-0 !px-0 !py-0",
-                          canSaveCredential ? "ui-button-primary" : "ui-button",
-                        )}
-                        disabled={!canSaveCredential}
-                        onClick={() => void handleSaveSecret(credential.key, draftValue)}
-                        title={configured ? "Update" : "Save"}
-                        type="button"
-                      >
-                        {isSavingSecret ? (
-                          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
-                        ) : (
-                          <CheckIcon className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
         <div className="rounded-[6px] border border-border bg-surface">
           <div className="border-b border-border px-4 py-3">
             <h3 className="text-[14px] font-semibold text-foreground">
