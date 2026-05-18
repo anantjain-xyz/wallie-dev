@@ -412,10 +412,13 @@ export function GitHubConnectionPanel({
             const selected = selectedRepositoryId === repository.id;
             const showSetupAction =
               setupActionScope === "all" || (setupActionScope === "selected" && selected);
+            const showInstallSkillsAction =
+              showSetupAction && repository.onboarding.status !== "ready";
             const showManualSetupComplete =
               allowManualSetupComplete &&
               showSetupAction &&
               repository.onboarding.status !== "ready";
+            const showSetupHelp = source === "onboarding" && showInstallSkillsAction;
             const setupActionBusy = startOnboarding.isBusy || markOnboardingReady.isBusy;
             return (
               <li className="flex flex-col gap-3 px-5 py-4" key={repository.id}>
@@ -479,6 +482,14 @@ export function GitHubConnectionPanel({
                     {repository.description ? (
                       <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
                     ) : null}
+                    {showSetupHelp ? (
+                      <p className="max-w-[640px] text-[12px] leading-5 text-muted">
+                        Install skills opens a pull request that adds Wallie&apos;s repo-local
+                        workflow skills under{" "}
+                        <span className="font-mono text-foreground">.agents/skills</span>. Mark
+                        skills as installed if they already exist in the repository.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -502,19 +513,14 @@ export function GitHubConnectionPanel({
                         View setup PR
                       </a>
                     ) : null}
-                    {showSetupAction ? (
+                    {showInstallSkillsAction ? (
                       <button
                         className="ui-button-primary"
-                        disabled={
-                          !canManage ||
-                          repository.isArchived ||
-                          setupActionBusy ||
-                          repository.onboarding.status === "ready"
-                        }
+                        disabled={!canManage || repository.isArchived || setupActionBusy}
                         onClick={() => void startOnboarding.run(repository.id)}
                         type="button"
                       >
-                        {startOnboarding.isBusy ? "Setting up..." : "Set up Wallie"}
+                        {startOnboarding.isBusy ? "Installing..." : "Install skills"}
                       </button>
                     ) : null}
                     {showManualSetupComplete ? (
@@ -524,7 +530,9 @@ export function GitHubConnectionPanel({
                         onClick={() => void markOnboardingReady.run(repository.id)}
                         type="button"
                       >
-                        {markOnboardingReady.isBusy ? "Marking ready..." : "Mark setup complete"}
+                        {markOnboardingReady.isBusy
+                          ? "Marking installed..."
+                          : "Mark skills as installed"}
                       </button>
                     ) : null}
                   </div>

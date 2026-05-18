@@ -18,7 +18,7 @@ export type OnboardingStepDefinition = {
 
 export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
   {
-    description: "Connect GitHub, choose a repository, and open the Wallie setup PR.",
+    description: "Connect GitHub, choose a repository, and install Wallie workflow skills.",
     id: "github",
     shortTitle: "GitHub",
     title: "Connect GitHub",

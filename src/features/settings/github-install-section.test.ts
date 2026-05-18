@@ -97,7 +97,7 @@ describe("GitHubInstallSection", () => {
     expect(markup).toContain("Connected");
     expect(markup).toContain("Refresh repositories");
     expect(markup).toContain("Manage on GitHub");
-    expect(markup).toContain("Set up Wallie");
+    expect(markup).toContain("Install skills");
     expect(markup).toContain("Not set up");
     expect(markup).toContain("Setup PR open");
     expect(markup).toContain("Ready");

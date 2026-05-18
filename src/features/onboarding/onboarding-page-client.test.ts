@@ -360,8 +360,9 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(blocked.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
-    expect(blocked).toContain("Mark setup complete");
+    expect(blocked.match(/>Install skills<\/button>/g) ?? []).toHaveLength(1);
+    expect(blocked).toContain("Mark skills as installed");
+    expect(blocked).toContain("Install skills opens a pull request");
     expect(primaryFooterButton(blocked)).toContain("disabled");
     expect(primaryFooterButton(readyToAdvance)).not.toContain("disabled");
   });
@@ -408,8 +409,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html.match(/>Set up Wallie<\/button>/g) ?? []).toHaveLength(1);
-    expect(html).toContain("Mark setup complete");
+    expect(html.match(/>Install skills<\/button>/g) ?? []).toHaveLength(1);
+    expect(html).toContain("Mark skills as installed");
   });
 
   it("keeps repository setup controls out of the analysis step", () => {
@@ -454,7 +455,7 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("Analyze repository");
-    expect(html).not.toContain("Set up Wallie");
+    expect(html).not.toContain("Install skills");
     expect(primaryFooterButton(html)).toContain("disabled");
   });
 
