@@ -129,6 +129,15 @@ export class FakeSandbox implements SandboxHandle {
 
     return {
       logs: logsIter,
+      output: async () => {
+        let stdout = "";
+        let stderr = "";
+        for (const entry of entries) {
+          if (entry.stream === "stdout") stdout += entry.data;
+          else stderr += entry.data;
+        }
+        return { stdout, stderr };
+      },
       exitCode: Promise.resolve(script.exitCode),
       kill: async () => {
         /* no-op */
