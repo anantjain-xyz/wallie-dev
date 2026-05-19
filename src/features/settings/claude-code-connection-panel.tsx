@@ -2,12 +2,17 @@
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
-interface ClaudeCodeConnectionStatus {
+export interface ClaudeCodeConnectionStatus {
   connected: boolean;
   updatedAt?: string | null;
 }
 
-export function ClaudeCodeConnectionPanel() {
+interface ClaudeCodeConnectionPanelProps {
+  /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
+  onStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
+}
+
+export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnectionPanelProps = {}) {
   const [status, setStatus] = useState<ClaudeCodeConnectionStatus | null>(null);
   const [credential, setCredential] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -22,13 +27,14 @@ export function ClaudeCodeConnectionPanel() {
       }
       const data = (await response.json()) as ClaudeCodeConnectionStatus;
       setStatus(data);
+      onStatusChange?.(data);
       setError(null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load Claude Code connection status.",
       );
     }
-  }, []);
+  }, [onStatusChange]);
 
   useEffect(() => {
     void refresh();
@@ -52,6 +58,7 @@ export function ClaudeCodeConnectionPanel() {
         throw new Error(data?.error ?? `Save failed (${response.status}).`);
       }
       setStatus(data);
+      if (data) onStatusChange?.(data);
       setCredential("");
       setNotice("Anthropic API key saved.");
     } catch (err) {

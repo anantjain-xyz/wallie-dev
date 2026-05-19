@@ -39,7 +39,10 @@ import {
   type AgentConfigMap,
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
+import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
+import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
+import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type {
   OnboardingSetupHealth,
@@ -472,6 +475,43 @@ function updateSecretInData(
   };
 }
 
+function updateCodexConnectionInData(
+  currentData: WorkspaceOnboardingData,
+  status: CodexConnectionStatus,
+): WorkspaceOnboardingData {
+  const expiredOrReconnect = Boolean(status.expired || status.reconnectRequired);
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      codexConnection: {
+        connected: status.connected,
+        credentialType: status.credentialType ?? null,
+        expiresAt: status.expiresAt ?? null,
+        status: status.connected ? "connected" : expiredOrReconnect ? "expired" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+function updateClaudeCodeConnectionInData(
+  currentData: WorkspaceOnboardingData,
+  status: ClaudeCodeConnectionStatus,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      claudeCodeConnection: {
+        connected: status.connected,
+        status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
 export function updateSandboxCapabilityCheckInData(
   currentData: WorkspaceOnboardingData,
   check: SandboxCapabilityCheckState,
@@ -519,14 +559,16 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
     selectedProvider === "claude-code"
       ? {
           connected: health.claudeCodeConnection.connected,
+          credentialLabel: health.claudeCodeConnection.connected ? "Anthropic API key" : null,
           expired: false,
-          label: "Anthropic key",
           updatedAt: health.claudeCodeConnection.updatedAt,
         }
       : {
           connected: health.codexConnection.connected,
+          credentialLabel: health.codexConnection.credentialType
+            ? codexCredentialTypeLabel(health.codexConnection.credentialType)
+            : null,
           expired: health.codexConnection.status === "expired",
-          label: "Codex",
           updatedAt: health.codexConnection.updatedAt,
         };
   const providerCredentialBadge = providerCredential.connected
@@ -578,10 +620,12 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
       value: agentConfig.value,
     },
     {
-      detail: providerCredential.updatedAt
-        ? "Credential available"
-        : "Provider credential required",
-      label: providerCredential.label,
+      detail: providerCredential.expired
+        ? "Provider credential expired"
+        : providerCredential.connected && providerCredential.credentialLabel
+          ? providerCredential.credentialLabel
+          : "Provider credential required",
+      label: "Provider access",
       tone: providerCredentialBadge.tone,
       value: providerCredentialBadge.value,
     },
@@ -1362,6 +1406,12 @@ function RuntimeStep({
 
         <div className="mt-4">
           <ProviderAccessPanel
+            onClaudeCodeStatusChange={(status) =>
+              onDataChange((current) => updateClaudeCodeConnectionInData(current, status))
+            }
+            onCodexStatusChange={(status) =>
+              onDataChange((current) => updateCodexConnectionInData(current, status))
+            }
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             variant="embedded"

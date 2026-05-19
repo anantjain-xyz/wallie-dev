@@ -4,7 +4,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
 
-interface CodexConnectionStatus {
+export interface CodexConnectionStatus {
   accountEmail?: string | null;
   authCacheLastRefresh?: string | null;
   connected: boolean;
@@ -31,6 +31,8 @@ interface CodexConnectionPanelProps {
   returnTo?: string;
   /** Banner to surface when the query string reports codex_connect=... */
   connectFlash?: string | null;
+  /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
+  onStatusChange?: (status: CodexConnectionStatus) => void;
 }
 
 const CREDENTIAL_TYPES: CodexCredentialType[] = [
@@ -39,7 +41,11 @@ const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "platform_api_key",
 ];
 
-export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnectionPanelProps) {
+export function CodexConnectionPanel({
+  connectFlash,
+  onStatusChange,
+  returnTo,
+}: CodexConnectionPanelProps) {
   const [status, setStatus] = useState<CodexConnectionStatus | null>(null);
   const [credentialType, setCredentialType] = useState<CodexCredentialType>("chatgpt_auth_json");
   const [credential, setCredential] = useState("");
@@ -57,6 +63,7 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
       }
       const data = (await response.json()) as CodexConnectionStatus;
       setStatus(data);
+      onStatusChange?.(data);
       if (data.credentialType) {
         setCredentialType(data.credentialType);
       }
@@ -64,7 +71,7 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Codex connection status.");
     }
-  }, []);
+  }, [onStatusChange]);
 
   useEffect(() => {
     void refresh();
@@ -211,6 +218,7 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
         throw new Error(data?.error ?? `Save failed (${response.status}).`);
       }
       setStatus(data);
+      if (data) onStatusChange?.(data);
       setCredential("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save Codex credential.");
