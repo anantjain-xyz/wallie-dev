@@ -352,6 +352,35 @@ describe("OnboardingPageClient", () => {
     );
   });
 
+  it("renders sandbox health check times as relative copy", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-16T18:05:00.000Z"));
+
+    try {
+      const html = renderToStaticMarkup(
+        createElement(OnboardingPageClient, {
+          initialData: onboardingData({
+            setupHealth: {
+              latestSandboxCapabilityCheck: {
+                capabilities: {},
+                checkedAt: "2026-05-16T18:00:00.000Z",
+                errorText: null,
+                githubRepositoryId: "repo-a",
+                id: "check-1",
+                status: "success",
+              },
+            },
+          }),
+        }),
+      );
+
+      expect(html).toContain("Checked 5 minutes ago");
+      expect(html).not.toContain("2026-05-16T18:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("merges a saved repository profile into the latest GitHub state", () => {
     const previousPrimary = profile("repo-b");
     const currentData = onboardingData({
