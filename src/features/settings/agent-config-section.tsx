@@ -302,7 +302,7 @@ export function AgentConfigSection({
     if (successCount === saveableFields.length) {
       setFlashMessage({
         kind: "success",
-        text: `Saved ${successCount} agent setting${successCount === 1 ? "" : "s"}.`,
+        text: "Saved.",
       });
     } else if (successCount > 0) {
       setFlashMessage({
