@@ -45,6 +45,13 @@ class VercelSandboxHandle implements SandboxHandle {
 
     return {
       logs: () => command.logs() as AsyncIterable<SandboxLogEntry>,
+      output: async () => {
+        const [stdout, stderr] = await Promise.all([
+          command.output("stdout"),
+          command.output("stderr"),
+        ]);
+        return { stdout, stderr };
+      },
       exitCode: waitPromise,
       kill: async (signal) => {
         await command.kill(signal);

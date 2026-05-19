@@ -21,12 +21,25 @@ export interface SandboxLogEntry {
 
 /**
  * Handle for a running command inside a sandbox. Mirrors Vercel Sandbox's
- * `Command` shape so the real impl is a thin wrapper; iterate `logs()` while
- * the command runs, then await `exitCode`.
+ * `Command` shape so the real impl is a thin wrapper. Prefer `output()` for
+ * commands that may finish quickly; `logs()` is a forward-only stream and
+ * will silently drop output emitted before subscription.
  */
 export interface SandboxExecHandle {
-  /** Async iterable of stdout+stderr chunks. NOT line-delimited — callers buffer. */
+  /**
+   * Forward-only async iterable of stdout+stderr chunks. NOT line-delimited —
+   * callers buffer. This is a live stream, not a replay buffer: short
+   * commands can finish before iteration begins, in which case nothing is
+   * yielded. Use `output()` for short-lived commands or anywhere subscription
+   * timing isn't guaranteed.
+   */
   logs(): AsyncIterable<SandboxLogEntry>;
+  /**
+   * Wait for the command to finish and return its full stdout and stderr.
+   * Safe to call regardless of subscription timing — uses the underlying
+   * SDK's cached output API.
+   */
+  output(): Promise<{ stdout: string; stderr: string }>;
   /** Resolves with the process exit code once it finishes. Memoised. */
   exitCode: Promise<number>;
   /** Send a signal to the running process. */

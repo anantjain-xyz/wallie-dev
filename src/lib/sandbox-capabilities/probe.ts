@@ -36,20 +36,12 @@ function agentCliCommand(provider: AgentProvider): string {
 
 async function run(sandbox: SandboxHandle, command: string): Promise<CommandResult> {
   const proc = await sandbox.exec("bash", ["-lc", command], { cwd: sandbox.repoPath });
-  let stdout = "";
-  let stderr = "";
-  for await (const log of proc.logs()) {
-    if (log.stream === "stdout") stdout += log.data;
-    if (log.stream === "stderr") stderr += log.data;
-  }
-  const code = await proc.exitCode;
+  const [{ stdout, stderr }, code] = await Promise.all([proc.output(), proc.exitCode]);
   console.info("[sandbox-capability-probe]", {
     code,
     command: command.slice(0, 200),
     stderrLen: stderr.length,
-    stderrPreview: stderr.slice(0, 200),
     stdoutLen: stdout.length,
-    stdoutPreview: stdout.slice(0, 200),
   });
   return { code, stderr, stdout };
 }
