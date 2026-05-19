@@ -981,8 +981,17 @@ export type Database = {
           access_token_expires_at: string | null
           account_email: string | null
           account_id: string | null
+          auth_cache_last_refresh: string | null
+          auth_lock_expires_at: string | null
+          auth_lock_run_id: string | null
+          auth_reconnect_reason: string | null
+          auth_reconnect_required: boolean
           created_at: string
-          credential_type: "codex_access_token" | "platform_api_key"
+          credential_type:
+            | "chatgpt_auth_json"
+            | "codex_access_token"
+            | "platform_api_key"
+          credential_version: number
           encrypted_credential: string
           scope: string | null
           updated_at: string
@@ -992,8 +1001,17 @@ export type Database = {
           access_token_expires_at?: string | null
           account_email?: string | null
           account_id?: string | null
+          auth_cache_last_refresh?: string | null
+          auth_lock_expires_at?: string | null
+          auth_lock_run_id?: string | null
+          auth_reconnect_reason?: string | null
+          auth_reconnect_required?: boolean
           created_at?: string
-          credential_type?: "codex_access_token" | "platform_api_key"
+          credential_type?:
+            | "chatgpt_auth_json"
+            | "codex_access_token"
+            | "platform_api_key"
+          credential_version?: number
           encrypted_credential: string
           scope?: string | null
           updated_at?: string
@@ -1003,8 +1021,17 @@ export type Database = {
           access_token_expires_at?: string | null
           account_email?: string | null
           account_id?: string | null
+          auth_cache_last_refresh?: string | null
+          auth_lock_expires_at?: string | null
+          auth_lock_run_id?: string | null
+          auth_reconnect_reason?: string | null
+          auth_reconnect_required?: boolean
           created_at?: string
-          credential_type?: "codex_access_token" | "platform_api_key"
+          credential_type?:
+            | "chatgpt_auth_json"
+            | "codex_access_token"
+            | "platform_api_key"
+          credential_version?: number
           encrypted_credential?: string
           scope?: string | null
           updated_at?: string
@@ -1412,6 +1439,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      acquire_codex_auth_lease: {
+        Args: {
+          lease_expires_at: string
+          target_run_id: string
+          target_user_id: string
+        }
+        Returns: {
+          access_token_expires_at: string | null
+          auth_cache_last_refresh: string | null
+          auth_reconnect_reason: string | null
+          auth_reconnect_required: boolean
+          credential_type: string
+          credential_version: number
+          encrypted_credential: string
+        }[]
+      }
       approve_session_stage: {
         Args: {
           approver_member_id?: string
@@ -1479,9 +1522,35 @@ export type Database = {
         }
       }
       current_user_workspace_ids: { Args: never; Returns: string[] }
+      mark_codex_auth_reconnect_required: {
+        Args: {
+          reconnect_reason: string
+          target_run_id: string
+          target_user_id: string
+        }
+        Returns: undefined
+      }
       next_session_number: {
         Args: { target_workspace_id: string }
         Returns: number
+      }
+      persist_codex_auth_json: {
+        Args: {
+          new_account_email: string | null
+          new_account_id: string | null
+          new_auth_cache_last_refresh: string | null
+          new_encrypted_credential: string
+          previous_credential_version: number
+          target_run_id: string
+          target_user_id: string
+        }
+        Returns: {
+          credential_version: number
+        }[]
+      }
+      release_codex_auth_lease: {
+        Args: { target_run_id: string; target_user_id: string }
+        Returns: undefined
       }
       rewrite_default_pipeline: {
         Args: {

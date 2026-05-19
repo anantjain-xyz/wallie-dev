@@ -64,6 +64,8 @@ export interface AgentRunnerStartInput {
   prompt: string;
   /** Optional session ID from a previous turn for continuation. */
   continueSessionId?: string;
+  /** Agent run row id. Required by runners that need per-run credential leases. */
+  runId?: string;
   /** Max output tokens for the agent (optional, provider-specific). */
   maxTokens?: number;
 }

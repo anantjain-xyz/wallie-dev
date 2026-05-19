@@ -1,13 +1,23 @@
-import type { CodexCredential } from "@/lib/codex/contracts";
+import { parseCodexChatGptAuthJson } from "@/lib/codex/auth-json";
+import {
+  CodexAuthLeaseBusyError,
+  type ChatGptCodexCredential,
+  type CodexChatGptAuthStore,
+  type CodexCredential,
+} from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 
 const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
 const CODEX_HOME = "/vercel/sandbox/.codex";
+const CODEX_AUTH_FILE = `${CODEX_HOME}/auth.json`;
+const CHATGPT_AUTH_LEASE_MS = 20 * 60_000;
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
   credential: CodexCredential;
+  /** Required for ChatGPT subscription auth so the runner can lease and persist auth.json. */
+  chatGptAuthStore?: CodexChatGptAuthStore;
   /** Model identifier (e.g. "gpt-5.5"). */
   model?: string;
 }
@@ -15,10 +25,11 @@ export interface CodexRunnerOptions {
 /**
  * Codex CLI agent runner.
  *
- * Runs `codex exec` inside a per-session sandbox. Platform API keys are
- * injected only into the process environment; Codex access tokens are first
- * logged into the fresh sandbox via the CLI so it can materialize auth.json.
- * Streams stdout line-by-line as AgentEvents.
+ * Runs `codex exec` inside a per-session sandbox. API keys and Codex access
+ * tokens are injected only into the process environment. ChatGPT subscription
+ * auth writes a leased Codex auth.json before the run and persists any
+ * refreshed auth cache after the CLI exits. Streams stdout line-by-line as
+ * AgentEvents.
  *
  * Expects `codex` on PATH inside the sandbox (installed at sandbox boot).
  */
@@ -37,22 +48,17 @@ export class CodexRunner implements AgentRunner {
     if (!sandbox) {
       throw new Error("CodexRunner requires a sandbox.");
     }
+
+    if (this.options.credential.type === "chatgpt_auth_json") {
+      yield* this.startWithChatGptAuth(input);
+      return;
+    }
+
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
 
     await sandbox.writeFile(PROMPT_FILE, input.prompt);
 
-    const cliArgs = [
-      "exec",
-      "--model",
-      model,
-      "-c",
-      `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
-      "--json",
-      "-",
-    ];
-    const execCmd = `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
-    const loginCmd = codexCredentialLoginCommand(this.options.credential);
-    const shellCmd = [loginCmd, execCmd].filter(Boolean).join(" && ");
+    const shellCmd = codexExecCommand(model);
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
@@ -88,6 +94,120 @@ export class CodexRunner implements AgentRunner {
       yield {
         type: "error",
         message: `codex CLI exited with code ${code}: ${stderrBuf.slice(0, 500)}`,
+      };
+    }
+
+    yield {
+      type: "completion",
+      taskComplete: true,
+      summary: "Codex session completed",
+    };
+  }
+
+  private async *startWithChatGptAuth(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
+    const { sandbox } = input;
+    if (!sandbox) {
+      throw new Error("CodexRunner requires a sandbox.");
+    }
+
+    const credential = this.options.credential;
+    if (credential.type !== "chatgpt_auth_json") {
+      throw new Error("CodexRunner expected ChatGPT subscription auth.");
+    }
+
+    const runId = input.runId;
+    if (!runId) {
+      throw new Error("CodexRunner requires runId for ChatGPT subscription auth.");
+    }
+
+    const store = this.options.chatGptAuthStore;
+    if (!store) {
+      throw new Error("CodexRunner requires a ChatGPT auth store for subscription auth.");
+    }
+
+    const leaseExpiresAt = new Date(Date.now() + CHATGPT_AUTH_LEASE_MS).toISOString();
+    const leased = await store.acquireChatGptAuthLease({
+      leaseExpiresAt,
+      runId,
+      userId: credential.userId,
+    });
+    if (!leased) {
+      throw new CodexAuthLeaseBusyError();
+    }
+
+    try {
+      yield* this.runWithLeasedChatGptAuth(input, leased, store);
+    } finally {
+      await store.releaseChatGptAuthLease({
+        runId,
+        userId: leased.userId,
+      });
+    }
+  }
+
+  private async *runWithLeasedChatGptAuth(
+    input: AgentRunnerStartInput,
+    credential: ChatGptCodexCredential,
+    store: CodexChatGptAuthStore,
+  ): AsyncIterable<AgentEvent> {
+    const { sandbox } = input;
+    if (!sandbox || !input.runId) return;
+
+    const model = this.options.model ?? DEFAULT_CODEX_MODEL;
+    await sandbox.writeFile(PROMPT_FILE, input.prompt);
+    await sandbox.writeFile(CODEX_AUTH_FILE, credential.secret, { mode: 0o600 });
+
+    const proc = await sandbox.exec("bash", ["-lc", codexExecCommand(model)], {
+      cwd: sandbox.repoPath,
+      env: { CI: "1", CODEX_HOME },
+    });
+
+    let stdoutBuf = "";
+    let stderrBuf = "";
+
+    for await (const log of proc.logs()) {
+      if (log.stream === "stderr") {
+        stderrBuf += log.data;
+        continue;
+      }
+
+      stdoutBuf += log.data;
+      const lines = stdoutBuf.split("\n");
+      stdoutBuf = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const event = parseCodexLine(line);
+        if (event) yield event;
+      }
+    }
+
+    if (stdoutBuf.trim()) {
+      const event = parseCodexLine(stdoutBuf);
+      if (event) yield event;
+    }
+
+    await persistRefreshedChatGptAuthJson({
+      credential,
+      runId: input.runId,
+      sandbox,
+      store,
+    });
+
+    const code = await proc.exitCode;
+    if (code !== 0) {
+      const message = `codex CLI exited with code ${code}: ${stderrBuf.slice(0, 500)}`;
+      if (isAuthFailure(message)) {
+        await store.markChatGptAuthReconnectRequired({
+          reason:
+            "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
+          runId: input.runId,
+          userId: credential.userId,
+        });
+      }
+
+      yield {
+        type: "error",
+        message,
       };
     }
 
@@ -148,20 +268,57 @@ export function parseCodexLine(raw: string): AgentEvent | null {
 
 function codexCredentialEnv(credential: CodexCredential): Record<string, string> {
   switch (credential.type) {
+    case "chatgpt_auth_json":
+      return {};
     case "codex_access_token":
       return { CODEX_ACCESS_TOKEN: credential.secret };
     case "platform_api_key":
-      return { OPENAI_API_KEY: credential.secret };
+      return { CODEX_API_KEY: credential.secret, OPENAI_API_KEY: credential.secret };
   }
 }
 
-function codexCredentialLoginCommand(credential: CodexCredential): string | null {
-  switch (credential.type) {
-    case "codex_access_token":
-      return `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token >/dev/stderr`;
-    case "platform_api_key":
-      return null;
-  }
+async function persistRefreshedChatGptAuthJson(input: {
+  credential: ChatGptCodexCredential;
+  runId: string;
+  sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>;
+  store: CodexChatGptAuthStore;
+}) {
+  const refreshedAuthJson = await input.sandbox.readFile(CODEX_AUTH_FILE);
+  if (!refreshedAuthJson || refreshedAuthJson === input.credential.secret) return;
+
+  const metadata = parseCodexChatGptAuthJson(refreshedAuthJson);
+  await input.store.persistChatGptAuthJson({
+    authJson: refreshedAuthJson,
+    metadata,
+    previousCredentialVersion: input.credential.credentialVersion,
+    runId: input.runId,
+    userId: input.credential.userId,
+  });
+}
+
+function codexExecCommand(model: string): string {
+  const cliArgs = [
+    "exec",
+    "--model",
+    model,
+    "-c",
+    `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+    "-c",
+    `cli_auth_credentials_store="file"`,
+    "--json",
+    "-",
+  ];
+  return `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
+}
+
+function isAuthFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("401") ||
+    lower.includes("unauthorized") ||
+    lower.includes("auth") ||
+    lower.includes("token")
+  );
 }
 
 function shellQuote(s: string): string {
