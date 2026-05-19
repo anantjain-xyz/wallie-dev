@@ -12,7 +12,7 @@ import {
 describe("createAgentRunner", () => {
   it("creates a ClaudeCodeRunner for 'claude-code'", () => {
     const runner = createAgentRunner("claude-code", {
-      claudeCode: { model: "claude-sonnet-4-5" },
+      claudeCode: { credential: { secret: "sk-ant-test" }, model: "claude-sonnet-4-5" },
     });
     expect(runner).toBeInstanceOf(ClaudeCodeRunner);
     expect(runner.provider).toBe("claude-code");
@@ -20,7 +20,9 @@ describe("createAgentRunner", () => {
   });
 
   it("creates a ClaudeCodeRunner for 'claude_code' (settings alias)", () => {
-    const runner = createAgentRunner("claude_code");
+    const runner = createAgentRunner("claude_code", {
+      claudeCode: { credential: { secret: "sk-ant-test" } },
+    });
     expect(runner).toBeInstanceOf(ClaudeCodeRunner);
     expect(runner.provider).toBe("claude-code");
   });
@@ -36,6 +38,10 @@ describe("createAgentRunner", () => {
 
   it("throws when codex is selected without credentials", () => {
     expect(() => createAgentRunner("codex")).toThrow(/codex credentials/);
+  });
+
+  it("throws when claude-code is selected without credentials", () => {
+    expect(() => createAgentRunner("claude-code")).toThrow(/Anthropic API key/);
   });
 
   it("throws for unknown provider", () => {

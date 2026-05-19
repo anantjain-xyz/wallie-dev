@@ -92,6 +92,7 @@ function resolveModel(config: AgentConfigMap): string {
 
 export function buildRuntimeReadiness(input: {
   agentConfig: AgentConfigMap;
+  claudeCodeConnection: OnboardingSetupHealth["claudeCodeConnection"];
   codexConnection: OnboardingSetupHealth["codexConnection"];
   primaryRepositoryId: string | null;
   repositorySetup: OnboardingSetupHealth["repositorySetup"];
@@ -144,6 +145,15 @@ export function buildRuntimeReadiness(input: {
     case "claude-code":
       requirements.push(
         {
+          detail: input.claudeCodeConnection.connected
+            ? "Current user has a connected Anthropic API key."
+            : "Connect the current user's Anthropic API key.",
+          id: "claude-code-connection",
+          label: "Anthropic API key",
+          passed: input.claudeCodeConnection.connected,
+          step: "runtime",
+        },
+        {
           detail: providerModelValid
             ? "Claude Code model uses a claude-* id."
             : "Claude Code requires a claude-* model id.",
@@ -186,6 +196,7 @@ export function buildVerifyChecklist(input: {
 }): VerifyChecklistItem[] {
   const runtimeReadiness = buildRuntimeReadiness({
     agentConfig: input.agentConfig,
+    claudeCodeConnection: input.health.claudeCodeConnection,
     codexConnection: input.health.codexConnection,
     primaryRepositoryId: input.health.primaryRepositoryProfile.repositoryId,
     repositorySetup: input.health.repositorySetup,

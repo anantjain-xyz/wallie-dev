@@ -6,6 +6,10 @@ import {
   type AgentProvider,
   modelMatchesProvider,
 } from "@/lib/agent-config/contracts";
+import {
+  ClaudeCodeNotConnectedError,
+  getClaudeCodeCredentialForUser,
+} from "@/lib/claude-code/tokens";
 import type { CodexCredential } from "@/lib/codex/contracts";
 import { getCodexCredentialForUser, CodexNotConnectedError } from "@/lib/codex/tokens";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -26,8 +30,7 @@ const requestSchema = z.object({
  *   - `{ ok: true }`              — provider accepted a 1-token call.
  *   - `{ ok: false, error }`      — provider rejected, secrets missing, etc.
  *   - `{ ok: "skipped", reason }` — reachability is not checkable here. Used
- *     for `claude-code`, which runs the `claude` CLI in a per-session sandbox
- *     at pipeline time.
+ *     for CLI-backed credentials that are exercised in a per-session sandbox.
  */
 export type VerifyAgentConfigResponse =
   | { ok: true }
@@ -63,23 +66,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // claude-code runs the `claude` CLI in a sandbox. Short-circuit before the
-  // access check so we don't pretend we verified anything we can't actually
-  // verify here.
-  if (provider === "claude-code") {
-    return NextResponse.json(
-      {
-        ok: "skipped",
-        reason:
-          "Claude Code runs the `claude` CLI inside a per-session sandbox. The model name is checked against the schema, and the CLI is exercised when the pipeline actually runs.",
-      } satisfies VerifyAgentConfigResponse,
-      { status: 200 },
-    );
-  }
-
   const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
   if (!access.ok) {
     return verifyError(access.error, access.status);
+  }
+
+  if (provider === "claude-code") {
+    return verifyClaudeCode(access.context.user.id);
   }
 
   return verifyCodex(access.context.user.id, model);
@@ -92,6 +85,39 @@ function providerModelMismatchMessage(provider: AgentProvider) {
     case "codex":
       return 'Model must start with "gpt-", "o1", "o3", or "o4" for the Codex provider.';
   }
+}
+
+async function verifyClaudeCode(userId: string): Promise<NextResponse<VerifyAgentConfigResponse>> {
+  const admin = createSupabaseAdminClient();
+  try {
+    await getClaudeCodeCredentialForUser(admin, userId);
+  } catch (cause) {
+    if (cause instanceof ClaudeCodeNotConnectedError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Connect an Anthropic API key in Settings first, then try Verify again.",
+        } satisfies VerifyAgentConfigResponse,
+        { status: 200 },
+      );
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        error: cause instanceof Error ? cause.message : "Claude Code credential lookup failed.",
+      } satisfies VerifyAgentConfigResponse,
+      { status: 200 },
+    );
+  }
+
+  return NextResponse.json(
+    {
+      ok: "skipped",
+      reason:
+        "Anthropic API key is saved. Claude Code CLI reachability is checked inside the per-session sandbox when a pipeline run starts.",
+    } satisfies VerifyAgentConfigResponse,
+    { status: 200 },
+  );
 }
 
 async function verifyCodex(

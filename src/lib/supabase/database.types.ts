@@ -1012,6 +1012,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_claude_code_credentials: {
+        Row: {
+          created_at: string
+          encrypted_api_key: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_api_key: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_api_key?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       worker_heartbeats: {
         Row: {
           active_job_id: string | null

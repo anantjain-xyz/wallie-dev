@@ -27,6 +27,11 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
+    claudeCodeConnection: {
+      connected: true,
+      status: "connected",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    },
     defaultPipeline: {
       configured: true,
       pipelineId: "pipeline-1",
@@ -97,6 +102,7 @@ describe("buildRuntimeReadiness", () => {
     expect(
       buildRuntimeReadiness({
         agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
+        claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
@@ -106,6 +112,7 @@ describe("buildRuntimeReadiness", () => {
     expect(
       buildRuntimeReadiness({
         agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
+        claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: {
           connected: false,
           credentialType: null,
@@ -123,6 +130,7 @@ describe("buildRuntimeReadiness", () => {
     expect(
       buildRuntimeReadiness({
         agentConfig: { agent_model: "gpt-5-codex", agent_provider: "claude-code" },
+        claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
@@ -132,9 +140,26 @@ describe("buildRuntimeReadiness", () => {
     expect(
       buildRuntimeReadiness({
         agentConfig: { agent_model: "claude-opus-4-7[1m]", agent_provider: "claude-code" },
+        claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: { configured: false, repositoryId, status: "not_set_up" },
+      }).canComplete,
+    ).toBe(false);
+  });
+
+  it("requires an Anthropic API key for claude-code", () => {
+    expect(
+      buildRuntimeReadiness({
+        agentConfig: { agent_model: "claude-opus-4-7[1m]", agent_provider: "claude-code" },
+        claudeCodeConnection: {
+          connected: false,
+          status: "missing",
+          updatedAt: null,
+        },
+        codexConnection: health().codexConnection,
+        primaryRepositoryId: repositoryId,
+        repositorySetup: health().repositorySetup,
       }).canComplete,
     ).toBe(false);
   });
@@ -143,6 +168,7 @@ describe("buildRuntimeReadiness", () => {
     expect(
       buildRuntimeReadiness({
         agentConfig: { agent_provider: "claude-code" },
+        claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: health().codexConnection,
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,

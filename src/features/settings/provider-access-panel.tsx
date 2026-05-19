@@ -1,5 +1,6 @@
 "use client";
 
+import { ClaudeCodeConnectionPanel } from "@/features/settings/claude-code-connection-panel";
 import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 
@@ -37,13 +38,13 @@ export function ProviderAccessPanel({
     case "claude-code":
       return (
         <div className={className}>
-          <div className="min-w-0">
+          <div className="mb-3 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Provider access</h3>
             <p className="mt-1 text-[13px] leading-5 text-muted">
-              Claude Code account connection is not managed in Wallie yet. Wallie validates the
-              sandboxed Claude Code CLI when pipeline runs execute.
+              Sessions run with the Anthropic API key saved by the session creator.
             </p>
           </div>
+          <ClaudeCodeConnectionPanel />
         </div>
       );
   }

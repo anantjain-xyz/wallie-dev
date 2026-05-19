@@ -7,11 +7,19 @@ const mocked = vi.hoisted(() => {
       this.name = "CodexNotConnectedError";
     }
   }
+  class ClaudeCodeNotConnectedErrorMock extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "ClaudeCodeNotConnectedError";
+    }
+  }
   return {
     createSupabaseAdminClient: vi.fn(),
     requireWorkspaceAccessById: vi.fn(),
     getCodexCredentialForUser: vi.fn(),
+    getClaudeCodeCredentialForUser: vi.fn(),
     CodexNotConnectedError: CodexNotConnectedErrorMock,
+    ClaudeCodeNotConnectedError: ClaudeCodeNotConnectedErrorMock,
   };
 });
 
@@ -26,6 +34,11 @@ vi.mock("@/lib/workspaces/access", () => ({
 vi.mock("@/lib/codex/tokens", () => ({
   getCodexCredentialForUser: mocked.getCodexCredentialForUser,
   CodexNotConnectedError: mocked.CodexNotConnectedError,
+}));
+
+vi.mock("@/lib/claude-code/tokens", () => ({
+  getClaudeCodeCredentialForUser: mocked.getClaudeCodeCredentialForUser,
+  ClaudeCodeNotConnectedError: mocked.ClaudeCodeNotConnectedError,
 }));
 
 import { POST } from "./route";
@@ -98,7 +111,10 @@ describe("POST /api/agent-config/verify — provider/model mismatches", () => {
 });
 
 describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
-  it("returns ok:'skipped' without touching the access check", async () => {
+  it("returns ok:'skipped' when an Anthropic API key is connected", async () => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce({});
+    mocked.getClaudeCodeCredentialForUser.mockResolvedValue({ secret: "sk-ant-test" });
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
 
     const response = await POST(
@@ -112,9 +128,10 @@ describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { ok: unknown; reason?: string };
     expect(payload.ok).toBe("skipped");
-    expect(payload.reason).toMatch(/sandbox/i);
-    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(payload.reason).toMatch(/Claude Code CLI/);
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith(WORKSPACE_ID, {
+      requireManager: true,
+    });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -130,6 +147,9 @@ describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
   });
 
   it("normalizes the legacy claude_code alias before dispatch", async () => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce({});
+    mocked.getClaudeCodeCredentialForUser.mockResolvedValue({ secret: "sk-ant-test" });
     globalThis.fetch = vi.fn() as unknown as typeof fetch;
 
     const response = await POST(
@@ -143,8 +163,29 @@ describe("POST /api/agent-config/verify — claude-code (sandbox CLI)", () => {
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { ok: unknown; reason?: string };
     expect(payload.ok).toBe("skipped");
-    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("explains when an Anthropic API key isn't connected", async () => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce({});
+    mocked.getClaudeCodeCredentialForUser.mockRejectedValue(
+      new mocked.ClaudeCodeNotConnectedError("not connected"),
+    );
+
+    const response = await POST(
+      postWith({
+        workspaceId: WORKSPACE_ID,
+        provider: "claude-code",
+        model: "claude-opus-4-7[1m]",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { ok: boolean; error?: string };
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatch(/Connect an Anthropic API key/);
   });
 });
 

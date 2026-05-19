@@ -9,6 +9,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { AGENT_PROVIDERS, normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
+import {
+  ClaudeCodeNotConnectedError,
+  getClaudeCodeCredentialForSession,
+} from "@/lib/claude-code/tokens";
 import { CodexNotConnectedError, getCodexCredentialForSession } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
@@ -529,10 +533,24 @@ async function resolveAgentRunner(input: {
     }
   }
 
+  if (input.provider === "claude-code") {
+    try {
+      const credential = await getClaudeCodeCredentialForSession(input.admin, input.session);
+      return {
+        runner: createAgentRunner("claude-code", {
+          claudeCode: { credential, model: input.model },
+        }),
+      };
+    } catch (error) {
+      if (error instanceof ClaudeCodeNotConnectedError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
+  }
+
   return {
-    runner: createAgentRunner(input.provider, {
-      claudeCode: { model: input.model },
-    }),
+    runner: createAgentRunner(input.provider),
   };
 }
 

@@ -192,6 +192,22 @@ function codexConnectionStatus(
   };
 }
 
+function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
+  if (!row) {
+    return {
+      connected: false,
+      status: "missing" as const,
+      updatedAt: null,
+    };
+  }
+
+  return {
+    connected: true,
+    status: "connected" as const,
+    updatedAt: row.updated_at,
+  };
+}
+
 async function loadSetupHealth(
   context: WorkspaceAccessContext,
   github: WorkspaceGitHubData,
@@ -220,6 +236,7 @@ async function loadSetupHealth(
     { data: linearRouting, error: linearRoutingError },
     { data: agentConfigRows, error: agentConfigError },
     { data: codexCredentials, error: codexError },
+    { data: claudeCodeCredentials, error: claudeCodeError },
     { data: sandboxRows, error: sandboxError },
   ] = await Promise.all([
     admin
@@ -247,6 +264,11 @@ async function loadSetupHealth(
       .select("access_token_expires_at, credential_type, updated_at")
       .eq("user_id", context.user.id)
       .maybeSingle(),
+    admin
+      .from("user_claude_code_credentials")
+      .select("updated_at")
+      .eq("user_id", context.user.id)
+      .maybeSingle(),
     latestSandboxQuery,
   ]);
 
@@ -257,6 +279,7 @@ async function loadSetupHealth(
     linearRoutingError ??
     agentConfigError ??
     codexError ??
+    claudeCodeError ??
     sandboxError;
   if (firstError) throw firstError;
 
@@ -282,6 +305,7 @@ async function loadSetupHealth(
       status: configuredKeys.length > 0 ? "present" : "missing",
       values: agentConfig,
     },
+    claudeCodeConnection: claudeCodeConnectionStatus(claudeCodeCredentials),
     codexConnection: codexConnectionStatus(codexCredentials),
     defaultPipeline: {
       configured: Boolean(pipelineRow && stageCount > 0),

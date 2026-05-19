@@ -91,6 +91,11 @@ const onboardingData: WorkspaceOnboardingData = {
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
+    claudeCodeConnection: {
+      connected: false,
+      status: "missing",
+      updatedAt: null,
+    },
     defaultPipeline: {
       configured: true,
       pipelineId: "pipeline-1",

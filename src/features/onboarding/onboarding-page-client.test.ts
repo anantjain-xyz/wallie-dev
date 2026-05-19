@@ -178,6 +178,11 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         status: "missing",
         updatedAt: null,
       },
+      claudeCodeConnection: {
+        connected: false,
+        status: "missing",
+        updatedAt: null,
+      },
       defaultPipeline: pipeline
         ? {
             configured: true,
@@ -786,12 +791,12 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("ANTHROPIC_API_KEY");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("Provider access");
-    expect(html).toContain("Claude Code account connection is not managed in Wallie yet");
+    expect(html).toContain("Sessions run with the Anthropic API key saved by the session creator");
     expect(html).not.toContain("Runtime credentials");
     expect(html).not.toContain("No encrypted workspace secret is required");
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
-    expect(html).not.toContain("Anthropic API key");
+    expect(html).toContain("Anthropic API key");
     expect(html).not.toContain('value="ANTHROPIC_API_KEY"');
   });
 
