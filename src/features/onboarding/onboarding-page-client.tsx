@@ -1029,7 +1029,7 @@ function RuntimeStep({
       }
 
       if (savedCount > 0) {
-        setRuntimeMessage(`Saved ${savedCount} agent setting${savedCount === 1 ? "" : "s"}.`);
+        setRuntimeMessage("Saved.");
       }
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Agent config save failed.");
