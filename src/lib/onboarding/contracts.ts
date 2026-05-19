@@ -77,6 +77,11 @@ export type OnboardingSetupHealth = {
     status: "connected" | "expired" | "missing";
     updatedAt: string | null;
   };
+  claudeCodeConnection: {
+    connected: boolean;
+    status: "connected" | "missing";
+    updatedAt: string | null;
+  };
   defaultPipeline: {
     configured: boolean;
     pipelineId: string | null;

@@ -1,9 +1,12 @@
+import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
 
 const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
 
 export interface ClaudeCodeRunnerOptions {
+  /** User-supplied Anthropic API key resolved by getClaudeCodeCredentialForUser. */
+  credential: ClaudeCodeCredential;
   /** Model identifier or Claude Code alias, e.g. "claude-opus-4-7[1m]". */
   model?: string;
 }
@@ -12,14 +15,19 @@ export interface ClaudeCodeRunnerOptions {
  * Claude Code CLI agent runner.
  *
  * Runs `claude` inside a per-session sandbox, streams its JSON output as
- * AgentEvents. Expects `claude` to be on PATH inside the sandbox
- * (installed at sandbox boot by `createSessionSandbox`).
+ * AgentEvents. Auth is provided only through ANTHROPIC_API_KEY for the
+ * subprocess; Wallie does not run `claude auth`. Expects `claude` to be on
+ * PATH inside the sandbox (installed at sandbox boot by `createSessionSandbox`).
  */
 export class ClaudeCodeRunner implements AgentRunner {
   readonly provider = "claude-code";
   readonly requiresSandbox = true;
 
-  constructor(private readonly options: ClaudeCodeRunnerOptions = {}) {}
+  constructor(private readonly options: ClaudeCodeRunnerOptions) {
+    if (!options.credential?.secret) {
+      throw new Error("ClaudeCodeRunner requires an Anthropic API key.");
+    }
+  }
 
   async *start(input: AgentRunnerStartInput): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
@@ -38,6 +46,8 @@ export class ClaudeCodeRunner implements AgentRunner {
       model,
       "--effort",
       DEFAULT_CLAUDE_CODE_EFFORT,
+      "--permission-mode",
+      "bypassPermissions",
       "--output-format",
       "stream-json",
       "--max-turns",
@@ -45,15 +55,14 @@ export class ClaudeCodeRunner implements AgentRunner {
       "--verbose",
     ];
     if (input.continueSessionId) {
-      cliArgs.push("--continue", input.continueSessionId);
+      cliArgs.push("--resume", input.continueSessionId);
     }
-    cliArgs.push("--stdin");
 
     const shellCmd = `claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { CI: "1" },
+      env: { ANTHROPIC_API_KEY: this.options.credential.secret, CI: "1" },
     });
 
     let stdoutBuf = "";
@@ -89,8 +98,15 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     // Flush the final partial line.
     if (stdoutBuf.trim()) {
-      const event = parseStreamJsonLine(stdoutBuf.trim());
+      const trimmed = stdoutBuf.trim();
+      const event = parseStreamJsonLine(trimmed);
       if (event) yield event;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.session_id) lastSessionId = parsed.session_id;
+      } catch {
+        // Not JSON — ignore.
+      }
     }
 
     const code = await proc.exitCode;

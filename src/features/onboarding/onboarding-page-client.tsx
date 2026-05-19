@@ -60,6 +60,7 @@ import {
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   getRecommendedAgentConfigDefault,
+  normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
 import { type AgentConfigDrafts, applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
@@ -427,6 +428,7 @@ export function isAgentConfigDraftDirty(
 function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = data.agentConfig) {
   return buildRuntimeReadiness({
     agentConfig,
+    claudeCodeConnection: data.setupHealth.claudeCodeConnection,
     codexConnection: data.setupHealth.codexConnection,
     primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
     repositorySetup: data.setupHealth.repositorySetup,
@@ -527,9 +529,27 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
   const linearKey = presenceBadge(health.linearKey.configured);
   const linearRouting = presenceBadge(health.linearRouting.configured);
   const agentConfig = presenceBadge(health.agentConfig.configured);
-  const codex = health.codexConnection.connected
+  const selectedProvider =
+    typeof health.agentConfig.values.agent_provider === "string"
+      ? (normalizeAgentProviderName(health.agentConfig.values.agent_provider) ?? "codex")
+      : "codex";
+  const providerCredential =
+    selectedProvider === "claude-code"
+      ? {
+          connected: health.claudeCodeConnection.connected,
+          expired: false,
+          label: "Anthropic key",
+          updatedAt: health.claudeCodeConnection.updatedAt,
+        }
+      : {
+          connected: health.codexConnection.connected,
+          expired: health.codexConnection.status === "expired",
+          label: "Codex",
+          updatedAt: health.codexConnection.updatedAt,
+        };
+  const providerCredentialBadge = providerCredential.connected
     ? { tone: "success" as const, value: "Connected" }
-    : health.codexConnection.status === "expired"
+    : providerCredential.expired
       ? { tone: "danger" as const, value: "Expired" }
       : { tone: "warning" as const, value: "Missing" };
   const sandbox = health.latestSandboxCapabilityCheck
@@ -576,12 +596,12 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
       value: agentConfig.value,
     },
     {
-      detail: health.codexConnection.updatedAt
+      detail: providerCredential.updatedAt
         ? "Credential available"
         : "Provider credential required",
-      label: "Codex",
-      tone: codex.tone,
-      value: codex.value,
+      label: providerCredential.label,
+      tone: providerCredentialBadge.tone,
+      value: providerCredentialBadge.value,
     },
     {
       detail: health.latestSandboxCapabilityCheck?.checkedAt ?? "Run a capability check",

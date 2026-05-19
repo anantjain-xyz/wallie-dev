@@ -326,11 +326,11 @@ Fill in the required values. Integration variables can be left blank until you c
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
-Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`. Per-user Codex credentials are also entered in Settings and stored encrypted separately.
+Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`. Per-user agent credentials are also entered in Settings and stored encrypted separately.
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. Codex defaults to `gpt-5.5`; Claude Code defaults to `claude-opus-4-7[1m]`. Codex users connect by pasting either a Codex access token or an OpenAI Platform API key; Wallie does not use a third-party ChatGPT OAuth flow.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. Codex defaults to `gpt-5.5`; Claude Code defaults to `claude-opus-4-7[1m]`. Codex users connect by pasting either a Codex access token or an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key. Wallie does not use third-party ChatGPT or Claude OAuth flows.
 
 ### 5. Create a GitHub App
 
@@ -386,6 +386,7 @@ The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS cla
 2. Complete onboarding (pick a workspace slug).
 3. **Settings -> Integrations**:
    - **Codex**: paste a Codex access token or OpenAI Platform API key.
+   - **Claude Code**: paste an Anthropic API key if the workspace uses Claude Code.
    - **Linear**: paste your Linear API key, verify.
    - **GitHub**: click Install -> GitHub App install -> back -> `github_installations` row created. Pick the repo(s) to track.
 4. Create a session from the sessions list, watch the worker claim its first job, then approve or reject the resulting artifact from the dashboard.

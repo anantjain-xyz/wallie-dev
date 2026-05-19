@@ -87,6 +87,11 @@ const onboardingData = {
       status: "missing",
       updatedAt: null,
     },
+    claudeCodeConnection: {
+      connected: false,
+      status: "missing",
+      updatedAt: null,
+    },
     defaultPipeline: {
       configured: true,
       pipelineId: "pipeline-1",

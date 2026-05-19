@@ -4,20 +4,26 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 
 import { ClaudeCodeRunner, parseStreamJsonLine } from "./claude-code";
 
+const anthropicCredential = { secret: "sk-ant-test" };
+
 describe("ClaudeCodeRunner", () => {
   it("has the correct provider name", () => {
-    const runner = new ClaudeCodeRunner();
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
     expect(runner.provider).toBe("claude-code");
     expect(runner.requiresSandbox).toBe(true);
   });
 
   it("implements the AgentRunner interface", () => {
-    const runner = new ClaudeCodeRunner();
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
     expect(typeof runner.start).toBe("function");
   });
 
+  it("throws when constructed without an Anthropic API key", () => {
+    expect(() => new ClaudeCodeRunner({ credential: { secret: "" } })).toThrow(/Anthropic API key/);
+  });
+
   it("throws when started without a sandbox", async () => {
-    const runner = new ClaudeCodeRunner();
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
     const iter = runner.start({ sessionId: "s", prompt: "p" });
     await expect(
       (async () => {
@@ -43,7 +49,7 @@ describe("ClaudeCodeRunner", () => {
       },
     ]);
 
-    const runner = new ClaudeCodeRunner();
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
     const events = [];
     for await (const ev of runner.start({
       sessionId: "s1",
@@ -67,15 +73,21 @@ describe("ClaudeCodeRunner", () => {
     expect(call.args[0]).toBe("-lc");
     expect(call.args[1]).toContain("'--model' 'claude-opus-4-7[1m]'");
     expect(call.args[1]).toContain("'--effort' 'xhigh'");
-    expect(call.args[1]).toContain("'--continue' 'prev-session'");
+    expect(call.args[1]).toContain("'--permission-mode' 'bypassPermissions'");
+    expect(call.args[1]).toContain("'--resume' 'prev-session'");
+    expect(call.args[1]).not.toContain("'--stdin'");
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
+    expect(call.opts.env).toMatchObject({
+      ANTHROPIC_API_KEY: "sk-ant-test",
+      CI: "1",
+    });
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec("bash", [{ data: "boom\n", stream: "stderr" }], { exitCode: 2 });
 
-    const runner = new ClaudeCodeRunner();
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
     const events = [];
     for await (const ev of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
       events.push(ev);

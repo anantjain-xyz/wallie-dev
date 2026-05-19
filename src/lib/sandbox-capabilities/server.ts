@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
+import { getClaudeCodeCredentialForUser } from "@/lib/claude-code/tokens";
 import { getCodexCredentialForUser } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider } from "@/lib/sandbox/types";
@@ -226,6 +227,8 @@ export async function completeSandboxCapabilityCheck(input: {
     const installationToken = await mintInstallationToken(input.admin, input.repository);
     if (provider === "codex") {
       await getCodexCredentialForUser(input.admin, input.userId);
+    } else {
+      await getClaudeCodeCredentialForUser(input.admin, input.userId);
     }
 
     sandbox = await createSessionSandbox({

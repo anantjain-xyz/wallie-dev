@@ -22,6 +22,9 @@ const mocked = vi.hoisted(() => ({
     secret: "codex-token",
     type: "codex_access_token",
   }),
+  getClaudeCodeCredentialForSession: vi.fn().mockResolvedValue({
+    secret: "sk-ant-test",
+  }),
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
@@ -75,6 +78,16 @@ vi.mock("@/lib/codex/tokens", () => ({
     }
   },
   getCodexCredentialForSession: mocked.getCodexCredentialForSession,
+}));
+
+vi.mock("@/lib/claude-code/tokens", () => ({
+  ClaudeCodeNotConnectedError: class ClaudeCodeNotConnectedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "ClaudeCodeNotConnectedError";
+    }
+  },
+  getClaudeCodeCredentialForSession: mocked.getClaudeCodeCredentialForSession,
 }));
 
 vi.mock("@/features/github/config", () => ({
@@ -455,6 +468,27 @@ describe("processPipelineJob (generic stage runner)", () => {
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
+  });
+
+  it("resolves the session owner's Anthropic API key for Claude Code runs", async () => {
+    const session = baseSession();
+    const { admin } = buildAdminMock({
+      session,
+      agentConfig: [
+        { key: "agent_provider", value_json: "claude-code" },
+        { key: "agent_model", value_json: "claude-sonnet-4-5" },
+      ],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.getClaudeCodeCredentialForSession).toHaveBeenCalledWith(admin, session);
+    expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
+      claudeCode: {
+        credential: { secret: "sk-ant-test" },
+        model: "claude-sonnet-4-5",
+      },
+    });
   });
 
   it("opens a session pull request after the artifact is persisted", async () => {

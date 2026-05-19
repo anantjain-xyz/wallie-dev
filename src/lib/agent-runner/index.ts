@@ -30,7 +30,7 @@ import { ClaudeCodeRunner, type ClaudeCodeRunnerOptions } from "./claude-code";
 import { CodexRunner, type CodexRunnerOptions } from "./codex";
 
 export interface CreateAgentRunnerOptions {
-  /** Optional model override when provider resolves to "claude-code". */
+  /** Required when provider resolves to "claude-code". */
   claudeCode?: ClaudeCodeRunnerOptions;
   /** Required when provider resolves to "codex". */
   codex?: CodexRunnerOptions;
@@ -43,8 +43,8 @@ type AgentProviderName = AgentProvider | "claude_code";
  * Accepts the legacy underscore aliases at this boundary, then runs internally
  * on the canonical dashed provider ids.
  *
- * Codex requires caller-supplied credentials; resolve them with
- * getCodexCredentialForUser from "@/lib/codex/tokens" before calling.
+ * CLI providers require caller-supplied credentials; resolve them with the
+ * provider token helper before calling.
  */
 export function createAgentRunner(
   provider: AgentProviderName,
@@ -53,6 +53,11 @@ export function createAgentRunner(
   const normalized = normalizeAgentProviderName(provider);
   switch (normalized) {
     case "claude-code":
+      if (!opts.claudeCode) {
+        throw new Error(
+          "claude-code provider requires an Anthropic API key (pass opts.claudeCode to createAgentRunner).",
+        );
+      }
       return new ClaudeCodeRunner(opts.claudeCode);
     case "codex":
       if (!opts.codex) {
