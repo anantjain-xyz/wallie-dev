@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { FakeSandbox } from "@/lib/sandbox/fake";
 import { probeSandboxCapabilities } from "@/lib/sandbox-capabilities/probe";
 
+type CapturedOutput = {
+  exitCode?: number;
+  stderr?: string;
+  stdout?: string;
+};
+
 function scriptBaseSuccess(sandbox: FakeSandbox) {
   sandbox.scriptExec(
     (call) => call.args.join(" ").includes("git --version"),
@@ -19,6 +25,24 @@ function scriptBaseSuccess(sandbox: FakeSandbox) {
   sandbox.scriptExec(
     (call) => call.args.join(" ").includes("claude --version"),
     [{ data: "1.0.0\n", stream: "stdout" }],
+  );
+}
+
+function scriptCapturedOutput(sandbox: FakeSandbox, matcher: string, output: CapturedOutput) {
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes(matcher),
+    (call) => {
+      const script = call.args[1] ?? "";
+      const stdoutPath = script.match(/^stdout_path='([^']+)'$/m)?.[1];
+      const stderrPath = script.match(/^stderr_path='([^']+)'$/m)?.[1];
+      if (!stdoutPath || !stderrPath) {
+        throw new Error("Capability probe capture paths were not found.");
+      }
+      sandbox.files.set(stdoutPath, { data: Buffer.from(output.stdout ?? "", "utf8") });
+      sandbox.files.set(stderrPath, { data: Buffer.from(output.stderr ?? "", "utf8") });
+      return [];
+    },
+    { exitCode: output.exitCode ?? 0 },
   );
 }
 
@@ -91,6 +115,33 @@ describe("probeSandboxCapabilities", () => {
 
     expect(report.screenshotSmoke.ok).toBe(true);
     expect(report.screenshotSmoke.detail).toBe("Playwright screenshot smoke passed.");
+  });
+
+  it("uses captured files when sandbox command output is lost", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCapturedOutput(sandbox, "git --version", { stdout: "git version 2.45.0\n" });
+    scriptCapturedOutput(sandbox, "node --version", { stdout: "v22.0.0\n" });
+    scriptCapturedOutput(sandbox, "for pm in", { stdout: "npm 10.0.0\n" });
+    scriptCapturedOutput(sandbox, "claude --version", { stdout: "1.0.0\n" });
+    scriptCapturedOutput(sandbox, "require.resolve('playwright')", { stdout: "1.56.0\n" });
+    scriptCapturedOutput(sandbox, "npx playwright install chromium", {});
+    scriptCapturedOutput(sandbox, "Wallie screenshot smoke", {});
+
+    const report = await probeSandboxCapabilities({
+      agentProvider: "claude-code",
+      sandbox,
+    });
+
+    expect(report.git.detail).toBe("git version 2.45.0");
+    expect(report.node.detail).toBe("v22.0.0");
+    expect(report.packageManager.detail).toBe("npm 10.0.0");
+    expect(report.agentCli.ok).toBe(true);
+    expect(report.playwrightPackage.ok).toBe(true);
+    expect(report.chromium).toEqual({
+      detail: "Chromium install completed successfully.",
+      ok: true,
+    });
+    expect(report.screenshotSmoke.ok).toBe(true);
   });
 
   it("treats exit-zero with empty output as failure", async () => {

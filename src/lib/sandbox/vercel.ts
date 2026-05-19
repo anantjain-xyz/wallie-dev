@@ -11,6 +11,24 @@ import type {
 
 const REPO_PATH = "/vercel/sandbox";
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const PLAYWRIGHT_SYSTEM_PACKAGES = [
+  "alsa-lib",
+  "atk",
+  "at-spi2-atk",
+  "cairo",
+  "cups-libs",
+  "gtk3",
+  "libdrm",
+  "libXcomposite",
+  "libXdamage",
+  "libXfixes",
+  "libXrandr",
+  "libxkbcommon",
+  "mesa-libgbm",
+  "nspr",
+  "nss",
+  "pango",
+].join(" ");
 
 /**
  * Vercel Sandbox-backed implementation of `SandboxHandle`.
@@ -180,7 +198,11 @@ function resolveBrowserBootstrap(): string {
   // Best-effort: code-only stages should not fail if browser bootstrap is
   // unavailable, but screenshot-capable sandboxes should have Playwright and
   // Chromium ready whenever the base image allows it.
-  return "(npm install -g playwright@^1.56.0 && playwright install chromium) || true";
+  return `if ! (
+    sudo dnf install -y ${PLAYWRIGHT_SYSTEM_PACKAGES} &&
+    npm install -g playwright@^1.56.0 &&
+    playwright install chromium
+  ); then true; fi`;
 }
 
 function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvider"]): string {
