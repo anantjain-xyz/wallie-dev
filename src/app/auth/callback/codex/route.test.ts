@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe("GET /auth/callback/codex", () => {
   it("returns pending device-flow status for JSON polling", async () => {
-    mocked.getCodexDeviceAuthFlowSnapshot.mockReturnValue({
+    mocked.getCodexDeviceAuthFlowSnapshot.mockResolvedValue({
       error: null,
       expiresAt: "2026-05-19T00:10:00.000Z",
       flowId: "flow-1",
@@ -79,7 +79,7 @@ describe("GET /auth/callback/codex", () => {
   });
 
   it("persists authenticated ChatGPT auth JSON and does not return the secret", async () => {
-    mocked.getCodexDeviceAuthFlowSnapshot.mockReturnValue({
+    mocked.getCodexDeviceAuthFlowSnapshot.mockResolvedValue({
       error: null,
       expiresAt: "2026-05-19T00:10:00.000Z",
       flowId: "flow-1",
@@ -88,7 +88,7 @@ describe("GET /auth/callback/codex", () => {
       userCode: "ABCD-EFGH",
       verificationUri: "https://chatgpt.com/activate",
     });
-    mocked.consumeAuthenticatedCodexDeviceAuthFlow.mockReturnValue({
+    mocked.consumeAuthenticatedCodexDeviceAuthFlow.mockResolvedValue({
       authJson: '{"auth_mode":"chatgpt"}',
       metadata: {
         accountEmail: "person@example.com",
@@ -131,7 +131,7 @@ describe("GET /auth/callback/codex", () => {
   });
 
   it("returns state_invalid for missing flows", async () => {
-    mocked.getCodexDeviceAuthFlowSnapshot.mockReturnValue(null);
+    mocked.getCodexDeviceAuthFlowSnapshot.mockResolvedValue(null);
 
     const response = await GET(
       new NextRequest("http://localhost/auth/callback/codex?flowId=missing", {

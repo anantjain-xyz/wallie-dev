@@ -11,7 +11,7 @@ import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
 const CODEX_HOME = "/vercel/sandbox/.codex";
 const CODEX_AUTH_FILE = `${CODEX_HOME}/auth.json`;
-const CHATGPT_AUTH_LEASE_MS = 20 * 60_000;
+const CHATGPT_AUTH_LEASE_MS = 35 * 60_000;
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */

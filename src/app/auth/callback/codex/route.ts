@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     return respondError(supabase, request, acceptsJson, "state_missing", 400);
   }
 
-  const snapshot = getCodexDeviceAuthFlowSnapshot({ flowId, userId: user.id });
+  const snapshot = await getCodexDeviceAuthFlowSnapshot({ flowId, userId: user.id });
   if (!snapshot) {
     return respondError(supabase, request, acceptsJson, "state_invalid", 404);
   }
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       : redirectWithFlash(supabase, request, "pending");
   }
 
-  const authenticated = consumeAuthenticatedCodexDeviceAuthFlow({ flowId, userId: user.id });
+  const authenticated = await consumeAuthenticatedCodexDeviceAuthFlow({ flowId, userId: user.id });
   if (!authenticated) {
     return respondError(supabase, request, acceptsJson, "state_invalid", 409);
   }

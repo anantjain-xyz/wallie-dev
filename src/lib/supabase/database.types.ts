@@ -244,6 +244,90 @@ export type Database = {
           },
         ]
       }
+      codex_device_auth_flows: {
+        Row: {
+          account_email: string | null
+          account_id: string | null
+          auth_cache_last_refresh: string | null
+          canceled_at: string | null
+          command_id: string
+          completed_at: string | null
+          created_at: string
+          encrypted_auth_json: string | null
+          error: string | null
+          expires_at: string
+          id: string
+          instructions: string | null
+          output_tail: string | null
+          sandbox_id: string
+          status:
+            | "starting"
+            | "prompted"
+            | "authenticated"
+            | "canceled"
+            | "error"
+            | "expired"
+          updated_at: string
+          user_code: string | null
+          user_id: string
+          verification_uri: string | null
+        }
+        Insert: {
+          account_email?: string | null
+          account_id?: string | null
+          auth_cache_last_refresh?: string | null
+          canceled_at?: string | null
+          command_id: string
+          completed_at?: string | null
+          created_at?: string
+          encrypted_auth_json?: string | null
+          error?: string | null
+          expires_at: string
+          id?: string
+          instructions?: string | null
+          output_tail?: string | null
+          sandbox_id: string
+          status?:
+            | "starting"
+            | "prompted"
+            | "authenticated"
+            | "canceled"
+            | "error"
+            | "expired"
+          updated_at?: string
+          user_code?: string | null
+          user_id: string
+          verification_uri?: string | null
+        }
+        Update: {
+          account_email?: string | null
+          account_id?: string | null
+          auth_cache_last_refresh?: string | null
+          canceled_at?: string | null
+          command_id?: string
+          completed_at?: string | null
+          created_at?: string
+          encrypted_auth_json?: string | null
+          error?: string | null
+          expires_at?: string
+          id?: string
+          instructions?: string | null
+          output_tail?: string | null
+          sandbox_id?: string
+          status?:
+            | "starting"
+            | "prompted"
+            | "authenticated"
+            | "canceled"
+            | "error"
+            | "expired"
+          updated_at?: string
+          user_code?: string | null
+          user_id?: string
+          verification_uri?: string | null
+        }
+        Relationships: []
+      }
       github_installations: {
         Row: {
           app_id: number

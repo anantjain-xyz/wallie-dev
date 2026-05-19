@@ -17,6 +17,44 @@ create index user_codex_credentials_auth_lock_idx
   on public.user_codex_credentials (auth_lock_expires_at)
   where credential_type = 'chatgpt_auth_json' and auth_lock_run_id is not null;
 
+create table public.codex_device_auth_flows (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  status text not null default 'starting',
+  sandbox_id text not null,
+  command_id text not null,
+  verification_uri text,
+  user_code text,
+  instructions text,
+  error text,
+  encrypted_auth_json text,
+  account_id text,
+  account_email text,
+  auth_cache_last_refresh timestamptz,
+  output_tail text,
+  expires_at timestamptz not null,
+  completed_at timestamptz,
+  canceled_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint codex_device_auth_flows_status_check
+    check (status in ('starting', 'prompted', 'authenticated', 'canceled', 'error', 'expired')),
+  constraint codex_device_auth_flows_auth_json_status_check
+    check (encrypted_auth_json is null or status = 'authenticated')
+);
+
+create index codex_device_auth_flows_user_active_idx
+  on public.codex_device_auth_flows (user_id, expires_at)
+  where status in ('starting', 'prompted', 'authenticated');
+
+create trigger codex_device_auth_flows_touch_updated_at
+before update on public.codex_device_auth_flows
+for each row
+execute function internal.touch_updated_at();
+
+alter table public.codex_device_auth_flows enable row level security;
+revoke all on public.codex_device_auth_flows from anon, authenticated;
+
 create or replace function public.acquire_codex_auth_lease(
   target_user_id uuid,
   target_run_id uuid,
