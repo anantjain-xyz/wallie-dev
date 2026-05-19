@@ -71,7 +71,10 @@ export function SandboxCapabilitySection({
         const body = (await response.json().catch(() => null)) as
           | (SandboxCapabilityCheckLatestResponse & { error?: string })
           | null;
-        if (cancelled || !body?.check) return;
+        if (!response.ok || !body?.check) {
+          throw new Error(body?.error ?? "Capability check polling failed.");
+        }
+        if (cancelled) return;
         const nextCheck = body.check;
         setCheck(nextCheck);
         if (nextCheck.status !== "running") {
@@ -85,8 +88,21 @@ export function SandboxCapabilitySection({
             });
           }
         }
-      } catch {
-        // transient polling failure; let the next tick retry
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Capability check polling failed.";
+        setCheck((currentCheck) =>
+          currentCheck?.status === "running"
+            ? {
+                ...currentCheck,
+                checkedAt: new Date().toISOString(),
+                errorText: message,
+                status: "error",
+              }
+            : currentCheck,
+        );
+        setFlashMessage({ kind: "error", text: message });
+        window.clearInterval(timer);
       }
     }, 2000);
 
@@ -110,9 +126,7 @@ export function SandboxCapabilitySection({
         />
         <button
           className="ui-button-primary"
-          disabled={
-            !canManage || repositoryOptions.length === 0 || runCheck.isBusy || isPolling
-          }
+          disabled={!canManage || repositoryOptions.length === 0 || runCheck.isBusy || isPolling}
           onClick={() => void runCheck.run()}
           type="button"
         >

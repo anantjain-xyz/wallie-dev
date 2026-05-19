@@ -11,6 +11,11 @@ type CommandResult = {
   stdout: string;
 };
 
+type ResultOptions = {
+  allowEmptySuccess?: boolean;
+  emptySuccessDetail?: string;
+};
+
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
 const { chromium } = require("playwright");
 (async () => {
@@ -46,10 +51,20 @@ async function run(sandbox: SandboxHandle, command: string): Promise<CommandResu
   return { code, stderr, stdout };
 }
 
-function result(command: CommandResult, fallback: string): SandboxCapabilityResult {
+function result(
+  command: CommandResult,
+  fallback: string,
+  options: ResultOptions = {},
+): SandboxCapabilityResult {
   const output = (command.stdout || command.stderr).trim().slice(0, 500);
-  const ok = command.code === 0 && output.length > 0;
-  return { detail: output || fallback, ok };
+  if (command.code === 0 && (output.length > 0 || options.allowEmptySuccess)) {
+    return {
+      detail:
+        output || options.emptySuccessDetail || "Command completed successfully with no output.",
+      ok: true,
+    };
+  }
+  return { detail: output || fallback, ok: false };
 }
 
 async function record(
@@ -57,8 +72,9 @@ async function record(
   name: SandboxCapabilityName,
   command: Promise<CommandResult>,
   fallback: string,
+  options?: ResultOptions,
 ) {
-  report[name] = result(await command, fallback);
+  report[name] = result(await command, fallback, options);
 }
 
 export async function probeSandboxCapabilities(input: {
@@ -113,6 +129,10 @@ export async function probeSandboxCapabilities(input: {
       "screenshotSmoke",
       run(sandbox, `node <<'NODE'\n${PLAYWRIGHT_SMOKE_SCRIPT}\nNODE`),
       "playwright screenshot smoke failed",
+      {
+        allowEmptySuccess: true,
+        emptySuccessDetail: "Playwright screenshot smoke passed.",
+      },
     );
   } else {
     report.chromium = { detail: "Skipped because Playwright package is unavailable.", ok: false };
