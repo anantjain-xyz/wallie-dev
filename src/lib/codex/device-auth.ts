@@ -1,6 +1,10 @@
 import "server-only";
 
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { Sandbox } from "@vercel/sandbox";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -15,8 +19,10 @@ const FLOW_TTL_MS = 10 * 60_000;
 const PROMPT_WAIT_MS = 2_500;
 const POLL_WAIT_MS = 750;
 const MAX_OUTPUT_CHARS = 4_000;
-const CODEX_HOME = "/vercel/sandbox/.codex";
-const CODEX_AUTH_FILE = `${CODEX_HOME}/auth.json`;
+const VERCEL_CODEX_HOME = "/vercel/sandbox/.codex";
+const VERCEL_SANDBOX_CWD = "/vercel/sandbox";
+const CODEX_AUTH_FILE = `${VERCEL_CODEX_HOME}/auth.json`;
+const LOCAL_SANDBOX_PREFIX = "local:";
 
 export type CodexDeviceAuthStatus =
   | "starting"
@@ -38,11 +44,45 @@ export interface CodexDeviceAuthSnapshot {
 
 type AdminClient = SupabaseClient<Database>;
 type FlowRow = Database["public"]["Tables"]["codex_device_auth_flows"]["Row"];
+type AuthCommandLog = { data: string };
+
+interface AuthCommand {
+  readonly exitCode: number | null;
+  logs(input?: { signal?: AbortSignal }): AsyncIterable<AuthCommandLog>;
+  output(stream: "both"): Promise<string>;
+}
+
+interface StartedAuthCommand extends AuthCommand {
+  readonly cmdId: string;
+}
+
+interface AuthSandbox {
+  readonly sandboxId: string;
+  getCommand(commandId: string): Promise<AuthCommand>;
+  readFileToBuffer(input: { path: string }): Promise<Buffer | null>;
+  runCommand(input: {
+    args: string[];
+    cmd: string;
+    cwd: string;
+    detached: boolean;
+    env: Record<string, string>;
+  }): Promise<StartedAuthCommand>;
+  stop(): Promise<void>;
+}
+
+interface AuthSandboxSession {
+  codexHome: string;
+  cwd: string;
+  installCodex: boolean;
+  sandbox: AuthSandbox;
+}
 
 const ACTIVE_FLOW_STATUSES: CodexDeviceAuthStatus[] = ["starting", "prompted", "authenticated"];
 const CANCELABLE_FLOW_STATUSES: CodexDeviceAuthStatus[] = ["starting", "prompted"];
 const FLOW_SELECT =
   "id, user_id, status, sandbox_id, command_id, verification_uri, user_code, instructions, error, encrypted_auth_json, account_id, account_email, auth_cache_last_refresh, output_tail, expires_at, completed_at, canceled_at, created_at, updated_at";
+
+const localSandboxes = new Map<string, LocalAuthSandbox>();
 
 export async function startCodexDeviceAuthFlow(input: {
   userId: string;
@@ -53,16 +93,17 @@ export async function startCodexDeviceAuthFlow(input: {
 
   const flowId = randomUUID();
   const expiresAt = new Date(Date.now() + FLOW_TTL_MS).toISOString();
-  let sandbox: Sandbox | null = null;
+  let sandbox: AuthSandbox | null = null;
 
   try {
-    sandbox = await createAuthSandbox();
+    const session = await createAuthSandbox();
+    sandbox = session.sandbox;
     const command = await sandbox.runCommand({
-      args: ["-lc", codexDeviceLoginCommand()],
+      args: ["-lc", codexDeviceLoginCommand(session)],
       cmd: "bash",
-      cwd: "/vercel/sandbox",
+      cwd: session.cwd,
       detached: true,
-      env: { CI: "1", CODEX_HOME },
+      env: { CI: "1", CODEX_HOME: session.codexHome },
     });
 
     const { data, error } = await admin
@@ -90,7 +131,7 @@ export async function startCodexDeviceAuthFlow(input: {
     }
 
     return {
-      error: error instanceof Error ? error.message : "Failed to start Codex sign-in.",
+      error: errorMessage(error, "Failed to start Codex sign-in."),
       expiresAt,
       flowId,
       instructions: null,
@@ -266,7 +307,7 @@ async function refreshFlowFromSandbox(
 
     const updated = await markFlowTerminal(admin, row, {
       encrypted_auth_json: null,
-      error: error instanceof Error ? error.message : "Failed to read Codex sign-in status.",
+      error: errorMessage(error, "Failed to read Codex sign-in status."),
       status: "error",
     });
     await stopSandboxQuietly(row.sandbox_id);
@@ -369,21 +410,48 @@ function snapshotFromRow(row: FlowRow): CodexDeviceAuthSnapshot {
   };
 }
 
-async function createAuthSandbox(): Promise<Sandbox> {
-  return Sandbox.create({
+async function createAuthSandbox(): Promise<AuthSandboxSession> {
+  if (shouldUseLocalAuthSandbox()) {
+    const cwd = await mkdtemp(join(tmpdir(), "wallie-codex-auth-"));
+    const sandbox = new LocalAuthSandbox(`${LOCAL_SANDBOX_PREFIX}${randomUUID()}`, cwd);
+    localSandboxes.set(sandbox.sandboxId, sandbox);
+    return {
+      codexHome: join(cwd, ".codex"),
+      cwd,
+      installCodex: false,
+      sandbox,
+    };
+  }
+
+  const sandbox = await Sandbox.create({
     ...resolveVercelCredentials(),
-    env: { CI: "1", CODEX_HOME },
+    env: { CI: "1", CODEX_HOME: VERCEL_CODEX_HOME },
     resources: { vcpus: 1 },
     runtime: "node22",
     timeout: FLOW_TTL_MS + 60_000,
   });
+
+  return {
+    codexHome: VERCEL_CODEX_HOME,
+    cwd: VERCEL_SANDBOX_CWD,
+    installCodex: true,
+    sandbox: sandbox as unknown as AuthSandbox,
+  };
 }
 
-async function getAuthSandbox(sandboxId: string): Promise<Sandbox> {
+async function getAuthSandbox(sandboxId: string): Promise<AuthSandbox> {
+  if (sandboxId.startsWith(LOCAL_SANDBOX_PREFIX)) {
+    const sandbox = localSandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error("Local Codex sign-in process is no longer running. Start sign-in again.");
+    }
+    return sandbox;
+  }
+
   return Sandbox.get({
     ...resolveVercelCredentials(),
     sandboxId,
-  });
+  }) as unknown as AuthSandbox;
 }
 
 async function stopSandboxQuietly(sandboxId: string): Promise<void> {
@@ -395,21 +463,25 @@ async function stopSandboxQuietly(sandboxId: string): Promise<void> {
   }
 }
 
-function codexDeviceLoginCommand(): string {
+function codexDeviceLoginCommand(
+  session: Pick<AuthSandboxSession, "codexHome" | "installCodex">,
+): string {
+  const codexCommand = session.installCodex
+    ? "codex"
+    : "npm exec --yes --package @openai/codex -- codex";
   const script = [
     "set -euo pipefail",
-    `export CODEX_HOME=${shellQuote(CODEX_HOME)}`,
+    `export CODEX_HOME=${shellQuote(session.codexHome)}`,
     'mkdir -p "$CODEX_HOME"',
-    "npm install -g @openai/codex >/tmp/wallie-codex-install.log 2>&1",
-    `codex login --device-auth -c ${shellQuote('cli_auth_credentials_store="file"')}`,
+    ...(session.installCodex
+      ? ["npm install -g @openai/codex >/tmp/wallie-codex-install.log 2>&1"]
+      : []),
+    `${codexCommand} login --device-auth -c ${shellQuote('cli_auth_credentials_store="file"')}`,
   ].join(" && ");
   return script;
 }
 
-async function readCommandOutput(
-  command: Awaited<ReturnType<Sandbox["getCommand"]>>,
-  timeoutMs: number,
-): Promise<string> {
+async function readCommandOutput(command: AuthCommand, timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let output = "";
@@ -427,10 +499,7 @@ async function readCommandOutput(
   return output;
 }
 
-async function readFinishedCommandOutput(
-  command: Awaited<ReturnType<Sandbox["getCommand"]>>,
-  fallback: string,
-): Promise<string> {
+async function readFinishedCommandOutput(command: AuthCommand, fallback: string): Promise<string> {
   try {
     return limitOutput(await command.output("both"));
   } catch {
@@ -490,6 +559,14 @@ function isAbortLikeError(error: unknown): boolean {
   );
 }
 
+function shouldUseLocalAuthSandbox(): boolean {
+  const mode = process.env.CODEX_DEVICE_AUTH_MODE;
+  if (mode === "local") return true;
+  if (mode === "vercel") return false;
+
+  return process.env.NODE_ENV === "development";
+}
+
 function resolveVercelCredentials():
   | { token: string; teamId: string; projectId: string }
   | Record<string, never> {
@@ -498,6 +575,187 @@ function resolveVercelCredentials():
   const projectId = process.env.VERCEL_PROJECT_ID;
   if (token && teamId && projectId) return { token, teamId, projectId };
   return {};
+}
+
+class LocalAuthSandbox implements AuthSandbox {
+  private readonly commands = new Map<string, LocalAuthCommand>();
+  readonly codexHome: string;
+
+  constructor(
+    readonly sandboxId: string,
+    readonly cwd: string,
+  ) {
+    this.codexHome = join(cwd, ".codex");
+  }
+
+  async runCommand(input: {
+    args: string[];
+    cmd: string;
+    cwd: string;
+    detached: boolean;
+    env: Record<string, string>;
+  }): Promise<StartedAuthCommand> {
+    const command = new LocalAuthCommand(randomUUID(), input);
+    this.commands.set(command.cmdId, command);
+    command.start();
+    return command;
+  }
+
+  async getCommand(commandId: string): Promise<AuthCommand> {
+    const command = this.commands.get(commandId);
+    if (!command) {
+      throw new Error("Local Codex sign-in process is no longer running. Start sign-in again.");
+    }
+    return command;
+  }
+
+  async readFileToBuffer(): Promise<Buffer | null> {
+    try {
+      return await readFile(join(this.codexHome, "auth.json"));
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  async stop(): Promise<void> {
+    for (const command of this.commands.values()) {
+      command.stop();
+    }
+    this.commands.clear();
+    localSandboxes.delete(this.sandboxId);
+    await rm(this.cwd, { force: true, recursive: true });
+  }
+}
+
+class LocalAuthCommand implements StartedAuthCommand {
+  private child: ReturnType<typeof spawn> | null = null;
+  private readonly chunks: string[] = [];
+  private readonly listeners = new Set<() => void>();
+  exitCode: number | null = null;
+
+  constructor(
+    readonly cmdId: string,
+    private readonly input: {
+      args: string[];
+      cmd: string;
+      cwd: string;
+      detached: boolean;
+      env: Record<string, string>;
+    },
+  ) {}
+
+  start(): void {
+    const child = spawn(this.input.cmd, this.input.args, {
+      cwd: this.input.cwd,
+      detached: this.input.detached,
+      env: { ...process.env, ...this.input.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    this.child = child;
+
+    if (!child.stdout || !child.stderr) {
+      throw new Error("Failed to capture local Codex sign-in output.");
+    }
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => this.append(String(chunk)));
+    child.stderr.on("data", (chunk) => this.append(String(chunk)));
+    child.on("error", (error) => {
+      this.append(error.message);
+      this.exitCode = 1;
+      this.notify();
+    });
+    child.on("close", (code) => {
+      this.exitCode = code ?? 1;
+      this.notify();
+    });
+    if (this.input.detached) {
+      child.unref();
+    }
+  }
+
+  async *logs(input?: { signal?: AbortSignal }): AsyncIterable<AuthCommandLog> {
+    if (this.chunks.length === 0 && this.exitCode === null) {
+      await this.waitForChunk(input?.signal);
+    }
+
+    for (const chunk of this.chunks) {
+      yield { data: chunk };
+    }
+  }
+
+  async output(): Promise<string> {
+    return limitOutput(this.chunks.join(""));
+  }
+
+  stop(): void {
+    if (!this.child || this.exitCode !== null) return;
+    try {
+      if (this.child.pid && this.input.detached) {
+        process.kill(-this.child.pid, "SIGTERM");
+      } else {
+        this.child.kill("SIGTERM");
+      }
+    } catch {
+      try {
+        this.child.kill("SIGTERM");
+      } catch {
+        // The local Codex process may have already exited.
+      }
+    }
+  }
+
+  private append(chunk: string): void {
+    this.chunks.push(chunk);
+    this.notify();
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      listener();
+    }
+    this.listeners.clear();
+  }
+
+  private waitForChunk(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(abortError());
+
+    return new Promise((resolve, reject) => {
+      const onSignal = () => {
+        cleanup();
+        reject(abortError());
+      };
+      const onChunk = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        this.listeners.delete(onChunk);
+        signal?.removeEventListener("abort", onSignal);
+      };
+
+      this.listeners.add(onChunk);
+      signal?.addEventListener("abort", onSignal, { once: true });
+    });
+  }
+}
+
+function abortError(): Error {
+  const error = new Error("The Codex sign-in log read was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string" && error.trim().length > 0) return error;
+  return fallback;
 }
 
 function shellQuote(s: string): string {

@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -7,10 +9,15 @@ const mocked = vi.hoisted(() => ({
   randomUUID: vi.fn(() => "00000000-0000-0000-0000-000000000123"),
   sandboxCreate: vi.fn(),
   sandboxGet: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 vi.mock("node:crypto", () => ({
   randomUUID: mocked.randomUUID,
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: mocked.spawn,
 }));
 
 vi.mock("@vercel/sandbox", () => ({
@@ -180,9 +187,23 @@ function filtered(rows: FlowRow[], filters: Array<(row: FlowRow) => boolean>): F
   return rows.filter((row) => filters.every((filter) => filter(row)));
 }
 
+function fakeChildProcess() {
+  const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+  const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+  const child = Object.assign(new EventEmitter(), {
+    kill: vi.fn(),
+    pid: 12345,
+    stderr,
+    stdout,
+    unref: vi.fn(),
+  });
+  return { child, stderr, stdout };
+}
+
 describe("Codex device auth", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.CODEX_DEVICE_AUTH_MODE;
     delete process.env.VERCEL_TOKEN;
     delete process.env.VERCEL_TEAM_ID;
     delete process.env.VERCEL_PROJECT_ID;
@@ -237,6 +258,45 @@ describe("Codex device auth", () => {
       status: "prompted",
       user_id: "user-1",
     });
+  });
+
+  it("starts local development auth without a Vercel Sandbox", async () => {
+    process.env.CODEX_DEVICE_AUTH_MODE = "local";
+    const rows: FlowRow[] = [];
+    const admin = buildAdminMock(rows);
+    const child = fakeChildProcess();
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.spawn.mockImplementation(() => {
+      setTimeout(() => {
+        child.stdout.emit("data", "Open https://chatgpt.com/activate and enter code WXYZ-1234\n");
+      }, 0);
+      return child.child;
+    });
+
+    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+
+    expect(snapshot).toMatchObject({
+      status: "prompted",
+      userCode: "WXYZ-1234",
+      verificationUri: "https://chatgpt.com/activate",
+    });
+    expect(mocked.sandboxCreate).not.toHaveBeenCalled();
+    expect(mocked.spawn).toHaveBeenCalledWith(
+      "bash",
+      [
+        "-lc",
+        expect.stringContaining(
+          "npm exec --yes --package @openai/codex -- codex login --device-auth",
+        ),
+      ],
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({
+          CODEX_HOME: expect.stringContaining(".codex"),
+        }),
+      }),
+    );
+    expect(rows[0]?.sandbox_id).toMatch(/^local:/);
   });
 
   it("persists completed auth JSON durably and deletes the flow after it is consumed", async () => {
