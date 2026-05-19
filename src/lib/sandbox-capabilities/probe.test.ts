@@ -71,6 +71,28 @@ describe("probeSandboxCapabilities", () => {
     expect(report.screenshotSmoke.ok).toBe(false);
   });
 
+  it("allows screenshot smoke success without output", async () => {
+    const sandbox = new FakeSandbox();
+    scriptBaseSuccess(sandbox);
+    sandbox.scriptExec(
+      (call) => call.args.join(" ").includes("require.resolve('playwright')"),
+      [{ data: "1.56.0\n", stream: "stdout" }],
+    );
+    sandbox.scriptExec(
+      (call) => call.args.join(" ").includes("npx playwright install chromium"),
+      [{ data: "chromium ready\n", stream: "stdout" }],
+    );
+    sandbox.scriptExec((call) => call.args.join(" ").includes("Wallie screenshot smoke"), []);
+
+    const report = await probeSandboxCapabilities({
+      agentProvider: "claude-code",
+      sandbox,
+    });
+
+    expect(report.screenshotSmoke.ok).toBe(true);
+    expect(report.screenshotSmoke.detail).toBe("Playwright screenshot smoke passed.");
+  });
+
   it("treats exit-zero with empty output as failure", async () => {
     const sandbox = new FakeSandbox();
 
