@@ -42,12 +42,22 @@ async function run(sandbox: SandboxHandle, command: string): Promise<CommandResu
     if (log.stream === "stdout") stdout += log.data;
     if (log.stream === "stderr") stderr += log.data;
   }
-  return { code: await proc.exitCode, stderr, stdout };
+  const code = await proc.exitCode;
+  console.info("[sandbox-capability-probe]", {
+    code,
+    command: command.slice(0, 200),
+    stderrLen: stderr.length,
+    stderrPreview: stderr.slice(0, 200),
+    stdoutLen: stdout.length,
+    stdoutPreview: stdout.slice(0, 200),
+  });
+  return { code, stderr, stdout };
 }
 
 function result(command: CommandResult, fallback: string): SandboxCapabilityResult {
-  const detail = (command.stdout || command.stderr).trim().slice(0, 500) || fallback;
-  return { detail, ok: command.code === 0 };
+  const output = (command.stdout || command.stderr).trim().slice(0, 500);
+  const ok = command.code === 0 && output.length > 0;
+  return { detail: output || fallback, ok };
 }
 
 async function record(

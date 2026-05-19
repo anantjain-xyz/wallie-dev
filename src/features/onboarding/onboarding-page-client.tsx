@@ -1561,7 +1561,6 @@ function VerifyStep({
   const [check, setCheck] = useState(data.setupHealth.latestSandboxCapabilityCheck);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
   const primaryRepositoryId = data.setupHealth.primaryRepositoryProfile.repositoryId;
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
@@ -1575,12 +1574,6 @@ function VerifyStep({
   const isPolling = check?.status === "running";
   const canRunCapabilityCheck =
     data.canManage && Boolean(primaryRepositoryId) && busyAction === null && !isPolling;
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!data.canManage || !primaryRepositoryId || check?.status !== "running") return;
@@ -1640,17 +1633,12 @@ function VerifyStep({
       if (!response.ok || !body) {
         throw new Error(body?.error ?? "Sandbox capability check failed.");
       }
-      if (!mountedRef.current) return;
       setCheck(body.check);
       onDataChange((currentData) => updateSandboxCapabilityCheckInData(currentData, body.check));
     } catch (error) {
-      if (mountedRef.current) {
-        setVerifyError(error instanceof Error ? error.message : "Sandbox capability check failed.");
-      }
+      setVerifyError(error instanceof Error ? error.message : "Sandbox capability check failed.");
     } finally {
-      if (mountedRef.current) {
-        setBusyAction(null);
-      }
+      setBusyAction(null);
     }
   }
 

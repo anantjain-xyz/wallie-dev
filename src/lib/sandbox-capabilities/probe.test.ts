@@ -71,6 +71,23 @@ describe("probeSandboxCapabilities", () => {
     expect(report.screenshotSmoke.ok).toBe(false);
   });
 
+  it("treats exit-zero with empty output as failure", async () => {
+    const sandbox = new FakeSandbox();
+
+    const report = await probeSandboxCapabilities({
+      agentProvider: "claude-code",
+      bootstrapPlaywright: false,
+      sandbox,
+    });
+
+    expect(report.git.ok).toBe(false);
+    expect(report.git.detail).toBe("git not found");
+    expect(report.node.ok).toBe(false);
+    expect(report.node.detail).toBe("node not found");
+    expect(report.packageManager.ok).toBe(false);
+    expect(report.agentCli.ok).toBe(false);
+  });
+
   it("bootstraps Playwright when the package is initially missing", async () => {
     const sandbox = new FakeSandbox();
     scriptBaseSuccess(sandbox);
