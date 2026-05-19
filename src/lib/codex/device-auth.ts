@@ -91,7 +91,8 @@ export async function startCodexDeviceAuthFlow(input: {
 }): Promise<CodexDeviceAuthSnapshot> {
   const admin = createSupabaseAdminClient();
   await expireStaleUserFlows(admin, input.userId);
-  await cancelActiveUserFlows(admin, input.userId);
+  const completedFlow = await cancelActiveUserFlows(admin, input.userId);
+  if (completedFlow) return completedFlow;
 
   const flowId = randomUUID();
   const expiresAt = new Date(Date.now() + FLOW_TTL_MS).toISOString();
@@ -358,7 +359,10 @@ async function expireStaleUserFlows(admin: AdminClient, userId: string): Promise
   }
 }
 
-async function cancelActiveUserFlows(admin: AdminClient, userId: string): Promise<void> {
+async function cancelActiveUserFlows(
+  admin: AdminClient,
+  userId: string,
+): Promise<CodexDeviceAuthSnapshot | null> {
   const { data, error } = await admin
     .from("codex_device_auth_flows")
     .select(FLOW_SELECT)
@@ -367,14 +371,34 @@ async function cancelActiveUserFlows(admin: AdminClient, userId: string): Promis
   if (error) throw error;
 
   for (const row of data ?? []) {
-    await markFlowTerminal(admin, row, {
+    const refreshed = await refreshFlowFromSandbox(admin, row, {
+      waitMs: COMMAND_STATUS_WAIT_MS,
+    });
+    if (refreshed.status === "authenticated") {
+      return refreshed;
+    }
+    if (!CANCELABLE_FLOW_STATUSES.includes(refreshed.status)) {
+      continue;
+    }
+
+    const cancellableRow = await getFlowRow(admin, { flowId: row.id, userId: row.user_id });
+    if (
+      !cancellableRow ||
+      !CANCELABLE_FLOW_STATUSES.includes(cancellableRow.status as CodexDeviceAuthStatus)
+    ) {
+      continue;
+    }
+
+    await markFlowTerminal(admin, cancellableRow, {
       canceled_at: new Date().toISOString(),
       encrypted_auth_json: null,
       error: null,
       status: "canceled",
     });
-    await stopSandboxQuietly(row.sandbox_id);
+    await stopSandboxQuietly(cancellableRow.sandbox_id);
   }
+
+  return null;
 }
 
 async function expireFlow(admin: AdminClient, row: FlowRow): Promise<CodexDeviceAuthSnapshot> {

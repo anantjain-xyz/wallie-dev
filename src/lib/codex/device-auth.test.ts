@@ -504,6 +504,52 @@ describe("Codex device auth", () => {
     });
   });
 
+  it("returns a completed active flow instead of bulk-canceling it when starting another sign-in", async () => {
+    const rows: FlowRow[] = [
+      buildFlowRow({
+        instructions: "Open https://chatgpt.com/activate and enter code ABCD-EFGH",
+        status: "prompted",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://chatgpt.com/activate",
+      }),
+    ];
+    const authJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      last_refresh: "2026-05-19T00:00:00.000Z",
+      tokens: {
+        access_token: "access-token-value-1234567890",
+        refresh_token: "refresh-token-value-1234567890",
+      },
+    });
+    const command = new FakeCommand();
+    command.exitCode = null;
+    const finished = new FakeCommand();
+    finished.exitCode = 0;
+    finished.outputText = "Open https://chatgpt.com/activate and enter code ABCD-EFGH\n";
+    command.waitResult = finished;
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      readFileToBuffer: vi.fn().mockResolvedValue(Buffer.from(authJson, "utf8")),
+      sandboxId: "sandbox-1",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+
+    expect(snapshot).toMatchObject({
+      flowId: "00000000-0000-0000-0000-000000000123",
+      status: "authenticated",
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      encrypted_auth_json: `encrypted:${authJson}`,
+      status: "authenticated",
+    });
+    expect(mocked.sandboxCreate).not.toHaveBeenCalled();
+  });
+
   it("expires unconsumed authenticated flows after their TTL", async () => {
     const rows: FlowRow[] = [
       buildFlowRow({

@@ -43,7 +43,7 @@ describe("CodexRunner", () => {
     ).rejects.toThrow(/requires a sandbox/);
   });
 
-  it("runs with a Codex access token from the environment", async () => {
+  it("logs in with a Codex access token before running exec", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
       (c) => c.cmd === "bash",
@@ -79,11 +79,15 @@ describe("CodexRunner", () => {
     expect(await sandbox.readFile("/vercel/sandbox/.codex/auth.json")).toBeNull();
     expect(await sandbox.readFile("/vercel/sandbox/.wallie-prompt.txt")).toBe("Hello Codex");
 
-    // CLI invocation uses bash -lc to redirect the prompt file as stdin.
+    // CLI invocation uses bash -lc to log in, then redirect the prompt file as stdin.
     expect(sandbox.calls).toHaveLength(1);
     const [call] = sandbox.calls;
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
+    expect(call.args[1]).toContain("mkdir -p '/vercel/sandbox/.codex'");
+    expect(call.args[1]).toContain(
+      `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token -c 'cli_auth_credentials_store="file"' >/dev/stderr`,
+    );
     expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.5'");
     expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
     expect(call.args[1]).toContain(`'-c' 'cli_auth_credentials_store="file"'`);

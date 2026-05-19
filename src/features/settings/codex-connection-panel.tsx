@@ -132,10 +132,14 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
       if (!response.ok || !data) {
         throw new Error(data?.error ?? `Sign-in start failed (${response.status}).`);
       }
-      setDeviceFlow(data);
       if (data.status === "error") {
         throw new Error(data.error ?? "Codex sign-in could not start.");
       }
+      if (data.status === "authenticated") {
+        await pollDeviceFlow(data.flowId);
+        return;
+      }
+      setDeviceFlow(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start Codex sign-in.");
     } finally {
@@ -158,6 +162,27 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const cancelDeviceFlowQuietly = useCallback(async (flowId: string) => {
+    try {
+      await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(flowId)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      // Leaving ChatGPT mode should stop local polling even if backend cleanup fails.
+    }
+  }, []);
+
+  const handleCredentialTypeChange = (type: CodexCredentialType) => {
+    if (type !== "chatgpt_auth_json" && deviceFlow) {
+      const flowId = deviceFlow.flowId;
+      setDeviceFlow(null);
+      void cancelDeviceFlowQuietly(flowId);
+    }
+    setCredentialType(type);
+    setError(null);
+    setNotice(null);
   };
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
@@ -272,11 +297,7 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
             }`}
             disabled={isBusy}
             key={type}
-            onClick={() => {
-              setCredentialType(type);
-              setError(null);
-              setNotice(null);
-            }}
+            onClick={() => handleCredentialTypeChange(type)}
             type="button"
           >
             {codexCredentialTypeLabel(type)}

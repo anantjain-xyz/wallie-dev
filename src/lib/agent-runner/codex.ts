@@ -58,7 +58,7 @@ export class CodexRunner implements AgentRunner {
 
     await sandbox.writeFile(PROMPT_FILE, input.prompt);
 
-    const shellCmd = codexExecCommand(model);
+    const shellCmd = codexCommandForCredential(model, this.options.credential);
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
@@ -276,6 +276,20 @@ function codexCredentialEnv(credential: CodexCredential): Record<string, string>
     case "platform_api_key":
       return { CODEX_API_KEY: credential.secret, OPENAI_API_KEY: credential.secret };
   }
+}
+
+function codexCommandForCredential(model: string, credential: CodexCredential): string {
+  if (credential.type !== "codex_access_token") {
+    return codexExecCommand(model);
+  }
+
+  const loginCommand = [
+    `mkdir -p ${shellQuote(CODEX_HOME)}`,
+    `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token -c ${shellQuote(
+      `cli_auth_credentials_store="file"`,
+    )} >/dev/stderr`,
+  ].join(" && ");
+  return `${loginCommand} && ${codexExecCommand(model)}`;
 }
 
 async function persistRefreshedChatGptAuthJson(input: {
