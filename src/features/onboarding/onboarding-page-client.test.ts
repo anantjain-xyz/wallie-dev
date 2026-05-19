@@ -663,7 +663,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("lin_api_plaintext");
   });
 
-  it("separates repository env suggestions from codex runtime credentials", () => {
+  it("renders provider access and repository env suggestions without a runtime credentials card", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
@@ -684,13 +684,16 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html).toContain("Runtime credentials");
     expect(html).toContain("Provider access");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
+    expect(html.indexOf("Concurrency")).toBeLessThan(html.indexOf("Provider access"));
+    expect(html.indexOf("Stall timeout")).toBeLessThan(html.indexOf("Provider access"));
+    expect(html.indexOf("Max retries")).toBeLessThan(html.indexOf("Provider access"));
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
-    expect(html).toContain("No encrypted workspace secret is required for the selected codex");
+    expect(html).not.toContain("Runtime credentials");
+    expect(html).not.toContain("No encrypted workspace secret is required");
     expect(html).toContain("Repository environment variables");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("VERCEL_GITHUB_APP_PRIVATE_KEY_BASE64");
@@ -784,9 +787,8 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("Provider access");
     expect(html).toContain("Claude Code account connection is not managed in Wallie yet");
-    expect(html).toContain(
-      "No encrypted workspace secret is required for the selected claude-code",
-    );
+    expect(html).not.toContain("Runtime credentials");
+    expect(html).not.toContain("No encrypted workspace secret is required");
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
     expect(html).not.toContain("Anthropic API key");
