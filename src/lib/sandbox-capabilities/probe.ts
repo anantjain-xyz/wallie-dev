@@ -11,6 +11,11 @@ type CommandResult = {
   stdout: string;
 };
 
+type ResultOptions = {
+  allowEmptySuccess?: boolean;
+  emptySuccessDetail?: string;
+};
+
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
 const { chromium } = require("playwright");
 (async () => {
@@ -42,12 +47,32 @@ async function run(sandbox: SandboxHandle, command: string): Promise<CommandResu
     if (log.stream === "stdout") stdout += log.data;
     if (log.stream === "stderr") stderr += log.data;
   }
-  return { code: await proc.exitCode, stderr, stdout };
+  const code = await proc.exitCode;
+  console.info("[sandbox-capability-probe]", {
+    code,
+    command: command.slice(0, 200),
+    stderrLen: stderr.length,
+    stderrPreview: stderr.slice(0, 200),
+    stdoutLen: stdout.length,
+    stdoutPreview: stdout.slice(0, 200),
+  });
+  return { code, stderr, stdout };
 }
 
-function result(command: CommandResult, fallback: string): SandboxCapabilityResult {
-  const detail = (command.stdout || command.stderr).trim().slice(0, 500) || fallback;
-  return { detail, ok: command.code === 0 };
+function result(
+  command: CommandResult,
+  fallback: string,
+  options: ResultOptions = {},
+): SandboxCapabilityResult {
+  const output = (command.stdout || command.stderr).trim().slice(0, 500);
+  if (command.code === 0 && (output.length > 0 || options.allowEmptySuccess)) {
+    return {
+      detail:
+        output || options.emptySuccessDetail || "Command completed successfully with no output.",
+      ok: true,
+    };
+  }
+  return { detail: output || fallback, ok: false };
 }
 
 async function record(
@@ -55,8 +80,9 @@ async function record(
   name: SandboxCapabilityName,
   command: Promise<CommandResult>,
   fallback: string,
+  options?: ResultOptions,
 ) {
-  report[name] = result(await command, fallback);
+  report[name] = result(await command, fallback, options);
 }
 
 export async function probeSandboxCapabilities(input: {
@@ -111,6 +137,10 @@ export async function probeSandboxCapabilities(input: {
       "screenshotSmoke",
       run(sandbox, `node <<'NODE'\n${PLAYWRIGHT_SMOKE_SCRIPT}\nNODE`),
       "playwright screenshot smoke failed",
+      {
+        allowEmptySuccess: true,
+        emptySuccessDetail: "Playwright screenshot smoke passed.",
+      },
     );
   } else {
     report.chromium = { detail: "Skipped because Playwright package is unavailable.", ok: false };

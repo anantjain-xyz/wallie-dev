@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
-import type { SandboxCapabilityCheckResponse } from "@/lib/sandbox-capabilities/contracts";
+import type {
+  SandboxCapabilityCheckLatestResponse,
+  SandboxCapabilityCheckResponse,
+} from "@/lib/sandbox-capabilities/contracts";
 
 type SandboxCapabilitySectionProps = {
   canManage: boolean;
@@ -53,6 +56,62 @@ export function SandboxCapabilitySection({
           : "Sandbox capability check finished with failures.",
   });
 
+  const isPolling = check?.status === "running";
+
+  useEffect(() => {
+    if (!isPolling || !check?.githubRepositoryId) return;
+    const repositoryId = check.githubRepositoryId;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(
+          `/api/workspaces/${workspaceId}/sandbox-capability-check?repositoryId=${encodeURIComponent(repositoryId)}`,
+          { cache: "no-store" },
+        );
+        const body = (await response.json().catch(() => null)) as
+          | (SandboxCapabilityCheckLatestResponse & { error?: string })
+          | null;
+        if (!response.ok || !body?.check) {
+          throw new Error(body?.error ?? "Capability check polling failed.");
+        }
+        if (cancelled) return;
+        const nextCheck = body.check;
+        setCheck(nextCheck);
+        if (nextCheck.status !== "running") {
+          window.clearInterval(timer);
+          if (nextCheck.status === "success") {
+            setFlashMessage({ kind: "success", text: "Sandbox capability check passed." });
+          } else if (nextCheck.status === "error") {
+            setFlashMessage({
+              kind: "error",
+              text: "Sandbox capability check finished with failures.",
+            });
+          }
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Capability check polling failed.";
+        setCheck((currentCheck) =>
+          currentCheck?.status === "running"
+            ? {
+                ...currentCheck,
+                checkedAt: new Date().toISOString(),
+                errorText: message,
+                status: "error",
+              }
+            : currentCheck,
+        );
+        setFlashMessage({ kind: "error", text: message });
+        window.clearInterval(timer);
+      }
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [check?.githubRepositoryId, isPolling, setFlashMessage, workspaceId]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3">
@@ -67,11 +126,11 @@ export function SandboxCapabilitySection({
         />
         <button
           className="ui-button-primary"
-          disabled={!canManage || repositoryOptions.length === 0 || runCheck.isBusy}
+          disabled={!canManage || repositoryOptions.length === 0 || runCheck.isBusy || isPolling}
           onClick={() => void runCheck.run()}
           type="button"
         >
-          {runCheck.isBusy ? "Checking…" : "Run capability check"}
+          {runCheck.isBusy ? "Starting…" : isPolling ? "Checking…" : "Run capability check"}
         </button>
       </div>
 
