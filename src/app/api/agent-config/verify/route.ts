@@ -147,12 +147,12 @@ async function verifyCodex(
     );
   }
 
-  if (credential.type === "codex_access_token") {
+  if (credential.type === "codex_access_token" || credential.type === "chatgpt_auth_json") {
     return NextResponse.json(
       {
         ok: "skipped",
         reason:
-          "Codex access tokens are verified by the Codex CLI inside the per-session sandbox when a pipeline run starts.",
+          "Codex subscription/access-token credentials are verified by the Codex CLI inside the per-session sandbox when a pipeline run starts.",
       } satisfies VerifyAgentConfigResponse,
       { status: 200 },
     );

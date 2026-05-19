@@ -77,6 +77,7 @@ vi.mock("@/lib/codex/tokens", () => ({
       this.name = "CodexNotConnectedError";
     }
   },
+  createCodexChatGptAuthStore: vi.fn(() => ({})),
   getCodexCredentialForSession: mocked.getCodexCredentialForSession,
 }));
 

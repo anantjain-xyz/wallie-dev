@@ -13,7 +13,12 @@ import {
   ClaudeCodeNotConnectedError,
   getClaudeCodeCredentialForSession,
 } from "@/lib/claude-code/tokens";
-import { CodexNotConnectedError, getCodexCredentialForSession } from "@/lib/codex/tokens";
+import { isCodexAuthLeaseBusyError } from "@/lib/codex/contracts";
+import {
+  createCodexChatGptAuthStore,
+  CodexNotConnectedError,
+  getCodexCredentialForSession,
+} from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
@@ -183,6 +188,7 @@ async function runStage(input: {
     for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,
+      runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
       sessionId: session.id,
     })) {
@@ -256,6 +262,13 @@ async function runStage(input: {
     if (runId) {
       await markRunError(admin, runId);
     }
+
+    if (isCodexAuthLeaseBusyError(error)) {
+      await updateSessionStatus(admin, session.id, session.phase_status);
+      await deferPipelineJob(admin, job, error.message);
+      return { jobId: job.id, processed: true, result: "idle", runId };
+    }
+
     if (artifactInserted) {
       // Compensate: drop the orphan so the next retry doesn't hit the
       // (session_id, stage_slug, version) unique constraint.
@@ -522,7 +535,11 @@ async function resolveAgentRunner(input: {
       const credential = await getCodexCredentialForSession(input.admin, input.session);
       return {
         runner: createAgentRunner("codex", {
-          codex: { credential, model: input.model },
+          codex: {
+            chatGptAuthStore: createCodexChatGptAuthStore(input.admin),
+            credential,
+            model: input.model,
+          },
         }),
       };
     } catch (error) {
@@ -785,4 +802,23 @@ async function markPipelineJobError(
       status: "error",
     })
     .eq("id", job.id);
+}
+
+async function deferPipelineJob(
+  admin: AdminClient,
+  job: Tables<"agent_jobs">,
+  message: string,
+): Promise<void> {
+  const { error: retryError } = await admin.rpc("schedule_job_retry", {
+    target_job_id: job.id,
+    base_delay_ms: 15000,
+    max_backoff_ms: 120000,
+  });
+
+  if (!retryError) {
+    await admin.from("agent_jobs").update({ last_error: message }).eq("id", job.id);
+    return;
+  }
+
+  await markPipelineJobError(admin, job, message);
 }

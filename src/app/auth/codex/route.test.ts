@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
   resolveAuthenticatedSettingsPath: vi.fn(),
+  startCodexDeviceAuthFlow: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -23,6 +24,10 @@ vi.mock("@/lib/auth", async () => {
   };
 });
 
+vi.mock("@/lib/codex/device-auth", () => ({
+  startCodexDeviceAuthFlow: mocked.startCodexDeviceAuthFlow,
+}));
+
 import { GET } from "@/app/auth/codex/route";
 
 describe("GET /auth/codex", () => {
@@ -30,6 +35,15 @@ describe("GET /auth/codex", () => {
     mocked.createSupabaseServerClient.mockResolvedValue({});
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
     mocked.resolveAuthenticatedSettingsPath.mockResolvedValue("/settings/integrations");
+    mocked.startCodexDeviceAuthFlow.mockResolvedValue({
+      error: null,
+      expiresAt: "2026-05-19T00:10:00.000Z",
+      flowId: "flow-1",
+      instructions: "Open https://chatgpt.com/activate and enter ABCD-EFGH",
+      status: "prompted",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://chatgpt.com/activate",
+    });
   });
 
   afterEach(() => {
@@ -38,25 +52,31 @@ describe("GET /auth/codex", () => {
     mocked.resolveAuthenticatedSettingsPath.mockReset();
   });
 
-  it("redirects authenticated users back to settings with an unsupported OAuth flash", async () => {
+  it("redirects direct authenticated navigation back to settings with a device-flow flash", async () => {
     const response = await GET(new NextRequest("https://preview.wallie.cc/auth/codex"));
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "https://preview.wallie.cc/settings/integrations?codex_connect=oauth_unsupported",
+      "https://preview.wallie.cc/settings/integrations?codex_connect=chatgpt_device_required",
     );
     expect(response.headers.get("set-cookie")).toBeNull();
+    expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
 
-  it("preserves a safe next path when redirecting authenticated users", async () => {
+  it("starts a device-code flow for authenticated JSON requests", async () => {
     const response = await GET(
-      new NextRequest("http://localhost:3000/auth/codex?next=/w/acme/onboarding?step=runtime"),
+      new NextRequest("http://localhost:3000/auth/codex?next=/w/acme/onboarding?step=runtime", {
+        headers: { accept: "application/json" },
+      }),
     );
 
-    expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/w/acme/onboarding?step=runtime&codex_connect=oauth_unsupported",
-    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      flowId: "flow-1",
+      status: "prompted",
+      userCode: "ABCD-EFGH",
+    });
+    expect(mocked.startCodexDeviceAuthFlow).toHaveBeenCalledWith({ userId: "user-123" });
   });
 
   it("sends unauthenticated users through login", async () => {
@@ -66,5 +86,18 @@ describe("GET /auth/codex", () => {
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toContain("/login");
+  });
+
+  it("returns 401 for unauthenticated JSON requests", async () => {
+    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/auth/codex?next=/settings", {
+        headers: { accept: "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 });

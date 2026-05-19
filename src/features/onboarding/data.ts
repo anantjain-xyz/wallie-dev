@@ -14,6 +14,7 @@ import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitiv
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
+import { credentialExpired } from "@/lib/codex/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -163,7 +164,8 @@ function mapSecretPreview(row: SecretPreviewRow): WorkspaceSecretPreview {
 function codexConnectionStatus(
   row: {
     access_token_expires_at: string | null;
-    credential_type: "codex_access_token" | "platform_api_key";
+    auth_reconnect_required: boolean;
+    credential_type: "chatgpt_auth_json" | "codex_access_token" | "platform_api_key";
     updated_at: string;
   } | null,
 ) {
@@ -177,17 +179,15 @@ function codexConnectionStatus(
     };
   }
 
-  const expiresAt = row.access_token_expires_at
-    ? new Date(row.access_token_expires_at).getTime()
-    : Number.NaN;
-  const isExpired =
-    row.access_token_expires_at !== null && Number.isFinite(expiresAt) && expiresAt <= Date.now();
+  const isExpired = credentialExpired(row.access_token_expires_at);
+  const reconnectRequired =
+    row.credential_type === "chatgpt_auth_json" && row.auth_reconnect_required;
 
   return {
-    connected: !isExpired,
+    connected: !isExpired && !reconnectRequired,
     credentialType: row.credential_type,
     expiresAt: row.access_token_expires_at,
-    status: isExpired ? ("expired" as const) : ("connected" as const),
+    status: isExpired || reconnectRequired ? ("expired" as const) : ("connected" as const),
     updatedAt: row.updated_at,
   };
 }
@@ -261,7 +261,7 @@ async function loadSetupHealth(
     admin.from("workspace_agent_config").select("key, value_json").eq("workspace_id", workspaceId),
     admin
       .from("user_codex_credentials")
-      .select("access_token_expires_at, credential_type, updated_at")
+      .select("access_token_expires_at, auth_reconnect_required, credential_type, updated_at")
       .eq("user_id", context.user.id)
       .maybeSingle(),
     admin
