@@ -54,6 +54,7 @@ execute function internal.touch_updated_at();
 
 alter table public.codex_device_auth_flows enable row level security;
 revoke all on public.codex_device_auth_flows from anon, authenticated;
+grant all on public.codex_device_auth_flows to service_role;
 
 create or replace function public.acquire_codex_auth_lease(
   target_user_id uuid,
@@ -80,14 +81,14 @@ begin
     auth_lock_run_id = target_run_id,
     auth_lock_expires_at = lease_expires_at,
     updated_at = now()
-  where user_id = target_user_id
-    and credential_type = 'chatgpt_auth_json'
-    and auth_reconnect_required = false
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
+    and public.user_codex_credentials.auth_reconnect_required = false
     and (
-      auth_lock_run_id is null
-      or auth_lock_run_id = target_run_id
-      or auth_lock_expires_at is null
-      or auth_lock_expires_at <= now()
+      public.user_codex_credentials.auth_lock_run_id is null
+      or public.user_codex_credentials.auth_lock_run_id = target_run_id
+      or public.user_codex_credentials.auth_lock_expires_at is null
+      or public.user_codex_credentials.auth_lock_expires_at <= now()
     )
   returning
     public.user_codex_credentials.credential_type,
@@ -125,13 +126,13 @@ begin
     auth_cache_last_refresh = new_auth_cache_last_refresh,
     auth_reconnect_reason = null,
     auth_reconnect_required = false,
-    credential_version = credential_version + 1,
+    credential_version = public.user_codex_credentials.credential_version + 1,
     encrypted_credential = new_encrypted_credential,
     updated_at = now()
-  where user_id = target_user_id
-    and credential_type = 'chatgpt_auth_json'
-    and auth_lock_run_id = target_run_id
-    and credential_version = previous_credential_version
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
+    and public.user_codex_credentials.auth_lock_run_id = target_run_id
+    and public.user_codex_credentials.credential_version = previous_credential_version
   returning public.user_codex_credentials.credential_version;
 end;
 $$;
@@ -151,8 +152,8 @@ begin
     auth_lock_run_id = null,
     auth_lock_expires_at = null,
     updated_at = now()
-  where user_id = target_user_id
-    and auth_lock_run_id = target_run_id;
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.auth_lock_run_id = target_run_id;
 end;
 $$;
 
@@ -174,9 +175,9 @@ begin
     auth_lock_run_id = null,
     auth_lock_expires_at = null,
     updated_at = now()
-  where user_id = target_user_id
-    and credential_type = 'chatgpt_auth_json'
-    and (auth_lock_run_id = target_run_id or auth_lock_run_id is null);
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
+    and public.user_codex_credentials.auth_lock_run_id = target_run_id;
 end;
 $$;
 

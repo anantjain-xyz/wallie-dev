@@ -6,6 +6,7 @@ const mocked = vi.hoisted(() => ({
   consumeAuthenticatedCodexDeviceAuthFlow: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
   createSupabaseServerClient: vi.fn(),
+  deleteCodexDeviceAuthFlow: vi.fn(),
   encryptSecretValue: vi.fn((value: string) => `encrypted:${value}`),
   getCodexDeviceAuthFlowSnapshot: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("@/lib/auth", async () => {
 vi.mock("@/lib/codex/device-auth", () => ({
   cancelCodexDeviceAuthFlow: mocked.cancelCodexDeviceAuthFlow,
   consumeAuthenticatedCodexDeviceAuthFlow: mocked.consumeAuthenticatedCodexDeviceAuthFlow,
+  deleteCodexDeviceAuthFlow: mocked.deleteCodexDeviceAuthFlow,
   getCodexDeviceAuthFlowSnapshot: mocked.getCodexDeviceAuthFlowSnapshot,
 }));
 
@@ -47,6 +49,7 @@ import { DELETE, GET } from "./route";
 beforeEach(() => {
   vi.clearAllMocks();
   mocked.createSupabaseServerClient.mockResolvedValue({});
+  mocked.deleteCodexDeviceAuthFlow.mockResolvedValue(true);
   mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
   mocked.resolveAuthenticatedSettingsPath.mockResolvedValue("/settings/integrations");
 });
@@ -127,7 +130,48 @@ describe("GET /auth/callback/codex", () => {
       }),
       { onConflict: "user_id" },
     );
+    expect(mocked.deleteCodexDeviceAuthFlow).toHaveBeenCalledWith({
+      flowId: "flow-1",
+      userId: "user-123",
+    });
     expect(JSON.stringify(await response.json())).not.toContain("auth_mode");
+  });
+
+  it("keeps the completed auth flow when credential persistence fails", async () => {
+    mocked.getCodexDeviceAuthFlowSnapshot.mockResolvedValue({
+      error: null,
+      expiresAt: "2026-05-19T00:10:00.000Z",
+      flowId: "flow-1",
+      instructions: null,
+      status: "authenticated",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://chatgpt.com/activate",
+    });
+    mocked.consumeAuthenticatedCodexDeviceAuthFlow.mockResolvedValue({
+      authJson: '{"auth_mode":"chatgpt"}',
+      metadata: {
+        accountEmail: "person@example.com",
+        accountId: "acct-1",
+        lastRefresh: "2026-05-19T00:00:00.000Z",
+      },
+      snapshot: {},
+    });
+    const single = vi.fn().mockResolvedValue({
+      data: null,
+      error: new Error("permission denied"),
+    });
+    const upsert = vi.fn(() => ({ select: () => ({ single }) }));
+    mocked.createSupabaseAdminClient.mockReturnValue({ from: () => ({ upsert }) });
+
+    const response = await GET(
+      new NextRequest("http://localhost/auth/callback/codex?flowId=flow-1", {
+        headers: { accept: "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ status: "persist_failed" });
+    expect(mocked.deleteCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
 
   it("returns state_invalid for missing flows", async () => {

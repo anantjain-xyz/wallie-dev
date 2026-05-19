@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   cancelCodexDeviceAuthFlow,
   consumeAuthenticatedCodexDeviceAuthFlow,
+  deleteCodexDeviceAuthFlow,
   getCodexDeviceAuthFlowSnapshot,
 } from "@/lib/codex/device-auth";
 import { encryptSecretValue } from "@/lib/secrets/crypto";
@@ -80,6 +81,8 @@ export async function GET(request: NextRequest) {
   if (error) {
     return respondError(supabase, request, acceptsJson, "persist_failed", 500, error.message);
   }
+
+  await deleteCodexDeviceAuthFlow({ flowId, userId: user.id });
 
   if (acceptsJson) {
     return NextResponse.json({

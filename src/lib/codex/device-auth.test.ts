@@ -31,6 +31,7 @@ vi.mock("@/lib/secrets/crypto", () => ({
 
 import {
   consumeAuthenticatedCodexDeviceAuthFlow,
+  deleteCodexDeviceAuthFlow,
   getCodexDeviceAuthFlowSnapshot,
   startCodexDeviceAuthFlow,
 } from "@/lib/codex/device-auth";
@@ -238,7 +239,7 @@ describe("Codex device auth", () => {
     });
   });
 
-  it("persists completed auth JSON durably and deletes the flow when consumed", async () => {
+  it("persists completed auth JSON durably and deletes the flow after it is consumed", async () => {
     const rows: FlowRow[] = [
       buildFlowRow({
         instructions: "Open https://chatgpt.com/activate and enter code ABCD-EFGH",
@@ -293,6 +294,53 @@ describe("Codex device auth", () => {
         lastRefresh: "2026-05-19T00:00:00.000Z",
       },
     });
+    expect(rows).toHaveLength(1);
+
+    await expect(
+      deleteCodexDeviceAuthFlow({
+        flowId: "00000000-0000-0000-0000-000000000123",
+        userId: "user-1",
+      }),
+    ).resolves.toBe(true);
     expect(rows).toHaveLength(0);
+  });
+
+  it("checks a completed command before expiring an overdue flow", async () => {
+    const rows: FlowRow[] = [
+      buildFlowRow({
+        expires_at: "2000-01-01T00:00:00.000Z",
+        status: "prompted",
+      }),
+    ];
+    const authJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      last_refresh: "2026-05-19T00:00:00.000Z",
+      tokens: {
+        access_token: "access-token-value-1234567890",
+        refresh_token: "refresh-token-value-1234567890",
+      },
+    });
+    const command = new FakeCommand();
+    command.exitCode = 0;
+    command.outputText = "Open https://chatgpt.com/activate and enter code ABCD-EFGH\n";
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      readFileToBuffer: vi.fn().mockResolvedValue(Buffer.from(authJson, "utf8")),
+      sandboxId: "sandbox-1",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await getCodexDeviceAuthFlowSnapshot({
+      flowId: "00000000-0000-0000-0000-000000000123",
+      userId: "user-1",
+    });
+
+    expect(snapshot).toMatchObject({ status: "authenticated" });
+    expect(rows[0]).toMatchObject({
+      encrypted_auth_json: `encrypted:${authJson}`,
+      status: "authenticated",
+    });
   });
 });

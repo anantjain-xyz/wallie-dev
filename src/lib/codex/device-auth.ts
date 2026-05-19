@@ -40,6 +40,7 @@ type AdminClient = SupabaseClient<Database>;
 type FlowRow = Database["public"]["Tables"]["codex_device_auth_flows"]["Row"];
 
 const ACTIVE_FLOW_STATUSES: CodexDeviceAuthStatus[] = ["starting", "prompted", "authenticated"];
+const CANCELABLE_FLOW_STATUSES: CodexDeviceAuthStatus[] = ["starting", "prompted"];
 const FLOW_SELECT =
   "id, user_id, status, sandbox_id, command_id, verification_uri, user_code, instructions, error, encrypted_auth_json, account_id, account_email, auth_cache_last_refresh, output_tail, expires_at, completed_at, canceled_at, created_at, updated_at";
 
@@ -131,14 +132,30 @@ export async function consumeAuthenticatedCodexDeviceAuthFlow(input: {
     lastRefresh: row.auth_cache_last_refresh,
   };
 
-  await admin.from("codex_device_auth_flows").delete().eq("id", row.id).eq("user_id", input.userId);
-  await stopSandboxQuietly(row.sandbox_id);
-
   return {
     authJson,
     metadata,
     snapshot: snapshotFromRow(row),
   };
+}
+
+export async function deleteCodexDeviceAuthFlow(input: {
+  flowId: string;
+  userId: string;
+}): Promise<boolean> {
+  const admin = createSupabaseAdminClient();
+  const row = await getFlowRow(admin, input);
+  if (!row) return false;
+
+  const { error } = await admin
+    .from("codex_device_auth_flows")
+    .delete()
+    .eq("id", row.id)
+    .eq("user_id", input.userId);
+  if (error) throw error;
+
+  await stopSandboxQuietly(row.sandbox_id);
+  return true;
 }
 
 export async function cancelCodexDeviceAuthFlow(input: {
@@ -164,10 +181,6 @@ async function refreshFlowFromSandbox(
   row: FlowRow,
   input: { waitMs: number },
 ): Promise<CodexDeviceAuthSnapshot> {
-  if (new Date(row.expires_at).getTime() <= Date.now()) {
-    return expireFlow(admin, row);
-  }
-
   if (
     row.status === "authenticated" ||
     row.status === "canceled" ||
@@ -176,6 +189,8 @@ async function refreshFlowFromSandbox(
   ) {
     return snapshotFromRow(row);
   }
+
+  const isExpired = new Date(row.expires_at).getTime() <= Date.now();
 
   try {
     const sandbox = await getAuthSandbox(row.sandbox_id);
@@ -187,6 +202,10 @@ async function refreshFlowFromSandbox(
 
     const refreshedCommand = await sandbox.getCommand(row.command_id);
     if (refreshedCommand.exitCode === null) {
+      if (isExpired) {
+        return expireFlow(admin, row);
+      }
+
       const updated = await updateFlow(admin, row, {
         instructions: prompt.instructions ?? row.instructions,
         output_tail: output,
@@ -241,6 +260,10 @@ async function refreshFlowFromSandbox(
     await stopSandboxQuietly(row.sandbox_id);
     return snapshotFromRow(updated ?? row);
   } catch (error) {
+    if (isExpired) {
+      return expireFlow(admin, row);
+    }
+
     const updated = await markFlowTerminal(admin, row, {
       encrypted_auth_json: null,
       error: error instanceof Error ? error.message : "Failed to read Codex sign-in status.",
@@ -275,7 +298,7 @@ async function expireStaleUserFlows(admin: AdminClient, userId: string): Promise
   if (error) throw error;
 
   for (const row of data ?? []) {
-    await expireFlow(admin, row);
+    await refreshFlowFromSandbox(admin, row, { waitMs: 0 });
   }
 }
 
@@ -284,7 +307,7 @@ async function cancelActiveUserFlows(admin: AdminClient, userId: string): Promis
     .from("codex_device_auth_flows")
     .select(FLOW_SELECT)
     .eq("user_id", userId)
-    .in("status", ACTIVE_FLOW_STATUSES);
+    .in("status", CANCELABLE_FLOW_STATUSES);
   if (error) throw error;
 
   for (const row of data ?? []) {
