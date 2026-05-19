@@ -321,6 +321,37 @@ function onboardingWithSelectedRepository(
 }
 
 describe("OnboardingPageClient", () => {
+  it("uses red for health errors and grey for initial health states", () => {
+    const noCheckHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData(),
+      }),
+    );
+    const errorHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          setupHealth: {
+            latestSandboxCapabilityCheck: {
+              capabilities: {},
+              checkedAt: "2026-05-16T18:00:00.000Z",
+              errorText: "sandbox failed",
+              githubRepositoryId: "repo-a",
+              id: "check-1",
+              status: "error",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(noCheckHtml).toMatch(
+      /class="ui-badge whitespace-nowrap ui-badge-neutral"><span class="ui-badge-dot"><\/span>No check/,
+    );
+    expect(errorHtml).toMatch(
+      /class="ui-badge whitespace-nowrap ui-badge-danger"><span class="ui-badge-dot"><\/span>Error/,
+    );
+  });
+
   it("merges a saved repository profile into the latest GitHub state", () => {
     const previousPrimary = profile("repo-b");
     const currentData = onboardingData({

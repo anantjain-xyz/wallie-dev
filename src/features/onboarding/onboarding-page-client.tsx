@@ -248,13 +248,15 @@ function SecretValueInput({
 }
 
 function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
+  const toneClassName =
+    tone === "danger"
+      ? "ui-badge-danger"
+      : tone === "success"
+        ? "ui-badge-success"
+        : "ui-badge-neutral";
+
   return (
-    <span
-      className={cn(
-        "ui-badge whitespace-nowrap",
-        tone === "success" ? "ui-badge-success" : "ui-badge-neutral",
-      )}
-    >
+    <span className={cn("ui-badge whitespace-nowrap", toneClassName)}>
       <span className="ui-badge-dot" />
       {children}
     </span>
@@ -1543,7 +1545,7 @@ function RuntimeStep({
 }
 
 function sandboxStatusTone(check: SandboxCapabilityCheckState | null): HealthTone {
-  if (!check) return "warning";
+  if (!check) return "neutral";
   if (check.status === "success") return "success";
   if (check.status === "error") return "danger";
   return "accent";
