@@ -16,6 +16,7 @@ type CommandResult = {
 type ResultOptions = {
   allowEmptySuccess?: boolean;
   emptySuccessDetail?: string;
+  successDetail?: (output: string) => string | null;
 };
 
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
@@ -88,9 +89,12 @@ function result(
 ): SandboxCapabilityResult {
   const output = (command.stdout || command.stderr).trim().slice(0, 500);
   if (command.code === 0 && (output.length > 0 || options.allowEmptySuccess)) {
+    const normalizedDetail = output ? (options.successDetail?.(output) ?? output) : null;
     return {
       detail:
-        output || options.emptySuccessDetail || "Command completed successfully with no output.",
+        normalizedDetail ||
+        options.emptySuccessDetail ||
+        "Command completed successfully with no output.",
       ok: true,
     };
   }
@@ -156,6 +160,7 @@ export async function probeSandboxCapabilities(input: {
       {
         allowEmptySuccess: true,
         emptySuccessDetail: "Chromium install completed successfully.",
+        successDetail: normalizeChromiumInstallSuccess,
       },
     );
     await record(
@@ -185,4 +190,14 @@ export function capabilityReportSucceeded(report: Partial<SandboxCapabilityRepor
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function normalizeChromiumInstallSuccess(output: string): string | null {
+  if (
+    output.includes("BEWARE: your OS is not officially supported by Playwright") &&
+    output.includes("downloading fallback build")
+  ) {
+    return "Chromium install completed successfully using Playwright's fallback Linux build.";
+  }
+  return null;
 }

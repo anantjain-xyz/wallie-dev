@@ -144,6 +144,38 @@ describe("probeSandboxCapabilities", () => {
     expect(report.screenshotSmoke.ok).toBe(true);
   });
 
+  it("normalizes expected Chromium fallback build warnings", async () => {
+    const sandbox = new FakeSandbox();
+    scriptBaseSuccess(sandbox);
+    sandbox.scriptExec(
+      (call) => call.args.join(" ").includes("require.resolve('playwright')"),
+      [{ data: "1.60.0\n", stream: "stdout" }],
+    );
+    sandbox.scriptExec(
+      (call) => call.args.join(" ").includes("npx playwright install chromium"),
+      [
+        {
+          data: [
+            "BEWARE: your OS is not officially supported by Playwright; downloading fallback build for ubuntu24.04-x64.\n",
+            "BEWARE: your OS is not officially supported by Playwright; downloading fallback build for ubuntu24.04-x64.\n",
+          ].join(""),
+          stream: "stdout",
+        },
+      ],
+    );
+    sandbox.scriptExec((call) => call.args.join(" ").includes("Wallie screenshot smoke"), []);
+
+    const report = await probeSandboxCapabilities({
+      agentProvider: "claude-code",
+      sandbox,
+    });
+
+    expect(report.chromium).toEqual({
+      detail: "Chromium install completed successfully using Playwright's fallback Linux build.",
+      ok: true,
+    });
+  });
+
   it("treats exit-zero with empty output as failure", async () => {
     const sandbox = new FakeSandbox();
 
