@@ -131,17 +131,24 @@ describe("CodexRunner", () => {
       },
     });
     const sandbox = new FakeSandbox();
-    sandbox.scriptExec("bash", (call) => {
-      expect(sandbox.files.get("/vercel/sandbox/.codex/auth.json")?.data.toString("utf8")).toBe(
-        originalAuthJson,
-      );
-      void call;
-      sandbox.files.set("/vercel/sandbox/.codex/auth.json", {
-        data: Buffer.from(refreshedAuthJson, "utf8"),
-        mode: 0o600,
-      });
-      return [{ data: `{"type":"result","summary":"done"}\n`, stream: "stdout" }];
-    });
+    sandbox.scriptExec(
+      (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
+      [],
+    );
+    sandbox.scriptExec(
+      (call) => call.args[1]?.includes("codex 'exec'") ?? false,
+      (call) => {
+        expect(sandbox.files.get("/vercel/sandbox/.codex/auth.json")?.data.toString("utf8")).toBe(
+          originalAuthJson,
+        );
+        void call;
+        sandbox.files.set("/vercel/sandbox/.codex/auth.json", {
+          data: Buffer.from(refreshedAuthJson, "utf8"),
+          mode: 0o600,
+        });
+        return [{ data: `{"type":"result","summary":"done"}\n`, stream: "stdout" }];
+      },
+    );
     const store = {
       acquireChatGptAuthLease: vi.fn().mockResolvedValue({
         authCacheLastRefresh: null,
@@ -203,7 +210,137 @@ describe("CodexRunner", () => {
       runId: "00000000-0000-0000-0000-000000000001",
       userId: "user-1",
     });
-    expect(sandbox.calls[0]?.opts.env).toEqual({ CI: "1", CODEX_HOME: "/vercel/sandbox/.codex" });
+    expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
+    expect(sandbox.calls[1]?.opts.env).toEqual({ CI: "1", CODEX_HOME: "/vercel/sandbox/.codex" });
+  });
+
+  it("does not mark ChatGPT auth reconnect required for token-limit failures", async () => {
+    const authJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: "access-token-value-1234567890",
+        refresh_token: "refresh-token-value-1234567890",
+      },
+    });
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
+      [],
+    );
+    sandbox.scriptExec(
+      (call) => call.args[1]?.includes("codex 'exec'") ?? false,
+      [{ data: "context token limit exceeded\n", stream: "stderr" }],
+      { exitCode: 1 },
+    );
+    const store = {
+      acquireChatGptAuthLease: vi.fn().mockResolvedValue({
+        authCacheLastRefresh: null,
+        credentialVersion: 7,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        secret: authJson,
+        type: "chatgpt_auth_json",
+        userId: "user-1",
+      }),
+      markChatGptAuthReconnectRequired: vi.fn(),
+      persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
+      releaseChatGptAuthLease: vi.fn(),
+    };
+    const runner = new CodexRunner({
+      chatGptAuthStore: store,
+      credential: {
+        authCacheLastRefresh: null,
+        credentialVersion: 7,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        secret: authJson,
+        type: "chatgpt_auth_json",
+        userId: "user-1",
+      },
+    });
+
+    const events = [];
+    for await (const ev of runner.start({
+      prompt: "p",
+      runId: "00000000-0000-0000-0000-000000000001",
+      sandbox,
+      sessionId: "s",
+    })) {
+      events.push(ev);
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("context token limit exceeded"),
+        type: "error",
+      }),
+    );
+    expect(store.markChatGptAuthReconnectRequired).not.toHaveBeenCalled();
+  });
+
+  it("marks ChatGPT auth reconnect required for credential failures", async () => {
+    const authJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: "access-token-value-1234567890",
+        refresh_token: "refresh-token-value-1234567890",
+      },
+    });
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
+      [],
+    );
+    sandbox.scriptExec(
+      (call) => call.args[1]?.includes("codex 'exec'") ?? false,
+      [{ data: "401 unauthorized\n", stream: "stderr" }],
+      { exitCode: 1 },
+    );
+    const store = {
+      acquireChatGptAuthLease: vi.fn().mockResolvedValue({
+        authCacheLastRefresh: null,
+        credentialVersion: 7,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        secret: authJson,
+        type: "chatgpt_auth_json",
+        userId: "user-1",
+      }),
+      markChatGptAuthReconnectRequired: vi.fn(),
+      persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
+      releaseChatGptAuthLease: vi.fn(),
+    };
+    const runner = new CodexRunner({
+      chatGptAuthStore: store,
+      credential: {
+        authCacheLastRefresh: null,
+        credentialVersion: 7,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        secret: authJson,
+        type: "chatgpt_auth_json",
+        userId: "user-1",
+      },
+    });
+
+    for await (const _ of runner.start({
+      prompt: "p",
+      runId: "00000000-0000-0000-0000-000000000001",
+      sandbox,
+      sessionId: "s",
+    })) {
+      void _;
+    }
+
+    expect(store.markChatGptAuthReconnectRequired).toHaveBeenCalledWith({
+      reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
+      runId: "00000000-0000-0000-0000-000000000001",
+      userId: "user-1",
+    });
   });
 
   it("throws a lease busy error when another ChatGPT-authenticated run holds the credential", async () => {

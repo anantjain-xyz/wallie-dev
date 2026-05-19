@@ -155,6 +155,7 @@ export class CodexRunner implements AgentRunner {
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     await sandbox.writeFile(PROMPT_FILE, input.prompt);
+    await ensureCodexHome(sandbox);
     await sandbox.writeFile(CODEX_AUTH_FILE, credential.secret, { mode: 0o600 });
 
     const proc = await sandbox.exec("bash", ["-lc", codexExecCommand(model)], {
@@ -311,13 +312,31 @@ function codexExecCommand(model: string): string {
   return `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
 }
 
+async function ensureCodexHome(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>) {
+  const proc = await sandbox.exec("bash", ["-lc", `mkdir -p ${shellQuote(CODEX_HOME)}`], {
+    cwd: sandbox.repoPath,
+    env: { CI: "1" },
+  });
+  let stderr = "";
+  for await (const log of proc.logs()) {
+    if (log.stream === "stderr") stderr += log.data;
+  }
+
+  const code = await proc.exitCode;
+  if (code !== 0) {
+    throw new Error(`Failed to create Codex auth directory: ${stderr.slice(0, 500)}`);
+  }
+}
+
 function isAuthFailure(message: string): boolean {
   const lower = message.toLowerCase();
   return (
-    lower.includes("401") ||
-    lower.includes("unauthorized") ||
-    lower.includes("auth") ||
-    lower.includes("token")
+    /\b401\b/.test(lower) ||
+    /\bunauthorized\b/.test(lower) ||
+    /\bnot authenticated\b/.test(lower) ||
+    /\bauth(?:entication)? (?:failed|required|error)\b/.test(lower) ||
+    /\binvalid (?:credential|credentials|grant|api key)\b/.test(lower) ||
+    /\b(?:access|refresh) token (?:expired|invalid|revoked)\b/.test(lower)
   );
 }
 

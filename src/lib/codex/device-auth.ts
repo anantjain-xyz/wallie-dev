@@ -18,6 +18,7 @@ import type { Database } from "@/lib/supabase/database.types";
 const FLOW_TTL_MS = 10 * 60_000;
 const PROMPT_WAIT_MS = 2_500;
 const POLL_WAIT_MS = 750;
+const COMMAND_STATUS_WAIT_MS = 500;
 const MAX_OUTPUT_CHARS = 4_000;
 const VERCEL_CODEX_HOME = "/vercel/sandbox/.codex";
 const VERCEL_SANDBOX_CWD = "/vercel/sandbox";
@@ -50,6 +51,7 @@ interface AuthCommand {
   readonly exitCode: number | null;
   logs(input?: { signal?: AbortSignal }): AsyncIterable<AuthCommandLog>;
   output(stream: "both"): Promise<string>;
+  wait?(input?: { signal?: AbortSignal }): Promise<AuthCommand>;
 }
 
 interface StartedAuthCommand extends AuthCommand {
@@ -207,13 +209,28 @@ export async function cancelCodexDeviceAuthFlow(input: {
   const row = await getFlowRow(admin, input);
   if (!row) return false;
 
-  await markFlowTerminal(admin, row, {
+  if (CANCELABLE_FLOW_STATUSES.includes(row.status as CodexDeviceAuthStatus)) {
+    const refreshed = await refreshFlowFromSandbox(admin, row, { waitMs: POLL_WAIT_MS });
+    if (refreshed.status !== "starting" && refreshed.status !== "prompted") {
+      return true;
+    }
+  }
+
+  const cancellableRow = await getFlowRow(admin, input);
+  if (
+    !cancellableRow ||
+    !CANCELABLE_FLOW_STATUSES.includes(cancellableRow.status as CodexDeviceAuthStatus)
+  ) {
+    return false;
+  }
+
+  await markFlowTerminal(admin, cancellableRow, {
     canceled_at: new Date().toISOString(),
     encrypted_auth_json: null,
     error: null,
     status: "canceled",
   });
-  await stopSandboxQuietly(row.sandbox_id);
+  await stopSandboxQuietly(cancellableRow.sandbox_id);
   return true;
 }
 
@@ -222,16 +239,14 @@ async function refreshFlowFromSandbox(
   row: FlowRow,
   input: { waitMs: number },
 ): Promise<CodexDeviceAuthSnapshot> {
-  if (
-    row.status === "authenticated" ||
-    row.status === "canceled" ||
-    row.status === "error" ||
-    row.status === "expired"
-  ) {
-    return snapshotFromRow(row);
+  const isExpired = new Date(row.expires_at).getTime() <= Date.now();
+  if (row.status === "authenticated") {
+    return isExpired ? expireFlow(admin, row) : snapshotFromRow(row);
   }
 
-  const isExpired = new Date(row.expires_at).getTime() <= Date.now();
+  if (row.status === "canceled" || row.status === "error" || row.status === "expired") {
+    return snapshotFromRow(row);
+  }
 
   try {
     const sandbox = await getAuthSandbox(row.sandbox_id);
@@ -241,7 +256,7 @@ async function refreshFlowFromSandbox(
     );
     const prompt = parseDevicePrompt(output);
 
-    const refreshedCommand = await sandbox.getCommand(row.command_id);
+    const refreshedCommand = await waitForCommandExit(command);
     if (refreshedCommand.exitCode === null) {
       if (isExpired) {
         return expireFlow(admin, row);
@@ -339,7 +354,7 @@ async function expireStaleUserFlows(admin: AdminClient, userId: string): Promise
   if (error) throw error;
 
   for (const row of data ?? []) {
-    await refreshFlowFromSandbox(admin, row, { waitMs: 0 });
+    await refreshFlowFromSandbox(admin, row, { waitMs: COMMAND_STATUS_WAIT_MS });
   }
 }
 
@@ -382,10 +397,11 @@ async function updateFlow(
     .update(values)
     .eq("id", row.id)
     .eq("user_id", row.user_id)
+    .eq("status", row.status)
     .select(FLOW_SELECT)
-    .single();
+    .maybeSingle();
   if (error) throw error;
-  return data;
+  return data ?? getFlowRow(admin, { flowId: row.id, userId: row.user_id });
 }
 
 async function markFlowTerminal(
@@ -504,6 +520,21 @@ async function readFinishedCommandOutput(command: AuthCommand, fallback: string)
     return limitOutput(await command.output("both"));
   } catch {
     return fallback;
+  }
+}
+
+async function waitForCommandExit(command: AuthCommand): Promise<AuthCommand> {
+  if (command.exitCode !== null || !command.wait) return command;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), COMMAND_STATUS_WAIT_MS);
+  try {
+    return await command.wait({ signal: controller.signal });
+  } catch (error) {
+    if (!isAbortLikeError(error)) throw error;
+    return command;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -688,6 +719,13 @@ class LocalAuthCommand implements StartedAuthCommand {
 
   async output(): Promise<string> {
     return limitOutput(this.chunks.join(""));
+  }
+
+  async wait(input?: { signal?: AbortSignal }): Promise<AuthCommand> {
+    while (this.exitCode === null) {
+      await this.waitForChunk(input?.signal);
+    }
+    return this;
   }
 
   stop(): void {
