@@ -931,6 +931,16 @@ function RuntimeStep({
     isVerifying: boolean;
     result: VerifyAgentConfigResponse | null;
   }>({ isVerifying: false, result: null });
+  const handleCodexStatusChange = useCallback(
+    (status: CodexConnectionStatus) =>
+      onDataChange((current) => updateCodexConnectionInData(current, status)),
+    [onDataChange],
+  );
+  const handleClaudeCodeStatusChange = useCallback(
+    (status: ClaudeCodeConnectionStatus) =>
+      onDataChange((current) => updateClaudeCodeConnectionInData(current, status)),
+    [onDataChange],
+  );
   const fields = AGENT_CONFIG_FIELDS;
   const savedDrafts = buildAgentConfigDrafts(data.agentConfig);
   const fieldStatuses = fields.map((field) => {
@@ -1406,12 +1416,8 @@ function RuntimeStep({
 
         <div className="mt-4">
           <ProviderAccessPanel
-            onClaudeCodeStatusChange={(status) =>
-              onDataChange((current) => updateClaudeCodeConnectionInData(current, status))
-            }
-            onCodexStatusChange={(status) =>
-              onDataChange((current) => updateCodexConnectionInData(current, status))
-            }
+            onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
+            onCodexStatusChange={handleCodexStatusChange}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             variant="embedded"

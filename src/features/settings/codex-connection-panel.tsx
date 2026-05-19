@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
 
@@ -55,6 +55,13 @@ export function CodexConnectionPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Held in a ref so the panel is robust to callers that pass a fresh callback
+  // on every render — otherwise the refresh effect would refire in a loop.
+  const onStatusChangeRef = useRef(onStatusChange);
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
+
   const refresh = useCallback(async () => {
     try {
       const response = await fetch("/api/codex/connection", { cache: "no-store" });
@@ -63,7 +70,7 @@ export function CodexConnectionPanel({
       }
       const data = (await response.json()) as CodexConnectionStatus;
       setStatus(data);
-      onStatusChange?.(data);
+      onStatusChangeRef.current?.(data);
       if (data.credentialType) {
         setCredentialType(data.credentialType);
       }
@@ -71,7 +78,7 @@ export function CodexConnectionPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Codex connection status.");
     }
-  }, [onStatusChange]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -218,7 +225,7 @@ export function CodexConnectionPanel({
         throw new Error(data?.error ?? `Save failed (${response.status}).`);
       }
       setStatus(data);
-      if (data) onStatusChange?.(data);
+      if (data) onStatusChangeRef.current?.(data);
       setCredential("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save Codex credential.");
