@@ -1,10 +1,10 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
 
-interface CodexConnectionStatus {
+export interface CodexConnectionStatus {
   accountEmail?: string | null;
   authCacheLastRefresh?: string | null;
   connected: boolean;
@@ -31,6 +31,8 @@ interface CodexConnectionPanelProps {
   returnTo?: string;
   /** Banner to surface when the query string reports codex_connect=... */
   connectFlash?: string | null;
+  /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
+  onStatusChange?: (status: CodexConnectionStatus) => void;
 }
 
 const CREDENTIAL_TYPES: CodexCredentialType[] = [
@@ -39,7 +41,11 @@ const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "platform_api_key",
 ];
 
-export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnectionPanelProps) {
+export function CodexConnectionPanel({
+  connectFlash,
+  onStatusChange,
+  returnTo,
+}: CodexConnectionPanelProps) {
   const [status, setStatus] = useState<CodexConnectionStatus | null>(null);
   const [credentialType, setCredentialType] = useState<CodexCredentialType>("chatgpt_auth_json");
   const [credential, setCredential] = useState("");
@@ -49,6 +55,13 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Held in a ref so the panel is robust to callers that pass a fresh callback
+  // on every render — otherwise the refresh effect would refire in a loop.
+  const onStatusChangeRef = useRef(onStatusChange);
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
+
   const refresh = useCallback(async () => {
     try {
       const response = await fetch("/api/codex/connection", { cache: "no-store" });
@@ -57,6 +70,7 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
       }
       const data = (await response.json()) as CodexConnectionStatus;
       setStatus(data);
+      onStatusChangeRef.current?.(data);
       if (data.credentialType) {
         setCredentialType(data.credentialType);
       }
@@ -211,6 +225,7 @@ export function CodexConnectionPanel({ connectFlash, returnTo }: CodexConnection
         throw new Error(data?.error ?? `Save failed (${response.status}).`);
       }
       setStatus(data);
+      if (data) onStatusChangeRef.current?.(data);
       setCredential("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save Codex credential.");

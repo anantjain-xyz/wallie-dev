@@ -1,11 +1,19 @@
 "use client";
 
-import { ClaudeCodeConnectionPanel } from "@/features/settings/claude-code-connection-panel";
-import { CodexConnectionPanel } from "@/features/settings/codex-connection-panel";
+import {
+  ClaudeCodeConnectionPanel,
+  type ClaudeCodeConnectionStatus,
+} from "@/features/settings/claude-code-connection-panel";
+import {
+  CodexConnectionPanel,
+  type CodexConnectionStatus,
+} from "@/features/settings/codex-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 
 type ProviderAccessPanelProps = {
   connectFlash?: string | null;
+  onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
+  onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   provider: AgentProvider;
   returnTo?: string;
   variant?: "card" | "embedded";
@@ -13,6 +21,8 @@ type ProviderAccessPanelProps = {
 
 export function ProviderAccessPanel({
   connectFlash,
+  onClaudeCodeStatusChange,
+  onCodexStatusChange,
   provider,
   returnTo,
   variant = "card",
@@ -32,7 +42,11 @@ export function ProviderAccessPanel({
               Sessions run with the Codex credential saved by the session creator.
             </p>
           </div>
-          <CodexConnectionPanel connectFlash={connectFlash} returnTo={returnTo} />
+          <CodexConnectionPanel
+            connectFlash={connectFlash}
+            onStatusChange={onCodexStatusChange}
+            returnTo={returnTo}
+          />
         </div>
       );
     case "claude-code":
@@ -44,7 +58,7 @@ export function ProviderAccessPanel({
               Sessions run with the Anthropic API key saved by the session creator.
             </p>
           </div>
-          <ClaudeCodeConnectionPanel />
+          <ClaudeCodeConnectionPanel onStatusChange={onClaudeCodeStatusChange} />
         </div>
       );
   }

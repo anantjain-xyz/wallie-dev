@@ -1,18 +1,30 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-interface ClaudeCodeConnectionStatus {
+export interface ClaudeCodeConnectionStatus {
   connected: boolean;
   updatedAt?: string | null;
 }
 
-export function ClaudeCodeConnectionPanel() {
+interface ClaudeCodeConnectionPanelProps {
+  /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
+  onStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
+}
+
+export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnectionPanelProps = {}) {
   const [status, setStatus] = useState<ClaudeCodeConnectionStatus | null>(null);
   const [credential, setCredential] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Held in a ref so the panel is robust to callers that pass a fresh callback
+  // on every render — otherwise the refresh effect would refire in a loop.
+  const onStatusChangeRef = useRef(onStatusChange);
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
 
   const refresh = useCallback(async () => {
     try {
@@ -22,6 +34,7 @@ export function ClaudeCodeConnectionPanel() {
       }
       const data = (await response.json()) as ClaudeCodeConnectionStatus;
       setStatus(data);
+      onStatusChangeRef.current?.(data);
       setError(null);
     } catch (err) {
       setError(
@@ -52,6 +65,7 @@ export function ClaudeCodeConnectionPanel() {
         throw new Error(data?.error ?? `Save failed (${response.status}).`);
       }
       setStatus(data);
+      if (data) onStatusChangeRef.current?.(data);
       setCredential("");
       setNotice("Anthropic API key saved.");
     } catch (err) {
