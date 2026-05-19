@@ -908,13 +908,11 @@ function RuntimeRequirementList({
 function RuntimeStep({
   data,
   isSaving,
-  onCompleted,
   onDataChange,
   onRuntimeStateChange,
 }: {
   data: WorkspaceOnboardingData;
   isSaving: boolean;
-  onCompleted: (action: string) => Promise<void>;
   onDataChange: OnboardingDataChange;
   onRuntimeStateChange: (state: RuntimeCompletionState) => void;
 }) {
@@ -1026,14 +1024,6 @@ function RuntimeStep({
     !verifyState.isVerifying &&
     !hasInvalidDrafts &&
     drafts.agent_model.trim() !== "";
-  const canCompleteRuntime =
-    data.canManage &&
-    !isSaving &&
-    busyAction === null &&
-    !hasInvalidDrafts &&
-    !hasUnsavedDrafts &&
-    readiness.canComplete;
-
   useEffect(() => {
     onRuntimeStateChange({ hasInvalidDrafts, hasUnsavedDrafts, readiness });
   }, [hasInvalidDrafts, hasUnsavedDrafts, onRuntimeStateChange, readiness, readinessSignature]);
@@ -1547,16 +1537,6 @@ function RuntimeStep({
         <div className="mt-4">
           <RuntimeRequirementList requirements={readiness.requirements} />
         </div>
-        <div className="mt-4 flex justify-end">
-          <button
-            className="ui-button-primary"
-            disabled={!canCompleteRuntime}
-            onClick={() => void onCompleted("runtime")}
-            type="button"
-          >
-            {isSaving ? "Saving..." : "Complete runtime"}
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -2021,7 +2001,6 @@ function StepBody({
       <RuntimeStep
         data={data}
         isSaving={isSaving}
-        onCompleted={onCompleteStep}
         onDataChange={onDataChange}
         onRuntimeStateChange={onRuntimeStateChange}
       />
@@ -2282,7 +2261,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     activeStep.id === "linear" && (!data.pipeline || data.pipeline.stages.length === 0);
   const inlineCompletionUnavailable = pipelineEditorUnavailable || linearRoutingUnavailable;
   const requiresInlineCompletion =
-    (activeStep.id === "pipeline" || activeStep.id === "linear" || activeStep.id === "runtime") &&
+    (activeStep.id === "pipeline" || activeStep.id === "linear") &&
     !inlineCompletionUnavailable &&
     !activeStepAlreadyResolved;
   const githubContinueBlocked = activeStep.id === "github" && !canCompleteGitHubSetupStep(data);
