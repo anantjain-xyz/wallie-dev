@@ -84,6 +84,9 @@ function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     scheduled_at: null,
     session_id: "sess-1",
     started_at: null,
+    stage_id: null,
+    stage_name: null,
+    stage_slug: null,
     status: "queued",
     trigger_type: "manual_run",
     updated_at: baseTimestamp,
@@ -107,6 +110,9 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     sandbox_id: null,
     session_id: "sess-1",
     started_at: null,
+    stage_id: null,
+    stage_name: null,
+    stage_slug: null,
     status: "queued",
     total_cost_usd: null,
     triggered_by_member_id: "mem-1",
@@ -166,6 +172,7 @@ function buildSupabaseMocks(opts: {
   ) => Promise<AgentRunRow | null> | AgentRunRow | null;
 }) {
   const sessionRow = {
+    current_stage_id: "stage-product",
     id: "sess-1",
     workspace_id: "ws-1",
     number: 1,
@@ -267,6 +274,18 @@ function buildSupabaseMocks(opts: {
               data: opts.activeJobRow ?? insertedJobRow,
               error: null,
             })),
+        };
+      }
+      if (table === "pipeline_stages") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { id: "stage-product", name: "Product", slug: "product" },
+                error: null,
+              }),
+            }),
+          }),
         };
       }
       if (table === "session_pull_requests") {
@@ -393,6 +412,9 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     // Underscore aliases that the settings UI persists must be normalized to
     // the canonical dashed form runners expect.
     expect(inserted.model_provider).toBe("claude-code");
+    expect(inserted.stage_id).toBe("stage-product");
+    expect(inserted.stage_name).toBe("Product");
+    expect(inserted.stage_slug).toBe("product");
   });
 
   it("falls back to the runner default when the workspace has not configured a model", async () => {

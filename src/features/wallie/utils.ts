@@ -32,7 +32,7 @@ export function isWallieRunTerminalStatus(status: Enums<"agent_run_status">) {
 }
 
 export function canRetryWallieRun(status: Enums<"agent_run_status">, hasActiveRun: boolean) {
-  return isWallieRunTerminalStatus(status) && !hasActiveRun;
+  return (status === "error" || status === "canceled") && !hasActiveRun;
 }
 
 export function buildWallieBlockingReasons(input: {
@@ -55,15 +55,14 @@ export function buildWallieBlockingReasons(input: {
   if (input.mode === "code" && !input.repository) {
     reasons.push({
       code: "repository_unavailable",
-      message:
-        "Code mode requires a linked repository. Link a GitHub repository on this session before running Wallie.",
+      message: "This run requires a linked repository. Link a GitHub repository before retrying.",
     });
   }
 
   if (input.mode === "code" && repositoryIsArchived) {
     reasons.push({
       code: "repository_archived",
-      message: "Wallie cannot start a code-mode run against an archived repository.",
+      message: "Wallie cannot start a run against an archived repository.",
     });
   }
 
@@ -75,8 +74,4 @@ export function buildWallieBlockingReasons(input: {
   }
 
   return reasons;
-}
-
-export function formatWallieRunMode(mode: WallieRunMode) {
-  return mode === "code" ? "Code mode" : "Project mode";
 }

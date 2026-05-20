@@ -40,6 +40,13 @@ interface ProcessPipelineJobResult {
   runId: string | null;
 }
 
+class MissingReviewableOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MissingReviewableOutputError";
+  }
+}
+
 export type PipelinePhaseActionResult = {
   error?: string;
   jobId?: string | null;
@@ -163,8 +170,10 @@ async function runStage(input: {
       jobId: job.id,
       model: config.model,
       provider: resolvedRunner.runner.provider,
+      requestedByMemberId: job.requested_by_member_id,
       runType: "project",
       sessionId: session.id,
+      stage,
       workspaceId: session.workspace_id,
     });
 
@@ -213,19 +222,26 @@ async function runStage(input: {
       if (event.type === "text") {
         collectedText.push(event.text);
       } else if (event.type === "completion") {
-        if (event.summary) collectedText.push(event.summary);
         if (event.usage) usage = event.usage;
       } else if (event.type === "error") {
         throw new Error(event.message);
       }
     }
 
+    const artifactMarkdown = collectedText.join("\n").trim();
+    if (!artifactMarkdown) {
+      const message = `${stage.name} did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.`;
+
+      if (runId) {
+        await persistEvent(admin, runId, session.workspace_id, { type: "error", message });
+      }
+
+      throw new MissingReviewableOutputError(message);
+    }
+
     if (runId) {
       await markRunSuccess(admin, runId, usage);
     }
-
-    const artifactMarkdown =
-      collectedText.join("\n").trim() || `_${stage.name} produced no output._`;
 
     await insertArtifact(admin, {
       artifactJson: artifactMarkdown,
@@ -297,7 +313,9 @@ async function runStage(input: {
 
     await updateSessionStatus(admin, session.id, "rejected");
     const message = getErrorMessage(error, "Stage generation failed");
-    await markPipelineJobError(admin, job, message);
+    await markPipelineJobError(admin, job, message, {
+      retry: !(error instanceof MissingReviewableOutputError),
+    });
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
     try {
@@ -375,14 +393,16 @@ async function enqueueSessionJobWithRun(input: {
   workspaceId: string;
 }) {
   const dedupeKey = buildWallieJobDedupeKey(input.sessionId);
-  const [agentConfig, repositoryResolution] = await Promise.all([
+  const [agentConfig, repositoryResolution, session] = await Promise.all([
     loadWorkspaceAgentConfig(input.admin, input.workspaceId),
     resolveEffectiveSessionRepository({
       sessionId: input.sessionId,
       supabase: input.admin,
       workspaceId: input.workspaceId,
     }),
+    loadSessionById(input.admin, input.sessionId),
   ]);
+  const stage = session ? await loadStageById(input.admin, session.current_stage_id) : null;
   const { data: job, error: jobError } = await input.admin
     .from("agent_jobs")
     .insert({
@@ -390,6 +410,9 @@ async function enqueueSessionJobWithRun(input: {
       job_type: PIPELINE_JOB_TYPE,
       requested_by_member_id: input.requestedByMemberId,
       session_id: input.sessionId,
+      stage_id: stage?.id ?? null,
+      stage_name: stage?.name ?? null,
+      stage_slug: stage?.slug ?? null,
       trigger_type: input.triggerType,
       workspace_id: input.workspaceId,
     })
@@ -417,6 +440,9 @@ async function enqueueSessionJobWithRun(input: {
     model_provider: agentConfig.provider,
     run_type: runType,
     session_id: input.sessionId,
+    stage_id: stage?.id ?? null,
+    stage_name: stage?.name ?? null,
+    stage_slug: stage?.slug ?? null,
     triggered_by_member_id: input.requestedByMemberId,
     workspace_id: input.workspaceId,
   });
@@ -493,6 +519,7 @@ export async function handleRejection(input: {
   admin?: AdminClient;
   expectedWorkspaceId: string;
   feedbackText: string;
+  requestedByMemberId: string | null;
   sessionId: string;
   version: number;
 }): Promise<PipelinePhaseActionResult> {
@@ -578,13 +605,11 @@ export async function handleRejection(input: {
   // If the enqueue fails with a non-dedupe error we must not transition into
   // 'rejected', because 'rejected' with no queued worker is a wedged state the
   // UI cannot recover from.
-  const wallieMember = await loadWallieSystemMember(admin, session.workspace_id);
-
   let queued: { created: boolean; jobId: string | null };
   try {
     queued = await enqueueSessionJobWithRun({
       admin,
-      requestedByMemberId: wallieMember?.id ?? null,
+      requestedByMemberId: input.requestedByMemberId,
       sessionId: session.id,
       triggerType: "comment_retry",
       workspaceId: session.workspace_id,
@@ -624,21 +649,6 @@ async function loadLatestFeedback(
     .maybeSingle();
   if (error) throw error;
   return data?.feedback_text ?? null;
-}
-
-async function loadWallieSystemMember(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<Pick<Tables<"workspace_members">, "id"> | null> {
-  const { data, error } = await admin
-    .from("workspace_members")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("kind", "system")
-    .eq("username", "wallie")
-    .maybeSingle();
-  if (error) throw error;
-  return data;
 }
 
 async function updateSessionStatus(
@@ -788,8 +798,10 @@ async function startAgentRun(
     sessionId: string;
     model: string;
     provider: AgentProvider;
+    requestedByMemberId: string | null;
     runType: string;
     workspaceId: string;
+    stage: Pick<PipelineStage, "id" | "name" | "slug"> | null;
   },
 ): Promise<string | null> {
   const startedAt = new Date().toISOString();
@@ -798,8 +810,12 @@ async function startAgentRun(
     .update({
       model_name: input.model,
       model_provider: input.provider,
+      stage_id: input.stage?.id ?? null,
+      stage_name: input.stage?.name ?? null,
+      stage_slug: input.stage?.slug ?? null,
       started_at: startedAt,
       status: "running" as const,
+      triggered_by_member_id: input.requestedByMemberId,
     })
     .eq("agent_job_id", input.jobId)
     .in("status", ["queued", "started", "running"])
@@ -822,8 +838,12 @@ async function startAgentRun(
       model_provider: input.provider,
       run_type: input.runType,
       session_id: input.sessionId,
+      stage_id: input.stage?.id ?? null,
+      stage_name: input.stage?.name ?? null,
+      stage_slug: input.stage?.slug ?? null,
       started_at: startedAt,
       status: "running" as const,
+      triggered_by_member_id: input.requestedByMemberId,
       workspace_id: input.workspaceId,
     })
     .select("id")
@@ -895,6 +915,9 @@ async function persistEvent(
       messageMd = `**Tool:** ${event.tool}\n\n\`\`\`\n${event.input}\n\`\`\``;
       break;
     case "completion":
+      if (isGenericRunnerCompletionSummary(event.summary)) {
+        return;
+      }
       kind = "completion";
       messageMd = event.summary;
       break;
@@ -910,6 +933,10 @@ async function persistEvent(
     message_md: messageMd,
     workspace_id: workspaceId,
   });
+}
+
+function isGenericRunnerCompletionSummary(summary: string) {
+  return summary.trim().toLowerCase() === "codex session completed";
 }
 
 async function markPipelineJobSuccess(
@@ -943,10 +970,11 @@ async function markPipelineJobError(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
+  options: { retry?: boolean } = {},
 ): Promise<void> {
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
-  if (job.attempt_count < maxRetries) {
+  if (options.retry !== false && job.attempt_count < maxRetries) {
     const { error: retryError } = await admin.rpc("schedule_job_retry", {
       target_job_id: job.id,
       base_delay_ms: 5000,

@@ -82,6 +82,9 @@ export async function loadWallieSessionData(input: {
         | "model_provider"
         | "run_type"
         | "started_at"
+        | "stage_id"
+        | "stage_name"
+        | "stage_slug"
         | "status"
         | "triggered_by_member_id"
       >
@@ -90,4 +93,4 @@ export async function loadWallieSessionData(input: {
 }
 
 const runSelect =
-  "id, created_at, finished_at, model_name, model_provider, run_type, started_at, status, triggered_by_member_id";
+  "id, created_at, finished_at, model_name, model_provider, run_type, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id";

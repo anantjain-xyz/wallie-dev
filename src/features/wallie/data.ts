@@ -20,6 +20,17 @@ function sortRuns(left: Pick<WallieRun, "createdAt">, right: Pick<WallieRun, "cr
   return right.createdAt.localeCompare(left.createdAt);
 }
 
+function isGenericRunnerCompletionMessage(message: Pick<WallieRunMessage, "kind" | "messageMd">) {
+  return (
+    message.kind === "completion" &&
+    message.messageMd.trim().toLowerCase() === "codex session completed"
+  );
+}
+
+function isDisplayableRunMessage(message: Pick<WallieRunMessage, "kind" | "messageMd">) {
+  return !isGenericRunnerCompletionMessage(message);
+}
+
 export function mapAgentRunMessageRow(
   row: Pick<Tables<"agent_run_messages">, "created_at" | "id" | "kind" | "message_md">,
 ): WallieRunMessage {
@@ -53,6 +64,9 @@ export function mapAgentRunRow(
     | "model_provider"
     | "run_type"
     | "started_at"
+    | "stage_id"
+    | "stage_name"
+    | "stage_slug"
     | "status"
     | "triggered_by_member_id"
   >,
@@ -69,13 +83,16 @@ export function mapAgentRunRow(
     messages: [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     modelName: row.model_name,
     modelProvider: row.model_provider,
-    runType: parseWallieRunMode(row.run_type),
-    startedAt: row.started_at,
-    status: row.status,
-    triggeredByMember: row.triggered_by_member_id
+    requestedByMember: row.triggered_by_member_id
       ? (memberIndex.get(row.triggered_by_member_id) ?? null)
       : null,
-    triggeredByMemberId: row.triggered_by_member_id,
+    requestedByMemberId: row.triggered_by_member_id,
+    runType: parseWallieRunMode(row.run_type),
+    startedAt: row.started_at,
+    stageId: row.stage_id,
+    stageName: row.stage_name,
+    stageSlug: row.stage_slug,
+    status: row.status,
   };
 }
 
@@ -101,7 +118,9 @@ export function upsertWallieRunMessage(
 
     const nextMessages = run.messages.filter((message) => message.id !== input.message.id);
 
-    nextMessages.push(input.message);
+    if (isDisplayableRunMessage(input.message)) {
+      nextMessages.push(input.message);
+    }
 
     return {
       ...run,
@@ -130,6 +149,9 @@ export function buildWallieSessionData(input: {
     | "model_provider"
     | "run_type"
     | "started_at"
+    | "stage_id"
+    | "stage_name"
+    | "stage_slug"
     | "status"
     | "triggered_by_member_id"
   >[];
@@ -137,9 +159,14 @@ export function buildWallieSessionData(input: {
   const messagesByRunId = new Map<string, WallieRunMessage[]>();
 
   for (const message of input.messages) {
+    const runMessage = mapAgentRunMessageRow(message);
+    if (!isDisplayableRunMessage(runMessage)) {
+      continue;
+    }
+
     const currentMessages = messagesByRunId.get(message.agent_run_id) ?? [];
 
-    currentMessages.push(mapAgentRunMessageRow(message));
+    currentMessages.push(runMessage);
     messagesByRunId.set(message.agent_run_id, currentMessages);
   }
 

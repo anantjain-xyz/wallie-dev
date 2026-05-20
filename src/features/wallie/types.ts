@@ -50,11 +50,14 @@ export type WallieRun = {
   messages: WallieRunMessage[];
   modelName: string;
   modelProvider: string;
+  requestedByMember: WorkspaceMember | null;
+  requestedByMemberId: string | null;
   runType: WallieRunMode;
   startedAt: string | null;
+  stageId: string | null;
+  stageName: string | null;
+  stageSlug: string | null;
   status: Enums<"agent_run_status">;
-  triggeredByMember: WorkspaceMember | null;
-  triggeredByMemberId: string | null;
 };
 
 export type WallieSessionData = {

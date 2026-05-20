@@ -50,6 +50,9 @@ const existingRunRow = {
   model_provider: "claude-code",
   run_type: "project",
   started_at: null,
+  stage_id: null,
+  stage_name: null,
+  stage_slug: null,
   status: "queued",
   triggered_by_member_id: "member-1",
 };

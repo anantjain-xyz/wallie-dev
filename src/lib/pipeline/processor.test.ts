@@ -120,6 +120,9 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     last_error: null,
     requested_by_member_id: null,
     started_at: null,
+    stage_id: null,
+    stage_name: null,
+    stage_slug: null,
     trigger_type: "manual_run",
     updated_at: new Date().toISOString(),
     attempt_count: 0,
@@ -214,6 +217,8 @@ function createProcessorTestAdminClient(
 function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
   const insertedRuns: Array<Record<string, unknown>> = [];
+  const insertedMessages: Array<Record<string, unknown>> = [];
+  const updatedJobs: Array<Record<string, unknown>> = [];
   const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
 
@@ -334,7 +339,10 @@ function buildAdminMock(opts: MockOptions) {
   } as const;
 
   const agentRunMessagesTable = {
-    insert: async () => ({ error: null }),
+    insert: async (row: Record<string, unknown>) => {
+      insertedMessages.push(row);
+      return { error: null };
+    },
   } as const;
 
   const agentJobsTable = {
@@ -343,7 +351,12 @@ function buildAdminMock(opts: MockOptions) {
         eq: async () => ({ error: null }),
       }),
     }),
-    update: () => ({ eq: async () => ({ error: null }) }),
+    update: (patch: Record<string, unknown>) => ({
+      eq: async () => {
+        updatedJobs.push(patch);
+        return { error: null };
+      },
+    }),
     insert: () => ({
       select: () => ({ single: async () => ({ data: { id: "job-enqueued" }, error: null }) }),
     }),
@@ -512,8 +525,10 @@ function buildAdminMock(opts: MockOptions) {
       rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
     insertedArtifacts,
+    insertedMessages,
     insertedRuns,
     insertedFeedback,
+    updatedJobs,
     updatedRuns,
     updatedSessions,
   };
@@ -564,11 +579,52 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(artifact.stage_slug).toBe("product");
     expect(artifact.version).toBe(1);
     expect(artifact.artifact_json).toContain("Drafted spec body");
+    expect(artifact.artifact_json).not.toContain("Done");
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
+  });
+
+  it("fails the stage when the runner only emits completion bookkeeping", async () => {
+    mocked.createAgentRunner.mockReturnValue(
+      makeRunner([{ type: "completion", taskComplete: true, summary: "Codex session completed" }]),
+    );
+    const session = baseSession();
+    const {
+      admin,
+      insertedArtifacts,
+      insertedMessages,
+      updatedJobs,
+      updatedRuns,
+      updatedSessions,
+    } = buildAdminMock({
+      session,
+      agentConfig: [],
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          "**Error:** Product did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.",
+      }),
+    ]);
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error:
+        "Product did not produce reviewable output. Wallie only received runner bookkeeping, so no artifact was created.",
+      status: "error",
+    });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
   });
 
   it("reuses the queued run row attached to the claimed job", async () => {
@@ -585,6 +641,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(updatedRuns[0]).toMatchObject({
       model_name: "gpt-5.5",
       model_provider: "claude-code",
+      stage_id: "stage-product",
+      stage_name: "Product",
+      stage_slug: "product",
       status: "running",
     });
     expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
@@ -869,6 +928,16 @@ describe("handleApproval", () => {
           }),
         }),
       },
+      sessions: {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: baseSession({ current_stage_id: "stage-design" }),
+              error: null,
+            }),
+          }),
+        }),
+      },
       session_pull_requests: {
         select: () => ({
           eq: () => ({
@@ -1120,6 +1189,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1134,6 +1204,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1151,6 +1222,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1168,6 +1240,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1183,13 +1256,13 @@ describe("handleRejection", () => {
     });
     const { admin, sessionUpdates, insertedFeedback, enqueuedJobs } = buildRejectionMock({
       session,
-      workspaceMember: { id: "mem-wallie" },
     });
 
     const result = await handleRejection({
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "tighten the spec",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1204,7 +1277,12 @@ describe("handleRejection", () => {
     });
     expect(enqueuedJobs).toHaveLength(1);
     expect(enqueuedJobs[0]!.session_id).toBe("sess-1");
-    expect(enqueuedJobs[0]!.requested_by_member_id).toBe("mem-wallie");
+    expect(enqueuedJobs[0]!.requested_by_member_id).toBe("mem-reviewer");
+    expect(enqueuedJobs[0]).toMatchObject({
+      stage_id: "stage-product",
+      stage_name: "Product",
+      stage_slug: "product",
+    });
     expect(enqueuedJobs[0]!.trigger_type).toBe("comment_retry");
     expect(sessionUpdates[0]).toEqual({ rejection_count: 1 });
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
@@ -1224,6 +1302,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "again",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1246,6 +1325,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: "ws-1",
       feedbackText: "boom",
+      requestedByMemberId: "mem-reviewer",
       sessionId: "sess-1",
       version: 1,
     });
@@ -1262,7 +1342,6 @@ describe("handleRejection", () => {
     });
     const { admin, sessionUpdates } = buildRejectionMock({
       session,
-      workspaceMember: { id: "mem-wallie" },
       feedbackInsertError: {
         code: "23505",
         message: "duplicate key value violates unique constraint",
@@ -1273,6 +1352,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: session.workspace_id,
       feedbackText: "race",
+      requestedByMemberId: "mem-reviewer",
       sessionId: session.id,
       version: 1,
     });
@@ -1296,6 +1376,7 @@ describe("handleRejection", () => {
       admin,
       expectedWorkspaceId: session.workspace_id,
       feedbackText: "boom",
+      requestedByMemberId: "mem-reviewer",
       sessionId: session.id,
       version: 1,
     });

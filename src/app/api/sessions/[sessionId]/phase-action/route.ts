@@ -126,6 +126,7 @@ export async function POST(request: Request, { params }: Params) {
     const result = await handleRejection({
       expectedWorkspaceId: sessionRow.workspace_id,
       feedbackText,
+      requestedByMemberId: memberRow.id,
       sessionId: sessionRow.id,
       version: body.version,
     });

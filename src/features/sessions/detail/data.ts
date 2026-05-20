@@ -14,7 +14,6 @@ import {
   type SessionPhaseStatus,
   type SessionPipeline,
   type SessionPullRequest,
-  type SessionRun,
 } from "@/features/sessions/types";
 import { loadWallieSessionData } from "@/features/wallie/server";
 import type { WallieSessionData } from "@/features/wallie/types";
@@ -81,7 +80,6 @@ export async function loadSessionDetailPageData(
     { data: artifactRows, error: artifactError },
     { data: completionRows, error: completionError },
     { data: prRows, error: prError },
-    { data: runRows, error: runError },
   ] = await Promise.all([
     context.supabase
       .from("pipelines")
@@ -110,14 +108,6 @@ export async function loadSessionDetailPageData(
       .eq("workspace_id", context.workspace.id)
       .eq("session_id", sessionRow.id)
       .order("created_at", { ascending: false }),
-    context.supabase
-      .from("agent_runs")
-      .select(
-        "id, created_at, finished_at, input_tokens, model_name, output_tokens, run_type, started_at, status, total_cost_usd",
-      )
-      .eq("session_id", sessionRow.id)
-      .order("created_at", { ascending: false })
-      .limit(10),
   ]);
 
   if (pipelineError) throw pipelineError;
@@ -125,7 +115,6 @@ export async function loadSessionDetailPageData(
   if (artifactError) throw artifactError;
   if (completionError) throw completionError;
   if (prError) throw prError;
-  if (runError) throw runError;
   if (!pipelineRow) {
     throw new Error(
       `Session ${sessionRow.id} references missing pipeline ${sessionRow.pipeline_id}`,
@@ -249,19 +238,6 @@ export async function loadSessionDetailPageData(
     };
   });
 
-  const runHistory: SessionRun[] = (runRows ?? []).map((row) => ({
-    createdAt: row.created_at,
-    finishedAt: row.finished_at,
-    id: row.id,
-    inputTokens: row.input_tokens,
-    modelName: row.model_name,
-    outputTokens: row.output_tokens,
-    runType: row.run_type,
-    startedAt: row.started_at,
-    status: row.status,
-    totalCostUsd: row.total_cost_usd,
-  }));
-
   const session: SessionDetail = {
     archivedAt: sessionRow.archived_at,
     artifacts,
@@ -282,7 +258,6 @@ export async function loadSessionDetailPageData(
     pullRequestCount: pullRequests.length,
     pullRequests,
     rejectionCount: sessionRow.rejection_count,
-    runHistory,
     title: sessionRow.title,
     updatedAt: sessionRow.updated_at,
     workspaceId: sessionRow.workspace_id,

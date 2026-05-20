@@ -26,16 +26,17 @@ type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type SessionForRun = Pick<
   Tables<"sessions">,
-  "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+  "created_at" | "current_stage_id" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
 >;
 type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
+type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
 
-const sessionSelect = "id, workspace_id, number, title, prompt_md, created_at";
+const sessionSelect = "id, workspace_id, number, title, prompt_md, current_stage_id, created_at";
 const jobSelect =
-  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
+  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, created_at, updated_at";
 const DEFAULT_RUN_LOOKUP_RETRY = {
   initialDelayMs: 40,
   maxDelayMs: 640,
@@ -193,6 +194,7 @@ function createRunInsert(input: {
   modelProvider: string;
   requestedByMemberId: string;
   runType: WallieRunMode;
+  stage: StageSnapshot | null;
   workspaceId: string;
 }): TablesInsert<"agent_runs"> {
   return {
@@ -201,6 +203,9 @@ function createRunInsert(input: {
     model_name: input.modelName,
     model_provider: input.modelProvider,
     run_type: input.runType,
+    stage_id: input.stage?.id ?? null,
+    stage_name: input.stage?.name ?? null,
+    stage_slug: input.stage?.slug ?? null,
     triggered_by_member_id: input.requestedByMemberId,
     workspace_id: input.workspaceId,
   };
@@ -209,6 +214,7 @@ function createRunInsert(input: {
 function createJobInsert(input: {
   sessionId: string;
   requestedByMemberId: string;
+  stage: StageSnapshot | null;
   triggerType: Enums<"agent_trigger_type">;
   workspaceId: string;
 }): TablesInsert<"agent_jobs"> {
@@ -217,6 +223,9 @@ function createJobInsert(input: {
     session_id: input.sessionId,
     requested_by_member_id: input.requestedByMemberId,
     trigger_type: input.triggerType,
+    stage_id: input.stage?.id ?? null,
+    stage_name: input.stage?.name ?? null,
+    stage_slug: input.stage?.slug ?? null,
     workspace_id: input.workspaceId,
   };
 }
@@ -245,8 +254,27 @@ async function loadSessionForRun(
 
   return data as Pick<
     Tables<"sessions">,
-    "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+    "created_at" | "current_stage_id" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
   >;
+}
+
+async function loadStageSnapshot(
+  admin: AdminClient,
+  stageId: string | null,
+): Promise<StageSnapshot | null> {
+  if (!stageId) return null;
+
+  const { data, error } = await admin
+    .from("pipeline_stages")
+    .select("id, name, slug")
+    .eq("id", stageId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data as StageSnapshot | null;
 }
 
 async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
@@ -523,11 +551,15 @@ async function createQueuedRun(input: {
   // the executor will actually run. Source-of-truth is the same lookup
   // pipeline/processor.ts uses; drift between the two re-introduces the
   // original placeholder bug.
-  const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspace.id);
+  const [agentConfig, stage] = await Promise.all([
+    loadWorkspaceAgentConfig(input.admin, input.workspace.id),
+    loadStageSnapshot(input.admin, input.session.current_stage_id),
+  ]);
 
   const jobInsert = createJobInsert({
     sessionId: input.session.id,
     requestedByMemberId: input.requestedByMemberId,
+    stage,
     triggerType: input.triggerType,
     workspaceId: input.workspace.id,
   });
@@ -571,6 +603,7 @@ async function createQueuedRun(input: {
         modelProvider: agentConfig.provider,
         requestedByMemberId: input.requestedByMemberId,
         runType: input.runType,
+        stage,
         workspaceId: input.workspace.id,
       }),
     )

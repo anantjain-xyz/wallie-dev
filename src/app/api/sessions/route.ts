@@ -45,6 +45,21 @@ function scheduleQueuedJob(jobId: string | null | undefined) {
   });
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return fallback;
+}
+
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const parsed = createSessionPayloadSchema.safeParse(payload);
@@ -177,7 +192,7 @@ export async function POST(request: Request) {
     } catch {
       response = {
         body: {
-          error: error instanceof Error ? error.message : "Wallie could not queue the first run.",
+          error: getErrorMessage(error, "Wallie could not queue the first run."),
         },
         status: 500,
       };
