@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 
+import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
+import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
+import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
+import type { SettingsPageData } from "@/features/settings/data";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
-import { LinearRoutingEditor } from "@/features/settings/linear-routing-editor";
+import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
-import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
+import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
+import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import {
   type SettingsAnchor,
   SettingsAnchorNav,
@@ -14,21 +19,30 @@ import {
 } from "@/features/settings/settings-anchor-nav";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
+import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
-import { WorkspaceSecretsSections } from "@/features/settings/workspace-secrets-sections";
+import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
+import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readiness";
+import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 
 const ANCHORS: SettingsAnchor[] = [
   { id: "workspace", label: "Workspace" },
-  { id: "github", label: "GitHub" },
-  { id: "linear", label: "Linear" },
-  { id: "secrets", label: "Secrets" },
-  { id: "usage", label: "Usage" },
+  { id: "github", label: "Connect GitHub" },
+  { id: "repository", label: "Analyze repository" },
+  { id: "pipeline", label: "Review pipeline" },
+  { id: "linear", label: "Configure Linear" },
+  { id: "runtime", label: "Verify runtime" },
+  { id: "verify", label: "Verify setup" },
+  { dividerBefore: true, id: "usage", label: "Usage" },
   { id: "rate-limits", label: "Rate limits" },
-  { id: "pipeline", label: "Pipeline" },
-  { id: "linear-routing", label: "Linear routing" },
-  { id: "coding-agent", label: "Coding agent" },
-  { id: "cloud-execution", label: "Cloud execution" },
 ];
+
+const LEGACY_ANCHOR_REDIRECTS: Record<string, string> = {
+  "cloud-execution": "verify",
+  "coding-agent": "runtime",
+  "linear-routing": "linear",
+  secrets: "runtime",
+};
 
 function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]) {
   switch (searchState.githubStatus) {
@@ -57,11 +71,149 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
   }
 }
 
+function updateGithubInData(
+  currentData: SettingsPageData,
+  github: SettingsPageData["github"],
+): SettingsPageData {
+  return {
+    ...currentData,
+    github,
+    setupHealth: {
+      ...currentData.setupHealth,
+      githubInstallation: {
+        connected: Boolean(github.installation && !github.installation.suspended),
+        installationId: github.installation?.installationId ?? null,
+        status: github.installation ? "present" : "missing",
+        suspended: github.installation?.suspended ?? null,
+        targetName: github.installation?.targetName ?? null,
+        updatedAt: github.installation?.updatedAt ?? null,
+      },
+      ...buildRepositorySetupHealth(github, currentData.onboarding.selectedGithubRepositoryId),
+    },
+  };
+}
+
+function updateAgentConfigInData(
+  currentData: SettingsPageData,
+  entry: UpsertAgentConfigResponse["entry"],
+): SettingsPageData {
+  const agentConfig = { ...currentData.agentConfig };
+  agentConfig[entry.key as AgentConfigKey] = entry.value;
+  const configuredKeys = configuredAgentConfigKeys(agentConfig);
+
+  return {
+    ...currentData,
+    agentConfig,
+    setupHealth: {
+      ...currentData.setupHealth,
+      agentConfig: {
+        configured: configuredKeys.length > 0,
+        configuredKeys,
+        status: configuredKeys.length > 0 ? "present" : "missing",
+        values: agentConfig,
+      },
+    },
+  };
+}
+
+function updateCodexConnectionInData(
+  currentData: SettingsPageData,
+  status: CodexConnectionStatus,
+): SettingsPageData {
+  const expiredOrReconnect = Boolean(status.expired || status.reconnectRequired);
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      codexConnection: {
+        connected: status.connected,
+        credentialType: status.credentialType ?? null,
+        expiresAt: status.expiresAt ?? null,
+        status: status.connected ? "connected" : expiredOrReconnect ? "expired" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+function updateClaudeCodeConnectionInData(
+  currentData: SettingsPageData,
+  status: ClaudeCodeConnectionStatus,
+): SettingsPageData {
+  return {
+    ...currentData,
+    setupHealth: {
+      ...currentData.setupHealth,
+      claudeCodeConnection: {
+        connected: status.connected,
+        status: status.connected ? "connected" : "missing",
+        updatedAt: status.updatedAt ?? null,
+      },
+    },
+  };
+}
+
+export function applyLinearRoutingToSettingsData(
+  currentData: SettingsPageData,
+  routing: SettingsPageData["linearRouting"],
+  updatedAt = new Date().toISOString(),
+): SettingsPageData {
+  return {
+    ...currentData,
+    linearRouting: routing,
+    setupHealth: {
+      ...currentData.setupHealth,
+      linearRouting: {
+        configured: true,
+        status: "present",
+        updatedAt,
+      },
+    },
+  };
+}
+
+function applySecretsToData(
+  currentData: SettingsPageData,
+  secrets: SettingsPageData["workspaceSecrets"],
+): SettingsPageData {
+  const managedLinearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
+  const linearSecret = currentData.canManage
+    ? managedLinearSecret
+    : (managedLinearSecret ?? currentData.linearSecret);
+  const linearKeyHealth: SettingsPageData["setupHealth"]["linearKey"] = currentData.canManage
+    ? {
+        configured: Boolean(linearSecret),
+        status: linearSecret ? "present" : "missing",
+        updatedAt: linearSecret?.updatedAt ?? null,
+      }
+    : currentData.setupHealth.linearKey;
+  const workspaceSecretKeys = currentData.canManage
+    ? [...new Set(secrets.map((secret) => secret.key))].sort()
+    : currentData.setupHealth.workspaceSecrets.configuredKeys;
+
+  return {
+    ...currentData,
+    linearSecret,
+    setupHealth: {
+      ...currentData.setupHealth,
+      linearKey: linearKeyHealth,
+      workspaceSecrets: {
+        configuredKeys: workspaceSecretKeys,
+      },
+    },
+    workspaceSecrets: secrets,
+  };
+}
+
 export function SettingsPageClient({ initialData, searchState }: SettingsPageClientProps) {
+  const [data, setData] = useState(initialData);
+  const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(
     initialFlashMessage(searchState),
   );
-  const isManager = initialData.canManage;
+  const pageData = applySecretsToData(data, secrets);
+  const isManager = pageData.canManage;
+  const linearSecret = pageData.linearSecret;
 
   return (
     <div className="min-h-full">
@@ -88,24 +240,99 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         <SettingsAnchorNavMobile anchors={ANCHORS} />
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
-          <SettingsAnchorNav anchors={ANCHORS} />
+          <SettingsAnchorNav anchors={ANCHORS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
 
           <div className="space-y-16 min-w-0">
             <WorkspaceAvatarSection
               canManage={isManager}
               setFlashMessage={setFlashMessage}
-              workspace={initialData.workspace}
+              workspace={pageData.workspace}
             />
             <GitHubInstallSection
               canManage={isManager}
-              github={initialData.github}
+              github={pageData.github}
+              onGithubChange={(github) =>
+                setData((currentData) => updateGithubInData(currentData, github))
+              }
               setFlashMessage={setFlashMessage}
-              workspaceId={initialData.workspace.id}
+              workspaceId={pageData.workspace.id}
             />
-            <WorkspaceSecretsSections
-              canManage={isManager}
+            <RepositoryAnalysisSection
+              data={pageData}
+              setData={setData}
               setFlashMessage={setFlashMessage}
-              workspaceId={initialData.workspace.id}
+            />
+
+            <Section
+              anchorId="pipeline"
+              tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
+              title="Review pipeline"
+            >
+              <PipelineEditor
+                canManage={isManager}
+                pipeline={pageData.pipeline}
+                workspaceId={pageData.workspace.id}
+                workspaceMembers={pageData.workspaceMembers}
+              />
+            </Section>
+
+            <LinearConfigurationSection
+              canManage={isManager}
+              isLoadingSecrets={false}
+              linearSecret={linearSecret}
+              onRoutingSaved={(routing) =>
+                setData((currentData) => applyLinearRoutingToSettingsData(currentData, routing))
+              }
+              routing={pageData.linearRouting}
+              setFlashMessage={setFlashMessage}
+              setSecrets={setSecrets}
+              stages={pageData.pipeline?.stages ?? []}
+              workspaceId={pageData.workspace.id}
+            />
+
+            <AgentConfigSection
+              anchorId="runtime"
+              canManage={isManager}
+              codexConnectFlash={searchState.codexStatus}
+              extraContent={
+                <div className="space-y-4 border-t border-border pt-6">
+                  <div className="min-w-0">
+                    <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
+                    <p className="mt-1 text-[12px] leading-5 text-muted">
+                      Secret values never come back to the client. Wallie shows preview-only rows
+                      and writes encrypted values through route handlers.
+                    </p>
+                  </div>
+                  <WorkspaceSecretsPanel
+                    canManage={isManager}
+                    isLoadingSecrets={false}
+                    secrets={secrets}
+                    setFlashMessage={setFlashMessage}
+                    setSecrets={setSecrets}
+                    workspaceId={pageData.workspace.id}
+                  />
+                </div>
+              }
+              initialAgentConfig={pageData.agentConfig}
+              onAgentConfigSaved={(entry) =>
+                setData((currentData) => updateAgentConfigInData(currentData, entry))
+              }
+              onClaudeCodeStatusChange={(status) =>
+                setData((currentData) => updateClaudeCodeConnectionInData(currentData, status))
+              }
+              onCodexStatusChange={(status) =>
+                setData((currentData) => updateCodexConnectionInData(currentData, status))
+              }
+              setFlashMessage={setFlashMessage}
+              tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
+              title="Verify runtime"
+              workspaceId={pageData.workspace.id}
+            />
+
+            <VerifySetupSection
+              data={pageData}
+              setData={setData}
+              setFlashMessage={setFlashMessage}
             />
 
             <Section
@@ -113,7 +340,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               tagline="Aggregate token usage and costs across all agent runs in this workspace."
               title="Usage"
             >
-              <UsageSummary usage={initialData.usage} />
+              <UsageSummary usage={pageData.usage} />
             </Section>
 
             <Section
@@ -122,7 +349,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               title="Rate limits"
             >
               <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
-                {initialData.rateLimits.map((limit) => (
+                {pageData.rateLimits.map((limit) => (
                   <li
                     key={limit.endpoint}
                     className="flex flex-col gap-1.5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
@@ -139,55 +366,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                   </li>
                 ))}
               </ul>
-            </Section>
-
-            <Section
-              anchorId="pipeline"
-              tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
-              title="Pipeline"
-            >
-              <PipelineEditor
-                canManage={isManager}
-                pipeline={initialData.pipeline}
-                workspaceId={initialData.workspace.id}
-                workspaceMembers={initialData.workspaceMembers}
-              />
-            </Section>
-
-            <Section
-              anchorId="linear-routing"
-              tagline="Map Linear workflow states to pipeline stages so Wallie syncs status correctly."
-              title="Linear routing"
-            >
-              <LinearRoutingEditor
-                canManage={isManager}
-                routing={initialData.linearRouting}
-                setFlashMessage={setFlashMessage}
-                stages={initialData.pipeline?.stages ?? []}
-                workspaceId={initialData.workspace.id}
-              />
-            </Section>
-
-            <AgentConfigSection
-              canManage={isManager}
-              codexConnectFlash={searchState.codexStatus}
-              initialAgentConfig={initialData.agentConfig}
-              setFlashMessage={setFlashMessage}
-              workspaceId={initialData.workspace.id}
-            />
-
-            <Section
-              anchorId="cloud-execution"
-              tagline="Verify that Wallie can spawn sandboxes for a repository and execute jobs end-to-end."
-              title="Cloud execution"
-            >
-              <SandboxCapabilitySection
-                canManage={isManager}
-                initialCheck={initialData.latestSandboxCapabilityCheck}
-                repositories={initialData.github.repositories}
-                setFlashMessage={setFlashMessage}
-                workspaceId={initialData.workspace.id}
-              />
             </Section>
           </div>
         </div>

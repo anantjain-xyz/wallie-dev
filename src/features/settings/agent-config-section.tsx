@@ -1,11 +1,14 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
 import { SelectField } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
+import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
+import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -27,10 +30,17 @@ type AgentConfigVerifyResult =
   | { kind: "skipped"; reason: string };
 
 type AgentConfigSectionProps = {
+  anchorId?: string;
   canManage: boolean;
   codexConnectFlash?: string | null;
+  extraContent?: ReactNode;
   initialAgentConfig: AgentConfigMap;
+  onAgentConfigSaved?: (entry: UpsertAgentConfigResponse["entry"]) => void;
+  onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
+  onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   setFlashMessage: (message: FlashMessage) => void;
+  tagline?: ReactNode;
+  title?: string;
   workspaceId: string;
 };
 
@@ -151,10 +161,17 @@ function AgentConfigField({
 }
 
 export function AgentConfigSection({
+  anchorId = "coding-agent",
   canManage,
   codexConnectFlash,
+  extraContent,
   initialAgentConfig,
+  onAgentConfigSaved,
+  onClaudeCodeStatusChange,
+  onCodexStatusChange,
   setFlashMessage,
+  tagline = "Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution.",
+  title = "Coding agent",
   workspaceId,
 }: AgentConfigSectionProps) {
   const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialAgentConfig);
@@ -184,6 +201,7 @@ export function AgentConfigSection({
     errorText: "Agent config save failed.",
     onSuccess: (payload) => {
       setAgentConfig((current) => ({ ...current, [payload.entry.key]: payload.entry.value }));
+      onAgentConfigSaved?.(payload.entry);
       return true;
     },
     setFlashMessage,
@@ -330,11 +348,7 @@ export function AgentConfigSection({
   }
 
   return (
-    <Section
-      anchorId="coding-agent"
-      tagline="Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution."
-      title="Coding agent"
-    >
+    <Section anchorId={anchorId} tagline={tagline} title={title}>
       {canManage ? (
         <div className="space-y-6">
           <div className="space-y-6">
@@ -386,7 +400,12 @@ export function AgentConfigSection({
             ))}
           </div>
 
-          <ProviderAccessPanel connectFlash={codexConnectFlash} provider={selectedAgentProvider} />
+          <ProviderAccessPanel
+            connectFlash={codexConnectFlash}
+            onClaudeCodeStatusChange={onClaudeCodeStatusChange}
+            onCodexStatusChange={onCodexStatusChange}
+            provider={selectedAgentProvider}
+          />
 
           <div className="space-y-6">
             {executionFieldStatuses.map((status) => (
@@ -420,13 +439,21 @@ export function AgentConfigSection({
               {saveAgentConfig.isBusy ? "Saving…" : "Save changes"}
             </button>
           </div>
+
+          {extraContent}
         </div>
       ) : (
         <div className="space-y-4">
           <p className="text-[13px] leading-6 text-muted">
             Workspace admins can configure coding agent settings from this page.
           </p>
-          <ProviderAccessPanel connectFlash={codexConnectFlash} provider={selectedAgentProvider} />
+          <ProviderAccessPanel
+            connectFlash={codexConnectFlash}
+            onClaudeCodeStatusChange={onClaudeCodeStatusChange}
+            onCodexStatusChange={onCodexStatusChange}
+            provider={selectedAgentProvider}
+          />
+          {extraContent}
         </div>
       )}
     </Section>

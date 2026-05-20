@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -9,19 +9,65 @@ import { useApiAction } from "@/features/settings/use-api-action";
 import type {
   SandboxCapabilityCheckLatestResponse,
   SandboxCapabilityCheckResponse,
+  SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
 
 type SandboxCapabilitySectionProps = {
   canManage: boolean;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
+  onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
+  preferredRepositoryId?: string | null;
   repositories: SettingsPageData["github"]["repositories"];
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
 
+export function resolveSandboxRepositorySelection({
+  currentRepositoryId,
+  preferredRepositoryId,
+  repositories,
+}: {
+  currentRepositoryId: string;
+  preferredRepositoryId?: string | null;
+  repositories: SettingsPageData["github"]["repositories"];
+}) {
+  const selectableRepositories = repositories.filter((repository) => !repository.isArchived);
+  const hasPreferredRepository = selectableRepositories.some(
+    (repository) => repository.id === preferredRepositoryId,
+  );
+
+  if (hasPreferredRepository) {
+    return preferredRepositoryId ?? "";
+  }
+
+  const currentRepositoryStillAvailable = selectableRepositories.some(
+    (repository) => repository.id === currentRepositoryId,
+  );
+  if (currentRepositoryStillAvailable) {
+    return currentRepositoryId;
+  }
+
+  return selectableRepositories[0]?.id ?? "";
+}
+
+export function markSandboxCapabilityCheckPollingFailed(
+  check: SandboxCapabilityCheckState,
+  message: string,
+  checkedAt = new Date().toISOString(),
+): SandboxCapabilityCheckState {
+  return {
+    ...check,
+    checkedAt,
+    errorText: message,
+    status: "error",
+  };
+}
+
 export function SandboxCapabilitySection({
   canManage,
   initialCheck,
+  onCheckChange,
+  preferredRepositoryId,
   repositories,
   setFlashMessage,
   workspaceId,
@@ -32,9 +78,29 @@ export function SandboxCapabilitySection({
     value: repository.id,
   }));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(
-    selectableRepositories[0]?.id ?? "",
+    resolveSandboxRepositorySelection({
+      currentRepositoryId: "",
+      preferredRepositoryId,
+      repositories,
+    }),
   );
   const [check, setCheck] = useState(initialCheck);
+  const latestCheckRef = useRef(check);
+  const repositoryIdsKey = selectableRepositories.map((repository) => repository.id).join("|");
+
+  useEffect(() => {
+    latestCheckRef.current = check;
+  }, [check]);
+
+  useEffect(() => {
+    setSelectedRepositoryId((currentRepositoryId) =>
+      resolveSandboxRepositorySelection({
+        currentRepositoryId,
+        preferredRepositoryId,
+        repositories,
+      }),
+    );
+  }, [preferredRepositoryId, repositories, repositoryIdsKey]);
 
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
     call: () =>
@@ -46,7 +112,10 @@ export function SandboxCapabilitySection({
         method: "POST",
       }),
     errorText: "Sandbox capability check failed.",
-    onSuccess: (payload) => setCheck(payload.check),
+    onSuccess: (payload) => {
+      setCheck(payload.check);
+      onCheckChange?.(payload.check);
+    },
     setFlashMessage,
     successText: (payload) =>
       payload.check.status === "running"
@@ -59,8 +128,8 @@ export function SandboxCapabilitySection({
   const isPolling = check?.status === "running";
 
   useEffect(() => {
-    if (!isPolling || !check?.githubRepositoryId) return;
-    const repositoryId = check.githubRepositoryId;
+    const repositoryId = check?.githubRepositoryId;
+    if (!isPolling || !repositoryId) return;
     let cancelled = false;
     const timer = window.setInterval(async () => {
       try {
@@ -77,6 +146,7 @@ export function SandboxCapabilitySection({
         if (cancelled) return;
         const nextCheck = body.check;
         setCheck(nextCheck);
+        onCheckChange?.(nextCheck);
         if (nextCheck.status !== "running") {
           window.clearInterval(timer);
           if (nextCheck.status === "success") {
@@ -91,16 +161,16 @@ export function SandboxCapabilitySection({
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : "Capability check polling failed.";
-        setCheck((currentCheck) =>
-          currentCheck?.status === "running"
-            ? {
-                ...currentCheck,
-                checkedAt: new Date().toISOString(),
-                errorText: message,
-                status: "error",
-              }
-            : currentCheck,
-        );
+        const currentCheck = latestCheckRef.current;
+        if (
+          currentCheck?.status === "running" &&
+          currentCheck.githubRepositoryId === repositoryId
+        ) {
+          const nextCheck = markSandboxCapabilityCheckPollingFailed(currentCheck, message);
+          latestCheckRef.current = nextCheck;
+          setCheck(nextCheck);
+          onCheckChange?.(nextCheck);
+        }
         setFlashMessage({ kind: "error", text: message });
         window.clearInterval(timer);
       }
@@ -110,7 +180,7 @@ export function SandboxCapabilitySection({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [check?.githubRepositoryId, isPolling, setFlashMessage, workspaceId]);
+  }, [check?.githubRepositoryId, isPolling, onCheckChange, setFlashMessage, workspaceId]);
 
   return (
     <div className="space-y-6">

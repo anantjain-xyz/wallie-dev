@@ -15,6 +15,7 @@ import {
 
 type LinearRoutingEditorProps = {
   canManage: boolean;
+  onSaved?: (routing: LinearRoutingConfig) => Promise<void> | void;
   routing: LinearRoutingConfig;
   setFlashMessage: (message: FlashMessage) => void;
   stages: PipelineStage[];
@@ -121,6 +122,7 @@ function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
 
 export function LinearRoutingEditor({
   canManage,
+  onSaved,
   routing,
   setFlashMessage,
   stages,
@@ -129,6 +131,7 @@ export function LinearRoutingEditor({
   return (
     <LinearRoutingControls
       canManage={canManage}
+      onSaved={onSaved}
       routing={routing}
       setFlashMessage={setFlashMessage}
       stages={stages}
@@ -144,9 +147,7 @@ export function LinearRoutingControls({
   setFlashMessage,
   stages,
   workspaceId,
-}: LinearRoutingEditorProps & {
-  onSaved?: (routing: LinearRoutingConfig) => Promise<void> | void;
-}) {
+}: LinearRoutingEditorProps) {
   const [draft, setDraft] = useState(() => routingDraftFromConfig(routing));
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);

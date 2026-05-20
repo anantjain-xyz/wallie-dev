@@ -219,6 +219,42 @@ describe("buildVerifyChecklist", () => {
     expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
   });
 
+  it("can verify Settings from setup health instead of onboarding step flags", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health(),
+      mode: "settings",
+      onboarding: onboarding({
+        completedSteps: [],
+        skippedSteps: [],
+      }),
+    });
+
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+  });
+
+  it("does not let stale onboarding Linear completion override Settings health", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        linearKey: { configured: false, status: "missing", updatedAt: null },
+      }),
+      mode: "settings",
+      onboarding: onboarding({
+        completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+      }),
+    });
+
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([
+      {
+        detail: "Configure the Linear API key and routing.",
+        id: "linear",
+        label: "Linear configured",
+        step: "linear",
+      },
+    ]);
+  });
+
   it("blocks sandbox checks that belong to a different repository", () => {
     const checklist = buildVerifyChecklist({
       agentConfig: health().agentConfig.values,

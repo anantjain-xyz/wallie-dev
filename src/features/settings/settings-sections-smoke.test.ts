@@ -4,10 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import type { SettingsPageData } from "@/features/settings/data";
-import { LinearKeySection } from "@/features/settings/linear-key-section";
+import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
-import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
-import { SettingsPageClient } from "@/features/settings/settings-page-client";
+import {
+  markSandboxCapabilityCheckPollingFailed,
+  resolveSandboxRepositorySelection,
+  SandboxCapabilitySection,
+} from "@/features/settings/sandbox-capability-section";
+import { resolveLegacySettingsAnchorHash } from "@/features/settings/settings-anchor-nav";
+import {
+  applyLinearRoutingToSettingsData,
+  SettingsPageClient,
+} from "@/features/settings/settings-page-client";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
@@ -31,14 +39,16 @@ const pipeline = {
 };
 
 function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageData {
+  const agentConfig = {
+    agent_model: "gpt-5-codex",
+    agent_provider: "codex",
+    concurrency_limit: 1,
+    max_retries: 3,
+    stall_timeout_ms: 300000,
+  };
+
   return {
-    agentConfig: {
-      agent_model: "gpt-5-codex",
-      agent_provider: "codex",
-      concurrency_limit: 1,
-      max_retries: 3,
-      stall_timeout_ms: 300000,
-    },
+    agentConfig,
     canManage: true,
     currentMember: {
       id: "member-1",
@@ -52,8 +62,21 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
       repositories: [],
     },
     latestSandboxCapabilityCheck: null,
+    linearSecret: null,
     linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
-    onboarding: null,
+    onboarding: {
+      completedAt: null,
+      completedSteps: [],
+      createdAt: "2026-05-16T18:00:00.000Z",
+      currentStep: "github",
+      dismissedAt: null,
+      id: "onboarding-1",
+      selectedGithubRepositoryId: null,
+      skippedSteps: [],
+      status: "in_progress",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+      workspaceId,
+    },
     pipeline,
     rateLimits: [],
     usage: {
@@ -61,6 +84,77 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
       totalInputTokens: 0,
       totalOutputTokens: 0,
       totalRuns: 0,
+    },
+    setupHealth: {
+      agentConfig: {
+        configured: true,
+        configuredKeys: [
+          "agent_provider",
+          "agent_model",
+          "concurrency_limit",
+          "stall_timeout_ms",
+          "max_retries",
+        ],
+        status: "present",
+        values: agentConfig,
+      },
+      claudeCodeConnection: {
+        connected: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      codexConnection: {
+        connected: false,
+        credentialType: null,
+        expiresAt: null,
+        status: "missing",
+        updatedAt: null,
+      },
+      defaultPipeline: {
+        configured: true,
+        pipelineId: "pipeline-1",
+        stageCount: 1,
+        status: "ready",
+      },
+      githubInstallation: {
+        connected: false,
+        installationId: null,
+        status: "missing",
+        suspended: null,
+        targetName: null,
+        updatedAt: null,
+      },
+      latestSandboxCapabilityCheck: null,
+      linearKey: {
+        configured: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      linearRouting: {
+        configured: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      primaryRepositoryProfile: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+      repositorySetup: {
+        configured: false,
+        repositoryId: null,
+        status: "placeholder",
+      },
+      selectedRepository: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+      workspaceSecrets: {
+        configuredKeys: [],
+      },
     },
     workspace: {
       avatarPath: null,
@@ -70,6 +164,7 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
       slug: "acme",
     },
     workspaceMembers: [],
+    workspaceSecrets: [],
     ...overrides,
   };
 }
@@ -90,9 +185,9 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Save pipeline");
   });
 
-  it("smoke-renders the Settings Linear section wrapper after extraction", () => {
+  it("smoke-renders the Settings Linear configuration section", () => {
     const html = renderToStaticMarkup(
-      createElement(LinearKeySection, {
+      createElement(LinearConfigurationSection, {
         canManage: true,
         isLoadingSecrets: false,
         linearSecret: {
@@ -104,13 +199,17 @@ describe("Settings integration sections", () => {
           valuePreview: "••••1234",
           workspaceId,
         },
+        routing: DEFAULT_LINEAR_ROUTING_CONFIG,
         setFlashMessage: vi.fn(),
         setSecrets: vi.fn(),
+        stages: pipeline.stages,
         workspaceId,
       }),
     );
 
-    expect(html).toContain("Linear");
+    expect(html).toContain("Configure Linear");
+    expect(html).toContain("Linear API key");
+    expect(html).toContain("Linear routing");
     expect(html).toContain("••••1234");
     expect(html).toContain("Test connection");
   });
@@ -140,7 +239,7 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain("Connect yours below");
   });
 
-  it("renders provider access inside Coding agent instead of a standalone Codex section", () => {
+  it("renders Settings anchors in onboarding order with usage at the bottom", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
@@ -151,10 +250,194 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    expect(html).toContain('id="coding-agent"');
+    const labels = [
+      "Workspace",
+      "Connect GitHub",
+      "Analyze repository",
+      "Review pipeline",
+      "Configure Linear",
+      "Verify runtime",
+      "Verify setup",
+      "Usage",
+      "Rate limits",
+    ];
+    let lastIndex = -1;
+    for (const label of labels) {
+      const index = html.indexOf(`>${label}</`);
+      expect(index).toBeGreaterThan(lastIndex);
+      lastIndex = index;
+    }
+    expect(html).not.toContain('href="#secrets"');
+    expect(html).not.toContain('href="#linear-routing"');
+    expect(html).not.toContain('href="#coding-agent"');
+    expect(html).not.toContain('href="#cloud-execution"');
+  });
+
+  it("preserves legacy Settings hashes through onboarding-aligned anchors", () => {
+    const redirects = {
+      "cloud-execution": "verify",
+      "coding-agent": "runtime",
+      "linear-routing": "linear",
+      secrets: "runtime",
+    };
+
+    expect(resolveLegacySettingsAnchorHash("#linear-routing", redirects)).toBe("linear");
+    expect(resolveLegacySettingsAnchorHash("#coding-agent", redirects)).toBe("runtime");
+    expect(resolveLegacySettingsAnchorHash("#cloud-execution", redirects)).toBe("verify");
+    expect(resolveLegacySettingsAnchorHash("#secrets", redirects)).toBe("runtime");
+    expect(resolveLegacySettingsAnchorHash("#usage", redirects)).toBeNull();
+  });
+
+  it("uses setup health, not onboarding step flags, for Settings verification", () => {
+    const base = settingsData();
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData({
+          canManage: false,
+          onboarding: {
+            ...base.onboarding,
+            completedSteps: [],
+            skippedSteps: [],
+          },
+          setupHealth: {
+            ...base.setupHealth,
+            codexConnection: {
+              connected: true,
+              credentialType: "codex_access_token",
+              expiresAt: "2026-05-16T20:00:00.000Z",
+              status: "connected",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            defaultPipeline: {
+              configured: true,
+              pipelineId: "pipeline-1",
+              stageCount: 1,
+              status: "ready",
+            },
+            githubInstallation: {
+              connected: true,
+              installationId: 123,
+              status: "present",
+              suspended: false,
+              targetName: "acme-corp",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            latestSandboxCapabilityCheck: {
+              capabilities: {},
+              checkedAt: "2026-05-16T18:00:00.000Z",
+              errorText: null,
+              githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+              id: "check-1",
+              status: "success",
+            },
+            linearKey: {
+              configured: true,
+              status: "present",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            linearRouting: {
+              configured: true,
+              status: "present",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/app",
+              repositoryId: "11111111-1111-4111-8111-111111111111",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "11111111-1111-4111-8111-111111111111",
+              status: "ready",
+            },
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/app",
+              repositoryId: "11111111-1111-4111-8111-111111111111",
+              status: "ready",
+            },
+          },
+          workspaceSecrets: [],
+        }),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain("Pipeline configured");
+    expect(html).toContain("Linear configured");
+    expect(html).toContain("Runtime configured");
+    expect(html).toContain("Linear API key and routing are configured.");
+    expect(html).not.toContain("Complete the pipeline step.");
+    expect(html).not.toContain("Complete the Linear step.");
+  });
+
+  it("updates Settings health when Linear routing saves", () => {
+    const data = settingsData({
+      setupHealth: {
+        ...settingsData().setupHealth,
+        linearRouting: {
+          configured: false,
+          status: "missing",
+          updatedAt: null,
+        },
+      },
+    });
+    const updated = applyLinearRoutingToSettingsData(
+      data,
+      DEFAULT_LINEAR_ROUTING_CONFIG,
+      "2026-05-20T04:10:00.000Z",
+    );
+
+    expect(updated.linearRouting).toEqual(DEFAULT_LINEAR_ROUTING_CONFIG);
+    expect(updated.setupHealth.linearRouting).toEqual({
+      configured: true,
+      status: "present",
+      updatedAt: "2026-05-20T04:10:00.000Z",
+    });
+  });
+
+  it("renders the onboarding-aligned Settings sections", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData(),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain('id="repository"');
+    expect(html).toContain("Analyze repository");
+    expect(html).toContain('id="linear"');
+    expect(html).toContain("Configure Linear");
+    expect(html).toContain('id="runtime"');
+    expect(html).toContain("Workspace secrets");
+    expect(html).toContain('id="verify"');
+    expect(html).toContain("Verify setup");
+  });
+
+  it("renders provider access inside Verify runtime instead of a standalone Codex section", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData(),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain('id="runtime"');
+    expect(html).toContain("Verify runtime");
     expect(html).toContain("Provider access");
     expect(html).toContain("Checking connection");
     expect(html).not.toContain('id="codex"');
+    expect(html).not.toContain('id="coding-agent"');
     expect(html).not.toContain('href="#codex"');
   });
 
@@ -178,6 +461,90 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Provider access");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
+  });
+
+  it("updates the sandbox repository target when the preferred repository changes", () => {
+    const repositories: SettingsPageData["github"]["repositories"] = [
+      {
+        defaultBranch: "main",
+        defaultProgrammingLanguage: "TypeScript",
+        description: null,
+        fullName: "acme/api",
+        htmlUrl: "https://github.com/acme/api",
+        id: "11111111-1111-4111-8111-111111111111",
+        isArchived: false,
+        isPrivate: true,
+        name: "api",
+        onboarding: {
+          conflictReport: [],
+          githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+          installedSkillHash: null,
+          installedSkillVersion: null,
+          lastError: null,
+          setupBranchName: null,
+          setupPrNumber: null,
+          setupPrUrl: null,
+          status: "not_set_up",
+          updatedAt: null,
+        },
+        profile: null,
+        repoId: 1,
+      },
+      {
+        defaultBranch: "main",
+        defaultProgrammingLanguage: "TypeScript",
+        description: null,
+        fullName: "acme/web",
+        htmlUrl: "https://github.com/acme/web",
+        id: "22222222-2222-4222-8222-222222222222",
+        isArchived: false,
+        isPrivate: true,
+        name: "web",
+        onboarding: {
+          conflictReport: [],
+          githubRepositoryId: "22222222-2222-4222-8222-222222222222",
+          installedSkillHash: null,
+          installedSkillVersion: null,
+          lastError: null,
+          setupBranchName: null,
+          setupPrNumber: null,
+          setupPrUrl: null,
+          status: "not_set_up",
+          updatedAt: null,
+        },
+        profile: null,
+        repoId: 2,
+      },
+    ];
+
+    expect(
+      resolveSandboxRepositorySelection({
+        currentRepositoryId: "11111111-1111-4111-8111-111111111111",
+        preferredRepositoryId: "22222222-2222-4222-8222-222222222222",
+        repositories,
+      }),
+    ).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
+  it("turns sandbox polling failures into a parent-syncable error check", () => {
+    const failed = markSandboxCapabilityCheckPollingFailed(
+      {
+        capabilities: {},
+        checkedAt: "2026-05-20T04:00:00.000Z",
+        errorText: null,
+        githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+        id: "check-1",
+        status: "running",
+      },
+      "Capability check polling failed.",
+      "2026-05-20T04:11:00.000Z",
+    );
+
+    expect(failed).toMatchObject({
+      checkedAt: "2026-05-20T04:11:00.000Z",
+      errorText: "Capability check polling failed.",
+      status: "error",
+    });
   });
 
   it("pairs Settings provider changes with the provider's recommended model", () => {
