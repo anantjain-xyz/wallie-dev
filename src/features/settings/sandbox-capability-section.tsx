@@ -21,6 +21,34 @@ type SandboxCapabilitySectionProps = {
   workspaceId: string;
 };
 
+export function resolveSandboxRepositorySelection({
+  currentRepositoryId,
+  preferredRepositoryId,
+  repositories,
+}: {
+  currentRepositoryId: string;
+  preferredRepositoryId?: string | null;
+  repositories: SettingsPageData["github"]["repositories"];
+}) {
+  const selectableRepositories = repositories.filter((repository) => !repository.isArchived);
+  const hasPreferredRepository = selectableRepositories.some(
+    (repository) => repository.id === preferredRepositoryId,
+  );
+
+  if (hasPreferredRepository) {
+    return preferredRepositoryId ?? "";
+  }
+
+  const currentRepositoryStillAvailable = selectableRepositories.some(
+    (repository) => repository.id === currentRepositoryId,
+  );
+  if (currentRepositoryStillAvailable) {
+    return currentRepositoryId;
+  }
+
+  return selectableRepositories[0]?.id ?? "";
+}
+
 export function SandboxCapabilitySection({
   canManage,
   initialCheck,
@@ -35,15 +63,25 @@ export function SandboxCapabilitySection({
     label: repository.fullName,
     value: repository.id,
   }));
-  const preferredRepositoryAvailable = selectableRepositories.some(
-    (repository) => repository.id === preferredRepositoryId,
-  );
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(
-    preferredRepositoryAvailable
-      ? (preferredRepositoryId ?? "")
-      : (selectableRepositories[0]?.id ?? ""),
+    resolveSandboxRepositorySelection({
+      currentRepositoryId: "",
+      preferredRepositoryId,
+      repositories,
+    }),
   );
   const [check, setCheck] = useState(initialCheck);
+  const repositoryIdsKey = selectableRepositories.map((repository) => repository.id).join("|");
+
+  useEffect(() => {
+    setSelectedRepositoryId((currentRepositoryId) =>
+      resolveSandboxRepositorySelection({
+        currentRepositoryId,
+        preferredRepositoryId,
+        repositories,
+      }),
+    );
+  }, [preferredRepositoryId, repositories, repositoryIdsKey]);
 
   const runCheck = useApiAction<SandboxCapabilityCheckResponse>({
     call: () =>

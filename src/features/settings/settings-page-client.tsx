@@ -157,20 +157,29 @@ function applySecretsToData(
   currentData: SettingsPageData,
   secrets: SettingsPageData["workspaceSecrets"],
 ): SettingsPageData {
-  const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
+  const managedLinearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
+  const linearSecret = currentData.canManage
+    ? managedLinearSecret
+    : (managedLinearSecret ?? currentData.linearSecret);
+  const linearKeyHealth: SettingsPageData["setupHealth"]["linearKey"] = currentData.canManage
+    ? {
+        configured: Boolean(linearSecret),
+        status: linearSecret ? "present" : "missing",
+        updatedAt: linearSecret?.updatedAt ?? null,
+      }
+    : currentData.setupHealth.linearKey;
+  const workspaceSecretKeys = currentData.canManage
+    ? [...new Set(secrets.map((secret) => secret.key))].sort()
+    : currentData.setupHealth.workspaceSecrets.configuredKeys;
 
   return {
     ...currentData,
     linearSecret,
     setupHealth: {
       ...currentData.setupHealth,
-      linearKey: {
-        configured: Boolean(linearSecret),
-        status: linearSecret ? "present" : "missing",
-        updatedAt: linearSecret?.updatedAt ?? null,
-      },
+      linearKey: linearKeyHealth,
       workspaceSecrets: {
-        configuredKeys: [...new Set(secrets.map((secret) => secret.key))].sort(),
+        configuredKeys: workspaceSecretKeys,
       },
     },
     workspaceSecrets: secrets,

@@ -28,6 +28,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,
+    mode: "settings",
     onboarding: data.onboarding,
   });
   const blockers = checklist.filter((item) => !item.passed);

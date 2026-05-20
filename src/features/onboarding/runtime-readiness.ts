@@ -55,6 +55,7 @@ export type VerifyChecklistItem = {
 };
 
 export type VerifyBlocker = Omit<VerifyChecklistItem, "passed">;
+export type VerifyChecklistMode = "onboarding" | "settings";
 
 export function agentConfigEntriesToMap(
   entries: Array<{ key: string; value: unknown }>,
@@ -192,6 +193,7 @@ export function buildRuntimeReadiness(input: {
 export function buildVerifyChecklist(input: {
   agentConfig: AgentConfigMap;
   health: OnboardingSetupHealth;
+  mode?: VerifyChecklistMode;
   onboarding: WorkspaceOnboardingState;
 }): VerifyChecklistItem[] {
   const runtimeReadiness = buildRuntimeReadiness({
@@ -212,6 +214,17 @@ export function buildVerifyChecklist(input: {
     : null;
   const stepSatisfied = (step: WorkspaceOnboardingStep) =>
     completedSteps.has(step) || (canSkipOnboardingStep(step) && skippedSteps.has(step));
+  const useSetupHealth = input.mode === "settings";
+  const pipelinePassed = useSetupHealth
+    ? input.health.defaultPipeline.configured
+    : completedSteps.has("pipeline");
+  const linearPassed = useSetupHealth
+    ? (input.health.linearKey.configured && input.health.linearRouting.configured) ||
+      stepSatisfied("linear")
+    : stepSatisfied("linear");
+  const runtimePassed = useSetupHealth
+    ? input.health.agentConfig.configured || stepSatisfied("runtime")
+    : stepSatisfied("runtime");
 
   return [
     {
@@ -248,30 +261,46 @@ export function buildVerifyChecklist(input: {
       step: "repository",
     },
     {
-      detail: completedSteps.has("pipeline")
-        ? "Pipeline step completed."
-        : "Complete the pipeline step.",
+      detail: useSetupHealth
+        ? input.health.defaultPipeline.configured
+          ? `${input.health.defaultPipeline.stageCount} pipeline stages are configured.`
+          : "Configure a default pipeline."
+        : completedSteps.has("pipeline")
+          ? "Pipeline step completed."
+          : "Complete the pipeline step.",
       id: "pipeline",
-      label: "Pipeline completed",
-      passed: completedSteps.has("pipeline"),
+      label: useSetupHealth ? "Pipeline configured" : "Pipeline completed",
+      passed: pipelinePassed,
       step: "pipeline",
     },
     {
-      detail: stepSatisfied("linear")
-        ? "Linear step completed or skipped."
-        : "Complete the Linear step.",
+      detail: useSetupHealth
+        ? linearPassed
+          ? input.health.linearKey.configured && input.health.linearRouting.configured
+            ? "Linear API key and routing are configured."
+            : "Linear setup was skipped."
+          : "Configure the Linear API key and routing."
+        : stepSatisfied("linear")
+          ? "Linear step completed or skipped."
+          : "Complete the Linear step.",
       id: "linear",
-      label: "Linear completed",
-      passed: stepSatisfied("linear"),
+      label: useSetupHealth ? "Linear configured" : "Linear completed",
+      passed: linearPassed,
       step: "linear",
     },
     {
-      detail: stepSatisfied("runtime")
-        ? "Runtime step completed or skipped."
-        : "Complete the Runtime step.",
+      detail: useSetupHealth
+        ? runtimePassed
+          ? input.health.agentConfig.configured
+            ? "Agent runtime configuration is saved."
+            : "Runtime setup was skipped."
+          : "Configure agent runtime settings."
+        : stepSatisfied("runtime")
+          ? "Runtime step completed or skipped."
+          : "Complete the Runtime step.",
       id: "runtime",
-      label: "Runtime completed",
-      passed: stepSatisfied("runtime"),
+      label: useSetupHealth ? "Runtime configured" : "Runtime completed",
+      passed: runtimePassed,
       step: "runtime",
     },
     {

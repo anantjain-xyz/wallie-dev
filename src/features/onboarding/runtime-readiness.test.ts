@@ -219,6 +219,20 @@ describe("buildVerifyChecklist", () => {
     expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
   });
 
+  it("can verify Settings from setup health instead of onboarding step flags", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health(),
+      mode: "settings",
+      onboarding: onboarding({
+        completedSteps: [],
+        skippedSteps: [],
+      }),
+    });
+
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+  });
+
   it("blocks sandbox checks that belong to a different repository", () => {
     const checklist = buildVerifyChecklist({
       agentConfig: health().agentConfig.values,

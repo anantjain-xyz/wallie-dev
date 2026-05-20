@@ -6,7 +6,10 @@ import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
-import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
+import {
+  resolveSandboxRepositorySelection,
+  SandboxCapabilitySection,
+} from "@/features/settings/sandbox-capability-section";
 import { resolveLegacySettingsAnchorHash } from "@/features/settings/settings-anchor-nav";
 import { SettingsPageClient } from "@/features/settings/settings-page-client";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
@@ -281,6 +284,93 @@ describe("Settings integration sections", () => {
     expect(resolveLegacySettingsAnchorHash("#usage", redirects)).toBeNull();
   });
 
+  it("uses setup health, not onboarding step flags, for Settings verification", () => {
+    const base = settingsData();
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData({
+          canManage: false,
+          onboarding: {
+            ...base.onboarding,
+            completedSteps: [],
+            skippedSteps: [],
+          },
+          setupHealth: {
+            ...base.setupHealth,
+            codexConnection: {
+              connected: true,
+              credentialType: "codex_access_token",
+              expiresAt: "2026-05-16T20:00:00.000Z",
+              status: "connected",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            defaultPipeline: {
+              configured: true,
+              pipelineId: "pipeline-1",
+              stageCount: 1,
+              status: "ready",
+            },
+            githubInstallation: {
+              connected: true,
+              installationId: 123,
+              status: "present",
+              suspended: false,
+              targetName: "acme-corp",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            latestSandboxCapabilityCheck: {
+              capabilities: {},
+              checkedAt: "2026-05-16T18:00:00.000Z",
+              errorText: null,
+              githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+              id: "check-1",
+              status: "success",
+            },
+            linearKey: {
+              configured: true,
+              status: "present",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            linearRouting: {
+              configured: true,
+              status: "present",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/app",
+              repositoryId: "11111111-1111-4111-8111-111111111111",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "11111111-1111-4111-8111-111111111111",
+              status: "ready",
+            },
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/app",
+              repositoryId: "11111111-1111-4111-8111-111111111111",
+              status: "ready",
+            },
+          },
+          workspaceSecrets: [],
+        }),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain("Pipeline configured");
+    expect(html).toContain("Linear configured");
+    expect(html).toContain("Runtime configured");
+    expect(html).toContain("Linear API key and routing are configured.");
+    expect(html).not.toContain("Complete the pipeline step.");
+    expect(html).not.toContain("Complete the Linear step.");
+  });
+
   it("renders the onboarding-aligned Settings sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
@@ -342,6 +432,69 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Provider access");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain("Checking connection");
+  });
+
+  it("updates the sandbox repository target when the preferred repository changes", () => {
+    const repositories: SettingsPageData["github"]["repositories"] = [
+      {
+        defaultBranch: "main",
+        defaultProgrammingLanguage: "TypeScript",
+        description: null,
+        fullName: "acme/api",
+        htmlUrl: "https://github.com/acme/api",
+        id: "11111111-1111-4111-8111-111111111111",
+        isArchived: false,
+        isPrivate: true,
+        name: "api",
+        onboarding: {
+          conflictReport: [],
+          githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+          installedSkillHash: null,
+          installedSkillVersion: null,
+          lastError: null,
+          setupBranchName: null,
+          setupPrNumber: null,
+          setupPrUrl: null,
+          status: "not_set_up",
+          updatedAt: null,
+        },
+        profile: null,
+        repoId: 1,
+      },
+      {
+        defaultBranch: "main",
+        defaultProgrammingLanguage: "TypeScript",
+        description: null,
+        fullName: "acme/web",
+        htmlUrl: "https://github.com/acme/web",
+        id: "22222222-2222-4222-8222-222222222222",
+        isArchived: false,
+        isPrivate: true,
+        name: "web",
+        onboarding: {
+          conflictReport: [],
+          githubRepositoryId: "22222222-2222-4222-8222-222222222222",
+          installedSkillHash: null,
+          installedSkillVersion: null,
+          lastError: null,
+          setupBranchName: null,
+          setupPrNumber: null,
+          setupPrUrl: null,
+          status: "not_set_up",
+          updatedAt: null,
+        },
+        profile: null,
+        repoId: 2,
+      },
+    ];
+
+    expect(
+      resolveSandboxRepositorySelection({
+        currentRepositoryId: "11111111-1111-4111-8111-111111111111",
+        preferredRepositoryId: "22222222-2222-4222-8222-222222222222",
+        repositories,
+      }),
+    ).toBe("22222222-2222-4222-8222-222222222222");
   });
 
   it("pairs Settings provider changes with the provider's recommended model", () => {
