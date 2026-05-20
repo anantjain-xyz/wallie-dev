@@ -8,39 +8,10 @@ alter table public.agent_runs
   add column stage_slug text,
   add column stage_name text;
 
-update public.agent_jobs jobs
-set
-  stage_id = stages.id,
-  stage_slug = stages.slug,
-  stage_name = stages.name
-from public.sessions sessions
-join public.pipeline_stages stages
-  on stages.id = sessions.current_stage_id
-where jobs.session_id = sessions.id
-  and jobs.stage_id is null;
-
-with run_stage_backfill as (
-  select
-    runs.id as run_id,
-    coalesce(jobs.stage_id, stages.id) as stage_id,
-    coalesce(jobs.stage_slug, stages.slug) as stage_slug,
-    coalesce(jobs.stage_name, stages.name) as stage_name
-  from public.agent_runs runs
-  join public.sessions sessions
-    on sessions.id = runs.session_id
-  join public.pipeline_stages stages
-    on stages.id = sessions.current_stage_id
-  left join public.agent_jobs jobs
-    on jobs.id = runs.agent_job_id
-  where runs.stage_id is null
-)
-update public.agent_runs runs
-set
-  stage_id = run_stage_backfill.stage_id,
-  stage_slug = run_stage_backfill.stage_slug,
-  stage_name = run_stage_backfill.stage_name
-from run_stage_backfill
-where runs.id = run_stage_backfill.run_id;
+-- Historical job/run stage snapshots cannot be safely reconstructed from the
+-- session's current stage because sessions may have advanced since those rows
+-- were written. Leave existing rows null and snapshot stage metadata only for
+-- new jobs/runs.
 
 create or replace function internal.enforce_agent_job_refs()
 returns trigger

@@ -101,11 +101,9 @@ with current_bad_artifacts as (
   join completion_only_artifacts as bad
     on bad.session_id = session.id
     and bad.version = session.current_artifact_version
-  left join public.pipeline_stages as stage
-    on stage.id = session.current_stage_id
   left join public.session_artifacts as artifact
     on artifact.session_id = session.id
-    and artifact.stage_slug = coalesce(stage.slug, bad.stage_slug)
+    and artifact.stage_slug = bad.stage_slug
   group by session.id
 )
 update public.sessions as session
