@@ -171,6 +171,7 @@ interface MockOptions {
   pointerUpdateError?: { message: string } | null;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
+  runSandboxUpdateError?: { message: string } | null;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
     default_branch: string | null;
@@ -319,8 +320,13 @@ function buildAdminMock(opts: MockOptions) {
         select: () => ({
           maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
         }),
-        then: (resolve: (value: { error: null }) => void) => {
-          resolve({ error: null });
+        then: (resolve: (value: { error: { message: string } | null }) => void) => {
+          resolve({
+            error:
+              "sandbox_id" in patch && opts.runSandboxUpdateError
+                ? opts.runSandboxUpdateError
+                : null,
+          });
         },
       };
       return chain;
@@ -757,6 +763,27 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
+  it("aborts the stage when persisting the sandbox id fails", async () => {
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedRuns, updatedSessions } = buildAdminMock({
+      session,
+      runSandboxUpdateError: { message: "sandbox id write failed" },
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(result.runId).toBe("run-1");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(updatedRuns[1]).toEqual({ sandbox_id: "sandbox-1" });
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
+  });
+
   it("treats an agent error event as a stage failure and deletes the orphan artifact", async () => {
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
@@ -815,6 +842,90 @@ describe("handleApproval", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("not authorized");
+  });
+
+  it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ id: "sess-1", archived_at: null, phase_status: "agent_generating" }],
+      error: null,
+    });
+    const enqueueError = {
+      code: "deadlock",
+      message: "queue write failed",
+    };
+    const tables: Record<string, unknown> = {
+      agent_jobs: {
+        insert: () => ({
+          select: () => ({
+            single: async () => ({
+              data: null,
+              error: enqueueError,
+            }),
+          }),
+        }),
+      },
+      session_pull_requests: {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: () => ({
+                  maybeSingle: async () => ({ data: null, error: null }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      },
+      workspace_agent_config: {
+        select: () => ({
+          eq: () => ({
+            in: async () => ({ data: [], error: null }),
+          }),
+        }),
+      },
+      workspace_onboarding: {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: null, error: null }),
+          }),
+        }),
+      },
+      workspace_repository_profiles: {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        }),
+      },
+    };
+    const admin = createProcessorTestAdminClient({
+      from: (name: string) => tables[name] ?? {},
+      rpc,
+    });
+
+    const result = await handleApproval({
+      admin,
+      approverMemberId: "mem-1",
+      expectedWorkspaceId: "ws-1",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({ jobId: null, success: true });
+    expect(consoleError).toHaveBeenCalledWith(
+      "Approved stage but failed to queue Wallie",
+      expect.objectContaining({
+        error: "queue write failed",
+        sessionId: "sess-1",
+        workspaceId: "ws-1",
+      }),
+    );
+
+    consoleError.mockRestore();
   });
 });
 

@@ -134,6 +134,7 @@ export async function resolveEffectiveSessionRepository(input: {
   workspaceId: string;
 }): Promise<EffectiveSessionRepositoryResolution> {
   const candidates = await loadCandidateRepositoryIds(input);
+  const firstConfiguredCandidate = candidates.find((candidate) => candidate.repositoryId);
 
   for (const candidate of candidates) {
     if (!candidate.repositoryId) {
@@ -156,7 +157,7 @@ export async function resolveEffectiveSessionRepository(input: {
 
   return {
     repository: null,
-    repositoryId: null,
-    source: null,
+    repositoryId: firstConfiguredCandidate?.repositoryId ?? null,
+    source: firstConfiguredCandidate?.source ?? null,
   };
 }

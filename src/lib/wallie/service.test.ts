@@ -439,6 +439,32 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
 
     expect(insertedRunRows[0]!.run_type).toBe("code");
   });
+
+  it("blocks code mode when the configured repository id does not resolve", async () => {
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-missing",
+      repositories: [],
+    });
+
+    await expect(
+      enqueueWallieRun({
+        admin,
+        sessionId: "sess-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        triggerType: "manual_run",
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "repository_unavailable",
+      statusCode: 422,
+    });
+
+    expect(insertedRunRows).toHaveLength(0);
+  });
 });
 
 describe("enqueueWallieRun duplicate job dedupe", () => {

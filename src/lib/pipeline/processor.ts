@@ -295,7 +295,7 @@ async function runStage(input: {
     }
 
     await updateSessionStatus(admin, session.id, "rejected");
-    const message = error instanceof Error ? error.message : "Stage generation failed";
+    const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message);
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
@@ -409,7 +409,7 @@ async function enqueueSessionJobWithRun(input: {
     throw jobError ?? new Error("Wallie job insert did not return a job id.");
   }
 
-  const runType = inferWallieRunMode(repositoryResolution.repository?.id);
+  const runType = inferWallieRunMode(repositoryResolution.repositoryId);
   const { error: runError } = await input.admin.from("agent_runs").insert({
     agent_job_id: job.id,
     model_name: agentConfig.model,
@@ -476,10 +476,12 @@ export async function handleApproval(input: {
 
       return { jobId: queued.jobId, success: true };
     } catch (error) {
-      return {
+      console.error("Approved stage but failed to queue Wallie", {
         error: getErrorMessage(error, "Approved stage but failed to queue Wallie."),
-        success: false,
-      };
+        sessionId: input.sessionId,
+        workspaceId: input.expectedWorkspaceId,
+      });
+      return { jobId: null, success: true };
     }
   }
 
@@ -834,7 +836,13 @@ async function updateRunSandbox(
   runId: string,
   sandboxId: string,
 ): Promise<void> {
-  await admin.from("agent_runs").update({ sandbox_id: sandboxId }).eq("id", runId);
+  const { error } = await admin
+    .from("agent_runs")
+    .update({ sandbox_id: sandboxId })
+    .eq("id", runId);
+  if (error) {
+    throw error;
+  }
 }
 
 async function markRunSuccess(

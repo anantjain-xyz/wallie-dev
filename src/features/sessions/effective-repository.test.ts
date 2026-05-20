@@ -170,7 +170,7 @@ describe("resolveEffectiveSessionRepository", () => {
     expect(resolution.repository?.fullName).toBe("acme/setup");
   });
 
-  it("returns null when no configured repository resolves in the workspace", async () => {
+  it("preserves the configured repository id when it does not resolve in the workspace", async () => {
     const resolution = await resolveEffectiveSessionRepository({
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({
@@ -181,7 +181,7 @@ describe("resolveEffectiveSessionRepository", () => {
     });
 
     expect(resolution.repository).toBeNull();
-    expect(resolution.repositoryId).toBeNull();
-    expect(resolution.source).toBeNull();
+    expect(resolution.repositoryId).toBe("repo-other-workspace");
+    expect(resolution.source).toBe("workspace_primary_profile");
   });
 });

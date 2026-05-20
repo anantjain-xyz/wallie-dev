@@ -466,7 +466,7 @@ async function validateQueuedRunRequest(input: {
         isPrivate: repositoryResolution.repository.isPrivate,
       }
     : null;
-  const runType = input.requestedRunType ?? inferWallieRunMode(repository?.id);
+  const runType = input.requestedRunType ?? inferWallieRunMode(repositoryResolution.repositoryId);
 
   if (activeRun) {
     return {
