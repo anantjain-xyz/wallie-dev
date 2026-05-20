@@ -149,6 +149,18 @@ function buildSupabaseMocks(opts: {
   insertedJobRow?: AgentJobRow;
   insertedRunRows: Array<Record<string, unknown>>;
   jobInsertError?: PostgrestError | null;
+  primaryRepositoryId?: string | null;
+  repositories?: Array<{
+    default_branch?: string | null;
+    default_programming_language?: string | null;
+    full_name: string;
+    github_installation_id?: string;
+    html_url?: string;
+    id: string;
+    is_archived?: boolean;
+    private?: boolean;
+    workspace_id?: string;
+  }>;
   loadRunByJobId?: (
     signal: AbortSignal | undefined,
   ) => Promise<AgentRunRow | null> | AgentRunRow | null;
@@ -257,6 +269,83 @@ function buildSupabaseMocks(opts: {
             })),
         };
       }
+      if (table === "session_pull_requests") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: async () => ({ data: null, error: null }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "workspace_repository_profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: opts.primaryRepositoryId
+                    ? { github_repository_id: opts.primaryRepositoryId }
+                    : null,
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "workspace_onboarding") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === "github_repositories") {
+        return {
+          select: () => {
+            const filters = new Map<string, unknown>();
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.set(column, value);
+                return builder;
+              },
+              maybeSingle: async () => {
+                const row = (opts.repositories ?? []).find(
+                  (candidate) =>
+                    candidate.id === filters.get("id") &&
+                    (candidate.workspace_id ?? "ws-1") === filters.get("workspace_id"),
+                );
+
+                return {
+                  data: row
+                    ? {
+                        default_branch: row.default_branch ?? "main",
+                        default_programming_language: row.default_programming_language ?? null,
+                        full_name: row.full_name,
+                        github_installation_id: row.github_installation_id ?? "ghi-1",
+                        html_url: row.html_url ?? `https://github.com/${row.full_name}`,
+                        id: row.id,
+                        is_archived: Boolean(row.is_archived),
+                        private: Boolean(row.private),
+                      }
+                    : null,
+                  error: null,
+                };
+              },
+            };
+            return builder;
+          },
+        };
+      }
       if (table === "workspace_agent_config") {
         return {
           select: () => ({
@@ -328,6 +417,27 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect((inserted.model_name as string).length).toBeGreaterThan(0);
     expect(typeof inserted.model_provider).toBe("string");
     expect((inserted.model_provider as string).length).toBeGreaterThan(0);
+  });
+
+  it("uses the effective workspace repository to choose code mode for queued runs", async () => {
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await enqueueWallieRun({
+      admin,
+      sessionId: "sess-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      triggerType: "manual_run",
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    expect(insertedRunRows[0]!.run_type).toBe("code");
   });
 });
 

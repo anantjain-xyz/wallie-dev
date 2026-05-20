@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import type { WorkspaceSummary } from "@/lib/auth";
 import type { Tables } from "@/lib/supabase/database.types";
 import { loadSessionWorkspaceContext } from "@/features/sessions/server";
+import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import {
   type PipelineStage,
   type SessionArtifactSummary,
@@ -287,10 +288,13 @@ export async function loadSessionDetailPageData(
     workspaceId: sessionRow.workspace_id,
   };
 
-  const sessionGithubRepositoryId = prRowsTyped[0]?.github_repository_id ?? null;
-  const repository = sessionGithubRepositoryId
-    ? (repositoryIndex.get(sessionGithubRepositoryId) ?? null)
-    : null;
+  const repositoryResolution = await resolveEffectiveSessionRepository({
+    sessionId: sessionRow.id,
+    supabase: context.supabase,
+    workspaceId: context.workspace.id,
+  });
+  const sessionGithubRepositoryId = repositoryResolution.repositoryId;
+  const repository = repositoryResolution.repository;
 
   const wallie = await loadWallieSessionData({
     memberIndex: context.memberIndex,
@@ -300,7 +304,7 @@ export async function loadSessionDetailPageData(
           defaultProgrammingLanguage: repository.defaultProgrammingLanguage,
           fullName: repository.fullName,
           htmlUrl: repository.htmlUrl,
-          id: sessionGithubRepositoryId!,
+          id: repository.id,
           isArchived: repository.isArchived,
           isPrivate: repository.isPrivate,
         }

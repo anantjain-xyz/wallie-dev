@@ -5,6 +5,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
+import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import {
   buildWallieBlockingReasons,
@@ -26,24 +27,11 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient
 type SessionForRun = Pick<
   Tables<"sessions">,
   "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
-> & { github_repository_id: string | null };
-type RepositoryForRun = Pick<
-  Tables<"github_repositories">,
-  | "default_branch"
-  | "default_programming_language"
-  | "full_name"
-  | "html_url"
-  | "id"
-  | "is_archived"
-  | "private"
-  | "workspace_id"
 >;
 type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 
 const sessionSelect = "id, workspace_id, number, title, prompt_md, created_at";
-const repositorySelect =
-  "id, workspace_id, full_name, html_url, private, default_programming_language, default_branch, is_archived";
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
@@ -198,18 +186,6 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
   });
 }
 
-function mapRepositoryForRun(repository: RepositoryForRun): WallieSessionRepository {
-  return {
-    defaultBranch: repository.default_branch,
-    defaultProgrammingLanguage: repository.default_programming_language,
-    fullName: repository.full_name,
-    htmlUrl: repository.html_url,
-    id: repository.id,
-    isArchived: repository.is_archived,
-    isPrivate: repository.private,
-  };
-}
-
 function createRunInsert(input: {
   sessionId: string;
   jobId: string;
@@ -267,53 +243,10 @@ async function loadSessionForRun(
     return null;
   }
 
-  // Sessions don't own a repo link directly; derive from the most recent PR
-  // branch recorded against this session. The session detail page orders
-  // session_pull_requests newest-first, so matching here keeps the run's
-  // repo context consistent with what the UI shows. Absent → project mode.
-  const { data: branchRow, error: branchError } = await supabase
-    .from("session_pull_requests")
-    .select("github_repository_id")
-    .eq("workspace_id", workspaceId)
-    .eq("session_id", sessionId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (branchError) {
-    throw branchError;
-  }
-
-  return {
-    ...(data as Pick<
-      Tables<"sessions">,
-      "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
-    >),
-    github_repository_id: branchRow?.github_repository_id ?? null,
-  };
-}
-
-async function loadRepositoryForRun(
-  admin: AdminClient,
-  workspaceId: string,
-  repositoryId: string | null,
-) {
-  if (!repositoryId) {
-    return null;
-  }
-
-  const { data, error } = await admin
-    .from("github_repositories")
-    .select(repositorySelect)
-    .eq("id", repositoryId)
-    .eq("workspace_id", workspaceId)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data ? mapRepositoryForRun(data as RepositoryForRun) : null;
+  return data as Pick<
+    Tables<"sessions">,
+    "created_at" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+  >;
 }
 
 async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
@@ -513,12 +446,27 @@ async function validateQueuedRunRequest(input: {
   }
 
   const workspace = input.workspace;
-  const runType = input.requestedRunType ?? inferWallieRunMode(session.github_repository_id);
-  const [repository, missingSecretKeys, activeRun] = await Promise.all([
-    loadRepositoryForRun(input.admin, workspace.id, session.github_repository_id),
+  const [repositoryResolution, missingSecretKeys, activeRun] = await Promise.all([
+    resolveEffectiveSessionRepository({
+      sessionId: session.id,
+      supabase: input.admin,
+      workspaceId: workspace.id,
+    }),
     loadMissingSecretKeys(input.admin, workspace.id),
     loadActiveRunForSession(input.admin, session.id),
   ]);
+  const repository: WallieSessionRepository | null = repositoryResolution.repository
+    ? {
+        defaultBranch: repositoryResolution.repository.defaultBranch,
+        defaultProgrammingLanguage: repositoryResolution.repository.defaultProgrammingLanguage,
+        fullName: repositoryResolution.repository.fullName,
+        htmlUrl: repositoryResolution.repository.htmlUrl,
+        id: repositoryResolution.repository.id,
+        isArchived: repositoryResolution.repository.isArchived,
+        isPrivate: repositoryResolution.repository.isPrivate,
+      }
+    : null;
+  const runType = input.requestedRunType ?? inferWallieRunMode(repository?.id);
 
   if (activeRun) {
     return {
