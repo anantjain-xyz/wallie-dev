@@ -736,7 +736,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {
     const session = baseSession();
-    const { admin } = buildAdminMock({
+    const { admin, updatedSessions } = buildAdminMock({
       session,
       githubInstallation: null,
     });
@@ -745,6 +745,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
   });
 
   it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {

@@ -102,7 +102,12 @@ function buildSupabaseMock(
   };
 }
 
-function buildAdminMock(opts: { sessionInsertError?: { message: string } | null } = {}) {
+function buildAdminMock(
+  opts: {
+    sessionDeleteError?: { message: string } | null;
+    sessionInsertError?: { message: string } | null;
+  } = {},
+) {
   const insertedSessions: Array<Record<string, unknown>> = [];
   const deletedSessionIds: string[] = [];
 
@@ -115,7 +120,7 @@ function buildAdminMock(opts: { sessionInsertError?: { message: string } | null 
         delete: () => ({
           eq: async (_column: string, value: string) => {
             deletedSessionIds.push(value);
-            return { error: null };
+            return { error: opts.sessionDeleteError ?? null };
           },
         }),
         insert: (row: Record<string, unknown>) => {
@@ -239,6 +244,25 @@ describe("POST /api/sessions", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: expect.stringContaining("could not queue the first run"),
     });
+    expect(currentAdminMock.deletedSessionIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
+  });
+
+  it("reports clearly when enqueue fails and the created session cannot be cleaned up", async () => {
+    mocked.enqueueWallieRun.mockRejectedValueOnce(new Error("queue failed"));
+    currentAdminMock = buildAdminMock({
+      sessionDeleteError: { message: "delete failed" },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(currentAdminMock.admin);
+
+    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toMatchObject({
+      error: expect.stringContaining("created session could not be cleaned up"),
+      sessionId: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(body.error).not.toContain("Session was not created");
     expect(currentAdminMock.deletedSessionIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
   });
 });

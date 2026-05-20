@@ -12,7 +12,7 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 async function cleanupCreatedSession(input: {
   admin: ReturnType<typeof createSupabaseAdminClient>;
   sessionId: string;
-}) {
+}): Promise<string | null> {
   const { error } = await input.admin.from("sessions").delete().eq("id", input.sessionId);
 
   if (error) {
@@ -20,7 +20,10 @@ async function cleanupCreatedSession(input: {
       error,
       sessionId: input.sessionId,
     });
+    return error.message;
   }
+
+  return null;
 }
 
 function scheduleQueuedJob(jobId: string | null | undefined) {
@@ -167,7 +170,7 @@ export async function POST(request: Request) {
       { status: 201 },
     );
   } catch (error) {
-    await cleanupCreatedSession({ admin, sessionId: sessionRow.id });
+    const cleanupError = await cleanupCreatedSession({ admin, sessionId: sessionRow.id });
     let response;
     try {
       response = buildAgentRunActionErrorResponse(error);
@@ -178,6 +181,17 @@ export async function POST(request: Request) {
         },
         status: 500,
       };
+    }
+
+    if (cleanupError) {
+      return NextResponse.json(
+        {
+          ...response.body,
+          error: `Wallie could not queue the first run, and the created session could not be cleaned up: ${cleanupError}`,
+          sessionId: sessionRow.id,
+        },
+        { status: 500 },
+      );
     }
 
     return NextResponse.json(

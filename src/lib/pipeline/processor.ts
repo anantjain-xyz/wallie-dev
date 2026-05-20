@@ -175,6 +175,7 @@ async function runStage(input: {
         if (runId) {
           await markRunError(admin, runId);
         }
+        await updateSessionStatus(admin, session.id, "rejected");
         await markPipelineJobError(
           admin,
           job,
