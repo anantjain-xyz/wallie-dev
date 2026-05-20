@@ -17,6 +17,7 @@ export type SessionConnectionPullRequest = Pick<
 >;
 
 type SessionConnectionsProps = {
+  className?: string;
   compact?: boolean;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
@@ -45,6 +46,7 @@ function pullRequestLabel(pullRequest: LinkedPullRequest, index: number, total: 
 }
 
 export function SessionConnections({
+  className,
   compact = false,
   linearIssueId,
   linearIssueUrl,
@@ -62,7 +64,11 @@ export function SessionConnections({
 
   return (
     <div
-      className={cn("flex flex-wrap items-center gap-1.5", compact ? "text-[11px]" : "text-[12px]")}
+      className={cn(
+        "flex flex-wrap items-center gap-1.5",
+        compact ? "text-[11px]" : "text-[12px]",
+        className,
+      )}
     >
       {showLinearLink ? (
         <ConnectionBadge

@@ -275,6 +275,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
                         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
                           <SessionConnections
+                            className="relative z-20"
                             compact
                             quiet
                             linearIssueId={card.linearIssueId}
