@@ -244,27 +244,28 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
                   {items.map((card) => {
                     const pullRequests = card.pullRequests ?? [];
+                    const sessionHref = workspaceSessionDetailPath(
+                      initialData.workspace.slug,
+                      card.number,
+                    );
 
                     return (
                       <article
                         key={card.id}
                         className={cn(
-                          "rounded-[8px] border border-border/80 bg-surface p-3 transition-[border-color,box-shadow] duration-150 hover:border-border-strong hover:shadow-[var(--shadow-ambient)]",
+                          "group relative rounded-[8px] border border-border/80 bg-surface p-3 transition-[border-color,box-shadow] duration-150 hover:border-border-strong hover:shadow-[var(--shadow-ambient)]",
                           card.phaseStatus === "rejected" &&
                             "border-danger/30 border-l-2 border-l-danger",
                         )}
                       >
+                        <Link
+                          href={sessionHref}
+                          aria-label={`Open session ${card.title}`}
+                          className="absolute inset-0 z-10 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                        />
                         <div className="flex min-w-0 items-start justify-between gap-3">
-                          <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">
-                            <Link
-                              href={workspaceSessionDetailPath(
-                                initialData.workspace.slug,
-                                card.number,
-                              )}
-                              className="line-clamp-3 break-words rounded-[3px] hover:text-accent"
-                            >
-                              {card.title}
-                            </Link>
+                          <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground transition-colors duration-150 group-hover:text-accent">
+                            <span className="line-clamp-3 break-words">{card.title}</span>
                           </h3>
                           <SessionPhaseStatusLabel
                             status={card.phaseStatus}
@@ -273,14 +274,16 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                         </div>
 
                         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
-                          <SessionConnections
-                            compact
-                            quiet
-                            linearIssueId={card.linearIssueId}
-                            linearIssueUrl={card.linearIssueUrl}
-                            pullRequestCount={pullRequests.length}
-                            pullRequests={pullRequests}
-                          />
+                          <div className="relative z-20">
+                            <SessionConnections
+                              compact
+                              quiet
+                              linearIssueId={card.linearIssueId}
+                              linearIssueUrl={card.linearIssueUrl}
+                              pullRequestCount={pullRequests.length}
+                              pullRequests={pullRequests}
+                            />
+                          </div>
 
                           <dl className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             {card.rejectionCount > 0 ? (
