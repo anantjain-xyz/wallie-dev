@@ -9,7 +9,6 @@ import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
-  formatSessionPhaseStatus,
   isTerminalStage,
   stageIndex,
   type PipelineStage,
@@ -396,11 +395,6 @@ function StageRail({
             >
               <StageDot entry={entry} />
               <span>{entry.stage.name}</span>
-              {entry.status === "current" && entry.phaseStatus ? (
-                <span className="text-[10px] text-muted">
-                  {formatSessionPhaseStatus(entry.phaseStatus)}
-                </span>
-              ) : null}
             </button>
             {index < stageRail.length - 1 ? (
               <span aria-hidden="true" className="h-px w-4 bg-border" />
