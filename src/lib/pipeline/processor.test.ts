@@ -171,15 +171,22 @@ interface MockOptions {
   pointerUpdateError?: { message: string } | null;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
+  runSandboxUpdateError?: { message: string } | null;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
     default_branch: string | null;
+    default_programming_language?: string | null;
     full_name: string;
     github_installation_id?: string;
+    html_url?: string;
     id: string;
     is_archived?: boolean;
+    private?: boolean;
+    workspace_id?: string;
   }>;
+  onboardingRepositoryId?: string | null;
   primaryRepositoryProfile?: { github_repository_id: string } | null;
+  sessionPullRequestRepositoryId?: string | null;
 }
 
 type AdminClient = SupabaseClient<Database>;
@@ -206,6 +213,8 @@ function createProcessorTestAdminClient(
 
 function buildAdminMock(opts: MockOptions) {
   const insertedArtifacts: Array<Record<string, unknown>> = [];
+  const insertedRuns: Array<Record<string, unknown>> = [];
+  const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
 
   const lookup: Record<string, unknown> = {};
@@ -297,10 +306,31 @@ function buildAdminMock(opts: MockOptions) {
   } as const;
 
   const agentRunsTable = {
-    insert: () => ({
-      select: () => ({ single: async () => ({ data: { id: "run-1" }, error: null }) }),
-    }),
-    update: () => ({ eq: async () => ({ error: null }) }),
+    insert: (row: Record<string, unknown>) => {
+      insertedRuns.push(row);
+      return {
+        select: () => ({ single: async () => ({ data: { id: "run-1" }, error: null }) }),
+      };
+    },
+    update: (patch: Record<string, unknown>) => {
+      updatedRuns.push(patch);
+      const chain = {
+        eq: () => chain,
+        in: () => chain,
+        select: () => ({
+          maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
+        }),
+        then: (resolve: (value: { error: { message: string } | null }) => void) => {
+          resolve({
+            error:
+              "sandbox_id" in patch && opts.runSandboxUpdateError
+                ? opts.runSandboxUpdateError
+                : null,
+          });
+        },
+      };
+      return chain;
+    },
   } as const;
 
   const agentRunMessagesTable = {
@@ -308,8 +338,28 @@ function buildAdminMock(opts: MockOptions) {
   } as const;
 
   const agentJobsTable = {
+    delete: () => ({
+      eq: () => ({
+        eq: async () => ({ error: null }),
+      }),
+    }),
     update: () => ({ eq: async () => ({ error: null }) }),
-    insert: async () => ({ error: null }),
+    insert: () => ({
+      select: () => ({ single: async () => ({ data: { id: "job-enqueued" }, error: null }) }),
+    }),
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          in: () => ({
+            order: () => ({
+              limit: () => ({
+                maybeSingle: async () => ({ data: { id: "job-enqueued" }, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
   } as const;
 
   const workspaceMembersTable = {
@@ -336,11 +386,13 @@ function buildAdminMock(opts: MockOptions) {
     },
   ];
   const githubInstallationsTable = {
-    select: () => ({
-      eq: () => ({
+    select: () => {
+      const chain = {
+        eq: () => chain,
         maybeSingle: async () => ({ data: githubInstallation, error: null }),
-      }),
-    }),
+      };
+      return chain;
+    },
   } as const;
 
   const githubRepositoriesTable = {
@@ -369,7 +421,16 @@ function buildAdminMock(opts: MockOptions) {
 
           return {
             data: row
-              ? { default_branch: row.default_branch, full_name: row.full_name, id: row.id }
+              ? {
+                  default_branch: row.default_branch,
+                  default_programming_language: row.default_programming_language ?? null,
+                  full_name: row.full_name,
+                  github_installation_id: row.github_installation_id ?? "ghi-1",
+                  html_url: row.html_url ?? `https://github.com/${row.full_name}`,
+                  id: row.id,
+                  is_archived: Boolean(row.is_archived),
+                  private: Boolean(row.private),
+                }
               : null,
             error: null,
           };
@@ -394,6 +455,41 @@ function buildAdminMock(opts: MockOptions) {
     }),
   } as const;
 
+  const sessionPullRequestsTable = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          order: () => ({
+            limit: () => ({
+              maybeSingle: async () => ({
+                data:
+                  opts.sessionPullRequestRepositoryId === undefined ||
+                  opts.sessionPullRequestRepositoryId === null
+                    ? null
+                    : { github_repository_id: opts.sessionPullRequestRepositoryId },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  } as const;
+
+  const workspaceOnboardingTable = {
+    select: () => ({
+      eq: () => ({
+        maybeSingle: async () => ({
+          data:
+            opts.onboardingRepositoryId === null
+              ? null
+              : { selected_github_repository_id: opts.onboardingRepositoryId ?? "repo-1" },
+          error: null,
+        }),
+      }),
+    }),
+  } as const;
+
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
@@ -405,6 +501,8 @@ function buildAdminMock(opts: MockOptions) {
     workspace_members: workspaceMembersTable,
     github_installations: githubInstallationsTable,
     github_repositories: githubRepositoriesTable,
+    session_pull_requests: sessionPullRequestsTable,
+    workspace_onboarding: workspaceOnboardingTable,
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
@@ -414,7 +512,9 @@ function buildAdminMock(opts: MockOptions) {
       rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     }),
     insertedArtifacts,
+    insertedRuns,
     insertedFeedback,
+    updatedRuns,
     updatedSessions,
   };
 }
@@ -469,6 +569,25 @@ describe("processPipelineJob (generic stage runner)", () => {
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
+  });
+
+  it("reuses the queued run row attached to the claimed job", async () => {
+    const session = baseSession();
+    const job = baseJob();
+    const { admin, insertedRuns, updatedRuns } = buildAdminMock({
+      session,
+      agentConfig: [],
+    });
+
+    await processPipelineJob({ admin, job });
+
+    expect(insertedRuns).toHaveLength(0);
+    expect(updatedRuns[0]).toMatchObject({
+      model_name: "gpt-5.5",
+      model_provider: "claude-code",
+      status: "running",
+    });
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
   });
 
   it("resolves the session owner's Anthropic API key for Claude Code runs", async () => {
@@ -546,7 +665,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.repoId).toBe("repo-z");
   });
 
-  it("falls back to the first non-archived repository when the selected primary repo is unavailable", async () => {
+  it("does not fall back to another repository when the selected primary repo is archived", async () => {
     const session = baseSession();
     const job = baseJob();
     const { admin } = buildAdminMock({
@@ -577,12 +696,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       primaryRepositoryProfile: { github_repository_id: "repo-archived" },
     });
 
-    await processPipelineJob({ admin, job });
+    const result = await processPipelineJob({ admin, job });
 
-    const call = mocked.openSessionPullRequest.mock.calls[0]![0] as Record<string, unknown>;
-    expect(call.baseBranch).toBe("main");
-    expect(call.repoFullName).toBe("acme/aaa");
-    expect(call.repoId).toBe("repo-a");
+    expect(result.result).toBe("error");
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
   });
 
   it("does not abort the stage when opening the pull request fails", async () => {
@@ -619,7 +736,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {
     const session = baseSession();
-    const { admin } = buildAdminMock({
+    const { admin, updatedSessions } = buildAdminMock({
       session,
       githubInstallation: null,
     });
@@ -628,6 +745,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
   });
 
   it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {
@@ -640,6 +761,27 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
+  });
+
+  it("aborts the stage when persisting the sandbox id fails", async () => {
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedRuns, updatedSessions } = buildAdminMock({
+      session,
+      runSandboxUpdateError: { message: "sandbox id write failed" },
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(result.runId).toBe("run-1");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(updatedRuns[1]).toEqual({ sandbox_id: "sandbox-1" });
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
       { phase_status: "rejected" },
@@ -704,6 +846,90 @@ describe("handleApproval", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("not authorized");
+  });
+
+  it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ id: "sess-1", archived_at: null, phase_status: "agent_generating" }],
+      error: null,
+    });
+    const enqueueError = {
+      code: "deadlock",
+      message: "queue write failed",
+    };
+    const tables: Record<string, unknown> = {
+      agent_jobs: {
+        insert: () => ({
+          select: () => ({
+            single: async () => ({
+              data: null,
+              error: enqueueError,
+            }),
+          }),
+        }),
+      },
+      session_pull_requests: {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: () => ({
+                  maybeSingle: async () => ({ data: null, error: null }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      },
+      workspace_agent_config: {
+        select: () => ({
+          eq: () => ({
+            in: async () => ({ data: [], error: null }),
+          }),
+        }),
+      },
+      workspace_onboarding: {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: null, error: null }),
+          }),
+        }),
+      },
+      workspace_repository_profiles: {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        }),
+      },
+    };
+    const admin = createProcessorTestAdminClient({
+      from: (name: string) => tables[name] ?? {},
+      rpc,
+    });
+
+    const result = await handleApproval({
+      admin,
+      approverMemberId: "mem-1",
+      expectedWorkspaceId: "ws-1",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({ jobId: null, success: true });
+    expect(consoleError).toHaveBeenCalledWith(
+      "Approved stage but failed to queue Wallie",
+      expect.objectContaining({
+        error: "queue write failed",
+        sessionId: "sess-1",
+        workspaceId: "ws-1",
+      }),
+    );
+
+    consoleError.mockRestore();
   });
 });
 
@@ -778,10 +1004,47 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   };
 
   const agentJobsTable = {
-    insert: async (row: Record<string, unknown>) => {
+    delete: () => ({
+      eq: () => ({
+        eq: async () => ({ error: null }),
+      }),
+    }),
+    insert: (row: Record<string, unknown>) => {
       enqueuedJobs.push(row);
-      return { error: opts.enqueueError ?? null };
+      return {
+        select: () => ({
+          single: async () => ({
+            data: opts.enqueueError ? null : { id: "job-retry" },
+            error: opts.enqueueError ?? null,
+          }),
+        }),
+      };
     },
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          in: () => ({
+            order: () => ({
+              limit: () => ({
+                maybeSingle: async () => ({ data: { id: "job-retry-existing" }, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  };
+
+  const agentRunsTable = {
+    insert: async () => ({ error: null }),
+  };
+
+  const agentConfigTable = {
+    select: () => ({
+      eq: () => ({
+        in: async () => ({ data: [], error: null }),
+      }),
+    }),
   };
 
   const feedbackTable = {
@@ -791,12 +1054,49 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     },
   };
 
+  const sessionPullRequestsTable = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          order: () => ({
+            limit: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  };
+
+  const workspaceRepositoryProfilesTable = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({ data: null, error: null }),
+        }),
+      }),
+    }),
+  };
+
+  const workspaceOnboardingTable = {
+    select: () => ({
+      eq: () => ({
+        maybeSingle: async () => ({ data: null, error: null }),
+      }),
+    }),
+  };
+
   const tables: Record<string, unknown> = {
     sessions: sessionsTable,
     session_artifacts: artifactsTable,
     session_artifact_feedback: feedbackTable,
     workspace_members: workspaceMembersTable,
     agent_jobs: agentJobsTable,
+    agent_runs: agentRunsTable,
+    workspace_agent_config: agentConfigTable,
+    session_pull_requests: sessionPullRequestsTable,
+    workspace_repository_profiles: workspaceRepositoryProfilesTable,
+    workspace_onboarding: workspaceOnboardingTable,
   };
 
   return {
@@ -895,6 +1195,7 @@ describe("handleRejection", () => {
     });
 
     expect(result.success).toBe(true);
+    expect(result.jobId).toBe("job-retry");
     expect(insertedFeedback).toHaveLength(1);
     expect(insertedFeedback[0]).toMatchObject({
       feedback_text: "tighten the spec",
@@ -927,6 +1228,7 @@ describe("handleRejection", () => {
       version: 1,
     });
     expect(result.success).toBe(true);
+    expect(result.jobId).toBe("job-retry-existing");
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
   });
 

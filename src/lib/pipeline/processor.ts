@@ -3,11 +3,14 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { AGENT_PROVIDERS, normalizeAgentProviderName } from "@/lib/agent-config/contracts";
+import { inferWallieRunMode } from "@/features/wallie/utils";
+import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import {
   ClaudeCodeNotConnectedError,
@@ -36,6 +39,12 @@ interface ProcessPipelineJobResult {
   result: "error" | "idle" | "success";
   runId: string | null;
 }
+
+export type PipelinePhaseActionResult = {
+  error?: string;
+  jobId?: string | null;
+  success: boolean;
+};
 
 export async function processPipelineJob(input: {
   admin?: AdminClient;
@@ -150,10 +159,23 @@ async function runStage(input: {
       session,
     });
 
+    runId = await startAgentRun(admin, {
+      jobId: job.id,
+      model: config.model,
+      provider: resolvedRunner.runner.provider,
+      runType: "project",
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
+    });
+
     // CLI-backed runners require a GitHub repo to clone into the sandbox.
     if (resolvedRunner.runner.requiresSandbox) {
-      github = await loadGitHubContext(admin, session.workspace_id);
+      github = await loadGitHubContext(admin, session.workspace_id, session.id);
       if (!github) {
+        if (runId) {
+          await markRunError(admin, runId);
+        }
+        await updateSessionStatus(admin, session.id, "rejected");
         await markPipelineJobError(
           admin,
           job,
@@ -171,17 +193,10 @@ async function runStage(input: {
         repoFullName: github.repo.full_name,
         sessionId: session.id,
       });
+      if (runId) {
+        await updateRunSandbox(admin, runId, sandbox.id);
+      }
     }
-
-    runId = await createAgentRun(admin, {
-      jobId: job.id,
-      model: config.model,
-      provider: resolvedRunner.runner.provider,
-      runType: stage.slug,
-      sandboxId: sandbox?.id ?? null,
-      sessionId: session.id,
-      workspaceId: session.workspace_id,
-    });
 
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
@@ -281,7 +296,7 @@ async function runStage(input: {
     }
 
     await updateSessionStatus(admin, session.id, "rejected");
-    const message = error instanceof Error ? error.message : "Stage generation failed";
+    const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message);
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
@@ -301,13 +316,129 @@ async function runStage(input: {
 
 // --- Approval + rejection handlers ---
 
+function isUniqueViolation(error: { code?: string } | null | undefined) {
+  return error?.code === "23505";
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return fallback;
+}
+
+async function loadActiveSessionJob(
+  admin: AdminClient,
+  input: { dedupeKey: string; workspaceId: string },
+) {
+  const { data, error } = await admin
+    .from("agent_jobs")
+    .select("id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("dedupe_key", input.dedupeKey)
+    .in("status", ["queued", "started", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.id ?? null;
+}
+
+async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
+  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
+
+  if (error) {
+    console.error("Failed to clean up orphaned pipeline job", {
+      error,
+      jobId,
+    });
+  }
+}
+
+async function enqueueSessionJobWithRun(input: {
+  admin: AdminClient;
+  requestedByMemberId: string | null;
+  sessionId: string;
+  triggerType: Tables<"agent_jobs">["trigger_type"];
+  workspaceId: string;
+}) {
+  const dedupeKey = buildWallieJobDedupeKey(input.sessionId);
+  const [agentConfig, repositoryResolution] = await Promise.all([
+    loadWorkspaceAgentConfig(input.admin, input.workspaceId),
+    resolveEffectiveSessionRepository({
+      sessionId: input.sessionId,
+      supabase: input.admin,
+      workspaceId: input.workspaceId,
+    }),
+  ]);
+  const { data: job, error: jobError } = await input.admin
+    .from("agent_jobs")
+    .insert({
+      dedupe_key: dedupeKey,
+      job_type: PIPELINE_JOB_TYPE,
+      requested_by_member_id: input.requestedByMemberId,
+      session_id: input.sessionId,
+      trigger_type: input.triggerType,
+      workspace_id: input.workspaceId,
+    })
+    .select("id")
+    .single();
+
+  if (isUniqueViolation(jobError)) {
+    return {
+      created: false,
+      jobId: await loadActiveSessionJob(input.admin, {
+        dedupeKey,
+        workspaceId: input.workspaceId,
+      }),
+    };
+  }
+
+  if (jobError || !job) {
+    throw jobError ?? new Error("Wallie job insert did not return a job id.");
+  }
+
+  const runType = inferWallieRunMode(repositoryResolution.repositoryId);
+  const { error: runError } = await input.admin.from("agent_runs").insert({
+    agent_job_id: job.id,
+    model_name: agentConfig.model,
+    model_provider: agentConfig.provider,
+    run_type: runType,
+    session_id: input.sessionId,
+    triggered_by_member_id: input.requestedByMemberId,
+    workspace_id: input.workspaceId,
+  });
+
+  if (runError) {
+    await cleanupQueuedJob(input.admin, job.id);
+    throw runError;
+  }
+
+  return {
+    created: true,
+    jobId: job.id,
+  };
+}
+
 export async function handleApproval(input: {
   admin?: AdminClient;
   approverMemberId: string | null;
   expectedWorkspaceId: string;
   sessionId: string;
   version: number;
-}): Promise<{ error?: string; success: boolean }> {
+}): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
   // The RPC enforces the approver gate (per-stage approver list, with
@@ -334,7 +465,28 @@ export async function handleApproval(input: {
     };
   }
 
-  return { success: true };
+  if (!row.archived_at && row.phase_status === "agent_generating") {
+    try {
+      const queued = await enqueueSessionJobWithRun({
+        admin,
+        requestedByMemberId: input.approverMemberId,
+        sessionId: input.sessionId,
+        triggerType: "assignment",
+        workspaceId: input.expectedWorkspaceId,
+      });
+
+      return { jobId: queued.jobId, success: true };
+    } catch (error) {
+      console.error("Approved stage but failed to queue Wallie", {
+        error: getErrorMessage(error, "Approved stage but failed to queue Wallie."),
+        sessionId: input.sessionId,
+        workspaceId: input.expectedWorkspaceId,
+      });
+      return { jobId: null, success: true };
+    }
+  }
+
+  return { jobId: null, success: true };
 }
 
 export async function handleRejection(input: {
@@ -343,7 +495,7 @@ export async function handleRejection(input: {
   feedbackText: string;
   sessionId: string;
   version: number;
-}): Promise<{ error?: string; success: boolean }> {
+}): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
 
   const session = await loadSessionById(admin, input.sessionId);
@@ -428,26 +580,25 @@ export async function handleRejection(input: {
   // UI cannot recover from.
   const wallieMember = await loadWallieSystemMember(admin, session.workspace_id);
 
-  const { error: enqueueError } = await admin.from("agent_jobs").insert({
-    dedupe_key: session.linear_issue_id
-      ? `pipeline:${session.linear_issue_id}:active`
-      : `pipeline:session:${session.id}:active`,
-    job_type: PIPELINE_JOB_TYPE,
-    requested_by_member_id: wallieMember?.id ?? null,
-    session_id: session.id,
-    trigger_type: "comment_retry",
-    workspace_id: session.workspace_id,
-  });
-
-  // 23505 = unique_violation: a concurrent retry already exists. Silent
-  // success — the existing queued job will pick up the feedback.
-  if (enqueueError && enqueueError.code !== "23505") {
-    return { error: enqueueError.message, success: false };
+  let queued: { created: boolean; jobId: string | null };
+  try {
+    queued = await enqueueSessionJobWithRun({
+      admin,
+      requestedByMemberId: wallieMember?.id ?? null,
+      sessionId: session.id,
+      triggerType: "comment_retry",
+      workspaceId: session.workspace_id,
+    });
+  } catch (error) {
+    return {
+      error: getErrorMessage(error, "Failed to queue Wallie retry."),
+      success: false,
+    };
   }
 
   await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
 
-  return { success: true };
+  return { jobId: queued.jobId, success: true };
 }
 
 // --- Data access helpers ---
@@ -583,54 +734,34 @@ interface GitHubContext {
 async function loadGitHubContext(
   admin: AdminClient,
   workspaceId: string,
+  sessionId: string,
 ): Promise<GitHubContext | null> {
+  const resolution = await resolveEffectiveSessionRepository({
+    sessionId,
+    supabase: admin,
+    workspaceId,
+  });
+  const repository = resolution.repository;
+
+  if (!repository || repository.isArchived) {
+    return null;
+  }
+
   const { data: installation } = await admin
     .from("github_installations")
     .select("id, installation_id")
+    .eq("id", repository.githubInstallationId)
     .eq("workspace_id", workspaceId)
     .maybeSingle();
 
   if (!installation) return null;
 
-  const { data: primaryProfile } = await admin
-    .from("workspace_repository_profiles")
-    .select("github_repository_id")
-    .eq("workspace_id", workspaceId)
-    .eq("is_primary", true)
-    .maybeSingle();
-
-  const repositoryQuery = () =>
-    admin
-      .from("github_repositories")
-      .select("id, full_name, default_branch")
-      .eq("github_installation_id", installation.id)
-      .eq("is_archived", false);
-
-  let repo: { default_branch: string | null; full_name: string; id: string } | null = null;
-
-  if (primaryProfile) {
-    const { data: selectedRepo } = await repositoryQuery()
-      .eq("id", primaryProfile.github_repository_id)
-      .maybeSingle();
-    repo = selectedRepo;
-  }
-
-  if (!repo) {
-    const { data: fallbackRepo } = await repositoryQuery()
-      .order("full_name", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    repo = fallbackRepo;
-  }
-
-  if (!repo) return null;
-
   return {
     installationId: installation.installation_id,
     repo: {
-      default_branch: repo.default_branch,
-      full_name: repo.full_name,
-      id: repo.id,
+      default_branch: repository.defaultBranch,
+      full_name: repository.fullName,
+      id: repository.id,
     },
   };
 }
@@ -650,7 +781,7 @@ function buildStageBranchName(sessionId: string, stageSlug: string): string {
   return `wallie/${safeSlug || "stage"}-${sessionId}`;
 }
 
-async function createAgentRun(
+async function startAgentRun(
   admin: AdminClient,
   input: {
     jobId: string;
@@ -658,10 +789,31 @@ async function createAgentRun(
     model: string;
     provider: AgentProvider;
     runType: string;
-    sandboxId: string | null;
     workspaceId: string;
   },
 ): Promise<string | null> {
+  const startedAt = new Date().toISOString();
+  const { data: existingRun, error: updateError } = await admin
+    .from("agent_runs")
+    .update({
+      model_name: input.model,
+      model_provider: input.provider,
+      started_at: startedAt,
+      status: "running" as const,
+    })
+    .eq("agent_job_id", input.jobId)
+    .in("status", ["queued", "started", "running"])
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) {
+    throw updateError;
+  }
+
+  if (existingRun) {
+    return existingRun.id;
+  }
+
   const { data, error } = await admin
     .from("agent_runs")
     .insert({
@@ -669,9 +821,8 @@ async function createAgentRun(
       model_name: input.model,
       model_provider: input.provider,
       run_type: input.runType,
-      sandbox_id: input.sandboxId,
       session_id: input.sessionId,
-      started_at: new Date().toISOString(),
+      started_at: startedAt,
       status: "running" as const,
       workspace_id: input.workspaceId,
     })
@@ -679,6 +830,20 @@ async function createAgentRun(
     .single();
   if (error || !data) return null;
   return data.id;
+}
+
+async function updateRunSandbox(
+  admin: AdminClient,
+  runId: string,
+  sandboxId: string,
+): Promise<void> {
+  const { error } = await admin
+    .from("agent_runs")
+    .update({ sandbox_id: sandboxId })
+    .eq("id", runId);
+  if (error) {
+    throw error;
+  }
 }
 
 async function markRunSuccess(
