@@ -31,7 +31,11 @@ export async function createSessionSandbox(
 ): Promise<SandboxHandle> {
   if (resolveImpl(input.implementation) === "fake") {
     const { FakeSandbox } = await import("./fake");
-    return new FakeSandbox();
+    return new FakeSandbox(undefined, {
+      baseBranch: input.baseBranch,
+      branch: input.branch,
+      passthroughExec: true,
+    });
   }
   const { createVercelSessionSandbox } = await import("./vercel");
   return createVercelSessionSandbox(input);

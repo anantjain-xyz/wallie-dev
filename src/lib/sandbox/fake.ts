@@ -1,3 +1,8 @@
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import type {
   RunningSandboxSummary,
   SandboxExecHandle,
@@ -71,20 +76,46 @@ interface ExecScript {
   exitCode: number;
 }
 
+export interface FakeSandboxOptions {
+  baseBranch?: string;
+  branch?: string;
+  /**
+   * When true, commands that are not explicitly scripted execute on the local
+   * machine in a temporary git checkout. Unit tests keep this false so
+   * unscripted commands remain deterministic empty outputs.
+   */
+  passthroughExec?: boolean;
+}
+
 let fakeSandboxCounter = 0;
 
 export class FakeSandbox implements SandboxHandle {
   readonly id: string;
-  readonly repoPath = "/vercel/sandbox";
+  readonly repoPath: string;
 
   readonly calls: FakeExecCall[] = [];
   readonly files = new Map<string, { data: Buffer; mode?: number }>();
 
   private scripts: ExecScript[] = [];
   private stopped = false;
+  private readonly passthroughExec: boolean;
+  private readonly tempRoot: string | null;
 
-  constructor(id?: string) {
+  constructor(id?: string, opts: FakeSandboxOptions = {}) {
     this.id = id ?? `fake-sandbox-${++fakeSandboxCounter}`;
+    this.passthroughExec = opts.passthroughExec ?? false;
+    this.tempRoot = this.passthroughExec
+      ? mkdtempSync(join(tmpdir(), "wallie-fake-sandbox-"))
+      : null;
+    this.repoPath = this.tempRoot ?? "/vercel/sandbox";
+
+    if (this.passthroughExec) {
+      initializeLocalGitCheckout(this.repoPath, {
+        baseBranch: opts.baseBranch ?? "main",
+        branch: opts.branch ?? "wallie/fake-stage",
+      });
+    }
+
     fakeRegistry.set(this.id, {
       id: this.id,
       status: "running",
@@ -116,6 +147,10 @@ export class FakeSandbox implements SandboxHandle {
     this.calls.push(call);
 
     const idx = this.scripts.findIndex((s) => s.matches(call));
+    if (idx < 0 && this.passthroughExec) {
+      return execLocalCommand(call);
+    }
+
     const script =
       idx >= 0
         ? this.scripts.splice(idx, 1)[0]
@@ -152,16 +187,95 @@ export class FakeSandbox implements SandboxHandle {
   ): Promise<void> {
     const buf = typeof data === "string" ? Buffer.from(data, "utf8") : data;
     this.files.set(path, { data: buf, mode: opts.mode });
+
+    if (this.passthroughExec) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, buf, { mode: opts.mode });
+    }
   }
 
   async readFile(path: string): Promise<string | null> {
+    if (this.passthroughExec && existsSync(path)) {
+      return readFileSync(path, "utf8");
+    }
+
     const entry = this.files.get(path);
     return entry ? entry.data.toString("utf8") : null;
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.tempRoot) {
+      rmSync(this.tempRoot, { force: true, recursive: true });
+    }
     const entry = fakeRegistry.get(this.id);
     if (entry) entry.status = "stopped";
   }
+}
+
+function initializeLocalGitCheckout(
+  repoPath: string,
+  input: { baseBranch: string; branch: string },
+): void {
+  mkdirSync(repoPath, { recursive: true });
+  writeFileSync(join(repoPath, "README.md"), "# Wallie fake sandbox\n");
+
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_EMAIL: "wallie@example.local",
+    GIT_AUTHOR_NAME: "Wallie",
+  };
+  spawnSync("git", ["init", "-q"], { cwd: repoPath, env });
+  spawnSync("git", ["config", "user.email", "wallie@example.local"], { cwd: repoPath, env });
+  spawnSync("git", ["config", "user.name", "Wallie"], { cwd: repoPath, env });
+  spawnSync("git", ["checkout", "-B", input.baseBranch], { cwd: repoPath, env });
+  spawnSync("git", ["add", "README.md"], { cwd: repoPath, env });
+  spawnSync("git", ["commit", "-qm", "Initial fake sandbox checkout"], { cwd: repoPath, env });
+  spawnSync("git", ["checkout", "-B", input.branch], { cwd: repoPath, env });
+}
+
+function execLocalCommand(call: FakeExecCall): SandboxExecHandle {
+  const entries: SandboxLogEntry[] = [];
+  const proc = spawn(call.cmd, call.args, {
+    cwd: call.opts.cwd ?? call.opts.env?.PWD ?? process.cwd(),
+    env: { ...process.env, ...call.opts.env },
+    signal: call.opts.signal,
+  });
+
+  const exitCode = new Promise<number>((resolve) => {
+    proc.stdout.on("data", (chunk: Buffer) => {
+      entries.push({ data: chunk.toString("utf8"), stream: "stdout" });
+    });
+    proc.stderr.on("data", (chunk: Buffer) => {
+      entries.push({ data: chunk.toString("utf8"), stream: "stderr" });
+    });
+    proc.on("error", (error) => {
+      entries.push({ data: `${error.message}\n`, stream: "stderr" });
+      resolve(127);
+    });
+    proc.on("close", (code) => {
+      resolve(code ?? 0);
+    });
+  });
+
+  return {
+    exitCode,
+    kill: async (signal = "SIGTERM") => {
+      proc.kill(signal);
+    },
+    logs: async function* () {
+      await exitCode;
+      yield* entries;
+    },
+    output: async () => {
+      await exitCode;
+      let stdout = "";
+      let stderr = "";
+      for (const entry of entries) {
+        if (entry.stream === "stdout") stdout += entry.data;
+        else stderr += entry.data;
+      }
+      return { stdout, stderr };
+    },
+  };
 }
