@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -143,7 +144,7 @@ export class FakeSandbox implements SandboxHandle {
   ): Promise<SandboxExecHandle> {
     if (this.stopped) throw new Error("FakeSandbox: sandbox is stopped");
 
-    const call: FakeExecCall = { cmd, args, opts };
+    const call: FakeExecCall = { cmd, args, opts: { ...opts, cwd: opts.cwd ?? this.repoPath } };
     this.calls.push(call);
 
     const idx = this.scripts.findIndex((s) => s.matches(call));
@@ -225,37 +226,86 @@ function initializeLocalGitCheckout(
     GIT_AUTHOR_EMAIL: "wallie@example.local",
     GIT_AUTHOR_NAME: "Wallie",
   };
-  spawnSync("git", ["init", "-q"], { cwd: repoPath, env });
-  spawnSync("git", ["config", "user.email", "wallie@example.local"], { cwd: repoPath, env });
-  spawnSync("git", ["config", "user.name", "Wallie"], { cwd: repoPath, env });
-  spawnSync("git", ["checkout", "-B", input.baseBranch], { cwd: repoPath, env });
-  spawnSync("git", ["add", "README.md"], { cwd: repoPath, env });
-  spawnSync("git", ["commit", "-qm", "Initial fake sandbox checkout"], { cwd: repoPath, env });
-  spawnSync("git", ["checkout", "-B", input.branch], { cwd: repoPath, env });
+  runGit(repoPath, ["init", "-q"], env);
+  runGit(repoPath, ["config", "user.email", "wallie@example.local"], env);
+  runGit(repoPath, ["config", "user.name", "Wallie"], env);
+  runGit(repoPath, ["checkout", "-B", input.baseBranch], env);
+  runGit(repoPath, ["add", "README.md"], env);
+  runGit(repoPath, ["commit", "-qm", "Initial fake sandbox checkout"], env);
+  runGit(repoPath, ["checkout", "-B", input.branch], env);
+}
+
+function runGit(repoPath: string, args: string[], env: NodeJS.ProcessEnv): void {
+  const result = spawnSync("git", args, { cwd: repoPath, env });
+  if (result.error || result.status !== 0) {
+    throw new Error(`FakeSandbox git ${args.join(" ")} failed: ${formatSpawnFailure(result)}`);
+  }
+}
+
+function formatSpawnFailure(result: SpawnSyncReturns<Buffer>): string {
+  if (result.error) {
+    return result.error.message;
+  }
+
+  const stderr = result.stderr.toString("utf8").trim();
+  if (stderr) {
+    return stderr;
+  }
+
+  const stdout = result.stdout.toString("utf8").trim();
+  if (stdout) {
+    return stdout;
+  }
+
+  return `exit code ${result.status ?? "unknown"}`;
 }
 
 function execLocalCommand(call: FakeExecCall): SandboxExecHandle {
   const entries: SandboxLogEntry[] = [];
+  let done = false;
+  const waiters: Array<() => void> = [];
+  let resolveExitCode: (code: number) => void = () => {};
+  const exitCode = new Promise<number>((resolve) => {
+    resolveExitCode = resolve;
+  });
+
+  function notify() {
+    const pending = waiters.splice(0);
+    for (const waiter of pending) {
+      waiter();
+    }
+  }
+
+  function append(entry: SandboxLogEntry) {
+    entries.push(entry);
+    notify();
+  }
+
+  function finish(code: number) {
+    if (done) return;
+    done = true;
+    resolveExitCode(code);
+    notify();
+  }
+
   const proc = spawn(call.cmd, call.args, {
-    cwd: call.opts.cwd ?? call.opts.env?.PWD ?? process.cwd(),
+    cwd: call.opts.cwd,
     env: { ...process.env, ...call.opts.env },
     signal: call.opts.signal,
   });
 
-  const exitCode = new Promise<number>((resolve) => {
-    proc.stdout.on("data", (chunk: Buffer) => {
-      entries.push({ data: chunk.toString("utf8"), stream: "stdout" });
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      entries.push({ data: chunk.toString("utf8"), stream: "stderr" });
-    });
-    proc.on("error", (error) => {
-      entries.push({ data: `${error.message}\n`, stream: "stderr" });
-      resolve(127);
-    });
-    proc.on("close", (code) => {
-      resolve(code ?? 0);
-    });
+  proc.stdout.on("data", (chunk: Buffer) => {
+    append({ data: chunk.toString("utf8"), stream: "stdout" });
+  });
+  proc.stderr.on("data", (chunk: Buffer) => {
+    append({ data: chunk.toString("utf8"), stream: "stderr" });
+  });
+  proc.on("error", (error) => {
+    append({ data: `${error.message}\n`, stream: "stderr" });
+    finish(127);
+  });
+  proc.on("close", (code) => {
+    finish(code ?? 0);
   });
 
   return {
@@ -264,8 +314,15 @@ function execLocalCommand(call: FakeExecCall): SandboxExecHandle {
       proc.kill(signal);
     },
     logs: async function* () {
-      await exitCode;
-      yield* entries;
+      let index = 0;
+      while (!done || index < entries.length) {
+        while (index < entries.length) {
+          yield entries[index++]!;
+        }
+        if (!done) {
+          await new Promise<void>((resolve) => waiters.push(resolve));
+        }
+      }
     },
     output: async () => {
       await exitCode;
