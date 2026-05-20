@@ -235,10 +235,16 @@ export async function completeSandboxCapabilityCheck(input: {
       agentProvider: provider,
       baseBranch: input.repository.default_branch ?? "main",
       branch: `wallie/capability-check-${randomUUID().slice(0, 8)}`,
+      implementation: "vercel",
       installationToken,
       repoFullName: input.repository.full_name,
       sessionId: randomUUID(),
       timeoutMs: 30 * 60_000,
+    });
+    console.info("[sandbox-capability-check] sandbox started", {
+      agentProvider: provider,
+      sandboxId: sandbox.id,
+      workspaceId: input.workspaceId,
     });
 
     const capabilities = await probeSandboxCapabilities({

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import type {
   SandboxCapabilityName,
@@ -14,6 +16,7 @@ type CommandResult = {
 type ResultOptions = {
   allowEmptySuccess?: boolean;
   emptySuccessDetail?: string;
+  successDetail?: (output: string) => string | null;
 };
 
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
@@ -40,11 +43,39 @@ function agentCliCommand(provider: AgentProvider): string {
 }
 
 async function run(sandbox: SandboxHandle, command: string): Promise<CommandResult> {
-  const proc = await sandbox.exec("bash", ["-lc", command], { cwd: sandbox.repoPath });
-  const [{ stdout, stderr }, code] = await Promise.all([proc.output(), proc.exitCode]);
+  const captureId = randomUUID();
+  const stdoutPath = `/tmp/wallie-capability-probe-${captureId}.stdout`;
+  const stderrPath = `/tmp/wallie-capability-probe-${captureId}.stderr`;
+  const wrappedCommand = [
+    `stdout_path=${shellQuote(stdoutPath)}`,
+    `stderr_path=${shellQuote(stderrPath)}`,
+    "(",
+    command,
+    ') > "$stdout_path" 2> "$stderr_path"',
+  ].join("\n");
+
+  const proc = await sandbox.exec("bash", ["-lc", wrappedCommand], { cwd: sandbox.repoPath });
+  const code = await proc.exitCode;
+  const [capturedStdout, capturedStderr] = await Promise.all([
+    sandbox.readFile(stdoutPath),
+    sandbox.readFile(stderrPath),
+  ]);
+
+  let stdout = capturedStdout ?? "";
+  let stderr = capturedStderr ?? "";
+  let outputSource = "capture-file";
+  if (capturedStdout === null && capturedStderr === null) {
+    const fallback = await proc.output();
+    stdout = fallback.stdout;
+    stderr = fallback.stderr;
+    outputSource = "sdk-output";
+  }
+
   console.info("[sandbox-capability-probe]", {
     code,
     command: command.slice(0, 200),
+    outputSource,
+    sandboxId: sandbox.id,
     stderrLen: stderr.length,
     stdoutLen: stdout.length,
   });
@@ -58,9 +89,12 @@ function result(
 ): SandboxCapabilityResult {
   const output = (command.stdout || command.stderr).trim().slice(0, 500);
   if (command.code === 0 && (output.length > 0 || options.allowEmptySuccess)) {
+    const normalizedDetail = output ? (options.successDetail?.(output) ?? output) : null;
     return {
       detail:
-        output || options.emptySuccessDetail || "Command completed successfully with no output.",
+        normalizedDetail ||
+        options.emptySuccessDetail ||
+        "Command completed successfully with no output.",
       ok: true,
     };
   }
@@ -123,6 +157,11 @@ export async function probeSandboxCapabilities(input: {
       "chromium",
       run(sandbox, "npx playwright install chromium"),
       "chromium install failed",
+      {
+        allowEmptySuccess: true,
+        emptySuccessDetail: "Chromium install completed successfully.",
+        successDetail: normalizeChromiumInstallSuccess,
+      },
     );
     await record(
       report,
@@ -147,4 +186,18 @@ export async function probeSandboxCapabilities(input: {
 
 export function capabilityReportSucceeded(report: Partial<SandboxCapabilityReport>): boolean {
   return Object.values(report).every((entry) => entry?.ok === true);
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function normalizeChromiumInstallSuccess(output: string): string | null {
+  if (
+    output.includes("BEWARE: your OS is not officially supported by Playwright") &&
+    output.includes("downloading fallback build")
+  ) {
+    return "Chromium install completed successfully using Playwright's fallback Linux build.";
+  }
+  return null;
 }

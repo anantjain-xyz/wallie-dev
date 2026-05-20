@@ -585,6 +585,9 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
         ? { tone: "accent" as const, value: "Running" }
         : { tone: "danger" as const, value: "Error" }
     : { tone: "neutral" as const, value: "No check" };
+  const sandboxDetail = health.latestSandboxCapabilityCheck
+    ? `Checked ${formatRelativeTime(health.latestSandboxCapabilityCheck.checkedAt)}`
+    : "Run a capability check";
 
   return [
     { detail: github.detail, label: "GitHub", tone: github.tone, value: github.value },
@@ -632,7 +635,7 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
       value: providerCredentialBadge.value,
     },
     {
-      detail: health.latestSandboxCapabilityCheck?.checkedAt ?? "Run a capability check",
+      detail: sandboxDetail,
       label: "Sandbox",
       tone: sandbox.tone,
       value: sandbox.value,
@@ -642,6 +645,28 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
 
 function settingsHref(workspaceSlug: string, anchor: string) {
   return `${workspaceSettingsPath(workspaceSlug)}#${anchor}`;
+}
+
+function formatRelativeTime(value: string, nowMs = Date.now()) {
+  const thenMs = Date.parse(value);
+  if (!Number.isFinite(thenMs)) return "recently";
+
+  const elapsedSeconds = Math.max(0, Math.round((nowMs - thenMs) / 1000));
+  if (elapsedSeconds < 45) return "just now";
+
+  const units = [
+    { max: 60, name: "second", seconds: 1 },
+    { max: 60 * 60, name: "minute", seconds: 60 },
+    { max: 24 * 60 * 60, name: "hour", seconds: 60 * 60 },
+    { max: 7 * 24 * 60 * 60, name: "day", seconds: 24 * 60 * 60 },
+    { max: 30 * 24 * 60 * 60, name: "week", seconds: 7 * 24 * 60 * 60 },
+    { max: 365 * 24 * 60 * 60, name: "month", seconds: 30 * 24 * 60 * 60 },
+    { max: Number.POSITIVE_INFINITY, name: "year", seconds: 365 * 24 * 60 * 60 },
+  ] as const;
+
+  const unit = units.find((candidate) => elapsedSeconds < candidate.max) ?? units[0];
+  const count = Math.max(1, Math.floor(elapsedSeconds / unit.seconds));
+  return `${count} ${unit.name}${count === 1 ? "" : "s"} ago`;
 }
 
 const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [

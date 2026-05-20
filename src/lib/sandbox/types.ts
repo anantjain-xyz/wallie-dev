@@ -75,6 +75,7 @@ export interface SandboxHandle {
 // ---------------------------------------------------------------------------
 
 export type AgentProvider = "codex" | "claude-code";
+export type SandboxImplementation = "vercel" | "fake";
 
 export type SandboxCheckoutMode =
   /** Clone baseBranch and create a new `branch` from it (default). */
@@ -105,6 +106,11 @@ export interface CreateSessionSandboxInput {
   /** Short-lived GitHub App installation token — passed as clone credentials + push credentials. */
   installationToken: string;
   agentProvider: AgentProvider;
+  /**
+   * Override the configured sandbox implementation. Capability checks use this
+   * to prove Vercel Sandbox works even when local dev uses the fake adapter.
+   */
+  implementation?: SandboxImplementation;
   mode?: SandboxCheckoutMode;
   /** VM wall-clock timeout. Vercel caps at 45min Hobby / 5h Pro. Default: 30min. */
   timeoutMs?: number;

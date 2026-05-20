@@ -8,12 +8,13 @@ export type {
   SandboxExecHandle,
   SandboxExecOptions,
   SandboxHandle,
+  SandboxImplementation,
   SandboxLogEntry,
 } from "./types";
 export { FakeSandbox } from "./fake";
 
-function resolveImpl(): "vercel" | "fake" {
-  const impl = process.env.WALLIE_SANDBOX_IMPL ?? "vercel";
+function resolveImpl(override?: CreateSessionSandboxInput["implementation"]): "vercel" | "fake" {
+  const impl = override ?? process.env.WALLIE_SANDBOX_IMPL ?? "vercel";
   if (impl !== "vercel" && impl !== "fake") {
     throw new Error(`Unknown WALLIE_SANDBOX_IMPL: ${impl}. Expected "vercel" or "fake".`);
   }
@@ -28,7 +29,7 @@ function resolveImpl(): "vercel" | "fake" {
 export async function createSessionSandbox(
   input: CreateSessionSandboxInput,
 ): Promise<SandboxHandle> {
-  if (resolveImpl() === "fake") {
+  if (resolveImpl(input.implementation) === "fake") {
     const { FakeSandbox } = await import("./fake");
     return new FakeSandbox();
   }
