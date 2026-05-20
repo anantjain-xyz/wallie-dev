@@ -15,17 +15,9 @@ import {
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import type {
-  WallieSessionData,
-  WallieSessionRepository,
-  WallieRun,
-} from "@/features/wallie/types";
+import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
-import {
-  buildWallieBlockingReasons,
-  formatWallieRunMode,
-  inferWallieRunMode,
-} from "@/features/wallie/utils";
+import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -35,7 +27,6 @@ type FlashMessage = {
 };
 
 export type WalliePanelSession = {
-  githubRepositoryId: string | null;
   id: string;
   workspaceId: string;
 };
@@ -44,7 +35,6 @@ type SessionWalliePanelProps = {
   initialData: WallieSessionData;
   session: WalliePanelSession;
   memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  repositories: WallieSessionRepository[];
   supabase: SupabaseClient<Database>;
   workspaceSlug: string;
 };
@@ -115,11 +105,56 @@ function actionErrorMessage(payload: AgentRunActionErrorResponse | null) {
   return payload.error;
 }
 
+function hydrateRequestedByMember(
+  run: WallieRun,
+  memberIndex: ReadonlyMap<string, WorkspaceMember>,
+): WallieRun {
+  if (run.requestedByMember || !run.requestedByMemberId) {
+    return run;
+  }
+
+  return {
+    ...run,
+    requestedByMember: memberIndex.get(run.requestedByMemberId) ?? null,
+  };
+}
+
+function formatStageRunLabel(run: WallieRun) {
+  if (run.stageName) {
+    return `${run.stageName} run`;
+  }
+
+  if (run.stageSlug) {
+    const words = run.stageSlug
+      .split(/[-_\s]+/g)
+      .filter(Boolean)
+      .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`);
+    return `${words.join(" ") || "Session"} run`;
+  }
+
+  return "Session run";
+}
+
+function formatRequestedBy(run: WallieRun) {
+  if (run.requestedByMember) {
+    const fullName = run.requestedByMember.fullName?.trim();
+    const username = run.requestedByMember.username?.trim();
+
+    if (fullName) return fullName;
+    if (username) return username;
+    if (run.requestedByMember.kind === "system") return "Wallie";
+    if (run.requestedByMember.role === "owner") return "workspace owner";
+    if (run.requestedByMember.role === "admin") return "workspace admin";
+    return "workspace member";
+  }
+
+  return run.requestedByMemberId ? "workspace member" : "Wallie";
+}
+
 export function SessionWalliePanel({
   initialData,
   session,
   memberIndex,
-  repositories,
   supabase,
   workspaceSlug,
 }: SessionWalliePanelProps) {
@@ -129,12 +164,6 @@ export function SessionWalliePanel({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
     buildDefaultExpandedRunIds(initialData.runs),
   );
-  const repository = session.githubRepositoryId
-    ? (repositories.find(
-        (candidateRepository) => candidateRepository.id === session.githubRepositoryId,
-      ) ?? null)
-    : null;
-  const mode = inferWallieRunMode(session.githubRepositoryId);
 
   useEffect(() => {
     setRuns(initialData.runs);
@@ -265,10 +294,9 @@ export function SessionWalliePanel({
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
     missingSecretKeys: initialData.missingSecretKeys,
-    mode,
-    repository,
-  });
-  const canEnqueue = blockingReasons.length === 0;
+    mode: initialData.mode,
+    repository: initialData.repository,
+  }).filter((reason) => reason.code !== "active_run");
 
   async function queueRun(endpoint: string, body: Record<string, string>) {
     const response = await fetch(endpoint, {
@@ -290,46 +318,6 @@ export function SessionWalliePanel({
     return payload as AgentRunActionResponse;
   }
 
-  async function handleRunWithWallie() {
-    setPendingActionId("enqueue");
-    setFlashMessage(null);
-
-    try {
-      const payload = await queueRun("/api/agent-runs", {
-        sessionId: session.id,
-        workspaceId: session.workspaceId,
-      });
-
-      setRuns((currentRuns) => upsertWallieRun(currentRuns, payload.run));
-      setExpandedRunIds((currentIds) => {
-        const nextIds = new Set(currentIds);
-
-        nextIds.add(payload.run.id);
-        return nextIds;
-      });
-      setFlashMessage(
-        payload.created
-          ? {
-              kind: "success",
-              text: payload.processScheduled
-                ? "Wallie queued the run and scheduled processing in the background."
-                : "Wallie queued the run.",
-            }
-          : {
-              kind: "info",
-              text: "Wallie already has an active run on this session.",
-            },
-      );
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not queue that run.",
-      });
-    } finally {
-      setPendingActionId(null);
-    }
-  }
-
   async function handleRetryRun(runId: string) {
     setPendingActionId(runId);
     setFlashMessage(null);
@@ -339,11 +327,13 @@ export function SessionWalliePanel({
         workspaceId: session.workspaceId,
       });
 
-      setRuns((currentRuns) => upsertWallieRun(currentRuns, payload.run));
+      const run = hydrateRequestedByMember(payload.run, memberIndex);
+
+      setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
       setExpandedRunIds((currentIds) => {
         const nextIds = new Set(currentIds);
 
-        nextIds.add(payload.run.id);
+        nextIds.add(run.id);
         return nextIds;
       });
       setFlashMessage(
@@ -371,42 +361,6 @@ export function SessionWalliePanel({
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="ui-pill">{formatWallieRunMode(mode)}</span>
-            {repository ? (
-              <a
-                className={cn(
-                  "ui-pill transition-[color,border-color] duration-150 hover:border-accent/25 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30",
-                )}
-                href={repository.htmlUrl}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {repository.fullName}
-              </a>
-            ) : (
-              <span className="ui-pill text-muted">No repository linked</span>
-            )}
-          </div>
-
-          <p className="text-sm leading-6 text-muted">
-            Queue Wallie from this session to inspect persisted run messages and retry completed
-            runs without exposing privileged queue writes in the browser.
-          </p>
-        </div>
-
-        <button
-          className="ui-button-primary"
-          disabled={!canEnqueue || pendingActionId !== null}
-          onClick={() => void handleRunWithWallie()}
-          type="button"
-        >
-          {pendingActionId === "enqueue" ? "Queuing…" : "Run With Wallie"}
-        </button>
-      </div>
-
       {flashMessage ? (
         <div
           aria-live="polite"
@@ -420,21 +374,30 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      <div className="ui-subpanel p-4">
-        <p className="ui-label">Secrets</p>
-        <p className="mt-2 text-sm text-foreground">
-          Required: {initialData.requiredSecretKeys.join(", ")}
-        </p>
-        <p className="mt-2 text-sm text-muted">
-          {initialData.missingSecretKeys.length === 0
-            ? "Ready"
-            : `Missing: ${initialData.missingSecretKeys.join(", ")}`}
-        </p>
-      </div>
+      {initialData.requiredSecretKeys.length > 0 ? (
+        <div className="ui-subpanel p-4">
+          <p className="ui-label">Required secrets</p>
+          <p className="mt-2 text-sm text-foreground">
+            {initialData.requiredSecretKeys.join(", ")}
+          </p>
+          <p className="mt-2 text-sm text-muted">
+            {initialData.missingSecretKeys.length === 0
+              ? "All required secrets are configured."
+              : `Missing: ${initialData.missingSecretKeys.join(", ")}`}
+          </p>
+          {initialData.missingSecretKeys.length > 0 ? (
+            <div className="mt-3">
+              <Link className={interactiveLinkClass} href={workspaceSettingsPath(workspaceSlug)}>
+                Open Workspace Settings
+              </Link>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {blockingReasons.length > 0 ? (
         <div className="rounded-[6px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
-          <p className="font-semibold">Wallie cannot start a new run yet.</p>
+          <p className="font-semibold">Wallie is not ready to run.</p>
           <ul className="mt-3 space-y-2">
             {blockingReasons.map((reason) => (
               <li key={reason.code}>{reason.message}</li>
@@ -450,18 +413,12 @@ export function SessionWalliePanel({
 
       <div className="space-y-4">
         {runs.length === 0 ? (
-          <div className="ui-subpanel p-5 text-sm leading-7 text-muted">
-            No Wallie runs yet. Queue one from this session to create the first persisted timeline
-            entry.
-          </div>
+          <div className="ui-subpanel p-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
         ) : (
           runs.map((run) => {
             const isExpanded = expandedRunIds.has(run.id);
             const runDetailsId = `wallie-run-details-${run.id}`;
-            const triggeredByLabel =
-              run.triggeredByMember?.fullName ??
-              run.triggeredByMember?.username ??
-              "Unknown member";
+            const requestedByLabel = formatRequestedBy(run);
 
             return (
               <article key={run.id} className="ui-subpanel p-5">
@@ -494,14 +451,14 @@ export function SessionWalliePanel({
                       >
                         {formatRunStatus(run.status)}
                       </span>
-                      <span className="ui-pill">{formatWallieRunMode(run.runType)}</span>
+                      <span className="ui-pill">{formatStageRunLabel(run)}</span>
                       <span className="ui-pill font-mono text-muted">
                         {run.modelProvider}/{run.modelName}
                       </span>
                     </div>
 
                     <p className="mt-3 text-sm font-semibold text-foreground">
-                      Triggered by {triggeredByLabel}
+                      Requested by {requestedByLabel}
                     </p>
                     <p className="mt-1 text-sm text-muted">
                       Created {dateTimeFormatter.format(new Date(run.createdAt))}
@@ -517,7 +474,7 @@ export function SessionWalliePanel({
                   {run.canRetry ? (
                     <button
                       className="ui-button"
-                      disabled={pendingActionId !== null}
+                      disabled={pendingActionId !== null || blockingReasons.length > 0}
                       onClick={() => void handleRetryRun(run.id)}
                       type="button"
                     >

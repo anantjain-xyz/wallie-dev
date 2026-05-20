@@ -15,7 +15,6 @@ import {
   type SessionArtifactSummary,
   type SessionDetail,
   type SessionPhaseStatus,
-  type SessionRun,
 } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
@@ -182,186 +181,169 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         />
       </div>
 
-      <div className="flex flex-col gap-6 md:flex-row">
-        <div className="flex min-w-0 flex-[2] flex-col gap-4">
-          <div className="rounded-[8px] border border-border bg-surface">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <div>
-                <h2 className="text-[13px] font-semibold text-foreground">
-                  {selectedStage?.name ?? selectedStageSlug} stage
-                </h2>
-                <p className="mt-0.5 text-[11px] text-muted">{selectedStage?.description ?? ""}</p>
-              </div>
-              {selectedStageSlug === session.currentStageSlug ? (
-                <SessionPhaseStatusLabel
-                  status={session.phaseStatus}
-                  className="shrink-0 text-right text-[11px] leading-4"
-                />
-              ) : null}
+      <div className="flex flex-col gap-6">
+        <section className="rounded-[8px] border border-border bg-surface">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div>
+              <h2 className="text-[13px] font-semibold text-foreground">
+                {selectedStage?.name ?? selectedStageSlug} artifact
+              </h2>
+              <p className="mt-0.5 text-[11px] text-muted">
+                {latestArtifact && canActOnCurrent
+                  ? "Review this output before approving."
+                  : (selectedStage?.description ?? "")}
+              </p>
             </div>
-
-            <div className="p-4">
-              {latestArtifact ? (
-                <ArtifactView artifact={latestArtifact} />
-              ) : selectedStageSlug === session.currentStageSlug &&
-                session.phaseStatus === "agent_generating" ? (
-                <EmptyHint text="Wallie is drafting the artifact for this stage. Refresh in a moment." />
-              ) : (
-                <EmptyHint
-                  text={
-                    stageIndex(session.pipeline, selectedStageSlug) >
-                    stageIndex(session.pipeline, session.currentStageSlug)
-                      ? "This stage has not started yet."
-                      : "No artifact recorded for this stage."
-                  }
-                />
-              )}
-
-              {activeArtifacts.length > 1 ? (
-                <details className="mt-4 text-[12px] text-muted">
-                  <summary className="cursor-pointer hover:text-foreground">
-                    {activeArtifacts.length - 1} earlier version
-                    {activeArtifacts.length - 1 === 1 ? "" : "s"}
-                  </summary>
-                  <ul className="mt-2 space-y-2">
-                    {activeArtifacts.slice(1).map((artifact) => (
-                      <li
-                        key={`${artifact.stageSlug}-${artifact.version}`}
-                        className="rounded-[4px] border border-border bg-background p-3"
-                      >
-                        <p className="text-[11px] uppercase text-muted">
-                          v{artifact.version} ·{" "}
-                          {dateTimeFormatter.format(new Date(artifact.createdAt))}
-                        </p>
-                        <ArtifactView artifact={artifact} compact />
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-            </div>
-
-            {canActOnCurrent ? (
-              <div className="border-t border-border bg-surface-muted p-4">
-                {actionError ? (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
-                  >
-                    {actionError}
-                  </div>
-                ) : null}
-
-                {feedbackOpen ? (
-                  <div className="space-y-3">
-                    <label
-                      className="block text-[12px] font-semibold text-foreground"
-                      htmlFor="session-feedback"
-                    >
-                      Feedback for Wallie
-                    </label>
-                    <textarea
-                      id="session-feedback"
-                      value={feedbackDraft}
-                      onChange={(event) => setFeedbackDraft(event.target.value)}
-                      className="ui-textarea min-h-24"
-                      placeholder="What should change? Wallie will regenerate this stage."
-                    />
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        className="ui-button"
-                        onClick={() => {
-                          setFeedbackOpen(false);
-                          setFeedbackDraft("");
-                          setActionError(null);
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isPending}
-                        className="ui-button-primary"
-                        onClick={() => handlePhaseAction("reject")}
-                      >
-                        {isPending ? "Submitting…" : "Submit feedback"}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      className="ui-button"
-                      disabled={isPending}
-                      onClick={() => setFeedbackOpen(true)}
-                    >
-                      Request changes
-                    </button>
-                    <button
-                      type="button"
-                      className="ui-button-primary"
-                      disabled={isPending}
-                      onClick={() => handlePhaseAction("approve")}
-                    >
-                      {isPending
-                        ? "Approving…"
-                        : isTerminalStage(session.pipeline, session.currentStageSlug)
-                          ? "Approve & archive"
-                          : "Approve & advance"}
-                    </button>
-                  </div>
-                )}
-              </div>
+            {selectedStageSlug === session.currentStageSlug ? (
+              <SessionPhaseStatusLabel
+                status={session.phaseStatus}
+                className="shrink-0 text-right text-[11px] leading-4"
+              />
             ) : null}
           </div>
 
-          <div className="rounded-[8px] border border-border bg-surface p-4">
-            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">
-              Wallie agent
-            </h2>
-            <div className="mt-3">
-              <SessionWalliePanel
-                initialData={initialData.wallie}
-                session={{
-                  githubRepositoryId: initialData.sessionGithubRepositoryId,
-                  id: session.id,
-                  workspaceId: session.workspaceId,
-                }}
-                memberIndex={initialData.memberIndex}
-                repositories={initialData.wallie.repository ? [initialData.wallie.repository] : []}
-                supabase={supabase}
-                workspaceSlug={initialData.workspace.slug}
-              />
-            </div>
-          </div>
-        </div>
-
-        <aside className="flex w-full flex-col gap-4 md:w-[320px]">
-          <section className="rounded-[8px] border border-border bg-surface p-4">
-            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-muted">Prompt</h3>
-            <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground">
-              {session.promptMd || "No prompt recorded."}
-            </pre>
-          </section>
-
-          <section className="rounded-[8px] border border-border bg-surface p-4">
-            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-muted">
-              Run history
-            </h3>
-            {session.runHistory.length === 0 ? (
-              <p className="mt-2 text-[11px] text-muted">No agent runs yet.</p>
+          <div className="p-4">
+            {latestArtifact ? (
+              <ArtifactView artifact={latestArtifact} />
+            ) : selectedStageSlug === session.currentStageSlug &&
+              session.phaseStatus === "agent_generating" ? (
+              <EmptyHint text="Wallie is drafting the artifact for this stage. Refresh in a moment." />
             ) : (
-              <ul className="mt-2 space-y-2">
-                {session.runHistory.map((run) => (
-                  <RunRow key={run.id} run={run} />
-                ))}
-              </ul>
+              <EmptyHint
+                text={
+                  stageIndex(session.pipeline, selectedStageSlug) >
+                  stageIndex(session.pipeline, session.currentStageSlug)
+                    ? "This stage has not started yet."
+                    : "No artifact recorded for this stage."
+                }
+              />
             )}
-          </section>
-        </aside>
+
+            {activeArtifacts.length > 1 ? (
+              <details className="mt-4 text-[12px] text-muted">
+                <summary className="cursor-pointer hover:text-foreground">
+                  {activeArtifacts.length - 1} earlier version
+                  {activeArtifacts.length - 1 === 1 ? "" : "s"}
+                </summary>
+                <ul className="mt-2 space-y-2">
+                  {activeArtifacts.slice(1).map((artifact) => (
+                    <li
+                      key={`${artifact.stageSlug}-${artifact.version}`}
+                      className="rounded-[4px] border border-border bg-background p-3"
+                    >
+                      <p className="text-[11px] uppercase text-muted">
+                        v{artifact.version} ·{" "}
+                        {dateTimeFormatter.format(new Date(artifact.createdAt))}
+                      </p>
+                      <ArtifactView artifact={artifact} compact />
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+
+          {canActOnCurrent ? (
+            <div className="border-t border-border bg-surface-muted p-4">
+              {actionError ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+                >
+                  {actionError}
+                </div>
+              ) : null}
+
+              {feedbackOpen ? (
+                <div className="space-y-3">
+                  <label
+                    className="block text-[12px] font-semibold text-foreground"
+                    htmlFor="session-feedback"
+                  >
+                    Feedback for Wallie
+                  </label>
+                  <textarea
+                    id="session-feedback"
+                    value={feedbackDraft}
+                    onChange={(event) => setFeedbackDraft(event.target.value)}
+                    className="ui-textarea min-h-24"
+                    placeholder="What should change? Wallie will regenerate this stage."
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      className="ui-button"
+                      onClick={() => {
+                        setFeedbackOpen(false);
+                        setFeedbackDraft("");
+                        setActionError(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      className="ui-button-primary"
+                      onClick={() => handlePhaseAction("reject")}
+                    >
+                      {isPending ? "Queueing…" : "Queue rerun"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    className="ui-button"
+                    disabled={isPending}
+                    onClick={() => setFeedbackOpen(true)}
+                  >
+                    Request changes and rerun
+                  </button>
+                  <button
+                    type="button"
+                    className="ui-button-primary"
+                    disabled={isPending}
+                    onClick={() => handlePhaseAction("approve")}
+                  >
+                    {isPending
+                      ? "Approving…"
+                      : isTerminalStage(session.pipeline, session.currentStageSlug)
+                        ? "Approve & archive"
+                        : "Approve & advance"}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="rounded-[8px] border border-border bg-surface p-4">
+          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">Prompt</h2>
+          <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground">
+            {session.promptMd || "No prompt recorded."}
+          </pre>
+        </section>
+
+        <section className="rounded-[8px] border border-border bg-surface p-4">
+          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">
+            Run activity
+          </h2>
+          <div className="mt-3">
+            <SessionWalliePanel
+              initialData={initialData.wallie}
+              session={{
+                id: session.id,
+                workspaceId: session.workspaceId,
+              }}
+              memberIndex={initialData.memberIndex}
+              supabase={supabase}
+              workspaceSlug={initialData.workspace.slug}
+            />
+          </div>
+        </section>
       </div>
     </PageContainer>
   );
@@ -465,34 +447,5 @@ function EmptyHint({ text }: { text: string }) {
     <p className="rounded-[4px] border border-dashed border-border px-3 py-6 text-center text-[12px] text-muted">
       {text}
     </p>
-  );
-}
-
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
-}
-
-function RunRow({ run }: { run: SessionRun }) {
-  const hasTokens = run.inputTokens !== null || run.outputTokens !== null;
-
-  return (
-    <li className="rounded-[4px] border border-border bg-background px-2.5 py-1.5 text-[11px]">
-      <div className="flex items-center justify-between">
-        <div className="flex min-w-0 flex-col">
-          <span className="font-mono text-foreground">{run.runType}</span>
-          <span className="text-muted">{dateTimeFormatter.format(new Date(run.createdAt))}</span>
-        </div>
-        <span className="text-muted">{run.status}</span>
-      </div>
-      {hasTokens ? (
-        <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
-          {run.inputTokens !== null ? <span>{formatTokenCount(run.inputTokens)} in</span> : null}
-          {run.outputTokens !== null ? <span>{formatTokenCount(run.outputTokens)} out</span> : null}
-          {run.totalCostUsd !== null ? <span>${run.totalCostUsd.toFixed(4)}</span> : null}
-        </div>
-      ) : null}
-    </li>
   );
 }

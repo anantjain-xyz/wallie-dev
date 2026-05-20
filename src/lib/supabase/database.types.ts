@@ -46,6 +46,9 @@ export type Database = {
           requested_by_member_id: string | null
           scheduled_at: string | null
           session_id: string
+          stage_id: string | null
+          stage_name: string | null
+          stage_slug: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -63,6 +66,9 @@ export type Database = {
           requested_by_member_id?: string | null
           scheduled_at?: string | null
           session_id: string
+          stage_id?: string | null
+          stage_name?: string | null
+          stage_slug?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -80,6 +86,9 @@ export type Database = {
           requested_by_member_id?: string | null
           scheduled_at?: string | null
           session_id?: string
+          stage_id?: string | null
+          stage_name?: string | null
+          stage_slug?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_job_status"]
           trigger_type?: Database["public"]["Enums"]["agent_trigger_type"]
@@ -99,6 +108,13 @@ export type Database = {
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_jobs_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
           {
@@ -166,6 +182,9 @@ export type Database = {
           run_type: string
           sandbox_id: string | null
           session_id: string
+          stage_id: string | null
+          stage_name: string | null
+          stage_slug: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["agent_run_status"]
           total_cost_usd: number | null
@@ -186,6 +205,9 @@ export type Database = {
           run_type: string
           sandbox_id?: string | null
           session_id: string
+          stage_id?: string | null
+          stage_name?: string | null
+          stage_slug?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
           total_cost_usd?: number | null
@@ -206,6 +228,9 @@ export type Database = {
           run_type?: string
           sandbox_id?: string | null
           session_id?: string
+          stage_id?: string | null
+          stage_name?: string | null
+          stage_slug?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["agent_run_status"]
           total_cost_usd?: number | null
@@ -226,6 +251,13 @@ export type Database = {
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_runs_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
           {

@@ -17,9 +17,10 @@ describe("inferWallieRunMode", () => {
 });
 
 describe("canRetryWallieRun", () => {
-  it("allows retry when run is terminal and no active run exists", () => {
+  it("allows retry for failed or canceled runs when no active run exists", () => {
     expect(canRetryWallieRun("error", false)).toBe(true);
-    expect(canRetryWallieRun("success", false)).toBe(true);
+    expect(canRetryWallieRun("canceled", false)).toBe(true);
+    expect(canRetryWallieRun("success", false)).toBe(false);
   });
 
   it("blocks retry when an active run exists", () => {
