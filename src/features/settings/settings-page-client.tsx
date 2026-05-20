@@ -153,6 +153,25 @@ function updateClaudeCodeConnectionInData(
   };
 }
 
+export function applyLinearRoutingToSettingsData(
+  currentData: SettingsPageData,
+  routing: SettingsPageData["linearRouting"],
+  updatedAt = new Date().toISOString(),
+): SettingsPageData {
+  return {
+    ...currentData,
+    linearRouting: routing,
+    setupHealth: {
+      ...currentData.setupHealth,
+      linearRouting: {
+        configured: true,
+        status: "present",
+        updatedAt,
+      },
+    },
+  };
+}
+
 function applySecretsToData(
   currentData: SettingsPageData,
   secrets: SettingsPageData["workspaceSecrets"],
@@ -261,6 +280,9 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               canManage={isManager}
               isLoadingSecrets={false}
               linearSecret={linearSecret}
+              onRoutingSaved={(routing) =>
+                setData((currentData) => applyLinearRoutingToSettingsData(currentData, routing))
+              }
               routing={pageData.linearRouting}
               setFlashMessage={setFlashMessage}
               setSecrets={setSecrets}

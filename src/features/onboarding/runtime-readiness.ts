@@ -219,8 +219,7 @@ export function buildVerifyChecklist(input: {
     ? input.health.defaultPipeline.configured
     : completedSteps.has("pipeline");
   const linearPassed = useSetupHealth
-    ? (input.health.linearKey.configured && input.health.linearRouting.configured) ||
-      stepSatisfied("linear")
+    ? input.health.linearKey.configured && input.health.linearRouting.configured
     : stepSatisfied("linear");
   const runtimePassed = useSetupHealth
     ? input.health.agentConfig.configured || stepSatisfied("runtime")
@@ -276,9 +275,7 @@ export function buildVerifyChecklist(input: {
     {
       detail: useSetupHealth
         ? linearPassed
-          ? input.health.linearKey.configured && input.health.linearRouting.configured
-            ? "Linear API key and routing are configured."
-            : "Linear setup was skipped."
+          ? "Linear API key and routing are configured."
           : "Configure the Linear API key and routing."
         : stepSatisfied("linear")
           ? "Linear step completed or skipped."

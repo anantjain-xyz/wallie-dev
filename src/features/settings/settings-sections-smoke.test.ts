@@ -7,11 +7,15 @@ import type { SettingsPageData } from "@/features/settings/data";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import {
+  markSandboxCapabilityCheckPollingFailed,
   resolveSandboxRepositorySelection,
   SandboxCapabilitySection,
 } from "@/features/settings/sandbox-capability-section";
 import { resolveLegacySettingsAnchorHash } from "@/features/settings/settings-anchor-nav";
-import { SettingsPageClient } from "@/features/settings/settings-page-client";
+import {
+  applyLinearRoutingToSettingsData,
+  SettingsPageClient,
+} from "@/features/settings/settings-page-client";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
@@ -371,6 +375,31 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain("Complete the Linear step.");
   });
 
+  it("updates Settings health when Linear routing saves", () => {
+    const data = settingsData({
+      setupHealth: {
+        ...settingsData().setupHealth,
+        linearRouting: {
+          configured: false,
+          status: "missing",
+          updatedAt: null,
+        },
+      },
+    });
+    const updated = applyLinearRoutingToSettingsData(
+      data,
+      DEFAULT_LINEAR_ROUTING_CONFIG,
+      "2026-05-20T04:10:00.000Z",
+    );
+
+    expect(updated.linearRouting).toEqual(DEFAULT_LINEAR_ROUTING_CONFIG);
+    expect(updated.setupHealth.linearRouting).toEqual({
+      configured: true,
+      status: "present",
+      updatedAt: "2026-05-20T04:10:00.000Z",
+    });
+  });
+
   it("renders the onboarding-aligned Settings sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
@@ -495,6 +524,27 @@ describe("Settings integration sections", () => {
         repositories,
       }),
     ).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
+  it("turns sandbox polling failures into a parent-syncable error check", () => {
+    const failed = markSandboxCapabilityCheckPollingFailed(
+      {
+        capabilities: {},
+        checkedAt: "2026-05-20T04:00:00.000Z",
+        errorText: null,
+        githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+        id: "check-1",
+        status: "running",
+      },
+      "Capability check polling failed.",
+      "2026-05-20T04:11:00.000Z",
+    );
+
+    expect(failed).toMatchObject({
+      checkedAt: "2026-05-20T04:11:00.000Z",
+      errorText: "Capability check polling failed.",
+      status: "error",
+    });
   });
 
   it("pairs Settings provider changes with the provider's recommended model", () => {

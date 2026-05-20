@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -9,6 +9,7 @@ import { useApiAction } from "@/features/settings/use-api-action";
 import type {
   SandboxCapabilityCheckLatestResponse,
   SandboxCapabilityCheckResponse,
+  SandboxCapabilityCheckState,
 } from "@/lib/sandbox-capabilities/contracts";
 
 type SandboxCapabilitySectionProps = {
@@ -49,6 +50,19 @@ export function resolveSandboxRepositorySelection({
   return selectableRepositories[0]?.id ?? "";
 }
 
+export function markSandboxCapabilityCheckPollingFailed(
+  check: SandboxCapabilityCheckState,
+  message: string,
+  checkedAt = new Date().toISOString(),
+): SandboxCapabilityCheckState {
+  return {
+    ...check,
+    checkedAt,
+    errorText: message,
+    status: "error",
+  };
+}
+
 export function SandboxCapabilitySection({
   canManage,
   initialCheck,
@@ -71,7 +85,12 @@ export function SandboxCapabilitySection({
     }),
   );
   const [check, setCheck] = useState(initialCheck);
+  const latestCheckRef = useRef(check);
   const repositoryIdsKey = selectableRepositories.map((repository) => repository.id).join("|");
+
+  useEffect(() => {
+    latestCheckRef.current = check;
+  }, [check]);
 
   useEffect(() => {
     setSelectedRepositoryId((currentRepositoryId) =>
@@ -109,8 +128,8 @@ export function SandboxCapabilitySection({
   const isPolling = check?.status === "running";
 
   useEffect(() => {
-    if (!isPolling || !check?.githubRepositoryId) return;
-    const repositoryId = check.githubRepositoryId;
+    const repositoryId = check?.githubRepositoryId;
+    if (!isPolling || !repositoryId) return;
     let cancelled = false;
     const timer = window.setInterval(async () => {
       try {
@@ -142,16 +161,16 @@ export function SandboxCapabilitySection({
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : "Capability check polling failed.";
-        setCheck((currentCheck) =>
-          currentCheck?.status === "running"
-            ? {
-                ...currentCheck,
-                checkedAt: new Date().toISOString(),
-                errorText: message,
-                status: "error",
-              }
-            : currentCheck,
-        );
+        const currentCheck = latestCheckRef.current;
+        if (
+          currentCheck?.status === "running" &&
+          currentCheck.githubRepositoryId === repositoryId
+        ) {
+          const nextCheck = markSandboxCapabilityCheckPollingFailed(currentCheck, message);
+          latestCheckRef.current = nextCheck;
+          setCheck(nextCheck);
+          onCheckChange?.(nextCheck);
+        }
         setFlashMessage({ kind: "error", text: message });
         window.clearInterval(timer);
       }

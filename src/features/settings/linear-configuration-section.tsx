@@ -15,6 +15,7 @@ type LinearConfigurationSectionProps = {
   canManage: boolean;
   isLoadingSecrets: boolean;
   linearSecret: WorkspaceSecretPreview | null;
+  onRoutingSaved?: (routing: SettingsPageData["linearRouting"]) => void;
   routing: SettingsPageData["linearRouting"];
   setFlashMessage: (message: FlashMessage) => void;
   setSecrets: Dispatch<SetStateAction<WorkspaceSecretPreview[]>>;
@@ -26,6 +27,7 @@ export function LinearConfigurationSection({
   canManage,
   isLoadingSecrets,
   linearSecret,
+  onRoutingSaved,
   routing,
   setFlashMessage,
   setSecrets,
@@ -77,6 +79,7 @@ export function LinearConfigurationSection({
           </div>
           <LinearRoutingEditor
             canManage={canManage}
+            onSaved={onRoutingSaved}
             routing={routing}
             setFlashMessage={setFlashMessage}
             stages={stages}
