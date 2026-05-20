@@ -56,10 +56,6 @@ export function workspaceSessionDetailPath(
   return withSearchParams(`${workspaceSessionsPath(workspaceSlug)}/${sessionNumber}`, query);
 }
 
-export function workspaceWorkersPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
-  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/workers`, query);
-}
-
 export function workspaceSettingsPath(workspaceSlug: string, query?: Record<string, QueryValue>) {
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
@@ -75,11 +71,6 @@ export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] 
       label: "Sessions",
       href: workspaceSessionsPath(workspaceSlug),
       description: "All sessions regardless of phase. Search and filter by phase or PRs.",
-    },
-    {
-      label: "Workers",
-      href: workspaceWorkersPath(workspaceSlug),
-      description: "Worker processes, queue depth, and error rates.",
     },
     {
       label: "Settings",

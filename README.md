@@ -158,7 +158,7 @@ workspaces/[id]/avatar/              <- storage upload
 
 - **sessions/** -- `server.ts` (RLS queries), `client.ts`, `model.ts`, `detail/` (with Realtime subscription in `session-detail-page-client.tsx`), `list/`, `create-session-dialog.tsx`.
 - **github/** -- `service.ts`, `webhooks.ts`, `contracts.ts`.
-- **issues/**, **pipeline/**, **settings/**, **workers/**, **wallie/** (legacy orchestration).
+- **issues/**, **pipeline/**, **settings/**, **wallie/** (legacy orchestration).
 
 #### Libraries (`src/lib/`)
 
@@ -179,8 +179,7 @@ app/
     |-- sessions/                   list + /[sessionNumber] detail
     |-- issues/                     GitHub issue tracker
     |-- pipeline/                   phase dashboard
-    |-- settings/                   integrations + secrets
-    `-- workers/                    daemon health
+    `-- settings/                   integrations + secrets
 
 components/
 |-- app-shell/   (shell, header, sidebar)
