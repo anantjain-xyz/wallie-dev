@@ -194,16 +194,16 @@ export async function saveWorkspaceRepositoryProfile(input: {
   });
 
   const { data, error } = await input.admin.rpc("save_workspace_repository_profile", {
-    selected_build_command: input.payload.buildCommand,
+    selected_build_command: input.payload.buildCommand as string,
     selected_env_key_suggestions: input.payload.envKeySuggestions,
     selected_framework_hints: input.payload.frameworkHints,
     selected_inference_confidence: input.payload.inferenceConfidence,
     selected_inference_sources: input.payload.inferenceSources as unknown as Json,
-    selected_install_command: input.payload.installCommand,
+    selected_install_command: input.payload.installCommand as string,
     selected_language_hints: input.payload.languageHints,
-    selected_package_manager: input.payload.packageManager,
+    selected_package_manager: input.payload.packageManager as string,
     selected_setup_notes: input.payload.setupNotes,
-    selected_test_command: input.payload.testCommand,
+    selected_test_command: input.payload.testCommand as string,
     target_github_repository_id: input.payload.githubRepositoryId,
     target_workspace_id: input.workspaceId,
   });

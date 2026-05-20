@@ -2,9 +2,21 @@ import { NextResponse } from "next/server";
 
 import { ensureProfileForUser } from "@/lib/auth";
 import { workspaceOnboardingPath } from "@/lib/routes";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createWorkspaceInputSchema, normalizeWorkspaceSlug } from "@/lib/workspaces";
+
+function getUserMetadataString(user: { user_metadata?: Record<string, unknown> }, keys: string[]) {
+  for (const key of keys) {
+    const value = user.user_metadata?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
@@ -30,7 +42,12 @@ export async function POST(request: Request) {
 
   await ensureProfileForUser(supabase, user);
 
-  const { data, error } = await supabase.rpc("create_workspace", {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.rpc("create_workspace", {
+    actor_avatar_url: getUserMetadataString(user, ["avatar_url", "picture"]),
+    actor_email: user.email ?? undefined,
+    actor_full_name: getUserMetadataString(user, ["full_name", "name"]),
+    actor_user_id: user.id,
     requested_slug: normalizeWorkspaceSlug(parsed.data.slug),
     workspace_name: parsed.data.name.trim(),
   });

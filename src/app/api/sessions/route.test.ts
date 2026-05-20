@@ -46,7 +46,6 @@ function makeRequest(body: Record<string, unknown>) {
 function buildSupabaseMock(
   opts: {
     firstStageRow?: { id: string } | null;
-    nextNumber?: number;
     onboardingRow?: { status: string } | null;
     pipelineRow?: { id: string } | null;
   } = {},
@@ -98,20 +97,29 @@ function buildSupabaseMock(
       }
       throw new Error(`unexpected supabase table ${table}`);
     },
-    rpc: vi.fn(async () => ({ data: opts.nextNumber ?? 7, error: null })),
   };
 }
 
 function buildAdminMock(
   opts: {
+    nextNumber?: number;
+    numberError?: { message: string } | null;
     sessionDeleteError?: { message: string } | null;
     sessionInsertError?: { message: string } | null;
   } = {},
 ) {
   const insertedSessions: Array<Record<string, unknown>> = [];
   const deletedSessionIds: string[] = [];
+  const rpcCalls: Array<{ args: Record<string, unknown>; fn: string }> = [];
 
   const admin = {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ args, fn });
+      if (fn !== "next_session_number") {
+        throw new Error(`unexpected admin rpc ${fn}`);
+      }
+      return { data: opts.nextNumber ?? 7, error: opts.numberError ?? null };
+    },
     from(table: string) {
       if (table !== "sessions") {
         throw new Error(`unexpected admin table ${table}`);
@@ -143,7 +151,7 @@ function buildAdminMock(
     },
   };
 
-  return { admin, deletedSessionIds, insertedSessions };
+  return { admin, deletedSessionIds, insertedSessions, rpcCalls };
 }
 
 function setupAccess(opts: Parameters<typeof buildSupabaseMock>[0] = {}) {
@@ -188,6 +196,15 @@ describe("POST /api/sessions", () => {
 
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({ number: 7, processScheduled: true });
+    expect(currentAdminMock.rpcCalls).toEqual([
+      {
+        args: {
+          actor_user_id: "user-1",
+          target_workspace_id: WORKSPACE_ID,
+        },
+        fn: "next_session_number",
+      },
+    ]);
     expect(currentAdminMock.insertedSessions[0]).toMatchObject({
       creator_member_id: MEMBER_ID,
       current_stage_id: "stage-1",

@@ -102,9 +102,9 @@ export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAut
 
     async persistChatGptAuthJson(input) {
       const { data, error } = await admin.rpc("persist_codex_auth_json", {
-        new_account_email: input.metadata.accountEmail,
-        new_account_id: input.metadata.accountId,
-        new_auth_cache_last_refresh: input.metadata.lastRefresh,
+        new_account_email: input.metadata.accountEmail as string,
+        new_account_id: input.metadata.accountId as string,
+        new_auth_cache_last_refresh: input.metadata.lastRefresh as string,
         new_encrypted_credential: encryptSecretValue(input.authJson),
         previous_credential_version: input.previousCredentialVersion,
         target_run_id: input.runId,
