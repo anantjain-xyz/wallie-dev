@@ -274,16 +274,15 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                         </div>
 
                         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
-                          <div className="relative z-20">
-                            <SessionConnections
-                              compact
-                              quiet
-                              linearIssueId={card.linearIssueId}
-                              linearIssueUrl={card.linearIssueUrl}
-                              pullRequestCount={pullRequests.length}
-                              pullRequests={pullRequests}
-                            />
-                          </div>
+                          <SessionConnections
+                            className="relative z-20"
+                            compact
+                            quiet
+                            linearIssueId={card.linearIssueId}
+                            linearIssueUrl={card.linearIssueUrl}
+                            pullRequestCount={pullRequests.length}
+                            pullRequests={pullRequests}
+                          />
 
                           <dl className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             {card.rejectionCount > 0 ? (
