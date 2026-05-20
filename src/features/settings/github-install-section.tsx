@@ -8,6 +8,7 @@ import { Section, StatusBadge } from "@/features/settings/settings-ui";
 type GitHubInstallSectionProps = {
   canManage: boolean;
   github: SettingsPageData["github"];
+  onGithubChange?: (github: SettingsPageData["github"]) => void;
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
@@ -15,6 +16,7 @@ type GitHubInstallSectionProps = {
 export function GitHubInstallSection({
   canManage,
   github,
+  onGithubChange,
   setFlashMessage,
   workspaceId,
 }: GitHubInstallSectionProps) {
@@ -33,11 +35,12 @@ export function GitHubInstallSection({
       anchorId="github"
       statusBadge={statusBadge}
       tagline="Install the workspace GitHub App so PR status appears on each session and Wallie can open PRs from agent runs."
-      title="GitHub"
+      title="Connect GitHub"
     >
       <GitHubConnectionPanel
         canManage={canManage}
         github={github}
+        onChange={onGithubChange}
         setFlashMessage={setFlashMessage}
         source="settings"
         workspaceId={workspaceId}

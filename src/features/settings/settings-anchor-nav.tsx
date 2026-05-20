@@ -1,14 +1,57 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 export type SettingsAnchor = {
+  dividerBefore?: boolean;
   id: string;
   label: string;
 };
 
-export function SettingsAnchorNav({ anchors }: { anchors: SettingsAnchor[] }) {
+type SettingsAnchorNavProps = {
+  anchors: SettingsAnchor[];
+  legacyRedirects?: Record<string, string>;
+};
+
+const EMPTY_LEGACY_REDIRECTS: Record<string, string> = {};
+
+export function resolveLegacySettingsAnchorHash(
+  hash: string,
+  legacyRedirects: Record<string, string>,
+) {
+  const anchorId = hash.replace(/^#/u, "");
+  return legacyRedirects[anchorId] ?? null;
+}
+
+export function SettingsAnchorNav({
+  anchors,
+  legacyRedirects = EMPTY_LEGACY_REDIRECTS,
+}: SettingsAnchorNavProps) {
   const [activeId, setActiveId] = useState<string | null>(anchors[0]?.id ?? null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    function redirectLegacyHash() {
+      const redirectId = resolveLegacySettingsAnchorHash(window.location.hash, legacyRedirects);
+      if (!redirectId) return;
+
+      const target = document.getElementById(redirectId);
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}#${redirectId}`,
+      );
+      if (target) {
+        window.requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
+      }
+    }
+
+    redirectLegacyHash();
+    window.addEventListener("hashchange", redirectLegacyHash);
+
+    return () => window.removeEventListener("hashchange", redirectLegacyHash);
+  }, [legacyRedirects]);
 
   useEffect(() => {
     const sections = anchors
@@ -60,16 +103,21 @@ export function SettingsAnchorNav({ anchors }: { anchors: SettingsAnchor[] }) {
           {anchors.map((anchor) => {
             const isActive = anchor.id === activeId;
             return (
-              <li key={anchor.id}>
-                <a
-                  aria-current={isActive ? "true" : undefined}
-                  className={`settings-anchor ${isActive ? "settings-anchor-active" : ""}`}
-                  href={`#${anchor.id}`}
-                  onClick={(event) => handleClick(event, anchor.id)}
-                >
-                  <span>{anchor.label}</span>
-                </a>
-              </li>
+              <Fragment key={anchor.id}>
+                {anchor.dividerBefore ? (
+                  <li aria-hidden="true" className="my-2 border-t border-border" />
+                ) : null}
+                <li>
+                  <a
+                    aria-current={isActive ? "true" : undefined}
+                    className={`settings-anchor ${isActive ? "settings-anchor-active" : ""}`}
+                    href={`#${anchor.id}`}
+                    onClick={(event) => handleClick(event, anchor.id)}
+                  >
+                    <span>{anchor.label}</span>
+                  </a>
+                </li>
+              </Fragment>
             );
           })}
         </ul>
@@ -83,11 +131,16 @@ export function SettingsAnchorNavMobile({ anchors }: { anchors: SettingsAnchor[]
     <nav aria-label="Settings sections" className="lg:hidden -mx-4 px-4 pb-4">
       <ul className="flex gap-2 overflow-x-auto">
         {anchors.map((anchor) => (
-          <li key={anchor.id} className="shrink-0">
-            <a className="ui-tab" href={`#${anchor.id}`}>
-              {anchor.label}
-            </a>
-          </li>
+          <Fragment key={anchor.id}>
+            {anchor.dividerBefore ? (
+              <li aria-hidden="true" className="w-px shrink-0 bg-border" />
+            ) : null}
+            <li className="shrink-0">
+              <a className="ui-tab" href={`#${anchor.id}`}>
+                {anchor.label}
+              </a>
+            </li>
+          </Fragment>
         ))}
       </ul>
     </nav>

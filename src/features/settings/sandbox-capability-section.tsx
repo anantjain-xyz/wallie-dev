@@ -14,6 +14,8 @@ import type {
 type SandboxCapabilitySectionProps = {
   canManage: boolean;
   initialCheck: SettingsPageData["latestSandboxCapabilityCheck"];
+  onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
+  preferredRepositoryId?: string | null;
   repositories: SettingsPageData["github"]["repositories"];
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
@@ -22,6 +24,8 @@ type SandboxCapabilitySectionProps = {
 export function SandboxCapabilitySection({
   canManage,
   initialCheck,
+  onCheckChange,
+  preferredRepositoryId,
   repositories,
   setFlashMessage,
   workspaceId,
@@ -31,8 +35,13 @@ export function SandboxCapabilitySection({
     label: repository.fullName,
     value: repository.id,
   }));
+  const preferredRepositoryAvailable = selectableRepositories.some(
+    (repository) => repository.id === preferredRepositoryId,
+  );
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(
-    selectableRepositories[0]?.id ?? "",
+    preferredRepositoryAvailable
+      ? (preferredRepositoryId ?? "")
+      : (selectableRepositories[0]?.id ?? ""),
   );
   const [check, setCheck] = useState(initialCheck);
 
@@ -46,7 +55,10 @@ export function SandboxCapabilitySection({
         method: "POST",
       }),
     errorText: "Sandbox capability check failed.",
-    onSuccess: (payload) => setCheck(payload.check),
+    onSuccess: (payload) => {
+      setCheck(payload.check);
+      onCheckChange?.(payload.check);
+    },
     setFlashMessage,
     successText: (payload) =>
       payload.check.status === "running"
@@ -77,6 +89,7 @@ export function SandboxCapabilitySection({
         if (cancelled) return;
         const nextCheck = body.check;
         setCheck(nextCheck);
+        onCheckChange?.(nextCheck);
         if (nextCheck.status !== "running") {
           window.clearInterval(timer);
           if (nextCheck.status === "success") {
@@ -110,7 +123,7 @@ export function SandboxCapabilitySection({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [check?.githubRepositoryId, isPolling, setFlashMessage, workspaceId]);
+  }, [check?.githubRepositoryId, isPolling, onCheckChange, setFlashMessage, workspaceId]);
 
   return (
     <div className="space-y-6">
