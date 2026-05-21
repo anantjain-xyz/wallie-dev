@@ -106,6 +106,75 @@ describe("SessionWalliePanel", () => {
     expect(html).toContain("Retry Run");
   });
 
+  it("shows visible progress when an active run has no messages yet", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({
+          runs: [
+            run({
+              finishedAt: null,
+              isActive: true,
+              isTerminal: false,
+              messages: [],
+              status: "running",
+            }),
+          ],
+        }),
+        memberIndex: new Map([[baseMember.id, baseMember]]),
+        session: { id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect(html).toContain("Wallie is working");
+    expect(html).not.toContain("Messages will appear here as the processor");
+    expect(html).toContain("animate-spin");
+    expect(html).not.toContain("No persisted messages were recorded for this run.");
+  });
+
+  it("keeps the progress row visible while an active run has messages", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({
+          runs: [
+            run({
+              finishedAt: null,
+              isActive: true,
+              isTerminal: false,
+              status: "running",
+            }),
+          ],
+        }),
+        memberIndex: new Map([[baseMember.id, baseMember]]),
+        session: { id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect(html).toContain("Wallie is working");
+    expect(html).toContain("Product spec created.");
+    expect(html).not.toContain("Messages will appear here as the processor");
+  });
+
+  it("keeps the terminal empty-message state for completed runs", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({
+          runs: [run({ messages: [], status: "success" })],
+        }),
+        memberIndex: new Map([[baseMember.id, baseMember]]),
+        session: { id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect(html).toContain("No persisted messages were recorded for this run.");
+    expect(html).not.toContain("Wallie is working.");
+  });
+
   it("falls back to a human-readable requester label when member names are blank", () => {
     const memberWithoutName = {
       ...baseMember,
