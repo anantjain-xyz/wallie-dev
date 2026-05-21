@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { CODEX_EXTERNAL_SANDBOX_FLAG, codexExecArgs } from "@/lib/agent-runner/codex";
+import {
+  CODEX_APPROVAL_POLICY,
+  CODEX_EXTERNAL_SANDBOX_FLAG,
+  CODEX_SANDBOX_MODE,
+  codexExecArgs,
+} from "@/lib/agent-runner/codex";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import type {
   SandboxCapabilityName,
@@ -195,10 +200,21 @@ export function capabilityReportSucceeded(report: Partial<SandboxCapabilityRepor
 function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityResult {
   const args = codexExecArgs("gpt-5.5", sandboxRepoPath);
   const usesExternalSandbox = args.includes(CODEX_EXTERNAL_SANDBOX_FLAG);
+  const disablesInnerSandbox = args.some(
+    (arg, index) => arg === "--sandbox" && args[index + 1] === CODEX_SANDBOX_MODE,
+  );
+  const configuresSandboxMode = args.includes(`sandbox_mode="${CODEX_SANDBOX_MODE}"`);
+  const configuresApprovalPolicy = args.includes(`approval_policy="${CODEX_APPROVAL_POLICY}"`);
   const usesSandboxRepo = args.some(
     (arg, index) => arg === "--cd" && args[index + 1] === sandboxRepoPath,
   );
-  if (usesExternalSandbox && usesSandboxRepo) {
+  if (
+    usesExternalSandbox &&
+    disablesInnerSandbox &&
+    configuresSandboxMode &&
+    configuresApprovalPolicy &&
+    usesSandboxRepo
+  ) {
     return {
       detail: "Codex command uses Vercel Sandbox as the execution boundary.",
       ok: true,
@@ -206,7 +222,7 @@ function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityR
   }
 
   return {
-    detail: `Codex command is missing ${CODEX_EXTERNAL_SANDBOX_FLAG} or --cd ${sandboxRepoPath}.`,
+    detail: `Codex command is missing external sandbox configuration: ${CODEX_EXTERNAL_SANDBOX_FLAG}, --sandbox ${CODEX_SANDBOX_MODE}, sandbox_mode, approval_policy, or --cd ${sandboxRepoPath}.`,
     ok: false,
   };
 }

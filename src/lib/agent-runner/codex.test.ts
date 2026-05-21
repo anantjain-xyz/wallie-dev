@@ -2,10 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
-import { CODEX_EXTERNAL_SANDBOX_FLAG, CodexRunner, codexExecArgs, parseCodexLine } from "./codex";
+import {
+  CODEX_APPROVAL_POLICY,
+  CODEX_EXTERNAL_SANDBOX_FLAG,
+  CODEX_SANDBOX_MODE,
+  CodexRunner,
+  codexExecArgs,
+  parseCodexLine,
+} from "./codex";
 
 function expectExternalSandboxMode(command: string) {
   expect(command).toContain(shellQuote(CODEX_EXTERNAL_SANDBOX_FLAG));
+  expect(command).toContain(`'--sandbox' '${CODEX_SANDBOX_MODE}'`);
+  expect(command).toContain(`'-c' 'sandbox_mode="${CODEX_SANDBOX_MODE}"'`);
+  expect(command).toContain(`'-c' 'approval_policy="${CODEX_APPROVAL_POLICY}"'`);
   expect(command).toContain("'--cd' '/vercel/sandbox'");
 }
 
@@ -53,6 +63,12 @@ describe("CodexRunner", () => {
       "exec",
       "--model",
       "gpt-5.5",
+      "--sandbox",
+      CODEX_SANDBOX_MODE,
+      "-c",
+      `sandbox_mode="${CODEX_SANDBOX_MODE}"`,
+      "-c",
+      `approval_policy="${CODEX_APPROVAL_POLICY}"`,
       "-c",
       'model_reasoning_effort="xhigh"',
       "-c",
