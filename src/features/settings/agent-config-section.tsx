@@ -4,7 +4,10 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
-import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
+import {
+  AGENT_PROVIDER_EMPTY_OPTION,
+  AGENT_PROVIDER_SELECT_OPTIONS,
+} from "@/components/shared/agent-provider-options";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
@@ -109,7 +112,7 @@ function AgentConfigField({
       {type === "select" && options ? (
         <SelectField
           disabled={disabled}
-          emptyOption={{ label: "Not configured", value: "" }}
+          emptyOption={AGENT_PROVIDER_EMPTY_OPTION}
           label={label}
           onValueChange={onChange}
           options={options}
