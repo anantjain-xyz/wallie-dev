@@ -225,7 +225,9 @@ describe("Codex device auth", () => {
     const command = new FakeCommand();
     command.logChunks = [
       {
-        data: "Open https://chatgpt.com/activate and enter code ABCD-EFGH\n",
+        data:
+          "Device code authorization\n" +
+          "Open https://chatgpt.com/activate and enter code ABCD-EFGH\n",
         stream: "stdout",
       },
     ];

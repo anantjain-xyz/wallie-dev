@@ -24,6 +24,38 @@ const VERCEL_CODEX_HOME = "/vercel/sandbox/.codex";
 const VERCEL_SANDBOX_CWD = "/vercel/sandbox";
 const CODEX_AUTH_FILE = `${VERCEL_CODEX_HOME}/auth.json`;
 const LOCAL_SANDBOX_PREFIX = "local:";
+const USER_CODE_PATTERN = "[A-Z0-9]{4,}(?:[- ][A-Z0-9]{4,})*";
+const USER_CODE_STOP_WORDS = new Set([
+  "ABOVE",
+  "ACTIVATE",
+  "AUTHENTICATION",
+  "AUTHORIZATION",
+  "AUTHORIZE",
+  "BELOW",
+  "BROWSER",
+  "CHATGPT",
+  "CODE",
+  "CONTINUE",
+  "CREDENTIAL",
+  "CREDENTIALS",
+  "DEVICE",
+  "DISPLAYED",
+  "HERE",
+  "LINK",
+  "LOGIN",
+  "OPEN",
+  "OPENAI",
+  "PERMISSION",
+  "PERMISSIONS",
+  "SHOWN",
+  "SIGN",
+  "SIGNIN",
+  "SUBSCRIPTION",
+  "TOKEN",
+  "URL",
+  "USER",
+  "VISIT",
+]);
 
 export type CodexDeviceAuthStatus =
   | "starting"
@@ -445,7 +477,7 @@ function snapshotFromRow(row: FlowRow): CodexDeviceAuthSnapshot {
     flowId: row.id,
     instructions: row.instructions,
     status: row.status as CodexDeviceAuthStatus,
-    userCode: row.user_code,
+    userCode: normalizeUserCode(row.user_code),
     verificationUri: row.verification_uri,
   };
 }
@@ -568,12 +600,13 @@ function parseDevicePrompt(output: string): {
   userCode: string | null;
   verificationUri: string | null;
 } {
-  const verificationUri = extractVerificationUri(output);
-  const userCode = extractUserCode(output);
+  const cleanOutput = stripAnsiCodes(output);
+  const verificationUri = extractVerificationUri(cleanOutput);
+  const userCode = extractUserCode(cleanOutput);
   const hasPrompt = Boolean(verificationUri || userCode);
   return {
     hasPrompt,
-    instructions: hasPrompt ? output.trim() || null : null,
+    instructions: hasPrompt ? cleanOutput.trim() || null : null,
     userCode,
     verificationUri,
   };
@@ -590,10 +623,67 @@ function extractVerificationUri(output: string): string | null {
 
 function extractUserCode(output: string): string | null {
   const withoutUrls = output.replace(/https?:\/\/\S+/gi, " ");
-  const labeled = withoutUrls.match(/(?:code|token)[:\s]+([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})*)/i);
-  if (labeled?.[1]) return labeled[1].toUpperCase();
+  const labeledPatterns = [
+    new RegExp(
+      `\\benter\\s+(?:this\\s+|the\\s+)?(?:user\\s+|device\\s+|verification\\s+)?code\\b(?:\\s+(?:shown|below|displayed))?(?:\\s+(?:in|on|at)\\b[^\\n:=-]*)?\\s*(?:is|:|=|-)?\\s*(${USER_CODE_PATTERN})`,
+      "gi",
+    ),
+    new RegExp(
+      `\\b(?:user\\s+|device\\s+|verification\\s+)?code\\b\\s*(?:is|:|=|-)\\s*(${USER_CODE_PATTERN})`,
+      "gi",
+    ),
+    new RegExp(`\\btoken\\b\\s*(?:is|:|=|-)\\s*(${USER_CODE_PATTERN})`, "gi"),
+  ];
 
-  return withoutUrls.match(/\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b/)?.[0] ?? null;
+  for (const pattern of labeledPatterns) {
+    for (const match of withoutUrls.matchAll(pattern)) {
+      const code = normalizeUserCode(match[1]);
+      if (code) return code;
+    }
+  }
+
+  for (const match of withoutUrls.matchAll(/\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b/gi)) {
+    const code = normalizeUserCode(match[0]);
+    if (code) return code;
+  }
+
+  for (const line of withoutUrls.split(/\r?\n/)) {
+    if (!/^[\sA-Z0-9-]+$/i.test(line.trim())) continue;
+    const code = normalizeUserCode(line);
+    if (code) return code;
+  }
+
+  return null;
+}
+
+function normalizeUserCode(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const code = value
+    .trim()
+    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/gi, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .toUpperCase();
+
+  if (!/^[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})*$/.test(code)) return null;
+  if (!isLikelyUserCode(code)) return null;
+  return code;
+}
+
+function isLikelyUserCode(code: string): boolean {
+  const segments = code.split("-");
+  const compact = segments.join("");
+  if (compact.length < 4 || compact.length > 32) return false;
+  if (segments.some((segment) => USER_CODE_STOP_WORDS.has(segment))) return false;
+  if (USER_CODE_STOP_WORDS.has(compact)) return false;
+  if (segments.length > 1) return true;
+  if (/\d/.test(compact)) return true;
+  return compact.length >= 6 && compact.length <= 10;
+}
+
+function stripAnsiCodes(output: string): string {
+  return output.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
 }
 
 function limitOutput(output: string): string {
