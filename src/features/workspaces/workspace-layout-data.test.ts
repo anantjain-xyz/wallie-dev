@@ -85,21 +85,24 @@ function buildSupabaseMock(
 
       if (table === "github_repositories") {
         return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                order: async () => ({
-                  data: (opts.repositories ?? [])
-                    .filter((repository) => !repository.is_archived)
-                    .map((repository) => ({
-                      full_name: repository.full_name,
-                      id: repository.id,
-                    })),
-                  error: null,
-                }),
+          select: () => {
+            const builder = {
+              eq: () => builder,
+              order: () => builder,
+              range: async (from: number, to: number) => ({
+                data: (opts.repositories ?? [])
+                  .filter((repository) => !repository.is_archived)
+                  .sort((left, right) => left.full_name.localeCompare(right.full_name))
+                  .slice(from, to + 1)
+                  .map((repository) => ({
+                    full_name: repository.full_name,
+                    id: repository.id,
+                  })),
+                error: null,
               }),
-            }),
-          }),
+            };
+            return builder;
+          },
         };
       }
 
@@ -179,6 +182,36 @@ describe("loadWorkspaceLayoutContext", () => {
       workspace,
     });
     expect(mocked.ensureProfileForUser).toHaveBeenCalledWith(supabase, user);
+  });
+
+  it("loads repository picker options across pages", async () => {
+    const repositories = Array.from({ length: 1001 }, (_, index) => ({
+      full_name: `acme/repo-${index.toString().padStart(4, "0")}`,
+      id: `repo-${index}`,
+    }));
+    const supabase = buildSupabaseMock(
+      {
+        current_step: "verify",
+        selected_github_repository_id: "repo-0",
+        status: "completed",
+      },
+      {
+        primaryRepositoryId: "repo-1000",
+        repositories,
+      },
+    );
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase);
+    mocked.getSupabaseUserOrNull.mockResolvedValue(user);
+    mocked.getWorkspaceBySlugForUser.mockResolvedValue(workspace);
+
+    const context = await loadWorkspaceLayoutContext("member-access");
+
+    expect(context.defaultSessionGithubRepositoryId).toBe("repo-1000");
+    expect(context.sessionRepositoryOptions).toHaveLength(1001);
+    expect(context.sessionRepositoryOptions.at(-1)).toEqual({
+      fullName: "acme/repo-1000",
+      id: "repo-1000",
+    });
   });
 
   it("treats a missing onboarding row as setup-required state", async () => {

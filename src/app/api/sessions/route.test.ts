@@ -178,10 +178,8 @@ function buildAdminMock(
                 data: matchingRepositories()[0] ? { id: matchingRepositories()[0]!.id } : null,
                 error: null,
               }),
-              order: async () => ({
-                data: matchingRepositories().map((repository) => ({ id: repository.id })),
-                error: null,
-              }),
+              limit: () => builder,
+              order: () => builder,
             };
             return builder;
           },

@@ -67,51 +67,44 @@ async function loadDefaultSessionRepositoryId(input: {
   onboardingRepositoryId: string | null;
   workspaceId: string;
 }): Promise<string | null> {
-  const [
-    { data: primaryProfileRow, error: primaryProfileError },
-    { data: repositoryRows, error: repositoriesError },
-  ] = await Promise.all([
-    input.admin
-      .from("workspace_repository_profiles")
-      .select("github_repository_id")
-      .eq("workspace_id", input.workspaceId)
-      .eq("is_primary", true)
-      .maybeSingle(),
-    input.admin
-      .from("github_repositories")
-      .select("id")
-      .eq("workspace_id", input.workspaceId)
-      .eq("is_archived", false)
-      .order("full_name", { ascending: true }),
-  ]);
+  const { data: primaryProfileRow, error: primaryProfileError } = await input.admin
+    .from("workspace_repository_profiles")
+    .select("github_repository_id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_primary", true)
+    .maybeSingle();
 
   if (primaryProfileError) {
     throw primaryProfileError;
   }
-  if (repositoriesError) {
-    throw repositoriesError;
-  }
 
-  const repositoryIds = (repositoryRows ?? []).map((row) => row.id);
-  const availableRepositoryIds = new Set(repositoryIds);
   const primaryRepositoryId = primaryProfileRow?.github_repository_id ?? null;
-
-  if (primaryRepositoryId && availableRepositoryIds.has(primaryRepositoryId)) {
-    return primaryRepositoryId;
+  if (primaryRepositoryId) {
+    const repositoryId = await loadAvailableSessionRepositoryId({
+      admin: input.admin,
+      repositoryId: primaryRepositoryId,
+      workspaceId: input.workspaceId,
+    });
+    if (repositoryId) return repositoryId;
   }
 
-  if (input.onboardingRepositoryId && availableRepositoryIds.has(input.onboardingRepositoryId)) {
-    return input.onboardingRepositoryId;
+  if (input.onboardingRepositoryId) {
+    const repositoryId = await loadAvailableSessionRepositoryId({
+      admin: input.admin,
+      repositoryId: input.onboardingRepositoryId,
+      workspaceId: input.workspaceId,
+    });
+    if (repositoryId) return repositoryId;
   }
 
-  return repositoryIds[0] ?? null;
+  return loadFirstAvailableSessionRepositoryId(input);
 }
 
-async function validateSessionRepositoryId(input: {
+async function loadAvailableSessionRepositoryId(input: {
   admin: AdminClient;
   repositoryId: string;
   workspaceId: string;
-}): Promise<boolean> {
+}): Promise<string | null> {
   const { data, error } = await input.admin
     .from("github_repositories")
     .select("id")
@@ -124,7 +117,35 @@ async function validateSessionRepositoryId(input: {
     throw error;
   }
 
-  return Boolean(data);
+  return data?.id ?? null;
+}
+
+async function loadFirstAvailableSessionRepositoryId(input: {
+  admin: AdminClient;
+  workspaceId: string;
+}): Promise<string | null> {
+  const { data, error } = await input.admin
+    .from("github_repositories")
+    .select("id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_archived", false)
+    .order("full_name", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.id ?? null;
+}
+
+async function validateSessionRepositoryId(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<boolean> {
+  return Boolean(await loadAvailableSessionRepositoryId(input));
 }
 
 export async function POST(request: Request) {

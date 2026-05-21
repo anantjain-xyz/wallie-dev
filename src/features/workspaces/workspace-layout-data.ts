@@ -17,6 +17,41 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
+const REPOSITORY_PAGE_SIZE = 1000;
+
+async function loadSessionRepositoryOptions(input: {
+  supabase: SupabaseServerClient;
+  workspaceId: string;
+}): Promise<SessionRepositoryOption[]> {
+  const repositories: SessionRepositoryOption[] = [];
+
+  for (let from = 0; ; from += REPOSITORY_PAGE_SIZE) {
+    const { data, error } = await input.supabase
+      .from("github_repositories")
+      .select("id, full_name")
+      .eq("workspace_id", input.workspaceId)
+      .eq("is_archived", false)
+      .order("full_name", { ascending: true })
+      .range(from, from + REPOSITORY_PAGE_SIZE - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = data ?? [];
+    repositories.push(
+      ...rows.map((row) => ({
+        fullName: row.full_name,
+        id: row.id,
+      })),
+    );
+
+    if (rows.length < REPOSITORY_PAGE_SIZE) {
+      return repositories;
+    }
+  }
+}
+
 async function loadSessionRepositoryContext(input: {
   selectedRepositoryId: string | null;
   supabase: SupabaseServerClient;
@@ -25,35 +60,21 @@ async function loadSessionRepositoryContext(input: {
   defaultSessionGithubRepositoryId: string | null;
   sessionRepositoryOptions: SessionRepositoryOption[];
 }> {
-  const [
-    { data: primaryProfileRow, error: primaryProfileError },
-    { data: repositoryRows, error: repositoriesError },
-  ] = await Promise.all([
-    input.supabase
-      .from("workspace_repository_profiles")
-      .select("github_repository_id")
-      .eq("workspace_id", input.workspaceId)
-      .eq("is_primary", true)
-      .maybeSingle(),
-    input.supabase
-      .from("github_repositories")
-      .select("id, full_name")
-      .eq("workspace_id", input.workspaceId)
-      .eq("is_archived", false)
-      .order("full_name", { ascending: true }),
-  ]);
+  const [{ data: primaryProfileRow, error: primaryProfileError }, sessionRepositoryOptions] =
+    await Promise.all([
+      input.supabase
+        .from("workspace_repository_profiles")
+        .select("github_repository_id")
+        .eq("workspace_id", input.workspaceId)
+        .eq("is_primary", true)
+        .maybeSingle(),
+      loadSessionRepositoryOptions(input),
+    ]);
 
   if (primaryProfileError) {
     throw primaryProfileError;
   }
-  if (repositoriesError) {
-    throw repositoriesError;
-  }
 
-  const sessionRepositoryOptions = (repositoryRows ?? []).map((row) => ({
-    fullName: row.full_name,
-    id: row.id,
-  }));
   const availableRepositoryIds = new Set(
     sessionRepositoryOptions.map((repository) => repository.id),
   );
