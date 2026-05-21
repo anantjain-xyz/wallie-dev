@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type {
@@ -222,7 +222,7 @@ function initializeLocalGitCheckout(
   writeFileSync(join(repoPath, "README.md"), "# Wallie fake sandbox\n");
 
   const env = {
-    ...process.env,
+    ...localSandboxEnv(repoPath),
     GIT_AUTHOR_EMAIL: "wallie@example.local",
     GIT_AUTHOR_NAME: "Wallie",
   };
@@ -290,7 +290,7 @@ function execLocalCommand(call: FakeExecCall): SandboxExecHandle {
 
   const proc = spawn(call.cmd, call.args, {
     cwd: call.opts.cwd,
-    env: { ...process.env, ...call.opts.env },
+    env: { ...localSandboxEnv(call.opts.cwd), ...call.opts.env },
     signal: call.opts.signal,
   });
 
@@ -302,10 +302,13 @@ function execLocalCommand(call: FakeExecCall): SandboxExecHandle {
   });
   proc.on("error", (error) => {
     append({ data: `${error.message}\n`, stream: "stderr" });
+    if (error.name === "AbortError") {
+      return;
+    }
     finish(127);
   });
-  proc.on("close", (code) => {
-    finish(code ?? 0);
+  proc.on("close", (code, signal) => {
+    finish(code ?? exitCodeForSignal(signal));
   });
 
   return {
@@ -335,4 +338,24 @@ function execLocalCommand(call: FakeExecCall): SandboxExecHandle {
       return { stdout, stderr };
     },
   };
+}
+
+function localSandboxEnv(home: string | undefined): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    HOME: home ?? tmpdir(),
+    NODE_ENV: process.env.NODE_ENV ?? "development",
+    TMPDIR: tmpdir(),
+  };
+
+  if (process.env.PATH) {
+    env.PATH = process.env.PATH;
+  }
+
+  return env;
+}
+
+function exitCodeForSignal(signal: NodeJS.Signals | null): number {
+  if (!signal) return 1;
+  const signalNumber = osConstants.signals[signal];
+  return typeof signalNumber === "number" ? 128 + signalNumber : 1;
 }
