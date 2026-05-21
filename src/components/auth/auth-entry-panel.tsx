@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
 import { isLocalDev } from "@/env/deploy";
 import type { OAuthProvider } from "@/lib/auth-providers";
 
@@ -20,11 +21,17 @@ const authStatusMessages = {
 } as const;
 
 type AuthEntryPanelProps = {
+  canUseEmailCode?: boolean;
   errorCode?: string | null;
   next: string;
-  requestedEmail?: string | null;
   statusCode?: string | null;
 };
+
+const emailCodeFallbackErrors = new Set([
+  "auth_confirmation_failed",
+  "email_code_failed",
+  "email_sign_in_failed",
+]);
 
 function buildOauthHref(provider: OAuthProvider, next: string) {
   const params = new URLSearchParams({
@@ -36,9 +43,9 @@ function buildOauthHref(provider: OAuthProvider, next: string) {
 }
 
 export function AuthEntryPanel({
+  canUseEmailCode = false,
   errorCode,
   next,
-  requestedEmail,
   statusCode,
 }: AuthEntryPanelProps) {
   const errorMessage = errorCode
@@ -47,7 +54,9 @@ export function AuthEntryPanel({
   const statusMessage = statusCode
     ? authStatusMessages[statusCode as keyof typeof authStatusMessages]
     : null;
-  const showEmailCodeForm = statusCode === "check_email" || errorCode === "email_code_failed";
+  const showEmailCodeForm =
+    canUseEmailCode &&
+    (statusCode === "check_email" || (errorCode ? emailCodeFallbackErrors.has(errorCode) : false));
 
   return (
     <div className="w-full max-w-[360px]">
@@ -107,33 +116,7 @@ export function AuthEntryPanel({
               className="space-y-2"
             >
               <input type="hidden" name="next" value={next} />
-              <label className="block">
-                <span className="sr-only">Email</span>
-                <input
-                  type="email"
-                  name="email"
-                  required
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="you@company.com"
-                  spellCheck={false}
-                  defaultValue={requestedEmail ?? ""}
-                  className="ui-input"
-                />
-              </label>
-              <label className="block">
-                <span className="sr-only">Six-digit code</span>
-                <input
-                  type="text"
-                  name="token"
-                  required
-                  autoComplete="one-time-code"
-                  inputMode="numeric"
-                  maxLength={8}
-                  placeholder="6-digit code"
-                  className="ui-input text-center font-mono text-[17px]"
-                />
-              </label>
+              <EmailCodeInputs />
               <button type="submit" className="ui-button w-full">
                 Continue with code
               </button>

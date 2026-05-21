@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { emailCodeAuthCookieName } from "@/lib/auth-email-code-cookie";
+
 const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   ensureProfileForUser: vi.fn(),
@@ -59,6 +61,7 @@ describe("GET /auth/confirm", () => {
     expect(mocked.verifyOtp).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("http://localhost:3000/onboarding/workspace");
+    expect(response.headers.get("set-cookie")).toContain(`${emailCodeAuthCookieName}=;`);
   });
 
   it("verifies token hashes when the redirect includes an OTP payload", async () => {
@@ -84,6 +87,7 @@ describe("GET /auth/confirm", () => {
     expect(mocked.exchangeCodeForSession).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("http://localhost:3000/w/acme/issues");
+    expect(response.headers.get("set-cookie")).toContain(`${emailCodeAuthCookieName}=;`);
   });
 
   it("redirects back to login when the confirmation link is missing auth parameters", async () => {

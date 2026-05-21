@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { normalizeNextPath } from "@/lib/auth";
+import {
+  emailCodeAuthCookieName,
+  emailCodeAuthCookieOptions,
+  normalizeEmailCodeAddress,
+} from "@/lib/auth-email-code-cookie";
 import { loginPath } from "@/lib/routes";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -12,18 +17,30 @@ function getEntryPath(next: string, params: Record<string, string>) {
   return `${basePath}${separator}${searchParams.toString()}`;
 }
 
+function redirectToEntry(
+  request: NextRequest,
+  next: string,
+  params: Record<string, string>,
+  email?: string,
+) {
+  const response = NextResponse.redirect(new URL(getEntryPath(next, params), request.url), {
+    status: 303,
+  });
+
+  if (email) {
+    response.cookies.set(emailCodeAuthCookieName, email, emailCodeAuthCookieOptions);
+  }
+
+  return response;
+}
+
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
-  const email = String(formData.get("email") ?? "")
-    .trim()
-    .toLowerCase();
+  const email = normalizeEmailCodeAddress(String(formData.get("email") ?? ""));
   const next = normalizeNextPath(String(formData.get("next") ?? ""));
 
   if (!email) {
-    return NextResponse.redirect(
-      new URL(getEntryPath(next, { error: "email_sign_in_failed" }), request.url),
-      { status: 303 },
-    );
+    return redirectToEntry(request, next, { error: "email_sign_in_failed" });
   }
 
   const supabase = await createSupabaseServerClient();
@@ -39,14 +56,8 @@ export async function POST(request: NextRequest) {
   });
 
   if (error) {
-    return NextResponse.redirect(
-      new URL(getEntryPath(next, { error: "email_sign_in_failed" }), request.url),
-      { status: 303 },
-    );
+    return redirectToEntry(request, next, { error: "email_sign_in_failed" }, email);
   }
 
-  return NextResponse.redirect(
-    new URL(getEntryPath(next, { status: "check_email", email }), request.url),
-    { status: 303 },
-  );
+  return redirectToEntry(request, next, { status: "check_email" }, email);
 }
