@@ -343,7 +343,9 @@ export function CodexConnectionPanel({
                     {deviceFlow.status === "starting"
                       ? "Waiting for sign-in code..."
                       : deviceFlow.status === "prompted"
-                        ? "Enter this code in ChatGPT"
+                        ? deviceFlow.userCode
+                          ? "Enter this code in ChatGPT"
+                          : "Waiting for sign-in code..."
                         : deviceFlow.status}
                   </p>
                   {deviceFlow.userCode ? (
@@ -363,7 +365,7 @@ export function CodexConnectionPanel({
                   ) : null}
                   <div>
                     <button
-                      className="ui-button-secondary"
+                      className="text-[12px] font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={isBusy}
                       onClick={handleCancelChatGptSignIn}
                       type="button"

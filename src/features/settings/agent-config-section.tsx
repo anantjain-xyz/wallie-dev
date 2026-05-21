@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
-import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
@@ -23,11 +22,6 @@ import {
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
-
-type AgentConfigVerifyResult =
-  | { kind: "ok" }
-  | { kind: "error"; message: string }
-  | { kind: "skipped"; reason: string };
 
 type AgentConfigSectionProps = {
   anchorId?: string;
@@ -81,17 +75,6 @@ function parseDraftForKey(
   }
 
   return parseAgentConfigValue(configKey, trimmed);
-}
-
-function mapVerifyResponse(payload: VerifyAgentConfigResponse): AgentConfigVerifyResult {
-  switch (payload.ok) {
-    case true:
-      return { kind: "ok" };
-    case "skipped":
-      return { kind: "skipped", reason: payload.reason };
-    case false:
-      return { kind: "error", message: payload.error };
-  }
 }
 
 function configValueToString(value: unknown): string {
@@ -182,10 +165,6 @@ export function AgentConfigSection({
     stall_timeout_ms: configValueToString(initialAgentConfig.stall_timeout_ms),
     max_retries: configValueToString(initialAgentConfig.max_retries),
   }));
-  const [verifyState, setVerifyState] = useState<{
-    isVerifying: boolean;
-    result: AgentConfigVerifyResult | null;
-  }>({ isVerifying: false, result: null });
 
   const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown], true>({
     call: (key, value) =>
@@ -208,28 +187,6 @@ export function AgentConfigSection({
     successText: null,
   });
 
-  const verifyAgentModel = useApiAction<
-    VerifyAgentConfigResponse,
-    [rawDraft: string, provider: AgentProvider],
-    AgentConfigVerifyResult
-  >({
-    call: (rawDraft, provider) =>
-      fetch("/api/agent-config/verify", {
-        body: JSON.stringify({
-          model: rawDraft.trim(),
-          provider,
-          workspaceId,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      }),
-    errorText: "Verify call failed.",
-    onError: (message) => ({ kind: "error", message }),
-    onSuccess: mapVerifyResponse,
-    setFlashMessage,
-    successText: null,
-  });
-
   const selectedAgentProvider: AgentProvider =
     normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
 
@@ -244,8 +201,7 @@ export function AgentConfigSection({
       },
       {
         configKey: "agent_model",
-        description:
-          "Model identifier passed to the agent provider. Use Verify to check the model against the selected provider and your provider access.",
+        description: "Model identifier passed to the selected agent provider.",
         label: "Agent model",
         placeholder: getRecommendedAgentModel(selectedAgentProvider),
         type: "text",
@@ -297,14 +253,9 @@ export function AgentConfigSection({
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
   const canSave = !saveAgentConfig.isBusy && saveableFields.length > 0 && !hasErrors;
-  const canVerify =
-    !verifyState.isVerifying && drafts.agent_model.trim() !== "" && !saveAgentConfig.isBusy;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
-    if (key === "agent_model" || key === "agent_provider") {
-      setVerifyState({ isVerifying: false, result: null });
-    }
   }
 
   async function handleSaveAll() {
@@ -331,22 +282,6 @@ export function AgentConfigSection({
     // If successCount === 0, useApiAction already surfaced the per-call error flash.
   }
 
-  async function handleVerify() {
-    setVerifyState({ isVerifying: true, result: null });
-    try {
-      const result = await verifyAgentModel.run(drafts.agent_model, selectedAgentProvider);
-      setVerifyState({
-        isVerifying: false,
-        result: result ?? { kind: "error", message: "Verify call failed." },
-      });
-    } catch (err) {
-      setVerifyState({
-        isVerifying: false,
-        result: { kind: "error", message: err instanceof Error ? err.message : "Verify failed." },
-      });
-    }
-  }
-
   return (
     <Section anchorId={anchorId} tagline={tagline} title={title}>
       {canManage ? (
@@ -364,38 +299,6 @@ export function AgentConfigSection({
                 options={status.field.options}
                 placeholder={status.field.placeholder}
                 type={status.field.type}
-                trailing={
-                  status.field.configKey === "agent_model" ? (
-                    <div className="flex items-center gap-2">
-                      {verifyState.result ? (
-                        <span
-                          className={`text-[12px] ${
-                            verifyState.result.kind === "ok"
-                              ? "text-success"
-                              : verifyState.result.kind === "skipped"
-                                ? "text-muted"
-                                : "text-danger"
-                          }`}
-                          role="status"
-                        >
-                          {verifyState.result.kind === "ok"
-                            ? "✓ Reachable"
-                            : verifyState.result.kind === "skipped"
-                              ? `ⓘ ${verifyState.result.reason}`
-                              : `✗ ${verifyState.result.message}`}
-                        </span>
-                      ) : null}
-                      <button
-                        className="ui-button"
-                        disabled={!canVerify}
-                        onClick={() => void handleVerify()}
-                        type="button"
-                      >
-                        {verifyState.isVerifying ? "Verifying…" : "Verify"}
-                      </button>
-                    </div>
-                  ) : undefined
-                }
               />
             ))}
           </div>
