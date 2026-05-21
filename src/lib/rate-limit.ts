@@ -148,7 +148,7 @@ export function describeRateLimits(): Array<{
 }> {
   return [
     {
-      endpoint: "POST /api/agent-runs (incl. retry)",
+      endpoint: "POST /api/agent-runs",
       scope: "agentRuns",
       description: "Per workspace member — caps sandbox spawns.",
       ...RATE_LIMITS.agentRuns,
