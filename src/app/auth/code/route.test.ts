@@ -119,7 +119,7 @@ describe("POST /auth/code", () => {
     expect(mocked.verifyOtp).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fw%2Facme&error=email_code_failed",
+      "http://localhost:3000/login?next=%2Fw%2Facme&error=email_code_failed&email=owner%40example.com",
     );
   });
 
@@ -145,7 +145,7 @@ describe("POST /auth/code", () => {
     expect(mocked.getSupabaseUserOrNull).not.toHaveBeenCalled();
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3000/login?next=%2Fw%2Facme&error=email_code_failed",
+      "http://localhost:3000/login?next=%2Fw%2Facme&error=email_code_failed&email=owner%40example.com",
     );
   });
 });

@@ -22,6 +22,7 @@ const authStatusMessages = {
 type AuthEntryPanelProps = {
   errorCode?: string | null;
   next: string;
+  requestedEmail?: string | null;
   statusCode?: string | null;
 };
 
@@ -34,13 +35,19 @@ function buildOauthHref(provider: OAuthProvider, next: string) {
   return `/auth/oauth?${params.toString()}`;
 }
 
-export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelProps) {
+export function AuthEntryPanel({
+  errorCode,
+  next,
+  requestedEmail,
+  statusCode,
+}: AuthEntryPanelProps) {
   const errorMessage = errorCode
     ? authErrorMessages[errorCode as keyof typeof authErrorMessages]
     : null;
   const statusMessage = statusCode
     ? authStatusMessages[statusCode as keyof typeof authStatusMessages]
     : null;
+  const showEmailCodeForm = statusCode === "check_email" || errorCode === "email_code_failed";
 
   return (
     <div className="w-full max-w-[360px]">
@@ -88,48 +95,51 @@ export function AuthEntryPanel({ errorCode, next, statusCode }: AuthEntryPanelPr
           </button>
         </form>
 
-        <div className="mt-4 border-t border-border pt-4">
-          <p id="email-code-heading" className="mb-3 text-[12px] font-medium text-muted">
-            Email code
-          </p>
-          <form
-            action="/auth/code"
-            method="post"
-            aria-labelledby="email-code-heading"
-            className="space-y-2"
-          >
-            <input type="hidden" name="next" value={next} />
-            <label className="block">
-              <span className="sr-only">Email</span>
-              <input
-                type="email"
-                name="email"
-                required
-                autoComplete="email"
-                inputMode="email"
-                placeholder="you@company.com"
-                spellCheck={false}
-                className="ui-input"
-              />
-            </label>
-            <label className="block">
-              <span className="sr-only">Six-digit code</span>
-              <input
-                type="text"
-                name="token"
-                required
-                autoComplete="one-time-code"
-                inputMode="numeric"
-                maxLength={8}
-                placeholder="6-digit code"
-                className="ui-input text-center font-mono text-[17px]"
-              />
-            </label>
-            <button type="submit" className="ui-button w-full">
-              Continue with code
-            </button>
-          </form>
-        </div>
+        {showEmailCodeForm ? (
+          <div className="mt-4 border-t border-border pt-4">
+            <p id="email-code-heading" className="mb-3 text-[12px] font-medium text-muted">
+              Enter 6-digit code emailed to you
+            </p>
+            <form
+              action="/auth/code"
+              method="post"
+              aria-labelledby="email-code-heading"
+              className="space-y-2"
+            >
+              <input type="hidden" name="next" value={next} />
+              <label className="block">
+                <span className="sr-only">Email</span>
+                <input
+                  type="email"
+                  name="email"
+                  required
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="you@company.com"
+                  spellCheck={false}
+                  defaultValue={requestedEmail ?? ""}
+                  className="ui-input"
+                />
+              </label>
+              <label className="block">
+                <span className="sr-only">Six-digit code</span>
+                <input
+                  type="text"
+                  name="token"
+                  required
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  maxLength={8}
+                  placeholder="6-digit code"
+                  className="ui-input text-center font-mono text-[17px]"
+                />
+              </label>
+              <button type="submit" className="ui-button w-full">
+                Continue with code
+              </button>
+            </form>
+          </div>
+        ) : null}
 
         <div className="my-4 flex items-center gap-3">
           <div className="h-px flex-1 bg-border" />

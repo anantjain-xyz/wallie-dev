@@ -7,11 +7,18 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const EMAIL_CODE_PATTERN = /^\d{6}$/;
 
-function getEntryPath(next: string, error: string) {
+function getEntryPath(next: string, params: Record<string, string | undefined>) {
   const basePath = loginPath(next);
+  const searchParams = new URLSearchParams();
   const separator = basePath.includes("?") ? "&" : "?";
 
-  return `${basePath}${separator}error=${error}`;
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  }
+
+  return `${basePath}${separator}${searchParams.toString()}`;
 }
 
 export async function POST(request: NextRequest) {
@@ -23,9 +30,12 @@ export async function POST(request: NextRequest) {
   const token = String(formData.get("token") ?? "").replace(/\s+/g, "");
 
   if (!email || !EMAIL_CODE_PATTERN.test(token)) {
-    return NextResponse.redirect(new URL(getEntryPath(next, "email_code_failed"), request.url), {
-      status: 303,
-    });
+    return NextResponse.redirect(
+      new URL(getEntryPath(next, { error: "email_code_failed", email }), request.url),
+      {
+        status: 303,
+      },
+    );
   }
 
   const supabase = await createSupabaseServerClient();
@@ -36,9 +46,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (error) {
-    return NextResponse.redirect(new URL(getEntryPath(next, "email_code_failed"), request.url), {
-      status: 303,
-    });
+    return NextResponse.redirect(
+      new URL(getEntryPath(next, { error: "email_code_failed", email }), request.url),
+      {
+        status: 303,
+      },
+    );
   }
 
   const user = await getSupabaseUserOrNull(supabase);

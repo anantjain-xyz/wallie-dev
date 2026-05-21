@@ -15,6 +15,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const resolvedSearchParams = await searchParams;
   const next = normalizeNextPath(readFirstValue(resolvedSearchParams.next));
   const errorCode = readFirstValue(resolvedSearchParams.error);
+  const requestedEmail = readFirstValue(resolvedSearchParams.email)?.trim().toLowerCase() ?? null;
   const statusCode = readFirstValue(resolvedSearchParams.status);
   const supabase = await createSupabaseServerClient();
   const user = await getSupabaseUserOrNull(supabase);
@@ -26,7 +27,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   return (
     <SplashShell>
-      <AuthEntryPanel errorCode={errorCode} next={next} statusCode={statusCode} />
+      <AuthEntryPanel
+        errorCode={errorCode}
+        next={next}
+        requestedEmail={requestedEmail}
+        statusCode={statusCode}
+      />
     </SplashShell>
   );
 }

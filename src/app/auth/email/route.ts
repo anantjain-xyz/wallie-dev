@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.redirect(
-    new URL(getEntryPath(next, { status: "check_email" }), request.url),
+    new URL(getEntryPath(next, { status: "check_email", email }), request.url),
     { status: 303 },
   );
 }
