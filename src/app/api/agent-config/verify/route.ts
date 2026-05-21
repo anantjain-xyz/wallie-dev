@@ -25,9 +25,11 @@ const requestSchema = z.object({
     .max(100, "Model must be 100 characters or fewer."),
 });
 
+const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
+
 /**
  * Verify supports three outcomes:
- *   - `{ ok: true }`              — provider accepted a 1-token call.
+ *   - `{ ok: true }`              — provider accepted a minimal reachability call.
  *   - `{ ok: false, error }`      — provider rejected, secrets missing, etc.
  *   - `{ ok: "skipped", reason }` — reachability is not checkable here. Used
  *     for CLI-backed credentials that are exercised in a per-session sandbox.
@@ -168,7 +170,7 @@ async function verifyCodex(
       body: JSON.stringify({
         model,
         input: "Reply with the single word: ok.",
-        max_output_tokens: 1,
+        max_output_tokens: OPENAI_RESPONSES_MIN_OUTPUT_TOKENS,
         store: false,
       }),
     });

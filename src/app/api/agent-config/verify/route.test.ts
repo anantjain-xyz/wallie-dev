@@ -247,6 +247,12 @@ describe("POST /api/agent-config/verify — codex", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "https://api.openai.com/v1/responses",
       expect.objectContaining({
+        body: JSON.stringify({
+          model: "gpt-5.5",
+          input: "Reply with the single word: ok.",
+          max_output_tokens: 16,
+          store: false,
+        }),
         method: "POST",
         headers: expect.objectContaining({ authorization: "Bearer sk-test" }),
       }),
