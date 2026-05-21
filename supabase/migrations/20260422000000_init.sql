@@ -2752,6 +2752,9 @@ declare
     'public.agent_runs',
     'public.agent_run_messages',
     'public.sessions',
+    'public.session_artifacts',
+    'public.session_phase_completions',
+    'public.session_pull_requests',
     'public.pipelines',
     'public.pipeline_stages'
   ];

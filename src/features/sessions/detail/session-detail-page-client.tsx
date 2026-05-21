@@ -1,13 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useEffectEvent, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { Spinner } from "@/components/shared/spinner";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import {
+  mergeArtifactRealtimeRow,
+  mergeCompletionRealtimeRow,
+  mergeSessionRealtimeRow,
+} from "@/features/sessions/detail/realtime";
 import {
   isTerminalStage,
   stageIndex,
@@ -19,7 +25,7 @@ import {
 import { StatusChip } from "@/components/shared/status-chip";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
-import type { Database } from "@/lib/supabase/database.types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -77,11 +83,14 @@ function buildStageRail(session: SessionDetail): StageRailEntry[] {
 export function SessionDetailPageClient({ initialData }: SessionDetailPageClientProps) {
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
-  const session = initialData.session;
-  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(session.currentStageSlug);
+  const [session, setSession] = useState(initialData.session);
+  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
+    initialData.session.currentStageSlug,
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [feedbackDraft, setFeedbackDraft] = useState("");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
@@ -106,9 +115,131 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
   const activeArtifacts = artifactsByStage.get(selectedStageSlug) ?? [];
   const latestArtifact = activeArtifacts[0] ?? null;
+  const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
+  const isDraftingSelectedStage =
+    selectedStageIsCurrent && session.phaseStatus === "agent_generating";
 
-  const canActOnCurrent =
-    selectedStageSlug === session.currentStageSlug && session.phaseStatus === "awaiting_review";
+  const canActOnCurrent = selectedStageIsCurrent && session.phaseStatus === "awaiting_review";
+  const phaseActionBusy = phaseActionPending !== null || isPending;
+
+  useEffect(() => {
+    setSession(initialData.session);
+    setSelectedStageSlug((currentSlug) => {
+      const stageStillExists = initialData.session.pipeline.stages.some(
+        (stage) => stage.slug === currentSlug,
+      );
+
+      return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
+    });
+  }, [initialData.session]);
+
+  const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
+    let previousCurrentStageSlug: string | null = null;
+    let nextCurrentStageSlug: string | null = null;
+
+    setSession((currentSession) => {
+      previousCurrentStageSlug = currentSession.currentStageSlug;
+      const nextSession = mergeSessionRealtimeRow(currentSession, row);
+
+      nextCurrentStageSlug = nextSession.currentStageSlug;
+      return nextSession;
+    });
+
+    setSelectedStageSlug((currentSlug) =>
+      previousCurrentStageSlug && nextCurrentStageSlug && currentSlug === previousCurrentStageSlug
+        ? nextCurrentStageSlug
+        : currentSlug,
+    );
+  });
+
+  const handleArtifactRealtimeUpdate = useEffectEvent((row: Tables<"session_artifacts">) => {
+    setSession((currentSession) => mergeArtifactRealtimeRow(currentSession, row));
+  });
+
+  const handleCompletionRealtimeUpdate = useEffectEvent(
+    (row: Tables<"session_phase_completions">) => {
+      setSession((currentSession) => mergeCompletionRealtimeRow(currentSession, row));
+    },
+  );
+
+  const refreshSessionFromServer = useEffectEvent(() => {
+    startTransition(() => {
+      router.refresh();
+    });
+  });
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`session-detail:${session.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `id=eq.${session.id}`,
+          schema: "public",
+          table: "sessions",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            refreshSessionFromServer();
+            return;
+          }
+
+          handleSessionRealtimeUpdate(payload.new as Tables<"sessions">);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `session_id=eq.${session.id}`,
+          schema: "public",
+          table: "session_artifacts",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            refreshSessionFromServer();
+            return;
+          }
+
+          handleArtifactRealtimeUpdate(payload.new as Tables<"session_artifacts">);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `session_id=eq.${session.id}`,
+          schema: "public",
+          table: "session_phase_completions",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            refreshSessionFromServer();
+            return;
+          }
+
+          handleCompletionRealtimeUpdate(payload.new as Tables<"session_phase_completions">);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `session_id=eq.${session.id}`,
+          schema: "public",
+          table: "session_pull_requests",
+        },
+        () => {
+          refreshSessionFromServer();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [session.id, supabase]);
 
   async function handlePhaseAction(action: "approve" | "reject") {
     if (action === "reject") {
@@ -119,28 +250,33 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     }
 
     setActionError(null);
+    setPhaseActionPending(action);
 
-    const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
-      body: JSON.stringify({
-        action,
-        feedbackText: action === "reject" ? feedbackDraft.trim() : undefined,
-        version: session.currentArtifactVersion ?? 1,
-      }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST",
-    });
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
+        body: JSON.stringify({
+          action,
+          feedbackText: action === "reject" ? feedbackDraft.trim() : undefined,
+          version: session.currentArtifactVersion ?? 1,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
 
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setActionError(body?.error ?? "Action failed.");
-      return;
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setActionError(body?.error ?? "Action failed.");
+        return;
+      }
+
+      setFeedbackDraft("");
+      setFeedbackOpen(false);
+      startTransition(() => {
+        router.refresh();
+      });
+    } finally {
+      setPhaseActionPending(null);
     }
-
-    setFeedbackDraft("");
-    setFeedbackOpen(false);
-    startTransition(() => {
-      router.refresh();
-    });
   }
 
   return (
@@ -202,12 +338,15 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             ) : null}
           </div>
 
-          <div className="p-4">
+          <div aria-busy={isDraftingSelectedStage} aria-live="polite" className="p-4">
+            {latestArtifact && isDraftingSelectedStage ? (
+              <ProgressHint text="Wallie is drafting the next artifact version." />
+            ) : null}
             {latestArtifact ? (
               <ArtifactView artifact={latestArtifact} />
             ) : selectedStageSlug === session.currentStageSlug &&
               session.phaseStatus === "agent_generating" ? (
-              <EmptyHint text="Wallie is drafting the artifact for this stage. Refresh in a moment." />
+              <ProgressHint text="Wallie is drafting the artifact for this stage." />
             ) : (
               <EmptyHint
                 text={
@@ -284,11 +423,18 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                     </button>
                     <button
                       type="button"
-                      disabled={isPending}
-                      className="ui-button-primary"
+                      disabled={phaseActionBusy}
+                      className="ui-button-primary gap-1.5"
                       onClick={() => handlePhaseAction("reject")}
                     >
-                      {isPending ? "Queueing…" : "Queue rerun"}
+                      {phaseActionPending === "reject" ? (
+                        <>
+                          <Spinner />
+                          <span>Queueing…</span>
+                        </>
+                      ) : (
+                        "Queue rerun"
+                      )}
                     </button>
                   </div>
                 </div>
@@ -297,22 +443,27 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                   <button
                     type="button"
                     className="ui-button"
-                    disabled={isPending}
+                    disabled={phaseActionBusy}
                     onClick={() => setFeedbackOpen(true)}
                   >
                     Request changes and rerun
                   </button>
                   <button
                     type="button"
-                    className="ui-button-primary"
-                    disabled={isPending}
+                    className="ui-button-primary gap-1.5"
+                    disabled={phaseActionBusy}
                     onClick={() => handlePhaseAction("approve")}
                   >
-                    {isPending
-                      ? "Approving…"
-                      : isTerminalStage(session.pipeline, session.currentStageSlug)
-                        ? "Approve & archive"
-                        : "Approve & advance"}
+                    {phaseActionPending === "approve" ? (
+                      <>
+                        <Spinner />
+                        <span>Approving…</span>
+                      </>
+                    ) : isTerminalStage(session.pipeline, session.currentStageSlug) ? (
+                      "Approve & archive"
+                    ) : (
+                      "Approve & advance"
+                    )}
                   </button>
                 </div>
               )}
@@ -447,5 +598,17 @@ function EmptyHint({ text }: { text: string }) {
     <p className="rounded-[4px] border border-dashed border-border px-3 py-6 text-center text-[12px] text-muted">
       {text}
     </p>
+  );
+}
+
+function ProgressHint({ text }: { text: string }) {
+  return (
+    <div
+      className="mb-3 flex items-center justify-center gap-2 rounded-[4px] border border-accent/20 bg-accent-soft px-3 py-4 text-[12px] font-medium text-accent"
+      role="status"
+    >
+      <Spinner />
+      <span>{text}</span>
+    </div>
   );
 }

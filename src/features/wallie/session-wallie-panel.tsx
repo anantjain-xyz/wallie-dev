@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { Spinner } from "@/components/shared/spinner";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
@@ -164,6 +165,14 @@ export function SessionWalliePanel({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
     buildDefaultExpandedRunIds(initialData.runs),
   );
+  const runIdsKey = useMemo(
+    () =>
+      runs
+        .map((run) => run.id)
+        .sort()
+        .join(","),
+    [runs],
+  );
 
   useEffect(() => {
     setRuns(initialData.runs);
@@ -262,14 +271,15 @@ export function SessionWalliePanel({
   }, [session.id, supabase]);
 
   useEffect(() => {
-    const channels = runs.map((run) =>
+    const runIds = runIdsKey ? runIdsKey.split(",") : [];
+    const channels = runIds.map((runId) =>
       supabase
-        .channel(`wallie-run-messages:${run.id}`)
+        .channel(`wallie-run-messages:${runId}`)
         .on(
           "postgres_changes",
           {
             event: "*",
-            filter: `agent_run_id=eq.${run.id}`,
+            filter: `agent_run_id=eq.${runId}`,
             schema: "public",
             table: "agent_run_messages",
           },
@@ -289,7 +299,7 @@ export function SessionWalliePanel({
         void supabase.removeChannel(channel);
       }
     };
-  }, [runs, supabase]);
+  }, [runIdsKey, supabase]);
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
@@ -419,9 +429,10 @@ export function SessionWalliePanel({
             const isExpanded = expandedRunIds.has(run.id);
             const runDetailsId = `wallie-run-details-${run.id}`;
             const requestedByLabel = formatRequestedBy(run);
+            const runIsBusy = run.isActive;
 
             return (
-              <article key={run.id} className="ui-subpanel p-5">
+              <article key={run.id} aria-busy={runIsBusy} className="ui-subpanel p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <button
                     aria-controls={runDetailsId}
@@ -445,10 +456,11 @@ export function SessionWalliePanel({
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={cn(
-                          "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
                           runStatusToneClass(run.status),
                         )}
                       >
+                        {runIsBusy ? <Spinner /> : null}
                         {formatRunStatus(run.status)}
                       </span>
                       <span className="ui-pill">{formatStageRunLabel(run)}</span>
@@ -485,31 +497,35 @@ export function SessionWalliePanel({
 
                 {isExpanded ? (
                   <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
-                    {run.messages.length === 0 ? (
-                      <div className="ui-muted-panel px-4 py-4 text-sm text-muted">
-                        {run.isActive
-                          ? "Wallie has claimed the run. Messages will appear here as the processor advances."
-                          : "No persisted messages were recorded for this run."}
+                    {runIsBusy ? <RunProgressRow /> : null}
+                    {run.messages.length === 0 && !runIsBusy ? (
+                      <div
+                        aria-live="polite"
+                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
+                        role="status"
+                      >
+                        No persisted messages were recorded for this run.
                       </div>
-                    ) : (
-                      run.messages.map((message) => (
-                        <div
-                          key={message.id}
-                          className={cn(
-                            "rounded-[6px] border px-4 py-4 text-sm leading-7",
-                            message.kind === "error"
-                              ? "border-danger/20 bg-danger-soft text-danger"
-                              : "border-border bg-surface-muted text-foreground",
-                          )}
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
-                            <span>{message.kind}</span>
-                            <span>{dateTimeFormatter.format(new Date(message.createdAt))}</span>
+                    ) : null}
+                    {run.messages.length > 0
+                      ? run.messages.map((message) => (
+                          <div
+                            key={message.id}
+                            className={cn(
+                              "rounded-[6px] border px-4 py-4 text-sm leading-7",
+                              message.kind === "error"
+                                ? "border-danger/20 bg-danger-soft text-danger"
+                                : "border-border bg-surface-muted text-foreground",
+                            )}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                              <span>{message.kind}</span>
+                              <span>{dateTimeFormatter.format(new Date(message.createdAt))}</span>
+                            </div>
+                            <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
                           </div>
-                          <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
-                        </div>
-                      ))
-                    )}
+                        ))
+                      : null}
                   </div>
                 ) : null}
               </article>
@@ -517,6 +533,22 @@ export function SessionWalliePanel({
           })
         )}
       </div>
+    </div>
+  );
+}
+
+function RunProgressRow() {
+  return (
+    <div
+      aria-busy
+      aria-live="polite"
+      className="ui-muted-panel px-4 py-4 text-sm text-muted"
+      role="status"
+    >
+      <span className="flex items-center gap-2">
+        <Spinner />
+        <span>Wallie is working</span>
+      </span>
     </div>
   );
 }
