@@ -11,10 +11,11 @@ import {
   type ReactNode,
 } from "react";
 
-import { ChevronDownIcon } from "@/components/shared/icons";
+import { CheckIcon, ChevronDownIcon } from "@/components/shared/icons";
 import { cn } from "@/lib/utils";
 
 export type SelectOption = {
+  icon?: ReactNode;
   label: string;
   value: string;
 };
@@ -62,6 +63,7 @@ export function SelectField({
         };
   const activeOptionId =
     isOpen && selectOptions[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined;
+  const hasOptionIcons = selectOptions.some((option) => option.icon);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -166,8 +168,13 @@ export function SelectField({
         role="combobox"
         type="button"
       >
-        <span className="min-w-0 truncate" id={selectedValueId}>
-          {selectedOption.label}
+        <span className="flex min-w-0 items-center gap-2" id={selectedValueId}>
+          {selectedOption.icon ? (
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
+              {selectedOption.icon}
+            </span>
+          ) : null}
+          <span className="min-w-0 truncate">{selectedOption.label}</span>
         </span>
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted">
           <ChevronDownIcon
@@ -203,9 +210,17 @@ export function SelectField({
                 tabIndex={-1}
                 type="button"
               >
-                <span aria-hidden="true" className="w-4 shrink-0 text-muted">
-                  {isSelected ? "\u2713" : ""}
+                <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center text-muted">
+                  {isSelected ? <CheckIcon className="h-4 w-4" /> : null}
                 </span>
+                {hasOptionIcons ? (
+                  <span
+                    aria-hidden="true"
+                    className="flex h-5 w-5 shrink-0 items-center justify-center text-foreground"
+                  >
+                    {option.icon}
+                  </span>
+                ) : null}
                 <span className="min-w-0 truncate">{option.label}</span>
               </button>
             );

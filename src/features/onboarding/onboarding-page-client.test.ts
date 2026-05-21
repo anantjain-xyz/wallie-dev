@@ -851,6 +851,8 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("ANTHROPIC_API_KEY");
     expect(html).toContain("NEXT_PUBLIC_APP_URL");
     expect(html).toContain("Provider access");
+    expect(html).toContain("Claude Code");
+    expect(html).not.toContain(">claude-code<");
     expect(html).toContain("Sessions run with the Anthropic API key saved by the session creator");
     expect(html).not.toContain("Runtime credentials");
     expect(html).not.toContain("No encrypted workspace secret is required");
