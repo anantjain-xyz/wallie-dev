@@ -1,9 +1,8 @@
 -- Wallie initial schema.
 --
--- Single authoritative migration. No backwards-compatibility shims, no drops
--- of objects that are never created, no data backfills. Consolidated from the
--- previous 17-file migration history now that the project has no production
--- data to preserve.
+-- Single authoritative migration for the pre-production schema. Historical
+-- backfills and repair SQL have been folded away; the remaining DDL creates
+-- the desired baseline and disables unused Supabase defaults.
 
 -- ---------------------------------------------------------------------------
 -- Schemas & extensions
@@ -14,6 +13,8 @@ create schema if not exists internal;
 
 create extension if not exists pgcrypto with schema extensions;
 create extension if not exists pg_trgm with schema extensions;
+
+drop extension if exists pg_graphql cascade;
 
 revoke all on schema internal from public;
 revoke all on schema internal from anon;
@@ -78,12 +79,29 @@ create table public.profiles (
 
 create table public.user_codex_credentials (
   user_id uuid primary key references auth.users(id) on delete cascade,
-  encrypted_access_token text not null,
-  encrypted_refresh_token text not null,
-  access_token_expires_at timestamptz not null,
+  credential_type text not null default 'codex_access_token',
+  encrypted_credential text not null,
+  access_token_expires_at timestamptz,
   scope text,
   account_id text,
   account_email text,
+  credential_version integer not null default 1,
+  auth_cache_last_refresh timestamptz,
+  auth_lock_run_id uuid,
+  auth_lock_expires_at timestamptz,
+  auth_reconnect_required boolean not null default false,
+  auth_reconnect_reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint user_codex_credentials_credential_version_positive
+    check (credential_version > 0),
+  constraint user_codex_credentials_credential_type_check
+    check (credential_type in ('chatgpt_auth_json', 'codex_access_token', 'platform_api_key'))
+);
+
+create table public.user_claude_code_credentials (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  encrypted_api_key text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -310,6 +328,9 @@ create table public.agent_jobs (
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
   session_id uuid not null references public.sessions(id) on delete cascade,
   requested_by_member_id uuid references public.workspace_members(id) on delete set null,
+  stage_id uuid references public.pipeline_stages(id) on delete set null,
+  stage_slug text,
+  stage_name text,
   trigger_type public.agent_trigger_type not null,
   status public.agent_job_status not null default 'queued',
   job_type text not null default 'session',
@@ -331,6 +352,9 @@ create table public.agent_runs (
   session_id uuid not null references public.sessions(id) on delete cascade,
   agent_job_id uuid references public.agent_jobs(id) on delete set null,
   triggered_by_member_id uuid references public.workspace_members(id) on delete set null,
+  stage_id uuid references public.pipeline_stages(id) on delete set null,
+  stage_slug text,
+  stage_name text,
   run_type text not null,
   model_provider text not null,
   model_name text not null,
@@ -453,7 +477,7 @@ create table public.workspace_linear_routing (
   }'::jsonb,
   rework_stage_slug text not null default 'engineering',
   land_stage_slug text not null default 'land',
-  monitor_stage_slug text,
+  monitor_stage_slug text default 'monitor',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint workspace_linear_routing_workspace_unique unique (workspace_id),
@@ -542,6 +566,32 @@ create table public.workspace_repository_profiles (
   )
 );
 
+create table public.codex_device_auth_flows (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  status text not null default 'starting',
+  sandbox_id text not null,
+  command_id text not null,
+  verification_uri text,
+  user_code text,
+  instructions text,
+  error text,
+  encrypted_auth_json text,
+  account_id text,
+  account_email text,
+  auth_cache_last_refresh timestamptz,
+  output_tail text,
+  expires_at timestamptz not null,
+  completed_at timestamptz,
+  canceled_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint codex_device_auth_flows_status_check
+    check (status in ('starting', 'prompted', 'authenticated', 'canceled', 'error', 'expired')),
+  constraint codex_device_auth_flows_auth_json_status_check
+    check (encrypted_auth_json is null or status = 'authenticated')
+);
+
 -- ---------------------------------------------------------------------------
 -- Indexes
 -- ---------------------------------------------------------------------------
@@ -557,6 +607,10 @@ create unique index workspace_members_workspace_username_unique
 create unique index workspace_members_one_wallie_system_member_per_workspace
   on public.workspace_members (workspace_id)
   where kind = 'system' and username = 'wallie';
+
+create index user_codex_credentials_auth_lock_idx
+  on public.user_codex_credentials (auth_lock_expires_at)
+  where credential_type = 'chatgpt_auth_json' and auth_lock_run_id is not null;
 
 create index github_repositories_workspace_full_name_idx
   on public.github_repositories (workspace_id, full_name);
@@ -657,6 +711,10 @@ create index workspace_repository_profiles_workspace_idx
 create index workspace_repository_profiles_repository_idx
   on public.workspace_repository_profiles (github_repository_id);
 
+create index codex_device_auth_flows_user_active_idx
+  on public.codex_device_auth_flows (user_id, expires_at)
+  where status in ('starting', 'prompted', 'authenticated');
+
 -- ---------------------------------------------------------------------------
 -- Helper functions
 -- ---------------------------------------------------------------------------
@@ -738,7 +796,7 @@ as $$
   )
 $$;
 
-create or replace function public.current_user_workspace_ids()
+create or replace function internal.current_user_workspace_ids()
 returns setof uuid
 language sql
 stable
@@ -752,7 +810,7 @@ as $$
     and wm.is_active = true
 $$;
 
-create or replace function public.can_manage_workspace(target_workspace_id uuid)
+create or replace function internal.can_manage_workspace(target_workspace_id uuid)
 returns boolean
 language sql
 stable
@@ -828,6 +886,10 @@ begin
     new.requested_by_member_id, 'requested_by_member_id'
   );
 
+  perform internal.assert_workspace_match(
+    new.workspace_id, 'public.pipeline_stages', new.stage_id, 'stage_id'
+  );
+
   return new;
 end;
 $$;
@@ -841,6 +903,7 @@ begin
   perform internal.assert_workspace_match(new.workspace_id, 'public.sessions', new.session_id, 'session_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.agent_jobs', new.agent_job_id, 'agent_job_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.workspace_members', new.triggered_by_member_id, 'triggered_by_member_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.pipeline_stages', new.stage_id, 'stage_id');
   return new;
 end;
 $$;
@@ -1036,6 +1099,11 @@ before update on public.user_codex_credentials
 for each row
 execute function internal.touch_updated_at();
 
+create trigger user_claude_code_credentials_touch_updated_at
+before update on public.user_claude_code_credentials
+for each row
+execute function internal.touch_updated_at();
+
 create trigger workspaces_touch_updated_at
 before update on public.workspaces
 for each row
@@ -1206,6 +1274,11 @@ before insert or update on public.workspace_repository_profiles
 for each row
 execute function internal.enforce_workspace_repository_profile_refs();
 
+create trigger codex_device_auth_flows_touch_updated_at
+before update on public.codex_device_auth_flows
+for each row
+execute function internal.touch_updated_at();
+
 -- ---------------------------------------------------------------------------
 -- Public RPCs
 -- ---------------------------------------------------------------------------
@@ -1304,7 +1377,10 @@ as $$
     );
 $$;
 
-create or replace function public.next_session_number(target_workspace_id uuid)
+create or replace function public.next_session_number(
+  target_workspace_id uuid,
+  actor_user_id uuid
+)
 returns integer
 language plpgsql
 security definer
@@ -1313,11 +1389,14 @@ as $$
 declare
   allocated_number integer;
 begin
-  if coalesce(auth.role(), '') <> 'service_role'
-     and not exists (
+  if actor_user_id is null
+     or not exists (
        select 1
-       from public.current_user_workspace_ids() as workspace_ids(workspace_id)
-       where workspace_id = target_workspace_id
+       from public.workspace_members wm
+       where wm.workspace_id = target_workspace_id
+         and wm.user_id = actor_user_id
+         and wm.kind = 'human'
+         and wm.is_active = true
      ) then
     raise exception 'Not authorized to allocate session numbers for workspace %', target_workspace_id
       using errcode = '42501';
@@ -1339,8 +1418,12 @@ end;
 $$;
 
 create or replace function public.create_workspace(
+  actor_user_id uuid,
   workspace_name text,
-  requested_slug text default null
+  requested_slug text default null,
+  actor_email text default null,
+  actor_full_name text default null,
+  actor_avatar_url text default null
 )
 returns public.workspaces
 language plpgsql
@@ -1348,22 +1431,6 @@ security definer
 set search_path = ''
 as $$
 declare
-  actor_id uuid := auth.uid();
-  actor_email text := nullif(auth.jwt() ->> 'email', '');
-  actor_full_name text := nullif(
-    coalesce(
-      auth.jwt() -> 'user_metadata' ->> 'full_name',
-      auth.jwt() -> 'user_metadata' ->> 'name'
-    ),
-    ''
-  );
-  actor_avatar_url text := nullif(
-    coalesce(
-      auth.jwt() -> 'user_metadata' ->> 'avatar_url',
-      auth.jwt() -> 'user_metadata' ->> 'picture'
-    ),
-    ''
-  );
   base_slug text;
   candidate_slug text;
   suffix integer := 0;
@@ -1371,7 +1438,7 @@ declare
   profile_row public.profiles%rowtype;
   default_pipeline_id uuid;
 begin
-  if actor_id is null then
+  if actor_user_id is null then
     raise exception 'Authenticated user required to create a workspace'
       using errcode = '42501';
   end if;
@@ -1405,7 +1472,7 @@ begin
   select *
   into profile_row
   from public.profiles profile_record
-  where profile_record.id = actor_id;
+  where profile_record.id = actor_user_id;
 
   insert into public.workspaces (
     slug,
@@ -1415,7 +1482,7 @@ begin
   values (
     candidate_slug,
     workspace_name,
-    actor_id
+    actor_user_id
   )
   returning *
   into created_workspace;
@@ -1431,12 +1498,12 @@ begin
   )
   values (
     created_workspace.id,
-    actor_id,
+    actor_user_id,
     'human',
     'owner',
-    coalesce(profile_row.primary_email, actor_email),
-    coalesce(profile_row.full_name, actor_full_name),
-    coalesce(profile_row.avatar_url, actor_avatar_url)
+    coalesce(profile_row.primary_email, nullif(actor_email, '')),
+    coalesce(profile_row.full_name, nullif(actor_full_name, '')),
+    coalesce(profile_row.avatar_url, nullif(actor_avatar_url, ''))
   );
 
   insert into public.workspace_members (
@@ -1530,48 +1597,28 @@ begin
     );
   end if;
 
-  create temporary table if not exists pipeline_rewrite_stages (
-    input_index integer primary key,
-    id uuid,
-    slug text not null,
-    name text not null,
-    description text not null,
-    prompt_template_md text not null,
-    approver_member_ids uuid[] not null
-  ) on commit drop;
-
-  truncate table pg_temp.pipeline_rewrite_stages;
-
-  insert into pg_temp.pipeline_rewrite_stages (
-    input_index,
-    id,
-    slug,
-    name,
-    description,
-    prompt_template_md,
-    approver_member_ids
+  with input_stages as (
+    select
+      payload.ordinality::integer as input_index,
+      nullif(payload.stage ->> 'id', '')::uuid as id,
+      payload.stage ->> 'slug' as slug,
+      payload.stage ->> 'name' as name,
+      coalesce(payload.stage ->> 'description', '') as description,
+      coalesce(payload.stage ->> 'promptTemplateMd', '') as prompt_template_md,
+      array(
+        select ids.member_id::uuid
+        from jsonb_array_elements_text(
+          coalesce(payload.stage -> 'approverMemberIds', '[]'::jsonb)
+        ) with ordinality as ids(member_id, member_ordinality)
+        order by ids.member_ordinality
+      )::uuid[] as approver_member_ids
+    from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality)
   )
-  select
-    payload.ordinality::integer,
-    nullif(payload.stage ->> 'id', '')::uuid,
-    payload.stage ->> 'slug',
-    payload.stage ->> 'name',
-    coalesce(payload.stage ->> 'description', ''),
-    coalesce(payload.stage ->> 'promptTemplateMd', ''),
-    array(
-      select ids.member_id::uuid
-      from jsonb_array_elements_text(
-        coalesce(payload.stage -> 'approverMemberIds', '[]'::jsonb)
-      ) with ordinality as ids(member_id, member_ordinality)
-      order by ids.member_ordinality
-    )::uuid[]
-  from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality);
-
   select coalesce(array_agg(duplicate_ids.id order by duplicate_ids.id), '{}'::uuid[])
   into duplicate_stage_ids
   from (
     select i.id
-    from pg_temp.pipeline_rewrite_stages i
+    from input_stages i
     where i.id is not null
     group by i.id
     having count(*) > 1
@@ -1585,11 +1632,15 @@ begin
     );
   end if;
 
+  with input_stages as (
+    select payload.stage ->> 'slug' as slug
+    from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality)
+  )
   select coalesce(array_agg(duplicate_slugs.slug order by duplicate_slugs.slug), '{}'::text[])
   into duplicate_stage_slugs
   from (
     select i.slug
-    from pg_temp.pipeline_rewrite_stages i
+    from input_stages i
     group by i.slug
     having count(*) > 1
   ) duplicate_slugs;
@@ -1602,11 +1653,21 @@ begin
     );
   end if;
 
+  with input_stages as (
+    select array(
+      select ids.member_id::uuid
+      from jsonb_array_elements_text(
+        coalesce(payload.stage -> 'approverMemberIds', '[]'::jsonb)
+      ) with ordinality as ids(member_id, member_ordinality)
+      order by ids.member_ordinality
+    )::uuid[] as approver_member_ids
+    from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality)
+  )
   select coalesce(array_agg(distinct ids.member_id order by ids.member_id), '{}'::uuid[])
   into invalid_member_ids
   from (
     select unnest(i.approver_member_ids) as member_id
-    from pg_temp.pipeline_rewrite_stages i
+    from input_stages i
   ) ids
   where not exists (
     select 1
@@ -1623,13 +1684,17 @@ begin
     );
   end if;
 
+  with input_stages as (
+    select nullif(payload.stage ->> 'id', '')::uuid as id
+    from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality)
+  )
   select coalesce(array_agg(ps.id order by ps.position), '{}'::uuid[])
   into delete_stage_ids
   from public.pipeline_stages ps
   where ps.pipeline_id = target_pipeline_id
     and not exists (
       select 1
-      from pg_temp.pipeline_rewrite_stages i
+      from input_stages i
       where i.id = ps.id
     );
 
@@ -1657,6 +1722,23 @@ begin
   set name = coalesce(pipeline_name, 'Default')
   where p.id = target_pipeline_id;
 
+  with input_stages as (
+    select
+      payload.ordinality::integer as input_index,
+      nullif(payload.stage ->> 'id', '')::uuid as id,
+      payload.stage ->> 'slug' as slug,
+      payload.stage ->> 'name' as name,
+      coalesce(payload.stage ->> 'description', '') as description,
+      coalesce(payload.stage ->> 'promptTemplateMd', '') as prompt_template_md,
+      array(
+        select ids.member_id::uuid
+        from jsonb_array_elements_text(
+          coalesce(payload.stage -> 'approverMemberIds', '[]'::jsonb)
+        ) with ordinality as ids(member_id, member_ordinality)
+        order by ids.member_ordinality
+      )::uuid[] as approver_member_ids
+    from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality)
+  )
   update public.pipeline_stages ps
   set
     approver_member_ids = i.approver_member_ids,
@@ -1665,10 +1747,27 @@ begin
     position = i.input_index,
     prompt_template_md = i.prompt_template_md,
     slug = i.slug
-  from pg_temp.pipeline_rewrite_stages i
+  from input_stages i
   where ps.id = i.id
     and ps.pipeline_id = target_pipeline_id;
 
+  with input_stages as (
+    select
+      payload.ordinality::integer as input_index,
+      nullif(payload.stage ->> 'id', '')::uuid as id,
+      payload.stage ->> 'slug' as slug,
+      payload.stage ->> 'name' as name,
+      coalesce(payload.stage ->> 'description', '') as description,
+      coalesce(payload.stage ->> 'promptTemplateMd', '') as prompt_template_md,
+      array(
+        select ids.member_id::uuid
+        from jsonb_array_elements_text(
+          coalesce(payload.stage -> 'approverMemberIds', '[]'::jsonb)
+        ) with ordinality as ids(member_id, member_ordinality)
+        order by ids.member_ordinality
+      )::uuid[] as approver_member_ids
+    from jsonb_array_elements(stage_payload) with ordinality as payload(stage, ordinality)
+  )
   insert into public.pipeline_stages (
     pipeline_id,
     workspace_id,
@@ -1688,7 +1787,7 @@ begin
     i.description,
     i.prompt_template_md,
     i.approver_member_ids
-  from pg_temp.pipeline_rewrite_stages i
+  from input_stages i
   where i.id is null
     or not exists (
       select 1
@@ -2041,12 +2140,138 @@ begin
 end;
 $$;
 
+create or replace function public.acquire_codex_auth_lease(
+  target_user_id uuid,
+  target_run_id uuid,
+  lease_expires_at timestamptz
+)
+returns table (
+  credential_type text,
+  encrypted_credential text,
+  access_token_expires_at timestamptz,
+  credential_version integer,
+  auth_cache_last_refresh timestamptz,
+  auth_reconnect_required boolean,
+  auth_reconnect_reason text
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  update public.user_codex_credentials
+  set
+    auth_lock_run_id = target_run_id,
+    auth_lock_expires_at = lease_expires_at,
+    updated_at = now()
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
+    and public.user_codex_credentials.auth_reconnect_required = false
+    and (
+      public.user_codex_credentials.auth_lock_run_id is null
+      or public.user_codex_credentials.auth_lock_run_id = target_run_id
+      or public.user_codex_credentials.auth_lock_expires_at is null
+      or public.user_codex_credentials.auth_lock_expires_at <= now()
+    )
+  returning
+    public.user_codex_credentials.credential_type,
+    public.user_codex_credentials.encrypted_credential,
+    public.user_codex_credentials.access_token_expires_at,
+    public.user_codex_credentials.credential_version,
+    public.user_codex_credentials.auth_cache_last_refresh,
+    public.user_codex_credentials.auth_reconnect_required,
+    public.user_codex_credentials.auth_reconnect_reason;
+end;
+$$;
+
+create or replace function public.persist_codex_auth_json(
+  target_user_id uuid,
+  target_run_id uuid,
+  previous_credential_version integer,
+  new_encrypted_credential text,
+  new_auth_cache_last_refresh timestamptz,
+  new_account_id text,
+  new_account_email text
+)
+returns table (
+  credential_version integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  update public.user_codex_credentials
+  set
+    account_email = new_account_email,
+    account_id = new_account_id,
+    auth_cache_last_refresh = new_auth_cache_last_refresh,
+    auth_reconnect_reason = null,
+    auth_reconnect_required = false,
+    credential_version = public.user_codex_credentials.credential_version + 1,
+    encrypted_credential = new_encrypted_credential,
+    updated_at = now()
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
+    and public.user_codex_credentials.auth_lock_run_id = target_run_id
+    and public.user_codex_credentials.credential_version = previous_credential_version
+  returning public.user_codex_credentials.credential_version;
+end;
+$$;
+
+create or replace function public.release_codex_auth_lease(
+  target_user_id uuid,
+  target_run_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.user_codex_credentials
+  set
+    auth_lock_run_id = null,
+    auth_lock_expires_at = null,
+    updated_at = now()
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.auth_lock_run_id = target_run_id;
+end;
+$$;
+
+create or replace function public.mark_codex_auth_reconnect_required(
+  target_user_id uuid,
+  target_run_id uuid,
+  reconnect_reason text
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.user_codex_credentials
+  set
+    auth_reconnect_reason = left(reconnect_reason, 500),
+    auth_reconnect_required = true,
+    auth_lock_run_id = null,
+    auth_lock_expires_at = null,
+    updated_at = now()
+  where public.user_codex_credentials.user_id = target_user_id
+    and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
+    and public.user_codex_credentials.auth_lock_run_id = target_run_id;
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- RLS enablement
 -- ---------------------------------------------------------------------------
 
 alter table public.profiles enable row level security;
 alter table public.user_codex_credentials enable row level security;
+alter table public.user_claude_code_credentials enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
 alter table public.github_installations enable row level security;
@@ -2070,6 +2295,7 @@ alter table public.workspace_linear_routing enable row level security;
 alter table public.sandbox_capability_checks enable row level security;
 alter table public.workspace_onboarding enable row level security;
 alter table public.workspace_repository_profiles enable row level security;
+alter table public.codex_device_auth_flows enable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -2080,6 +2306,7 @@ grant usage on schema internal to authenticated, service_role;
 
 revoke all on public.profiles from anon, authenticated;
 revoke all on public.user_codex_credentials from anon, authenticated;
+revoke all on public.user_claude_code_credentials from anon, authenticated;
 revoke all on public.workspaces from anon, authenticated;
 revoke all on public.workspace_members from anon, authenticated;
 revoke all on public.github_installations from anon, authenticated;
@@ -2096,12 +2323,16 @@ revoke all on public.session_pull_requests from anon, authenticated;
 revoke all on public.agent_jobs from anon, authenticated;
 revoke all on public.agent_runs from anon, authenticated;
 revoke all on public.agent_run_messages from anon, authenticated;
+revoke all privileges on public.workspace_agent_config from public;
+revoke all privileges on public.workspace_agent_config from anon;
+revoke all privileges on public.workspace_agent_config from authenticated;
 revoke all on public.worker_heartbeats from anon, authenticated;
 revoke all on public.repository_onboarding_status from anon, authenticated;
 revoke all on public.workspace_linear_routing from anon, authenticated;
 revoke all on public.sandbox_capability_checks from anon, authenticated;
 revoke all on public.workspace_onboarding from anon, authenticated;
 revoke all on public.workspace_repository_profiles from anon, authenticated;
+revoke all on public.codex_device_auth_flows from anon, authenticated;
 
 grant all on all tables in schema public to service_role;
 grant all on all tables in schema internal to service_role;
@@ -2110,6 +2341,7 @@ grant all on all functions in schema internal to service_role;
 
 grant select, insert, update on public.profiles to authenticated;
 grant select, delete on public.user_codex_credentials to authenticated;
+grant select, delete on public.user_claude_code_credentials to authenticated;
 grant select on public.workspaces to authenticated;
 grant select on public.workspace_members to authenticated;
 grant update (preferences) on public.workspace_members to authenticated;
@@ -2152,16 +2384,30 @@ grant select on public.workspace_repository_profiles to authenticated;
 grant insert, update, delete on public.workspace_repository_profiles to authenticated;
 
 grant execute on function internal.current_workspace_member_id(uuid) to authenticated;
-grant execute on function public.current_user_workspace_ids() to authenticated;
-grant execute on function public.can_manage_workspace(uuid) to authenticated;
-grant execute on function public.next_session_number(uuid) to authenticated;
-grant execute on function public.create_workspace(text, text) to authenticated;
+grant execute on function internal.current_user_workspace_ids() to authenticated, service_role;
+grant execute on function internal.can_manage_workspace(uuid) to authenticated, service_role;
 
-revoke all on function public.approve_session_stage(uuid, uuid, integer, uuid) from public;
+revoke all on function public.acquire_codex_auth_lease(uuid, uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.persist_codex_auth_json(uuid, uuid, integer, text, timestamptz, text, text) from public, anon, authenticated;
+revoke all on function public.release_codex_auth_lease(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.mark_codex_auth_reconnect_required(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public.approve_session_stage(uuid, uuid, integer, uuid) from public, anon, authenticated;
+revoke all on function public.rewrite_default_pipeline(uuid, text, jsonb) from public, anon, authenticated;
+revoke all on function public.claim_agent_job(uuid, integer) from public, anon, authenticated;
+revoke all on function public.schedule_job_retry(uuid, integer, integer) from public, anon, authenticated;
+revoke all on function public.create_workspace(uuid, text, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.next_session_number(uuid, uuid) from public, anon, authenticated;
+
+grant execute on function public.acquire_codex_auth_lease(uuid, uuid, timestamptz) to service_role;
+grant execute on function public.persist_codex_auth_json(uuid, uuid, integer, text, timestamptz, text, text) to service_role;
+grant execute on function public.release_codex_auth_lease(uuid, uuid) to service_role;
+grant execute on function public.mark_codex_auth_reconnect_required(uuid, uuid, text) to service_role;
 grant execute on function public.approve_session_stage(uuid, uuid, integer, uuid) to service_role;
-
-revoke all on function public.rewrite_default_pipeline(uuid, text, jsonb) from public;
 grant execute on function public.rewrite_default_pipeline(uuid, text, jsonb) to service_role;
+grant execute on function public.claim_agent_job(uuid, integer) to service_role;
+grant execute on function public.schedule_job_retry(uuid, integer, integer) to service_role;
+grant execute on function public.create_workspace(uuid, text, text, text, text, text) to service_role;
+grant execute on function public.next_session_number(uuid, uuid) to service_role;
 
 grant execute on function public.save_workspace_repository_profile(
   uuid,
@@ -2177,9 +2423,6 @@ grant execute on function public.save_workspace_repository_profile(
   text,
   jsonb
 ) to authenticated;
-
-revoke all on function public.schedule_job_retry(uuid, int, int) from public;
-grant execute on function public.schedule_job_retry(uuid, int, int) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- RLS policies
@@ -2216,67 +2459,93 @@ create policy user_codex_credentials_delete_self
   to authenticated
   using (user_id = auth.uid());
 
+create policy user_claude_code_credentials_select_self
+  on public.user_claude_code_credentials
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+create policy user_claude_code_credentials_delete_self
+  on public.user_claude_code_credentials
+  for delete
+  to authenticated
+  using (user_id = auth.uid());
+
 create policy workspaces_select_membership
   on public.workspaces
   for select
   to authenticated
-  using (id in (select public.current_user_workspace_ids()));
+  using (id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_members_select_membership
   on public.workspace_members
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_members_update_own_preferences
   on public.workspace_members
   for update
   to authenticated
-  using (user_id = auth.uid() and workspace_id in (select public.current_user_workspace_ids()))
-  with check (user_id = auth.uid() and workspace_id in (select public.current_user_workspace_ids()));
+  using (user_id = auth.uid() and workspace_id in (select internal.current_user_workspace_ids()))
+  with check (user_id = auth.uid() and workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy github_installations_select_membership
   on public.github_installations
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy github_repositories_select_membership
   on public.github_repositories
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy github_issue_branches_select_membership
   on public.github_issue_branches
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy agent_runs_select_membership
   on public.agent_runs
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy agent_run_messages_select_membership
   on public.agent_run_messages
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
+
+create policy agent_jobs_service_only
+  on public.agent_jobs
+  for all
+  to authenticated
+  using (false)
+  with check (false);
+
+create policy workspace_secrets_service_only
+  on public.workspace_secrets
+  for all
+  to authenticated
+  using (false)
+  with check (false);
 
 create policy sessions_select_membership
   on public.sessions
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy sessions_insert_membership
   on public.sessions
   for insert
   to authenticated
   with check (
-    workspace_id in (select public.current_user_workspace_ids())
+    workspace_id in (select internal.current_user_workspace_ids())
     and workspace_id in (
       select onboarding.workspace_id
       from public.workspace_onboarding onboarding
@@ -2292,79 +2561,84 @@ create policy session_artifacts_select_membership
   on public.session_artifacts
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy session_artifact_feedback_select_membership
   on public.session_artifact_feedback
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy session_phase_completions_select_membership
   on public.session_phase_completions
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy session_pull_requests_select_membership
   on public.session_pull_requests
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_agent_config_select
   on public.workspace_agent_config
   for select
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  to authenticated
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_agent_config_insert
   on public.workspace_agent_config
   for insert
-  with check (public.can_manage_workspace(workspace_id));
+  to authenticated
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_agent_config_update
   on public.workspace_agent_config
   for update
-  using (public.can_manage_workspace(workspace_id));
+  to authenticated
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_agent_config_delete
   on public.workspace_agent_config
   for delete
-  using (public.can_manage_workspace(workspace_id));
+  to authenticated
+  using (internal.can_manage_workspace(workspace_id));
 
 create policy pipelines_select_membership
   on public.pipelines for select to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy pipelines_insert_manager
   on public.pipelines for insert to authenticated
-  with check (public.can_manage_workspace(workspace_id));
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy pipelines_update_manager
   on public.pipelines for update to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy pipelines_delete_manager
   on public.pipelines for delete to authenticated
-  using (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id));
 
 create policy pipeline_stages_select_membership
   on public.pipeline_stages for select to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy pipeline_stages_insert_manager
   on public.pipeline_stages for insert to authenticated
-  with check (public.can_manage_workspace(workspace_id));
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy pipeline_stages_update_manager
   on public.pipeline_stages for update to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy pipeline_stages_delete_manager
   on public.pipeline_stages for delete to authenticated
-  using (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id));
 
 create policy worker_heartbeats_select
   on public.worker_heartbeats
@@ -2375,84 +2649,91 @@ create policy repository_onboarding_status_select_membership
   on public.repository_onboarding_status
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy repository_onboarding_status_manage
   on public.repository_onboarding_status
   for all
   to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_linear_routing_select_membership
   on public.workspace_linear_routing
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_linear_routing_manage
   on public.workspace_linear_routing
   for all
   to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy sandbox_capability_checks_select_membership
   on public.sandbox_capability_checks
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy sandbox_capability_checks_manage
   on public.sandbox_capability_checks
   for all
   to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_onboarding_select_membership
   on public.workspace_onboarding
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_onboarding_insert_managers
   on public.workspace_onboarding
   for insert
   to authenticated
-  with check (public.can_manage_workspace(workspace_id));
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_onboarding_update_managers
   on public.workspace_onboarding
   for update
   to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_repository_profiles_select_membership
   on public.workspace_repository_profiles
   for select
   to authenticated
-  using (workspace_id in (select public.current_user_workspace_ids()));
+  using (workspace_id in (select internal.current_user_workspace_ids()));
 
 create policy workspace_repository_profiles_insert_managers
   on public.workspace_repository_profiles
   for insert
   to authenticated
-  with check (public.can_manage_workspace(workspace_id));
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_repository_profiles_update_managers
   on public.workspace_repository_profiles
   for update
   to authenticated
-  using (public.can_manage_workspace(workspace_id))
-  with check (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id))
+  with check (internal.can_manage_workspace(workspace_id));
 
 create policy workspace_repository_profiles_delete_managers
   on public.workspace_repository_profiles
   for delete
   to authenticated
-  using (public.can_manage_workspace(workspace_id));
+  using (internal.can_manage_workspace(workspace_id));
+
+create policy codex_device_auth_flows_service_only
+  on public.codex_device_auth_flows
+  for all
+  to authenticated
+  using (false)
+  with check (false);
 
 -- ---------------------------------------------------------------------------
 -- Realtime publication
