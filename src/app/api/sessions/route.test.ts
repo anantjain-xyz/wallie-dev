@@ -33,6 +33,7 @@ import { POST } from "./route";
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
+const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 let currentAdminMock: ReturnType<typeof buildAdminMock>;
 
 function makeRequest(body: Record<string, unknown>) {
@@ -104,6 +105,13 @@ function buildAdminMock(
   opts: {
     nextNumber?: number;
     numberError?: { message: string } | null;
+    primaryRepositoryId?: string | null;
+    repositories?: Array<{
+      full_name: string;
+      id: string;
+      is_archived?: boolean;
+      workspace_id?: string;
+    }>;
     sessionDeleteError?: { message: string } | null;
     sessionInsertError?: { message: string } | null;
   } = {},
@@ -121,6 +129,65 @@ function buildAdminMock(
       return { data: opts.nextNumber ?? 7, error: opts.numberError ?? null };
     },
     from(table: string) {
+      if (table === "workspace_repository_profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: opts.primaryRepositoryId
+                    ? { github_repository_id: opts.primaryRepositoryId }
+                    : null,
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
+      if (table === "github_repositories") {
+        return {
+          select: () => {
+            const filters = new Map<string, unknown>();
+            const matchingRepositories = () =>
+              (opts.repositories ?? [])
+                .filter((repository) => {
+                  if (filters.has("id") && repository.id !== filters.get("id")) return false;
+                  if (
+                    filters.has("workspace_id") &&
+                    (repository.workspace_id ?? WORKSPACE_ID) !== filters.get("workspace_id")
+                  ) {
+                    return false;
+                  }
+                  if (
+                    filters.has("is_archived") &&
+                    Boolean(repository.is_archived) !== filters.get("is_archived")
+                  ) {
+                    return false;
+                  }
+                  return true;
+                })
+                .sort((left, right) => left.full_name.localeCompare(right.full_name));
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.set(column, value);
+                return builder;
+              },
+              maybeSingle: async () => ({
+                data: matchingRepositories()[0] ? { id: matchingRepositories()[0]!.id } : null,
+                error: null,
+              }),
+              order: async () => ({
+                data: matchingRepositories().map((repository) => ({ id: repository.id })),
+                error: null,
+              }),
+            };
+            return builder;
+          },
+        };
+      }
+
       if (table !== "sessions") {
         throw new Error(`unexpected admin table ${table}`);
       }
@@ -226,6 +293,77 @@ describe("POST /api/sessions", () => {
     const scheduled = mocked.after.mock.calls[0]![0] as () => Promise<void>;
     await scheduled();
     expect(mocked.processQueuedAgentJobs).toHaveBeenCalledWith({ requestedJobId: "job-1" });
+  });
+
+  it("pins the selected repository on the created session", async () => {
+    currentAdminMock = buildAdminMock({
+      repositories: [{ full_name: "acme/app", id: REPOSITORY_ID }],
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(currentAdminMock.admin);
+
+    const response = await POST(
+      makeRequest({
+        githubRepositoryId: REPOSITORY_ID,
+        promptMd: "Add SSO",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(currentAdminMock.insertedSessions[0]).toMatchObject({
+      github_repository_id: REPOSITORY_ID,
+    });
+  });
+
+  it("defaults the session repository from the workspace primary repository", async () => {
+    currentAdminMock = buildAdminMock({
+      primaryRepositoryId: REPOSITORY_ID,
+      repositories: [
+        { full_name: "acme/app", id: REPOSITORY_ID },
+        { full_name: "acme/web", id: "55555555-5555-4555-8555-555555555555" },
+      ],
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(currentAdminMock.admin);
+
+    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
+
+    expect(response.status).toBe(201);
+    expect(currentAdminMock.insertedSessions[0]).toMatchObject({
+      github_repository_id: REPOSITORY_ID,
+    });
+  });
+
+  it("rejects repository ids that are archived or outside the workspace", async () => {
+    currentAdminMock = buildAdminMock({
+      repositories: [
+        { full_name: "acme/archived", id: REPOSITORY_ID, is_archived: true },
+        {
+          full_name: "other/app",
+          id: "66666666-6666-4666-8666-666666666666",
+          workspace_id: "77777777-7777-4777-8777-777777777777",
+        },
+      ],
+    });
+    mocked.createSupabaseAdminClient.mockReturnValue(currentAdminMock.admin);
+
+    const archived = await POST(
+      makeRequest({
+        githubRepositoryId: REPOSITORY_ID,
+        promptMd: "Add SSO",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+    const otherWorkspace = await POST(
+      makeRequest({
+        githubRepositoryId: "66666666-6666-4666-8666-666666666666",
+        promptMd: "Add SSO",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(archived.status).toBe(400);
+    expect(otherWorkspace.status).toBe(400);
+    expect(currentAdminMock.insertedSessions).toHaveLength(0);
   });
 
   it("rejects incomplete onboarding before inserting a session", async () => {

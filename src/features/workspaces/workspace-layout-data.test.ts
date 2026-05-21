@@ -40,24 +40,70 @@ const user = { email: "owner@example.com", id: "user-1" };
 const workspace = { id: "workspace-1", name: "Northwind", slug: "northwind" };
 
 function buildSupabaseMock(
-  onboardingRow: { current_step: string; status: string } | null = {
+  onboardingRow: {
+    current_step: string;
+    selected_github_repository_id?: string | null;
+    status: string;
+  } | null = {
     current_step: "github",
+    selected_github_repository_id: null,
     status: "dismissed",
   },
+  opts: {
+    primaryRepositoryId?: string | null;
+    repositories?: Array<{ full_name: string; id: string; is_archived?: boolean }>;
+  } = {},
 ) {
   return {
     from: vi.fn((table: string) => {
-      if (table !== "workspace_onboarding") {
-        throw new Error(`unexpected table ${table}`);
+      if (table === "workspace_onboarding") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: onboardingRow, error: null }),
+            }),
+          }),
+        };
       }
 
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({ data: onboardingRow, error: null }),
+      if (table === "workspace_repository_profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: opts.primaryRepositoryId
+                    ? { github_repository_id: opts.primaryRepositoryId }
+                    : null,
+                  error: null,
+                }),
+              }),
+            }),
           }),
-        }),
-      };
+        };
+      }
+
+      if (table === "github_repositories") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: async () => ({
+                  data: (opts.repositories ?? [])
+                    .filter((repository) => !repository.is_archived)
+                    .map((repository) => ({
+                      full_name: repository.full_name,
+                      id: repository.id,
+                    })),
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
+      throw new Error(`unexpected table ${table}`);
     }),
   };
 }
@@ -100,7 +146,20 @@ describe("loadWorkspaceLayoutContext", () => {
   });
 
   it("ensures the user profile and returns member workspace context", async () => {
-    const supabase = buildSupabaseMock({ current_step: "repository", status: "in_progress" });
+    const supabase = buildSupabaseMock(
+      {
+        current_step: "repository",
+        selected_github_repository_id: "repo-b",
+        status: "in_progress",
+      },
+      {
+        primaryRepositoryId: "repo-a",
+        repositories: [
+          { full_name: "acme/api", id: "repo-a" },
+          { full_name: "acme/web", id: "repo-b" },
+        ],
+      },
+    );
     mocked.createSupabaseServerClient.mockResolvedValue(supabase);
     mocked.getSupabaseUserOrNull.mockResolvedValue(user);
     mocked.getWorkspaceBySlugForUser.mockResolvedValue(workspace);
@@ -110,6 +169,11 @@ describe("loadWorkspaceLayoutContext", () => {
         currentStep: "repository",
         status: "in_progress",
       },
+      defaultSessionGithubRepositoryId: "repo-a",
+      sessionRepositoryOptions: [
+        { fullName: "acme/api", id: "repo-a" },
+        { fullName: "acme/web", id: "repo-b" },
+      ],
       supabase,
       user,
       workspace,

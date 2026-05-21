@@ -44,6 +44,11 @@ export type SessionPullRequest = {
   updatedAt: string;
 };
 
+export type SessionRepositoryOption = {
+  fullName: string;
+  id: string;
+};
+
 export type SessionPhaseCompletion = {
   completedAt: string;
   stageSlug: string;

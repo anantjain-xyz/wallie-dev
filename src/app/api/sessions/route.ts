@@ -9,8 +9,10 @@ import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import { enqueueWallieRun, processQueuedAgentJobs } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
+type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
+
 async function cleanupCreatedSession(input: {
-  admin: ReturnType<typeof createSupabaseAdminClient>;
+  admin: AdminClient;
   sessionId: string;
 }): Promise<string | null> {
   const { error } = await input.admin.from("sessions").delete().eq("id", input.sessionId);
@@ -60,6 +62,71 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+async function loadDefaultSessionRepositoryId(input: {
+  admin: AdminClient;
+  onboardingRepositoryId: string | null;
+  workspaceId: string;
+}): Promise<string | null> {
+  const [
+    { data: primaryProfileRow, error: primaryProfileError },
+    { data: repositoryRows, error: repositoriesError },
+  ] = await Promise.all([
+    input.admin
+      .from("workspace_repository_profiles")
+      .select("github_repository_id")
+      .eq("workspace_id", input.workspaceId)
+      .eq("is_primary", true)
+      .maybeSingle(),
+    input.admin
+      .from("github_repositories")
+      .select("id")
+      .eq("workspace_id", input.workspaceId)
+      .eq("is_archived", false)
+      .order("full_name", { ascending: true }),
+  ]);
+
+  if (primaryProfileError) {
+    throw primaryProfileError;
+  }
+  if (repositoriesError) {
+    throw repositoriesError;
+  }
+
+  const repositoryIds = (repositoryRows ?? []).map((row) => row.id);
+  const availableRepositoryIds = new Set(repositoryIds);
+  const primaryRepositoryId = primaryProfileRow?.github_repository_id ?? null;
+
+  if (primaryRepositoryId && availableRepositoryIds.has(primaryRepositoryId)) {
+    return primaryRepositoryId;
+  }
+
+  if (input.onboardingRepositoryId && availableRepositoryIds.has(input.onboardingRepositoryId)) {
+    return input.onboardingRepositoryId;
+  }
+
+  return repositoryIds[0] ?? null;
+}
+
+async function validateSessionRepositoryId(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<boolean> {
+  const { data, error } = await input.admin
+    .from("github_repositories")
+    .select("id")
+    .eq("id", input.repositoryId)
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_archived", false)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return Boolean(data);
+}
+
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const parsed = createSessionPayloadSchema.safeParse(payload);
@@ -84,7 +151,7 @@ export async function POST(request: Request) {
 
   const { data: onboardingRow, error: onboardingError } = await access.context.supabase
     .from("workspace_onboarding")
-    .select("status")
+    .select("status, selected_github_repository_id")
     .eq("workspace_id", normalized.workspaceId)
     .maybeSingle();
   if (onboardingError) {
@@ -98,6 +165,37 @@ export async function POST(request: Request) {
   }
 
   const admin = createSupabaseAdminClient();
+  let githubRepositoryId: string | null = null;
+  try {
+    if (normalized.githubRepositoryId) {
+      const repositoryAvailable = await validateSessionRepositoryId({
+        admin,
+        repositoryId: normalized.githubRepositoryId,
+        workspaceId: normalized.workspaceId,
+      });
+
+      if (!repositoryAvailable) {
+        return NextResponse.json(
+          { error: "Repository is not available for this workspace." },
+          { status: 400 },
+        );
+      }
+
+      githubRepositoryId = normalized.githubRepositoryId;
+    } else {
+      githubRepositoryId = await loadDefaultSessionRepositoryId({
+        admin,
+        onboardingRepositoryId: onboardingRow.selected_github_repository_id,
+        workspaceId: normalized.workspaceId,
+      });
+    }
+  } catch (error) {
+    return NextResponse.json(
+      { error: getErrorMessage(error, "Wallie could not resolve a session repository.") },
+      { status: 500 },
+    );
+  }
+
   const { data: number, error: numberError } = await admin.rpc("next_session_number", {
     actor_user_id: access.context.user.id,
     target_workspace_id: normalized.workspaceId,
@@ -144,6 +242,7 @@ export async function POST(request: Request) {
     .insert({
       creator_member_id: access.context.currentMember.id,
       current_stage_id: firstStageRow.id,
+      github_repository_id: githubRepositoryId,
       linear_issue_id: normalized.linearIssueId,
       linear_issue_url: normalized.linearIssueUrl,
       number,

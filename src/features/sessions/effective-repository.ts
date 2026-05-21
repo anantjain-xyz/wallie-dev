@@ -18,6 +18,7 @@ export type EffectiveSessionRepository = {
 };
 
 export type EffectiveSessionRepositorySource =
+  | "session"
   | "session_pull_request"
   | "workspace_primary_profile"
   | "workspace_onboarding";
@@ -83,10 +84,17 @@ async function loadCandidateRepositoryIds(input: {
   workspaceId: string;
 }) {
   const [
+    { data: sessionRow, error: sessionError },
     { data: prRow, error: prError },
     { data: profileRow, error: profileError },
     { data: onboardingRow, error: onboardingError },
   ] = await Promise.all([
+    input.supabase
+      .from("sessions")
+      .select("github_repository_id")
+      .eq("workspace_id", input.workspaceId)
+      .eq("id", input.sessionId)
+      .maybeSingle(),
     input.supabase
       .from("session_pull_requests")
       .select("github_repository_id")
@@ -108,11 +116,16 @@ async function loadCandidateRepositoryIds(input: {
       .maybeSingle(),
   ]);
 
+  if (sessionError) throw sessionError;
   if (prError) throw prError;
   if (profileError) throw profileError;
   if (onboardingError) throw onboardingError;
 
   return [
+    {
+      repositoryId: sessionRow?.github_repository_id ?? null,
+      source: "session" as const,
+    },
     {
       repositoryId: prRow?.github_repository_id ?? null,
       source: "session_pull_request" as const,
