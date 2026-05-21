@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { CODEX_EXTERNAL_SANDBOX_FLAG, codexExecArgs } from "@/lib/agent-runner/codex";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import type {
   SandboxCapabilityName,
@@ -136,6 +137,9 @@ export async function probeSandboxCapabilities(input: {
     run(sandbox, agentCliCommand(input.agentProvider)),
     "agent CLI not found",
   );
+  if (input.agentProvider === "codex") {
+    report.codexExternalSandbox = codexExternalSandboxResult(sandbox.repoPath);
+  }
 
   const playwrightCheck = await run(
     sandbox,
@@ -186,6 +190,25 @@ export async function probeSandboxCapabilities(input: {
 
 export function capabilityReportSucceeded(report: Partial<SandboxCapabilityReport>): boolean {
   return Object.values(report).every((entry) => entry?.ok === true);
+}
+
+function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityResult {
+  const args = codexExecArgs("gpt-5.5", sandboxRepoPath);
+  const usesExternalSandbox = args.includes(CODEX_EXTERNAL_SANDBOX_FLAG);
+  const usesSandboxRepo = args.some(
+    (arg, index) => arg === "--cd" && args[index + 1] === sandboxRepoPath,
+  );
+  if (usesExternalSandbox && usesSandboxRepo) {
+    return {
+      detail: "Codex command uses Vercel Sandbox as the execution boundary.",
+      ok: true,
+    };
+  }
+
+  return {
+    detail: `Codex command is missing ${CODEX_EXTERNAL_SANDBOX_FLAG} or --cd ${sandboxRepoPath}.`,
+    ok: false,
+  };
 }
 
 function shellQuote(s: string): string {

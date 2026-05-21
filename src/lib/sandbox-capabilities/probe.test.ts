@@ -28,6 +28,25 @@ function scriptBaseSuccess(sandbox: FakeSandbox) {
   );
 }
 
+function scriptCodexBaseSuccess(sandbox: FakeSandbox) {
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("git --version"),
+    [{ data: "git version 2.45.0\n", stream: "stdout" }],
+  );
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("node --version"),
+    [{ data: "v22.0.0\n", stream: "stdout" }],
+  );
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("for pm in"),
+    [{ data: "npm 10.0.0\n", stream: "stdout" }],
+  );
+  sandbox.scriptExec(
+    (call) => call.args.join(" ").includes("codex --version"),
+    [{ data: "codex-cli 0.132.0\n", stream: "stdout" }],
+  );
+}
+
 function scriptCapturedOutput(sandbox: FakeSandbox, matcher: string, output: CapturedOutput) {
   sandbox.scriptExec(
     (call) => call.args.join(" ").includes(matcher),
@@ -93,6 +112,24 @@ describe("probeSandboxCapabilities", () => {
     expect(report.playwrightPackage.ok).toBe(false);
     expect(report.chromium.detail).toMatch(/Skipped/);
     expect(report.screenshotSmoke.ok).toBe(false);
+  });
+
+  it("reports Codex external-sandbox command configuration without a model call", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCodexBaseSuccess(sandbox);
+
+    const report = await probeSandboxCapabilities({
+      agentProvider: "codex",
+      bootstrapPlaywright: false,
+      sandbox,
+    });
+
+    expect(report.agentCli.ok).toBe(true);
+    expect(report.codexExternalSandbox).toEqual({
+      detail: "Codex command uses Vercel Sandbox as the execution boundary.",
+      ok: true,
+    });
+    expect(sandbox.calls.every((call) => !call.args.join(" ").includes("codex 'exec'"))).toBe(true);
   });
 
   it("allows screenshot smoke success without output", async () => {

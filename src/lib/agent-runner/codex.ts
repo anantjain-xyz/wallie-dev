@@ -12,6 +12,7 @@ const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 const CODEX_HOME_DIR = ".codex";
 const CODEX_AUTH_FILE_NAME = "auth.json";
 const CHATGPT_AUTH_LEASE_MS = 35 * 60_000;
+export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
@@ -68,6 +69,7 @@ export class CodexRunner implements AgentRunner {
       this.options.credential,
       codexHome,
       promptFile,
+      sandbox.repoPath,
     );
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
@@ -103,7 +105,7 @@ export class CodexRunner implements AgentRunner {
     if (code !== 0) {
       yield {
         type: "error",
-        message: `codex CLI exited with code ${code}: ${stderrBuf.slice(0, 500)}`,
+        message: codexExitErrorMessage(code, stderrBuf),
       };
     }
 
@@ -171,10 +173,14 @@ export class CodexRunner implements AgentRunner {
     await ensureCodexHome(sandbox, codexHome);
     await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
 
-    const proc = await sandbox.exec("bash", ["-lc", codexExecCommand(model, promptFile)], {
-      cwd: sandbox.repoPath,
-      env: { CI: "1", CODEX_HOME: codexHome },
-    });
+    const proc = await sandbox.exec(
+      "bash",
+      ["-lc", codexExecCommand(model, promptFile, sandbox.repoPath)],
+      {
+        cwd: sandbox.repoPath,
+        env: { CI: "1", CODEX_HOME: codexHome },
+      },
+    );
 
     let stdoutBuf = "";
     let stderrBuf = "";
@@ -209,7 +215,7 @@ export class CodexRunner implements AgentRunner {
 
     const code = await proc.exitCode;
     if (code !== 0) {
-      const message = `codex CLI exited with code ${code}: ${stderrBuf.slice(0, 500)}`;
+      const message = codexExitErrorMessage(code, stderrBuf);
       if (isAuthFailure(message)) {
         await store.markChatGptAuthReconnectRequired({
           reason:
@@ -395,9 +401,10 @@ function codexCommandForCredential(
   credential: CodexCredential,
   codexHome: string,
   promptFile: string,
+  sandboxRepoPath: string,
 ): string {
   if (credential.type !== "codex_access_token") {
-    return codexExecCommand(model, promptFile);
+    return codexExecCommand(model, promptFile, sandboxRepoPath);
   }
 
   const loginCommand = [
@@ -406,7 +413,7 @@ function codexCommandForCredential(
       `cli_auth_credentials_store="file"`,
     )} >/dev/stderr`,
   ].join(" && ");
-  return `${loginCommand} && ${codexExecCommand(model, promptFile)}`;
+  return `${loginCommand} && ${codexExecCommand(model, promptFile, sandboxRepoPath)}`;
 }
 
 async function persistRefreshedChatGptAuthJson(input: {
@@ -428,8 +435,8 @@ async function persistRefreshedChatGptAuthJson(input: {
   });
 }
 
-function codexExecCommand(model: string, promptFile: string): string {
-  const cliArgs = [
+export function codexExecArgs(model: string, sandboxRepoPath: string): string[] {
+  return [
     "exec",
     "--model",
     model,
@@ -437,10 +444,18 @@ function codexExecCommand(model: string, promptFile: string): string {
     `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
     "-c",
     `cli_auth_credentials_store="file"`,
+    CODEX_EXTERNAL_SANDBOX_FLAG,
+    "--cd",
+    sandboxRepoPath,
     "--json",
     "-",
   ];
-  return `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
+}
+
+function codexExecCommand(model: string, promptFile: string, sandboxRepoPath: string): string {
+  return `codex ${codexExecArgs(model, sandboxRepoPath).map(shellQuote).join(" ")} < ${shellQuote(
+    promptFile,
+  )}`;
 }
 
 async function ensureCodexHome(
@@ -472,6 +487,22 @@ function isAuthFailure(message: string): boolean {
     /\binvalid (?:credential|credentials|grant|api key)\b/.test(lower) ||
     /\b(?:access|refresh) token (?:expired|invalid|revoked)\b/.test(lower)
   );
+}
+
+function codexExitErrorMessage(code: number, stderr: string): string {
+  const excerpt = stderr.slice(0, 500);
+  if (isCodexInnerSandboxFailure(stderr)) {
+    return [
+      `codex CLI exited with code ${code}: Codex's inner Bubblewrap sandbox was invoked unexpectedly inside Vercel Sandbox.`,
+      `Wallie should run Codex with ${CODEX_EXTERNAL_SANDBOX_FLAG}.`,
+      `Raw stderr: ${excerpt || "(empty)"}`,
+    ].join(" ");
+  }
+  return `codex CLI exited with code ${code}: ${excerpt}`;
+}
+
+function isCodexInnerSandboxFailure(stderr: string): boolean {
+  return /\b(?:bwrap|bubblewrap)\b|No permissions to create a new namespace/i.test(stderr);
 }
 
 function shellQuote(s: string): string {
