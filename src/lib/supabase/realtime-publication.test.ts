@@ -1,14 +1,16 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const migrationSql = readFileSync(
-  join(currentDir, "../../../supabase/migrations/20260422000000_init.sql"),
-  "utf8",
-);
+const migrationsDir = join(currentDir, "../../../supabase/migrations");
+const migrationSql = readdirSync(migrationsDir)
+  .filter((file) => file.endsWith(".sql"))
+  .sort()
+  .map((file) => readFileSync(join(migrationsDir, file), "utf8"))
+  .join("\n");
 
 describe("Supabase Realtime publication", () => {
   it("publishes every table the session detail page subscribes to", () => {
