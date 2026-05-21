@@ -970,6 +970,7 @@ export type Database = {
           creator_member_id: string | null
           current_artifact_version: number
           current_stage_id: string
+          github_repository_id: string | null
           id: string
           linear_issue_id: string | null
           linear_issue_url: string | null
@@ -988,6 +989,7 @@ export type Database = {
           creator_member_id?: string | null
           current_artifact_version?: number
           current_stage_id: string
+          github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
           linear_issue_url?: string | null
@@ -1006,6 +1008,7 @@ export type Database = {
           creator_member_id?: string | null
           current_artifact_version?: number
           current_stage_id?: string
+          github_repository_id?: string | null
           id?: string
           linear_issue_id?: string | null
           linear_issue_url?: string | null
@@ -1024,6 +1027,13 @@ export type Database = {
             columns: ["creator_member_id"]
             isOneToOne: false
             referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_github_repository_id_fkey"
+            columns: ["github_repository_id"]
+            isOneToOne: false
+            referencedRelation: "github_repositories"
             referencedColumns: ["id"]
           },
           {
@@ -1890,4 +1900,3 @@ export const Constants = {
     },
   },
 } as const
-

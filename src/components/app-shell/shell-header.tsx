@@ -11,13 +11,16 @@ import {
   type OnboardingResumeState,
 } from "@/features/onboarding/flow";
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
+import type { SessionRepositoryOption } from "@/features/sessions/types";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type ShellHeaderProps = {
+  defaultSessionGithubRepositoryId: string | null;
   navItems: WorkspaceNavItem[];
   onboarding: OnboardingResumeState | null;
+  sessionRepositoryOptions: SessionRepositoryOption[];
   viewerEmail: string | null;
   workspace: WorkspaceSummary;
 };
@@ -32,7 +35,14 @@ function isActive(pathname: string, workspaceSlug: string, item: WorkspaceNavIte
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function ShellHeader({ navItems, onboarding, viewerEmail, workspace }: ShellHeaderProps) {
+export function ShellHeader({
+  defaultSessionGithubRepositoryId,
+  navItems,
+  onboarding,
+  sessionRepositoryOptions,
+  viewerEmail,
+  workspace,
+}: ShellHeaderProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -116,8 +126,10 @@ export function ShellHeader({ navItems, onboarding, viewerEmail, workspace }: Sh
       </div>
 
       <CreateSessionDialog
+        defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
         open={createOpen}
         onClose={handleCreateClose}
+        repositoryOptions={sessionRepositoryOptions}
         workspaceId={workspace.id}
         workspaceSlug={workspace.slug}
       />

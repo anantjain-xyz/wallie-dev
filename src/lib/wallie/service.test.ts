@@ -173,6 +173,7 @@ function buildSupabaseMocks(opts: {
 }) {
   const sessionRow = {
     current_stage_id: "stage-product",
+    github_repository_id: null,
     id: "sess-1",
     workspace_id: "ws-1",
     number: 1,
@@ -217,6 +218,17 @@ function buildSupabaseMocks(opts: {
 
   const admin = {
     from: (table: string) => {
+      if (table === "sessions") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: sessionRow, error: null }),
+              }),
+            }),
+          }),
+        };
+      }
       if (table === "workspace_secrets") {
         // No missing required secrets.
         return {

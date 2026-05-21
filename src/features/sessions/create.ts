@@ -3,6 +3,7 @@ import { z } from "zod";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
 
 export const createSessionPayloadSchema = z.object({
+  githubRepositoryId: z.string().uuid("Repository id is invalid.").nullable().optional(),
   linearIssueUrl: z.string().nullable().optional(),
   promptMd: z.string().trim().min(1, "Prompt is required."),
   title: z.string().nullable().optional(),
@@ -25,6 +26,7 @@ export function normalizeCreateSessionPayload(payload: CreateSessionPayload) {
   const linearIssueUrl = payload.linearIssueUrl?.trim() || null;
 
   return {
+    githubRepositoryId: payload.githubRepositoryId?.trim() || null,
     linearIssueId: linearIssueUrl ? extractLinearIssueId(linearIssueUrl) : null,
     linearIssueUrl,
     promptMd,

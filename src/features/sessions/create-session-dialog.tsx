@@ -3,14 +3,20 @@
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
-import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
+import {
+  deriveSessionTitleFromPrompt,
+  type SessionRepositoryOption,
+} from "@/features/sessions/types";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type CreateSessionDialogProps = {
+  defaultGithubRepositoryId: string | null;
   onClose: () => void;
   open: boolean;
+  repositoryOptions: SessionRepositoryOption[];
   workspaceId: string;
   workspaceSlug: string;
 };
@@ -28,7 +34,9 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 }
 
 function CreateSessionDialogBody({
+  defaultGithubRepositoryId,
   onClose,
+  repositoryOptions,
   workspaceId,
   workspaceSlug,
 }: CreateSessionDialogProps) {
@@ -39,6 +47,9 @@ function CreateSessionDialogBody({
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [linearUrl, setLinearUrl] = useState("");
+  const [githubRepositoryId, setGithubRepositoryId] = useState(
+    defaultGithubRepositoryId ?? repositoryOptions[0]?.id ?? "",
+  );
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,6 +81,21 @@ function CreateSessionDialogBody({
   }
 
   const derivedTitle = deriveSessionTitleFromPrompt(prompt);
+  const repositorySelectOptions = repositoryOptions.map((repository) => ({
+    label: repository.fullName,
+    value: repository.id,
+  }));
+  const defaultRepositoryAvailable = repositoryOptions.some(
+    (repository) => repository.id === defaultGithubRepositoryId,
+  );
+  const fallbackRepositoryId = defaultRepositoryAvailable
+    ? (defaultGithubRepositoryId ?? "")
+    : (repositoryOptions[0]?.id ?? "");
+  const selectedGithubRepositoryId = repositoryOptions.some(
+    (repository) => repository.id === githubRepositoryId,
+  )
+    ? githubRepositoryId
+    : fallbackRepositoryId;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -89,6 +115,7 @@ function CreateSessionDialogBody({
 
     try {
       const result = await createSessionFromClient(supabase, {
+        githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
         title: title.trim() || null,
@@ -155,6 +182,15 @@ function CreateSessionDialogBody({
               placeholder={prompt.trim() ? derivedTitle : "Generated from the prompt"}
             />
           </div>
+
+          {repositoryOptions.length > 0 ? (
+            <SelectField
+              label="Repository"
+              options={repositorySelectOptions}
+              onValueChange={setGithubRepositoryId}
+              value={selectedGithubRepositoryId}
+            />
+          ) : null}
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">

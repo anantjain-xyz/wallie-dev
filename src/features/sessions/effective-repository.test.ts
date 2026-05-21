@@ -37,11 +37,29 @@ function buildSupabaseMock(input: {
   primaryRepositoryId?: string | null;
   pullRequestRepositoryId?: string | null;
   repositories?: Repo[];
+  sessionRepositoryId?: string | null;
 }) {
   const repositories = input.repositories ?? [];
 
   return {
     from(table: string) {
+      if (table === "sessions") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: input.sessionRepositoryId
+                    ? { github_repository_id: input.sessionRepositoryId }
+                    : null,
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
       if (table === "session_pull_requests") {
         return {
           select: () => ({
@@ -126,6 +144,26 @@ function buildSupabaseMock(input: {
 }
 
 describe("resolveEffectiveSessionRepository", () => {
+  it("uses the pinned session repository before pull request and workspace fallbacks", async () => {
+    const resolution = await resolveEffectiveSessionRepository({
+      sessionId: SESSION_ID,
+      supabase: buildSupabaseMock({
+        primaryRepositoryId: "repo-primary",
+        pullRequestRepositoryId: "repo-pr",
+        repositories: [
+          repo("repo-primary", "acme/primary"),
+          repo("repo-pr", "acme/pr"),
+          repo("repo-session", "acme/session"),
+        ],
+        sessionRepositoryId: "repo-session",
+      }) as never,
+      workspaceId: WORKSPACE_ID,
+    });
+
+    expect(resolution.source).toBe("session");
+    expect(resolution.repository?.fullName).toBe("acme/session");
+  });
+
   it("uses the latest session pull request repository before the workspace primary", async () => {
     const resolution = await resolveEffectiveSessionRepository({
       sessionId: SESSION_ID,

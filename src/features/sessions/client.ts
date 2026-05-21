@@ -4,6 +4,7 @@ import { createSessionPayloadSchema } from "@/features/sessions/create";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type CreateSessionInput = {
+  githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
   promptMd: string;
   title?: string | null;
@@ -24,6 +25,7 @@ export async function createSessionFromClient(
   }
 
   const payload = createSessionPayloadSchema.parse({
+    githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl: input.linearIssueUrl?.trim() || null,
     promptMd: trimmedPrompt,
     title: input.title?.trim() || null,

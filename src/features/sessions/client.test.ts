@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionFromClient } from "./client";
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
+const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 
 function mockFetch(response: { body: Record<string, unknown>; ok: boolean; status?: number }) {
   const fetchMock = vi.fn(async () => ({
@@ -35,6 +36,7 @@ describe("createSessionFromClient", () => {
     const fetchMock = mockFetch({ body: { number: 42 }, ok: true });
 
     const result = await createSessionFromClient({} as never, {
+      githubRepositoryId: `  ${REPOSITORY_ID}  `,
       linearIssueUrl: "  https://linear.app/team/issue/TEAM-42/some-slug  ",
       promptMd: "  Add SSO  ",
       title: "  Override Title  ",
@@ -44,6 +46,7 @@ describe("createSessionFromClient", () => {
     expect(result).toEqual({ number: 42 });
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions", {
       body: JSON.stringify({
+        githubRepositoryId: REPOSITORY_ID,
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",
         title: "Override Title",

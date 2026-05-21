@@ -139,6 +139,7 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     title: "Add SSO",
     prompt_md: "Add SSO via Google Workspace",
     creator_member_id: null,
+    github_repository_id: null,
     linear_issue_id: "TEAM-1",
     linear_issue_url: "https://linear.app/team/issue/TEAM-1",
     pipeline_id: "pipe-1",
@@ -237,11 +238,13 @@ function buildAdminMock(opts: MockOptions) {
   mocked.loadWorkspaceAgentConfig.mockResolvedValue(resolvedConfig);
 
   const sessionsTable = {
-    select: () => ({
-      eq: () => ({
+    select: () => {
+      const builder = {
+        eq: () => builder,
         maybeSingle: async () => ({ data: opts.session, error: null }),
-      }),
-    }),
+      };
+      return builder;
+    },
     update: (patch: Record<string, unknown>) => ({
       eq: () => {
         updatedSessions.push(patch);
@@ -929,14 +932,16 @@ describe("handleApproval", () => {
         }),
       },
       sessions: {
-        select: () => ({
-          eq: () => ({
+        select: () => {
+          const builder = {
+            eq: () => builder,
             maybeSingle: async () => ({
               data: baseSession({ current_stage_id: "stage-design" }),
               error: null,
             }),
-          }),
-        }),
+          };
+          return builder;
+        },
       },
       session_pull_requests: {
         select: () => ({
@@ -1020,9 +1025,13 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   const enqueuedJobs: Array<Record<string, unknown>> = [];
 
   const sessionsTable = {
-    select: () => ({
-      eq: () => ({ maybeSingle: async () => ({ data: opts.session, error: null }) }),
-    }),
+    select: () => {
+      const builder = {
+        eq: () => builder,
+        maybeSingle: async () => ({ data: opts.session, error: null }),
+      };
+      return builder;
+    },
     update: (patch: Record<string, unknown>) => {
       sessionUpdates.push(patch);
       const eqChain = {
