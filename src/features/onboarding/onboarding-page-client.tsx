@@ -2337,11 +2337,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         </div>
       </header>
 
-      <MobileStepControl
-        canSelect={!isSaving}
-        items={railItems}
-        onSelect={selectStep}
-      />
+      <MobileStepControl canSelect={!isSaving} items={railItems} onSelect={selectStep} />
 
       <main
         id="main-content"
@@ -2349,11 +2345,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       >
         <aside className="hidden lg:block">
           <div className="sticky top-8">
-            <StepRail
-              canSelect={!isSaving}
-              items={railItems}
-              onSelect={selectStep}
-            />
+            <StepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
           </div>
         </aside>
 
