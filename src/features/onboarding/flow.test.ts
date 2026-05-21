@@ -33,7 +33,7 @@ function onboardingState(
 }
 
 describe("onboarding flow helpers", () => {
-  it("maps completed, skipped, active, and blocked rail states from server state", () => {
+  it("maps completed, skipped, active, and available rail states from server state", () => {
     const items = getOnboardingStepRailItems(
       onboardingState({
         completedSteps: ["github"],
@@ -47,9 +47,9 @@ describe("onboarding flow helpers", () => {
       ["github", "completed"],
       ["repository", "skipped"],
       ["pipeline", "active"],
-      ["linear", "blocked"],
-      ["runtime", "blocked"],
-      ["verify", "blocked"],
+      ["linear", "available"],
+      ["runtime", "available"],
+      ["verify", "available"],
     ]);
   });
 
@@ -189,7 +189,7 @@ describe("onboarding flow helpers", () => {
     });
   });
 
-  it("allows rail navigation backward and to skipped steps but blocks future steps", () => {
+  it("allows rail navigation to any setup step before completion", () => {
     const state = onboardingState({
       currentStep: "runtime",
       skippedSteps: ["linear"],
@@ -204,7 +204,10 @@ describe("onboarding flow helpers", () => {
       currentStep: "linear",
       status: "in_progress",
     });
-    expect(buildOnboardingRailNavigationPatch(state, "verify")).toBeNull();
+    expect(buildOnboardingRailNavigationPatch(state, "verify")).toEqual({
+      currentStep: "verify",
+      status: "in_progress",
+    });
   });
 
   it("does not persist rail navigation after onboarding is completed", () => {

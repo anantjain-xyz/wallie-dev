@@ -1680,11 +1680,11 @@ function StepBody({
 }
 
 function StepRail({
-  canManage,
+  canSelect,
   items,
   onSelect,
 }: {
-  canManage: boolean;
+  canSelect: boolean;
   items: ReturnType<typeof getOnboardingStepRailItems>;
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
@@ -1698,9 +1698,9 @@ function StepRail({
             className={cn(
               "flex w-full items-center gap-2 rounded-[6px] px-3 py-1.5 text-left text-[13px] font-medium transition-colors",
               railStateClasses[step.displayState],
-              (!canManage || !step.isNavigable) && "cursor-not-allowed",
+              (!canSelect || !step.isNavigable) && "cursor-not-allowed",
             )}
-            disabled={!canManage || !step.isNavigable}
+            disabled={!canSelect || !step.isNavigable}
             onClick={() => onSelect(step.id)}
           >
             <StepStateIcon state={step.displayState} />
@@ -1715,11 +1715,11 @@ function StepRail({
 }
 
 function MobileStepControl({
-  canManage,
+  canSelect,
   items,
   onSelect,
 }: {
-  canManage: boolean;
+  canSelect: boolean;
   items: ReturnType<typeof getOnboardingStepRailItems>;
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
@@ -1734,9 +1734,9 @@ function MobileStepControl({
             className={cn(
               "inline-flex h-9 min-w-[112px] items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-[12px] font-medium",
               railStateClasses[step.displayState],
-              (!canManage || !step.isNavigable) && "cursor-not-allowed",
+              (!canSelect || !step.isNavigable) && "cursor-not-allowed",
             )}
-            disabled={!canManage || !step.isNavigable}
+            disabled={!canSelect || !step.isNavigable}
             onClick={() => onSelect(step.id)}
           >
             <StepStateIcon state={step.displayState} />
@@ -1856,6 +1856,25 @@ function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {
     data.setupHealth.primaryRepositoryProfile.configured &&
     data.setupHealth.primaryRepositoryProfile.repositoryId === selectedRepositoryId
   );
+}
+
+function selectOnboardingStepInData(
+  currentData: WorkspaceOnboardingData,
+  step: WorkspaceOnboardingStep,
+): WorkspaceOnboardingData {
+  if (currentData.onboarding.currentStep === step) return currentData;
+
+  return {
+    ...currentData,
+    onboarding: {
+      ...currentData.onboarding,
+      currentStep: step,
+      status:
+        currentData.canManage && currentData.onboarding.status !== "completed"
+          ? "in_progress"
+          : currentData.onboarding.status,
+    },
+  };
 }
 
 export function OnboardingPageClient({ initialData }: OnboardingPageClientProps) {
@@ -2074,8 +2093,14 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function selectStep(step: WorkspaceOnboardingStep) {
-    const patch = buildOnboardingRailNavigationPatch(onboarding, step);
-    if (!patch) return;
+    const currentData = latestDataRef.current;
+    const patch = buildOnboardingRailNavigationPatch(currentData.onboarding, step);
+    const nextData = selectOnboardingStepInData(currentData, step);
+    if (nextData !== currentData) {
+      latestDataRef.current = nextData;
+      setData(nextData);
+    }
+    if (!data.canManage || !patch) return;
     await persistOnboarding(patch, `rail:${step}`);
   }
 
@@ -2237,11 +2262,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         </div>
       </header>
 
-      <MobileStepControl
-        canManage={data.canManage && !isSaving}
-        items={railItems}
-        onSelect={selectStep}
-      />
+      <MobileStepControl canSelect={!isSaving} items={railItems} onSelect={selectStep} />
 
       <main
         id="main-content"
@@ -2249,11 +2270,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       >
         <aside className="hidden lg:block">
           <div className="sticky top-8">
-            <StepRail
-              canManage={data.canManage && !isSaving}
-              items={railItems}
-              onSelect={selectStep}
-            />
+            <StepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
           </div>
         </aside>
 
