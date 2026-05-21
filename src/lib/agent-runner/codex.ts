@@ -8,9 +8,9 @@ import {
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 
-const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
-const CODEX_HOME = "/vercel/sandbox/.codex";
-const CODEX_AUTH_FILE = `${CODEX_HOME}/auth.json`;
+const PROMPT_FILE_NAME = ".wallie-prompt.txt";
+const CODEX_HOME_DIR = ".codex";
+const CODEX_AUTH_FILE_NAME = "auth.json";
 const CHATGPT_AUTH_LEASE_MS = 35 * 60_000;
 
 export interface CodexRunnerOptions {
@@ -55,14 +55,24 @@ export class CodexRunner implements AgentRunner {
     }
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
+    const promptFile = promptFileFor(sandbox);
+    const codexHome = codexHomeFor(sandbox);
 
-    await sandbox.writeFile(PROMPT_FILE, input.prompt);
+    await sandbox.writeFile(promptFile, input.prompt);
+    if (this.options.credential.type !== "codex_access_token") {
+      await ensureCodexHome(sandbox, codexHome);
+    }
 
-    const shellCmd = codexCommandForCredential(model, this.options.credential);
+    const shellCmd = codexCommandForCredential(
+      model,
+      this.options.credential,
+      codexHome,
+      promptFile,
+    );
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CODEX_HOME, ...codexCredentialEnv(this.options.credential) },
+      env: { CI: "1", CODEX_HOME: codexHome, ...codexCredentialEnv(this.options.credential) },
     });
 
     let stdoutBuf = "";
@@ -154,13 +164,16 @@ export class CodexRunner implements AgentRunner {
     if (!sandbox || !input.runId) return;
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
-    await sandbox.writeFile(PROMPT_FILE, input.prompt);
-    await ensureCodexHome(sandbox);
-    await sandbox.writeFile(CODEX_AUTH_FILE, credential.secret, { mode: 0o600 });
+    const promptFile = promptFileFor(sandbox);
+    const codexHome = codexHomeFor(sandbox);
+    const codexAuthFile = codexAuthFileFor(sandbox);
+    await sandbox.writeFile(promptFile, input.prompt);
+    await ensureCodexHome(sandbox, codexHome);
+    await sandbox.writeFile(codexAuthFile, credential.secret, { mode: 0o600 });
 
-    const proc = await sandbox.exec("bash", ["-lc", codexExecCommand(model)], {
+    const proc = await sandbox.exec("bash", ["-lc", codexExecCommand(model, promptFile)], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CODEX_HOME },
+      env: { CI: "1", CODEX_HOME: codexHome },
     });
 
     let stdoutBuf = "";
@@ -226,9 +239,11 @@ export class CodexRunner implements AgentRunner {
  *   { type: "message", role: "assistant", content: "..." }
  *   { type: "text", text: "..." }
  *   { type: "tool_call", name: "...", arguments: {...} }
+ *   { type: "item.completed", item: { type: "agent_message", text: "..." } }
+ *   { type: "turn.completed", usage: {...} }
  *   { type: "result", summary: "..." }
- * Unknown shapes fall through to a raw-text event so we don't silently drop
- * output.
+ * Unknown JSON bookkeeping shapes are ignored; non-JSON stdout falls through
+ * to raw text so we don't silently drop plain output.
  */
 export function parseCodexLine(raw: string): AgentEvent | null {
   const trimmed = raw.trim();
@@ -251,6 +266,21 @@ export function parseCodexLine(raw: string): AgentEvent | null {
       return { type: "tool_use", tool: obj.name, input };
     }
 
+    if (obj.type === "item.completed" && isRecord(obj.item)) {
+      return parseCodexItem(obj.item);
+    }
+
+    if (obj.type === "turn.completed") {
+      const event: AgentEvent = {
+        type: "completion",
+        taskComplete: true,
+        summary: "Codex turn completed",
+      };
+      const usage = parseCodexUsage(obj.usage);
+      if (usage) event.usage = usage;
+      return event;
+    }
+
     if (obj.type === "result") {
       const summary =
         typeof obj.summary === "string"
@@ -258,13 +288,83 @@ export function parseCodexLine(raw: string): AgentEvent | null {
           : typeof obj.result === "string"
             ? obj.result
             : "Codex run finished";
-      return { type: "completion", taskComplete: true, summary };
+      const event: AgentEvent = {
+        type: "completion",
+        taskComplete: true,
+        summary,
+      };
+      const usage = parseCodexUsage(obj.usage);
+      if (usage) event.usage = usage;
+      return event;
     }
 
     return null;
   } catch {
     return { type: "text", text: trimmed };
   }
+}
+
+function parseCodexItem(item: Record<string, unknown>): AgentEvent | null {
+  if (item.type === "agent_message") {
+    const text = textFromCodexContent(item.text ?? item.content);
+    return text ? { type: "text", text } : null;
+  }
+
+  if (
+    (item.type === "tool_call" || item.type === "function_call") &&
+    typeof item.name === "string"
+  ) {
+    const rawInput = item.arguments ?? item.input ?? {};
+    return {
+      type: "tool_use",
+      tool: item.name,
+      input: typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput),
+    };
+  }
+
+  return null;
+}
+
+function textFromCodexContent(content: unknown): string | null {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  for (const block of content) {
+    if (typeof block === "string") {
+      parts.push(block);
+    } else if (isRecord(block) && typeof block.text === "string") {
+      parts.push(block.text);
+    }
+  }
+
+  const text = parts.join("\n").trim();
+  return text || null;
+}
+
+function parseCodexUsage(
+  usage: unknown,
+): { inputTokens: number; outputTokens: number } | undefined {
+  if (!isRecord(usage)) {
+    return undefined;
+  }
+
+  const inputTokens = usage.input_tokens;
+  const outputTokens = usage.output_tokens;
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") {
+    return undefined;
+  }
+
+  return { inputTokens, outputTokens };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function codexCredentialEnv(credential: CodexCredential): Record<string, string> {
@@ -278,18 +378,35 @@ function codexCredentialEnv(credential: CodexCredential): Record<string, string>
   }
 }
 
-function codexCommandForCredential(model: string, credential: CodexCredential): string {
+function promptFileFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>): string {
+  return `${sandbox.repoPath}/${PROMPT_FILE_NAME}`;
+}
+
+function codexHomeFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>): string {
+  return `${sandbox.repoPath}/${CODEX_HOME_DIR}`;
+}
+
+function codexAuthFileFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>): string {
+  return `${codexHomeFor(sandbox)}/${CODEX_AUTH_FILE_NAME}`;
+}
+
+function codexCommandForCredential(
+  model: string,
+  credential: CodexCredential,
+  codexHome: string,
+  promptFile: string,
+): string {
   if (credential.type !== "codex_access_token") {
-    return codexExecCommand(model);
+    return codexExecCommand(model, promptFile);
   }
 
   const loginCommand = [
-    `mkdir -p ${shellQuote(CODEX_HOME)}`,
+    `mkdir -p ${shellQuote(codexHome)}`,
     `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token -c ${shellQuote(
       `cli_auth_credentials_store="file"`,
     )} >/dev/stderr`,
   ].join(" && ");
-  return `${loginCommand} && ${codexExecCommand(model)}`;
+  return `${loginCommand} && ${codexExecCommand(model, promptFile)}`;
 }
 
 async function persistRefreshedChatGptAuthJson(input: {
@@ -298,7 +415,7 @@ async function persistRefreshedChatGptAuthJson(input: {
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>;
   store: CodexChatGptAuthStore;
 }) {
-  const refreshedAuthJson = await input.sandbox.readFile(CODEX_AUTH_FILE);
+  const refreshedAuthJson = await input.sandbox.readFile(codexAuthFileFor(input.sandbox));
   if (!refreshedAuthJson || refreshedAuthJson === input.credential.secret) return;
 
   const metadata = parseCodexChatGptAuthJson(refreshedAuthJson);
@@ -311,7 +428,7 @@ async function persistRefreshedChatGptAuthJson(input: {
   });
 }
 
-function codexExecCommand(model: string): string {
+function codexExecCommand(model: string, promptFile: string): string {
   const cliArgs = [
     "exec",
     "--model",
@@ -323,11 +440,14 @@ function codexExecCommand(model: string): string {
     "--json",
     "-",
   ];
-  return `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
+  return `codex ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 }
 
-async function ensureCodexHome(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>) {
-  const proc = await sandbox.exec("bash", ["-lc", `mkdir -p ${shellQuote(CODEX_HOME)}`], {
+async function ensureCodexHome(
+  sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>,
+  codexHome: string,
+) {
+  const proc = await sandbox.exec("bash", ["-lc", `mkdir -p ${shellQuote(codexHome)}`], {
     cwd: sandbox.repoPath,
     env: { CI: "1" },
   });

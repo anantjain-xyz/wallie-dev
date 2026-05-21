@@ -2,7 +2,7 @@ import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
 
-const PROMPT_FILE = "/vercel/sandbox/.wallie-prompt.txt";
+const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 
 export interface ClaudeCodeRunnerOptions {
   /** User-supplied Anthropic API key resolved by getClaudeCodeCredentialForUser. */
@@ -37,7 +37,8 @@ export class ClaudeCodeRunner implements AgentRunner {
 
     // Vercel Sandbox's runCommand has no stdin support; materialise the prompt
     // as a file and pipe it via bash redirection.
-    await sandbox.writeFile(PROMPT_FILE, input.prompt);
+    const promptFile = `${sandbox.repoPath}/${PROMPT_FILE_NAME}`;
+    await sandbox.writeFile(promptFile, input.prompt);
 
     const model = this.options.model ?? DEFAULT_CLAUDE_CODE_MODEL;
     const cliArgs = [
@@ -58,7 +59,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       cliArgs.push("--resume", input.continueSessionId);
     }
 
-    const shellCmd = `claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(PROMPT_FILE)}`;
+    const shellCmd = `claude ${cliArgs.map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,

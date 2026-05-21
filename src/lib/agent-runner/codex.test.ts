@@ -48,12 +48,21 @@ describe("CodexRunner", () => {
     sandbox.scriptExec(
       (c) => c.cmd === "bash",
       [
+        { data: `{"type":"thread.started","thread_id":"thread-1"}\n`, stream: "stdout" },
+        { data: `{"type":"turn.started"}\n`, stream: "stdout" },
         { data: `{"type":"text","text":"thinking..."}\n`, stream: "stdout" },
+        {
+          data: `{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"Drafted product spec"}}\n`,
+          stream: "stdout",
+        },
         {
           data: `{"type":"tool_call","name":"read_file","arguments":{"path":"a.ts"}}\n`,
           stream: "stdout",
         },
-        { data: `{"type":"result","summary":"all done"}\n`, stream: "stdout" },
+        {
+          data: `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":4}}\n`,
+          stream: "stdout",
+        },
       ],
     );
 
@@ -71,8 +80,14 @@ describe("CodexRunner", () => {
 
     expect(events).toEqual([
       { type: "text", text: "thinking..." },
+      { type: "text", text: "Drafted product spec" },
       { type: "tool_use", tool: "read_file", input: '{"path":"a.ts"}' },
-      { type: "completion", taskComplete: true, summary: "all done" },
+      {
+        type: "completion",
+        taskComplete: true,
+        summary: "Codex turn completed",
+        usage: { inputTokens: 10, outputTokens: 4 },
+      },
       { type: "completion", taskComplete: true, summary: "Codex session completed" },
     ]);
 
@@ -110,12 +125,14 @@ describe("CodexRunner", () => {
       void _;
     }
 
-    expect(sandbox.calls[0]?.opts.env).toMatchObject({
+    expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
+    const execCall = sandbox.calls[1]!;
+    expect(execCall.opts.env).toMatchObject({
       CODEX_API_KEY: "sk-test",
       OPENAI_API_KEY: "sk-test",
     });
-    expect(sandbox.calls[0]?.opts.env).not.toHaveProperty("CODEX_ACCESS_TOKEN");
-    expect(sandbox.calls[0]?.args[1]).not.toContain("codex login --with-access-token");
+    expect(execCall.opts.env).not.toHaveProperty("CODEX_ACCESS_TOKEN");
+    expect(execCall.args[1]).not.toContain("codex login --with-access-token");
   });
 
   it("writes and persists ChatGPT auth.json for subscription credentials", async () => {
@@ -426,6 +443,30 @@ describe("parseCodexLine", () => {
       type: "tool_use",
       tool: "read_file",
       input: '{"path":"a.ts"}',
+    });
+  });
+
+  it("parses current Codex item.completed agent messages as text", () => {
+    expect(
+      parseCodexLine(
+        '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"artifact-output"}}',
+      ),
+    ).toEqual({
+      type: "text",
+      text: "artifact-output",
+    });
+  });
+
+  it("parses current Codex turn.completed usage as completion metadata", () => {
+    expect(
+      parseCodexLine(
+        '{"type":"turn.completed","usage":{"input_tokens":15762,"cached_input_tokens":2432,"output_tokens":34,"reasoning_output_tokens":26}}',
+      ),
+    ).toEqual({
+      type: "completion",
+      taskComplete: true,
+      summary: "Codex turn completed",
+      usage: { inputTokens: 15762, outputTokens: 34 },
     });
   });
 
