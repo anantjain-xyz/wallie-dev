@@ -2,6 +2,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 import { ensureProfileForUser, normalizeNextPath, resolveAuthenticatedHomePath } from "@/lib/auth";
+import { emailCodeAuthCookieName, emailCodeAuthCookieOptions } from "@/lib/auth-email-code-cookie";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -11,6 +12,19 @@ function loginErrorPath(next: string, error: string) {
 
 function isEmailOtpType(value: string | null): value is EmailOtpType {
   return value === "email" || value === "recovery" || value === "invite";
+}
+
+function redirectToAuthenticatedPath(request: NextRequest, redirectTarget: string) {
+  const response = NextResponse.redirect(new URL(redirectTarget, request.url), {
+    status: 303,
+  });
+
+  response.cookies.set(emailCodeAuthCookieName, "", {
+    ...emailCodeAuthCookieOptions,
+    maxAge: 0,
+  });
+
+  return response;
 }
 
 export async function GET(request: NextRequest) {
@@ -57,7 +71,5 @@ export async function GET(request: NextRequest) {
 
   const redirectTarget = next === "/" ? await resolveAuthenticatedHomePath(supabase) : next;
 
-  return NextResponse.redirect(new URL(redirectTarget, request.url), {
-    status: 303,
-  });
+  return redirectToAuthenticatedPath(request, redirectTarget);
 }
