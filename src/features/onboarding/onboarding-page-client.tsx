@@ -8,7 +8,6 @@ import type {
   ApplyAgentConfigDefaultsResponse,
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
-import type { VerifyAgentConfigResponse } from "@/app/api/agent-config/verify/route";
 import { PlusIcon, XIcon } from "@/components/shared/icons";
 import { SelectField } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
@@ -572,7 +571,7 @@ const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
   },
   {
     configKey: "agent_model",
-    description: "Use Verify to check the model against the selected provider.",
+    description: "Model identifier passed to the selected agent provider.",
     label: "Agent model",
     placeholder: RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model,
     type: "text",
@@ -664,10 +663,6 @@ function RuntimeStep({
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const nextNewSecretRowId = useRef(1);
-  const [verifyState, setVerifyState] = useState<{
-    isVerifying: boolean;
-    result: VerifyAgentConfigResponse | null;
-  }>({ isVerifying: false, result: null });
   const handleCodexStatusChange = useCallback(
     (status: CodexConnectionStatus) =>
       onDataChange((current) => updateCodexConnectionInData(current, status)),
@@ -756,22 +751,12 @@ function RuntimeStep({
     !hasPartialNewSecretDraft &&
     (repositorySecretDrafts.length > 0 || completeNewSecretDrafts.length > 0);
 
-  const canVerify =
-    data.canManage &&
-    !isSaving &&
-    busyAction === null &&
-    !verifyState.isVerifying &&
-    !hasInvalidDrafts &&
-    drafts.agent_model.trim() !== "";
   useEffect(() => {
     onRuntimeStateChange({ hasInvalidDrafts, hasUnsavedDrafts, readiness });
   }, [hasInvalidDrafts, hasUnsavedDrafts, onRuntimeStateChange, readiness, readinessSignature]);
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
-    if (key === "agent_model" || key === "agent_provider") {
-      setVerifyState({ isVerifying: false, result: null });
-    }
   }
 
   async function handleSaveConfig() {
@@ -952,39 +937,6 @@ function RuntimeStep({
     }
   }
 
-  async function handleVerifyModel() {
-    if (!canVerify) return;
-    setVerifyState({ isVerifying: true, result: null });
-    setRuntimeError(null);
-
-    try {
-      const response = await fetch("/api/agent-config/verify", {
-        body: JSON.stringify({
-          model: drafts.agent_model.trim(),
-          provider: selectedProvider,
-          workspaceId: data.workspace.id,
-        }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      });
-      const body = (await response.json().catch(() => null)) as
-        | (VerifyAgentConfigResponse & { error?: string })
-        | null;
-      if (!response.ok || !body) {
-        throw new Error(body?.error ?? "Verify call failed.");
-      }
-      setVerifyState({ isVerifying: false, result: body });
-    } catch (error) {
-      setVerifyState({
-        isVerifying: false,
-        result: {
-          ok: false,
-          error: error instanceof Error ? error.message : "Verify call failed.",
-        },
-      });
-    }
-  }
-
   return (
     <div className="space-y-5">
       {runtimeError ? (
@@ -1103,35 +1055,8 @@ function RuntimeStep({
             {hasUnsavedDrafts
               ? "Save agent config before completing Runtime."
               : "No unsaved changes."}
-            {verifyState.result ? (
-              <span
-                className={cn(
-                  "ml-2",
-                  verifyState.result.ok === true
-                    ? "text-success"
-                    : verifyState.result.ok === "skipped"
-                      ? "text-muted"
-                      : "text-danger",
-                )}
-                role="status"
-              >
-                {verifyState.result.ok === true
-                  ? "Reachable"
-                  : verifyState.result.ok === "skipped"
-                    ? verifyState.result.reason
-                    : verifyState.result.error}
-              </span>
-            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              className="ui-button"
-              disabled={!canVerify}
-              onClick={() => void handleVerifyModel()}
-              type="button"
-            >
-              {verifyState.isVerifying ? "Verifying..." : "Verify model"}
-            </button>
             <button
               className="ui-button-primary"
               disabled={!canSaveConfig}

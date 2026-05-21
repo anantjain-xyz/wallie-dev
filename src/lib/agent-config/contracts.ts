@@ -66,8 +66,8 @@ export function getRecommendedAgentConfigDefault(
  * Model identifiers must match the prefix of a supported provider family.
  * This prevents typos (e.g. "lol") while keeping the field flexible enough
  * that a new model release like `claude-sonnet-4-7` works without a code
- * change. The Verify button (which actually hits the provider) is the
- * authoritative reachability check.
+ * change. Runtime readiness still pairs the configured model family with the
+ * selected provider before sessions can run.
  *
  * Lowercase-only: provider model IDs are always lowercase in practice, and
  * the matching DB CHECK uses case-sensitive `LIKE`. Rejecting uppercase here
@@ -196,9 +196,8 @@ export function isAgentProvider(value: unknown): value is AgentProvider {
 
 /**
  * Some providers only accept a subset of model identifiers — Claude Code
- * expects `claude-*`, Codex expects OpenAI-family ids. The Verify endpoint uses this
- * to short-circuit before paying for a network round-trip, and the UI uses
- * it to surface a helpful inline warning.
+ * expects `claude-*`, Codex expects OpenAI-family ids. Runtime readiness uses
+ * this to surface a helpful inline warning before sessions run.
  */
 export function modelMatchesProvider(provider: AgentProvider, model: string): boolean {
   const trimmed = model.trim();
