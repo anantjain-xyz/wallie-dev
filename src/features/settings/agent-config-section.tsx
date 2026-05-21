@@ -4,7 +4,11 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
-import { SelectField } from "@/components/ui/select";
+import {
+  AGENT_PROVIDER_EMPTY_OPTION,
+  AGENT_PROVIDER_SELECT_OPTIONS,
+} from "@/components/shared/agent-provider-options";
+import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
@@ -16,7 +20,6 @@ import {
   type AgentConfigKey,
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
-  AGENT_PROVIDERS,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
   parseAgentConfigValue,
@@ -44,7 +47,7 @@ type FieldDescriptor = {
   configKey: AgentConfigKey;
   description: string;
   label: string;
-  options?: readonly string[];
+  options?: readonly SelectOption[];
   placeholder?: string;
   type: FieldType;
 };
@@ -99,7 +102,7 @@ function AgentConfigField({
   error: string | null;
   label: string;
   onChange: (next: string) => void;
-  options?: readonly string[];
+  options?: readonly SelectOption[];
   placeholder?: string;
   trailing?: React.ReactNode;
   type: FieldType;
@@ -109,10 +112,10 @@ function AgentConfigField({
       {type === "select" && options ? (
         <SelectField
           disabled={disabled}
-          emptyOption={{ label: "Not configured", value: "" }}
+          emptyOption={AGENT_PROVIDER_EMPTY_OPTION}
           label={label}
           onValueChange={onChange}
-          options={options.map((option) => ({ label: option, value: option }))}
+          options={options}
           value={draft}
         />
       ) : (
@@ -196,7 +199,7 @@ export function AgentConfigSection({
         configKey: "agent_provider",
         description: "Which agent CLI to use for coding tasks.",
         label: "Agent provider",
-        options: AGENT_PROVIDERS,
+        options: AGENT_PROVIDER_SELECT_OPTIONS,
         type: "select",
       },
       {

@@ -231,6 +231,8 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain("Agent provider");
+    expect(html).toContain("Codex");
+    expect(html).not.toContain(">codex<");
     expect(html).toContain("Provider access");
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain('role="combobox"');

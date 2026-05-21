@@ -8,8 +8,9 @@ import type {
   ApplyAgentConfigDefaultsResponse,
   UpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
+import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { PlusIcon, XIcon } from "@/components/shared/icons";
-import { SelectField } from "@/components/ui/select";
+import { SelectField, type SelectOption } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -52,7 +53,6 @@ import type {
 import {
   type AgentConfigKey,
   AGENT_CONFIG_LIMITS,
-  AGENT_PROVIDERS,
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   getRecommendedAgentConfigDefault,
@@ -105,7 +105,7 @@ type FieldDescriptor = {
   configKey: AgentConfigKey;
   description: string;
   label: string;
-  options?: readonly string[];
+  options?: readonly SelectOption[];
   placeholder?: string;
   type: FieldType;
 };
@@ -566,7 +566,7 @@ const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
     configKey: "agent_provider",
     description: "Choose the runtime Wallie uses for coding-agent work.",
     label: "Agent provider",
-    options: AGENT_PROVIDERS,
+    options: AGENT_PROVIDER_SELECT_OPTIONS,
     type: "select",
   },
   {
@@ -982,7 +982,7 @@ function RuntimeStep({
                   disabled={busyAction !== null}
                   label={status.field.label}
                   onValueChange={(value) => handleFieldChange(status.field.configKey, value)}
-                  options={status.field.options.map((option) => ({ label: option, value: option }))}
+                  options={status.field.options}
                   value={status.draft}
                 />
               ) : (
@@ -1020,7 +1020,7 @@ function RuntimeStep({
                   disabled={busyAction !== null}
                   label={status.field.label}
                   onValueChange={(value) => handleFieldChange(status.field.configKey, value)}
-                  options={status.field.options.map((option) => ({ label: option, value: option }))}
+                  options={status.field.options}
                   value={status.draft}
                 />
               ) : (
