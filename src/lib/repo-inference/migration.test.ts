@@ -40,7 +40,7 @@ describe("workspace repository profiles schema", () => {
     expect(migration).toContain("workspace_repository_profiles_insert_managers");
     expect(migration).toContain("workspace_repository_profiles_update_managers");
     expect(migration).toContain("workspace_repository_profiles_delete_managers");
-    expect(migration).toContain("public.can_manage_workspace(workspace_id)");
+    expect(migration).toContain("internal.can_manage_workspace(workspace_id)");
   });
 
   it("provides an atomic save function for switching the primary profile", () => {

@@ -40,9 +40,9 @@ describe("workspace onboarding schema", () => {
     );
     expect(migration).not.toContain("grant insert, update, delete on public.workspace_onboarding");
     expect(migration).toContain("workspace_onboarding_select_membership");
-    expect(migration).toContain("workspace_id in (select public.current_user_workspace_ids())");
+    expect(migration).toContain("workspace_id in (select internal.current_user_workspace_ids())");
     expect(migration).toContain("workspace_onboarding_insert_managers");
     expect(migration).toContain("workspace_onboarding_update_managers");
-    expect(migration).toContain("public.can_manage_workspace(workspace_id)");
+    expect(migration).toContain("internal.can_manage_workspace(workspace_id)");
   });
 });
