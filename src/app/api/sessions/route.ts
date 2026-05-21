@@ -97,12 +97,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: number, error: numberError } = await access.context.supabase.rpc(
-    "next_session_number",
-    {
-      target_workspace_id: normalized.workspaceId,
-    },
-  );
+  const admin = createSupabaseAdminClient();
+  const { data: number, error: numberError } = await admin.rpc("next_session_number", {
+    actor_user_id: access.context.user.id,
+    target_workspace_id: normalized.workspaceId,
+  });
   if (numberError) {
     return NextResponse.json({ error: numberError.message }, { status: 500 });
   }
@@ -140,7 +139,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const admin = createSupabaseAdminClient();
   const { data: sessionRow, error: sessionError } = await admin
     .from("sessions")
     .insert({

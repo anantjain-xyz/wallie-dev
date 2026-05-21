@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  createSupabaseAdminClient: vi.fn(),
   createSupabaseServerClient: vi.fn(),
   ensureProfileForUser: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
@@ -13,6 +14,10 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/supabase/auth", () => ({
   getSupabaseUserOrNull: mocked.getSupabaseUserOrNull,
+}));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: mocked.createSupabaseAdminClient,
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -35,8 +40,16 @@ describe("POST /api/workspaces", () => {
   });
 
   it("returns the workspace onboarding redirect for newly created workspaces", async () => {
-    mocked.createSupabaseServerClient.mockResolvedValue({ rpc: mocked.rpc });
-    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
+    mocked.createSupabaseServerClient.mockResolvedValue({});
+    mocked.createSupabaseAdminClient.mockReturnValue({ rpc: mocked.rpc });
+    mocked.getSupabaseUserOrNull.mockResolvedValue({
+      email: "owner@example.com",
+      id: "user-1",
+      user_metadata: {
+        avatar_url: "https://example.com/avatar.png",
+        full_name: "Ada Lovelace",
+      },
+    });
     mocked.rpc.mockResolvedValue({
       data: {
         id: "workspace-1",
@@ -58,6 +71,10 @@ describe("POST /api/workspaces", () => {
       },
     });
     expect(mocked.rpc).toHaveBeenCalledWith("create_workspace", {
+      actor_avatar_url: "https://example.com/avatar.png",
+      actor_email: "owner@example.com",
+      actor_full_name: "Ada Lovelace",
+      actor_user_id: "user-1",
       requested_slug: "northwind-labs",
       workspace_name: "Northwind Labs",
     });

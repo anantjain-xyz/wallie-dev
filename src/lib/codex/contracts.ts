@@ -79,7 +79,7 @@ export interface CodexCredentialStatusRow {
   auth_cache_last_refresh: string | null;
   auth_reconnect_reason: string | null;
   auth_reconnect_required: boolean;
-  credential_type: CodexCredentialType;
+  credential_type: string;
   updated_at: string;
 }
 
@@ -98,15 +98,19 @@ export interface CodexCredentialConnectionStatus {
 export function mapCodexCredentialConnectionStatus(
   row: CodexCredentialStatusRow,
 ): CodexCredentialConnectionStatus {
+  if (!isCodexCredentialType(row.credential_type)) {
+    throw new Error("The saved Codex credential type is not supported.");
+  }
+
+  const credentialType = row.credential_type;
   const expired = credentialExpired(row.access_token_expires_at);
-  const reconnectRequired =
-    row.credential_type === "chatgpt_auth_json" && row.auth_reconnect_required;
+  const reconnectRequired = credentialType === "chatgpt_auth_json" && row.auth_reconnect_required;
 
   return {
     accountEmail: row.account_email,
     authCacheLastRefresh: row.auth_cache_last_refresh,
     connected: !expired && !reconnectRequired,
-    credentialType: row.credential_type,
+    credentialType,
     expired,
     expiresAt: row.access_token_expires_at,
     reconnectReason: row.auth_reconnect_reason,

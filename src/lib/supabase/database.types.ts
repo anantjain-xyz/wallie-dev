@@ -7,31 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       agent_jobs: {
@@ -292,13 +267,7 @@ export type Database = {
           instructions: string | null
           output_tail: string | null
           sandbox_id: string
-          status:
-            | "starting"
-            | "prompted"
-            | "authenticated"
-            | "canceled"
-            | "error"
-            | "expired"
+          status: string
           updated_at: string
           user_code: string | null
           user_id: string
@@ -319,13 +288,7 @@ export type Database = {
           instructions?: string | null
           output_tail?: string | null
           sandbox_id: string
-          status?:
-            | "starting"
-            | "prompted"
-            | "authenticated"
-            | "canceled"
-            | "error"
-            | "expired"
+          status?: string
           updated_at?: string
           user_code?: string | null
           user_id: string
@@ -346,13 +309,7 @@ export type Database = {
           instructions?: string | null
           output_tail?: string | null
           sandbox_id?: string
-          status?:
-            | "starting"
-            | "prompted"
-            | "authenticated"
-            | "canceled"
-            | "error"
-            | "expired"
+          status?: string
           updated_at?: string
           user_code?: string | null
           user_id?: string
@@ -1092,69 +1049,6 @@ export type Database = {
           },
         ]
       }
-      user_codex_credentials: {
-        Row: {
-          access_token_expires_at: string | null
-          account_email: string | null
-          account_id: string | null
-          auth_cache_last_refresh: string | null
-          auth_lock_expires_at: string | null
-          auth_lock_run_id: string | null
-          auth_reconnect_reason: string | null
-          auth_reconnect_required: boolean
-          created_at: string
-          credential_type:
-            | "chatgpt_auth_json"
-            | "codex_access_token"
-            | "platform_api_key"
-          credential_version: number
-          encrypted_credential: string
-          scope: string | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          access_token_expires_at?: string | null
-          account_email?: string | null
-          account_id?: string | null
-          auth_cache_last_refresh?: string | null
-          auth_lock_expires_at?: string | null
-          auth_lock_run_id?: string | null
-          auth_reconnect_reason?: string | null
-          auth_reconnect_required?: boolean
-          created_at?: string
-          credential_type?:
-            | "chatgpt_auth_json"
-            | "codex_access_token"
-            | "platform_api_key"
-          credential_version?: number
-          encrypted_credential: string
-          scope?: string | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          access_token_expires_at?: string | null
-          account_email?: string | null
-          account_id?: string | null
-          auth_cache_last_refresh?: string | null
-          auth_lock_expires_at?: string | null
-          auth_lock_run_id?: string | null
-          auth_reconnect_reason?: string | null
-          auth_reconnect_required?: boolean
-          created_at?: string
-          credential_type?:
-            | "chatgpt_auth_json"
-            | "codex_access_token"
-            | "platform_api_key"
-          credential_version?: number
-          encrypted_credential?: string
-          scope?: string | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       user_claude_code_credentials: {
         Row: {
           created_at: string
@@ -1171,6 +1065,60 @@ export type Database = {
         Update: {
           created_at?: string
           encrypted_api_key?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_codex_credentials: {
+        Row: {
+          access_token_expires_at: string | null
+          account_email: string | null
+          account_id: string | null
+          auth_cache_last_refresh: string | null
+          auth_lock_expires_at: string | null
+          auth_lock_run_id: string | null
+          auth_reconnect_reason: string | null
+          auth_reconnect_required: boolean
+          created_at: string
+          credential_type: string
+          credential_version: number
+          encrypted_credential: string
+          scope: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token_expires_at?: string | null
+          account_email?: string | null
+          account_id?: string | null
+          auth_cache_last_refresh?: string | null
+          auth_lock_expires_at?: string | null
+          auth_lock_run_id?: string | null
+          auth_reconnect_reason?: string | null
+          auth_reconnect_required?: boolean
+          created_at?: string
+          credential_type?: string
+          credential_version?: number
+          encrypted_credential: string
+          scope?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token_expires_at?: string | null
+          account_email?: string | null
+          account_id?: string | null
+          auth_cache_last_refresh?: string | null
+          auth_lock_expires_at?: string | null
+          auth_lock_run_id?: string | null
+          auth_reconnect_reason?: string | null
+          auth_reconnect_required?: boolean
+          created_at?: string
+          credential_type?: string
+          credential_version?: number
+          encrypted_credential?: string
+          scope?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -1562,9 +1510,9 @@ export type Database = {
           target_user_id: string
         }
         Returns: {
-          access_token_expires_at: string | null
-          auth_cache_last_refresh: string | null
-          auth_reconnect_reason: string | null
+          access_token_expires_at: string
+          auth_cache_last_refresh: string
+          auth_reconnect_reason: string
           auth_reconnect_required: boolean
           credential_type: string
           credential_version: number
@@ -1589,10 +1537,6 @@ export type Database = {
           workspace_id: string
         }[]
       }
-      can_manage_workspace: {
-        Args: { target_workspace_id: string }
-        Returns: boolean
-      }
       claim_agent_job: {
         Args: { default_concurrency_limit?: number; target_job_id: string }
         Returns: {
@@ -1606,6 +1550,9 @@ export type Database = {
           requested_by_member_id: string | null
           scheduled_at: string | null
           session_id: string
+          stage_id: string | null
+          stage_name: string | null
+          stage_slug: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -1620,7 +1567,14 @@ export type Database = {
         }
       }
       create_workspace: {
-        Args: { requested_slug?: string; workspace_name: string }
+        Args: {
+          actor_avatar_url?: string
+          actor_email?: string
+          actor_full_name?: string
+          actor_user_id: string
+          requested_slug?: string
+          workspace_name: string
+        }
         Returns: {
           avatar_path: string | null
           created_at: string
@@ -1637,7 +1591,6 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      current_user_workspace_ids: { Args: never; Returns: string[] }
       mark_codex_auth_reconnect_required: {
         Args: {
           reconnect_reason: string
@@ -1647,14 +1600,14 @@ export type Database = {
         Returns: undefined
       }
       next_session_number: {
-        Args: { target_workspace_id: string }
+        Args: { actor_user_id: string; target_workspace_id: string }
         Returns: number
       }
       persist_codex_auth_json: {
         Args: {
-          new_account_email: string | null
-          new_account_id: string | null
-          new_auth_cache_last_refresh: string | null
+          new_account_email: string
+          new_account_id: string
+          new_auth_cache_last_refresh: string
           new_encrypted_credential: string
           previous_credential_version: number
           target_run_id: string
@@ -1678,20 +1631,43 @@ export type Database = {
       }
       save_workspace_repository_profile: {
         Args: {
-          selected_build_command: string | null
+          selected_build_command: string
           selected_env_key_suggestions: string[]
           selected_framework_hints: string[]
           selected_inference_confidence: string
           selected_inference_sources: Json
-          selected_install_command: string | null
+          selected_install_command: string
           selected_language_hints: string[]
-          selected_package_manager: string | null
+          selected_package_manager: string
           selected_setup_notes: string
-          selected_test_command: string | null
+          selected_test_command: string
           target_github_repository_id: string
           target_workspace_id: string
         }
-        Returns: Database["public"]["Tables"]["workspace_repository_profiles"]["Row"]
+        Returns: {
+          build_command: string | null
+          created_at: string
+          env_key_suggestions: string[]
+          framework_hints: string[]
+          github_repository_id: string
+          id: string
+          inference_confidence: string
+          inference_sources: Json
+          install_command: string | null
+          is_primary: boolean
+          language_hints: string[]
+          package_manager: string | null
+          setup_notes: string
+          test_command: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "workspace_repository_profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       schedule_job_retry: {
         Args: {
@@ -1710,6 +1686,9 @@ export type Database = {
           requested_by_member_id: string | null
           scheduled_at: string | null
           session_id: string
+          stage_id: string | null
+          stage_name: string | null
+          stage_slug: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["agent_job_status"]
           trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
@@ -1876,9 +1855,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       agent_job_status: [
@@ -1914,3 +1890,4 @@ export const Constants = {
     },
   },
 } as const
+

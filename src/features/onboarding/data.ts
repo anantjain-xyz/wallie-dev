@@ -14,7 +14,7 @@ import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitiv
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
-import { credentialExpired } from "@/lib/codex/contracts";
+import { credentialExpired, isCodexCredentialType } from "@/lib/codex/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -165,11 +165,11 @@ function codexConnectionStatus(
   row: {
     access_token_expires_at: string | null;
     auth_reconnect_required: boolean;
-    credential_type: "chatgpt_auth_json" | "codex_access_token" | "platform_api_key";
+    credential_type: string;
     updated_at: string;
   } | null,
 ) {
-  if (!row) {
+  if (!row || !isCodexCredentialType(row.credential_type)) {
     return {
       connected: false,
       credentialType: null,
