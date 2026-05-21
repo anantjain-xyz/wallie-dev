@@ -243,6 +243,19 @@ function primaryFooterButton(html: string) {
   return footerButton;
 }
 
+function desktopRailButton(html: string, label: string) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = html.match(
+    new RegExp(
+      `<button[^>]*>[^]*?<span class="block truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
+    ),
+  )?.[0];
+  if (!match) {
+    throw new Error(`${label} rail button was not rendered.`);
+  }
+  return match;
+}
+
 function connectedInstallation() {
   return {
     appId: 123,
@@ -448,6 +461,38 @@ describe("OnboardingPageClient", () => {
     expect(blocked).toContain("Install skills opens a pull request");
     expect(primaryFooterButton(blocked)).toContain("disabled");
     expect(primaryFooterButton(readyToAdvance)).not.toContain("disabled");
+  });
+
+  it("renders future and read-only sidebar steps as section navigation targets", () => {
+    const managerHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: [],
+            currentStep: "github",
+          },
+        }),
+      }),
+    );
+    const readOnlyHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          canManage: false,
+          currentMember: { id: "member-2", role: "member" },
+          onboarding: {
+            completedSteps: [],
+            currentStep: "github",
+          },
+        }),
+      }),
+    );
+
+    const futureButton = desktopRailButton(managerHtml, "Verify setup");
+    const readOnlyButton = desktopRailButton(readOnlyHtml, "Analyze repository");
+    expect(futureButton).not.toContain("disabled");
+    expect(futureButton).not.toContain("cursor-not-allowed");
+    expect(readOnlyButton).not.toContain("disabled");
+    expect(readOnlyButton).not.toContain("cursor-not-allowed");
   });
 
   it("shows GitHub setup actions for the effective fallback selected repository", () => {

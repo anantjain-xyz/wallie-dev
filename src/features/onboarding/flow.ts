@@ -126,7 +126,6 @@ function removeStep(
 export function getOnboardingStepRailItems(
   onboarding: WorkspaceOnboardingState,
 ): OnboardingStepRailItem[] {
-  const activeIndex = onboardingStepIndex(onboarding.currentStep);
   const completed =
     onboarding.status === "completed"
       ? new Set<WorkspaceOnboardingStep>(WORKSPACE_ONBOARDING_STEPS)
@@ -142,14 +141,14 @@ export function getOnboardingStepRailItems(
       displayState = "completed";
     } else if (skipped.has(step.id)) {
       displayState = "skipped";
-    } else if (index < activeIndex) {
+    } else {
       displayState = "available";
     }
 
     return {
       ...step,
       displayState,
-      isNavigable: displayState !== "blocked",
+      isNavigable: true,
       position: index + 1,
     };
   });
@@ -248,9 +247,7 @@ export function buildOnboardingRailNavigationPatch(
     return null;
   }
 
-  const target = getOnboardingStepRailItems(onboarding).find((step) => step.id === targetStep);
-
-  if (!target?.isNavigable || targetStep === onboarding.currentStep) {
+  if (targetStep === onboarding.currentStep) {
     return null;
   }
 
