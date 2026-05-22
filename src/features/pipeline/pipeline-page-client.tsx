@@ -253,7 +253,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                       <article
                         key={card.id}
                         className={cn(
-                          "group relative rounded-[8px] border border-border/80 bg-surface p-3 transition-[border-color,box-shadow] duration-150 hover:border-border-strong hover:shadow-[var(--shadow-ambient)]",
+                          "relative rounded-[8px] border border-border/80 bg-surface p-3 transition-colors duration-150 hover:bg-surface-strong",
                           card.phaseStatus === "rejected" &&
                             "border-danger/30 border-l-2 border-l-danger",
                         )}
@@ -264,7 +264,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                           className="absolute inset-0 z-10 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                         />
                         <div className="flex min-w-0 items-start justify-between gap-3">
-                          <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground transition-colors duration-150 group-hover:text-accent">
+                          <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">
                             <span className="line-clamp-3 break-words">{card.title}</span>
                           </h3>
                           <SessionPhaseStatusLabel
