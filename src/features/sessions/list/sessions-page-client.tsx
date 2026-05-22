@@ -192,17 +192,23 @@ function SessionRow({
   session: SessionSummary;
   workspaceSlug: string;
 }) {
+  const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
+
   return (
-    <li className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-muted md:flex-row md:items-center">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <li className="relative flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-strong md:flex-row md:items-center">
+      <Link
+        href={detailHref}
+        className="absolute inset-0 z-10 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
+        <span className="sr-only">
+          Open session #{session.number}: {session.title}
+        </span>
+      </Link>
+
+      <div className="pointer-events-none relative z-20 flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[11px] text-muted">#{session.number}</span>
-          <Link
-            href={workspaceSessionDetailPath(workspaceSlug, session.number)}
-            className="truncate text-[14px] font-medium text-foreground hover:underline"
-          >
-            {session.title}
-          </Link>
+          <span className="truncate text-[14px] font-medium text-foreground">{session.title}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>{session.currentStageName}</span>
@@ -219,8 +225,9 @@ function SessionRow({
         </div>
       </div>
 
-      <div className="shrink-0">
+      <div className="pointer-events-none relative z-20 shrink-0">
         <SessionConnections
+          className="pointer-events-auto"
           compact
           linearIssueId={session.linearIssueId}
           linearIssueUrl={session.linearIssueUrl}
