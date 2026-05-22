@@ -23,6 +23,10 @@ type CreateSessionDialogProps = {
 
 const LINEAR_URL_RE = /^https?:\/\/(?:[\w-]+\.)?linear\.app\//i;
 
+export function isSessionSubmitShortcut(event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey">) {
+  return (event.metaKey || event.ctrlKey) && event.key === "Enter";
+}
+
 // When `open` is false the body does not mount, so all of its local state is
 // reset automatically on reopen. This avoids a reset effect (which the
 // react-hooks/set-state-in-effect lint rule forbids).
@@ -100,6 +104,10 @@ function CreateSessionDialogBody({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (isSubmitting) {
+      return;
+    }
+
     if (!prompt.trim()) {
       setErrorMessage("A prompt is required.");
       return;
@@ -133,6 +141,18 @@ function CreateSessionDialogBody({
     }
   }
 
+  function handleFormKeyDown(event: React.KeyboardEvent<HTMLFormElement>) {
+    if (!isSessionSubmitShortcut(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (!isSubmitting) {
+      event.currentTarget.requestSubmit();
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-10 backdrop-blur-sm">
       <div
@@ -150,7 +170,7 @@ function CreateSessionDialogBody({
           </h2>
         </div>
 
-        <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
+        <form className="mt-6 space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
               Prompt
