@@ -23,8 +23,8 @@ type CreateSessionDialogProps = {
 
 const LINEAR_URL_RE = /^https?:\/\/(?:[\w-]+\.)?linear\.app\//i;
 
-export function isSessionSubmitShortcut(event: Pick<KeyboardEvent, "key" | "metaKey">) {
-  return event.metaKey && event.key === "Enter";
+export function isSessionSubmitShortcut(event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey">) {
+  return (event.metaKey || event.ctrlKey) && event.key === "Enter";
 }
 
 // When `open` is false the body does not mount, so all of its local state is
