@@ -14,7 +14,6 @@ const CODEX_AUTH_FILE_NAME = "auth.json";
 const CHATGPT_AUTH_LEASE_MS = 35 * 60_000;
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
-export const CODEX_APPROVAL_POLICY = "never";
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
@@ -444,10 +443,6 @@ export function codexExecArgs(model: string, sandboxRepoPath: string): string[] 
     model,
     "--sandbox",
     CODEX_SANDBOX_MODE,
-    "-c",
-    `sandbox_mode="${CODEX_SANDBOX_MODE}"`,
-    "-c",
-    `approval_policy="${CODEX_APPROVAL_POLICY}"`,
     "-c",
     `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
     "-c",

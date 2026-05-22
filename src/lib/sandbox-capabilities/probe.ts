@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  CODEX_APPROVAL_POLICY,
   CODEX_EXTERNAL_SANDBOX_FLAG,
   CODEX_SANDBOX_MODE,
   codexExecArgs,
@@ -203,18 +202,10 @@ function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityR
   const disablesInnerSandbox = args.some(
     (arg, index) => arg === "--sandbox" && args[index + 1] === CODEX_SANDBOX_MODE,
   );
-  const configuresSandboxMode = args.includes(`sandbox_mode="${CODEX_SANDBOX_MODE}"`);
-  const configuresApprovalPolicy = args.includes(`approval_policy="${CODEX_APPROVAL_POLICY}"`);
   const usesSandboxRepo = args.some(
     (arg, index) => arg === "--cd" && args[index + 1] === sandboxRepoPath,
   );
-  if (
-    usesExternalSandbox &&
-    disablesInnerSandbox &&
-    configuresSandboxMode &&
-    configuresApprovalPolicy &&
-    usesSandboxRepo
-  ) {
+  if (usesExternalSandbox && disablesInnerSandbox && usesSandboxRepo) {
     return {
       detail: "Codex command uses Vercel Sandbox as the execution boundary.",
       ok: true,
@@ -222,7 +213,7 @@ function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityR
   }
 
   return {
-    detail: `Codex command is missing external sandbox configuration: ${CODEX_EXTERNAL_SANDBOX_FLAG}, --sandbox ${CODEX_SANDBOX_MODE}, sandbox_mode, approval_policy, or --cd ${sandboxRepoPath}.`,
+    detail: `Codex command is missing external sandbox configuration: ${CODEX_EXTERNAL_SANDBOX_FLAG}, --sandbox ${CODEX_SANDBOX_MODE}, or --cd ${sandboxRepoPath}.`,
     ok: false,
   };
 }

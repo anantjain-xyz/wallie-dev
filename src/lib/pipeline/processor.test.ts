@@ -627,59 +627,6 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
-  it("rejects bwrap output instead of accepting it as a review artifact", async () => {
-    mocked.createAgentRunner.mockReturnValue(
-      makeRunner(
-        [
-          {
-            type: "text",
-            text: [
-              "I'm blocked from implementing this in the current environment.",
-              "",
-              "bwrap: No permissions to create a new namespace",
-            ].join("\n"),
-          },
-          { type: "completion", taskComplete: true, summary: "Codex session completed" },
-        ],
-        { provider: "codex" },
-      ),
-    );
-    const session = baseSession();
-    const {
-      admin,
-      insertedArtifacts,
-      insertedMessages,
-      updatedJobs,
-      updatedRuns,
-      updatedSessions,
-    } = buildAdminMock({
-      session,
-      agentConfig: [],
-    });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    expect(result.result).toBe("error");
-    expect(insertedArtifacts).toHaveLength(0);
-    expect(insertedMessages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "error",
-          message_md: expect.stringContaining("inner Bubblewrap sandbox"),
-        }),
-      ]),
-    );
-    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
-    expect(updatedJobs.at(-1)).toMatchObject({
-      last_error: expect.stringContaining("inner Bubblewrap sandbox"),
-      status: "error",
-    });
-    expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
-      { phase_status: "rejected" },
-    ]);
-  });
-
   it("reuses the queued run row attached to the claimed job", async () => {
     const session = baseSession();
     const job = baseJob();

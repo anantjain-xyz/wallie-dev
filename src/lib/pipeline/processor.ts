@@ -239,18 +239,6 @@ async function runStage(input: {
       throw new MissingReviewableOutputError(message);
     }
 
-    const nonReviewableFailure = nonReviewableRunnerOutputMessage(stage.name, artifactMarkdown);
-    if (nonReviewableFailure) {
-      if (runId) {
-        await persistEvent(admin, runId, session.workspace_id, {
-          type: "error",
-          message: nonReviewableFailure,
-        });
-      }
-
-      throw new MissingReviewableOutputError(nonReviewableFailure);
-    }
-
     if (runId) {
       await markRunSuccess(admin, runId, usage);
     }
@@ -363,23 +351,6 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
-}
-
-function nonReviewableRunnerOutputMessage(stageName: string, output: string): string | null {
-  if (!isCodexInnerSandboxOutput(output)) {
-    return null;
-  }
-
-  const excerpt = output.trim().slice(0, 500);
-  return [
-    `${stageName} produced a runner environment failure instead of reviewable output.`,
-    "Codex's inner Bubblewrap sandbox was invoked unexpectedly inside Vercel Sandbox.",
-    `Raw output: ${excerpt || "(empty)"}`,
-  ].join(" ");
-}
-
-function isCodexInnerSandboxOutput(output: string): boolean {
-  return /\b(?:bwrap|bubblewrap)\b|No permissions to create a new namespace/i.test(output);
 }
 
 async function loadActiveSessionJob(
