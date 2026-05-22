@@ -144,6 +144,7 @@ describe("provider-specific recommended defaults", () => {
   it("keeps the public agent config default provider on Codex", () => {
     expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider).toBe("codex");
     expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model).toBe("gpt-5.5");
+    expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms).toBe(900_000);
     expect(getRecommendedAgentConfigDefault("agent_model", "claude-code")).toBe(
       "claude-opus-4-7[1m]",
     );

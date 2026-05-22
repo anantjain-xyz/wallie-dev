@@ -1304,11 +1304,22 @@ as $$
       1,
       'product',
       'Product',
-      'Write the spec and approve the problem framing.',
-      '## Task' || E'\n\n' ||
+      'Write the product spec and approve the problem framing.',
+      '## Product Spec Request' || E'\n\n' ||
       '{{session.title}}' || E'\n\n' ||
-      '## Description' || E'\n\n' ||
-      '{{session.prompt}}' || E'\n'
+      '## User Request' || E'\n\n' ||
+      '{{session.prompt}}' || E'\n\n' ||
+      '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
+      '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
+      '## Instructions' || E'\n\n' ||
+      'Produce a reviewable product specification only. Do not modify files, run implementation commands, create branches, install dependencies, or make code changes.' || E'\n\n' ||
+      'Cover:' || E'\n' ||
+      '- Problem and goals' || E'\n' ||
+      '- Non-goals' || E'\n' ||
+      '- Target users and workflows' || E'\n' ||
+      '- Functional requirements' || E'\n' ||
+      '- Acceptance criteria' || E'\n' ||
+      '- Open questions and risks' || E'\n'
     ),
     (
       2,

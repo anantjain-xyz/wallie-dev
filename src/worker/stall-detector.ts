@@ -5,6 +5,8 @@ import { stopSandboxById } from "@/lib/sandbox";
 
 type AdminClient = SupabaseClient<Database>;
 
+const FRESH_WORKER_HEARTBEAT_MS = 60_000;
+
 export interface StallSweepResult {
   stalledRunIds: string[];
   stalledJobIds: string[];
@@ -56,6 +58,7 @@ export async function sweepStalledRuns(
   const maxRetries = await loadMaxRetries(admin, workspaceIds);
 
   const now = Date.now();
+  const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, now);
 
   for (const run of activeRuns) {
     const timeoutMs = stallTimeouts.get(run.workspace_id) ?? defaultStallTimeoutMs;
@@ -66,6 +69,10 @@ export async function sweepStalledRuns(
     const elapsed = now - lastActivity;
 
     if (elapsed < timeoutMs) {
+      continue;
+    }
+
+    if (run.agent_job_id && freshWorkerJobIds.has(run.agent_job_id)) {
       continue;
     }
 
@@ -141,6 +148,25 @@ export async function sweepStalledRuns(
 }
 
 const DEFAULT_MAX_RETRIES = 3;
+
+async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise<Set<string>> {
+  const cutoff = new Date(nowMs - FRESH_WORKER_HEARTBEAT_MS).toISOString();
+  const { data, error } = await admin
+    .from("worker_heartbeats")
+    .select("active_job_id")
+    .gte("last_heartbeat_at", cutoff);
+
+  if (error) {
+    console.error("[stall-detector] failed to load worker heartbeats", { error: error.message });
+    return new Set();
+  }
+
+  return new Set(
+    (data ?? [])
+      .map((row) => row.active_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+}
 
 /**
  * Decide whether to retry the parent job (attempts remaining) or mark it

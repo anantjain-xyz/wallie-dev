@@ -25,7 +25,7 @@ export function parseWorkerConfig(): WorkerConfig {
     stallSweepIntervalMs: 30_000,
     reconcileIntervalMs: 60_000,
     sandboxReapIntervalMs: 60_000,
-    defaultStallTimeoutMs: 300_000, // 5 minutes
+    defaultStallTimeoutMs: 900_000, // 15 minutes
     defaultConcurrencyLimit: 2,
     workerId: `worker-${process.pid}-${Date.now()}`,
   };

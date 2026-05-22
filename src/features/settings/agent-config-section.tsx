@@ -20,6 +20,7 @@ import {
   type AgentConfigKey,
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
+  RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
   parseAgentConfigValue,
@@ -220,7 +221,7 @@ export function AgentConfigSection({
         configKey: "stall_timeout_ms",
         description: `Time in milliseconds before a run with no activity is considered stalled (${AGENT_CONFIG_LIMITS.stall_timeout_ms.min.toLocaleString()}–${AGENT_CONFIG_LIMITS.stall_timeout_ms.max.toLocaleString()} ms).`,
         label: "Stall timeout (ms)",
-        placeholder: "300000",
+        placeholder: String(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms),
         type: "number",
       },
       {

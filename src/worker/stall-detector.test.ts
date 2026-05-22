@@ -38,10 +38,16 @@ interface AgentConfigRow {
   value_json: unknown;
 }
 
+interface WorkerHeartbeatRow {
+  active_job_id: string | null;
+  last_heartbeat_at: string;
+}
+
 interface MockState {
   runs: AgentRunRow[];
   jobs: AgentJobRow[];
   configs: AgentConfigRow[];
+  heartbeats?: WorkerHeartbeatRow[];
   sessions: Map<string, { phase_status: string }>;
   rpcCalls: Array<{ name: string; args: unknown }>;
   retryRpcShouldFail?: boolean;
@@ -140,6 +146,18 @@ function buildAdminMock(state: MockState) {
     }),
   });
 
+  const fromWorkerHeartbeats = () => ({
+    select: () => ({
+      gte: async (_col: string, cutoff: string) => ({
+        data: (state.heartbeats ?? []).filter(
+          (heartbeat) =>
+            new Date(heartbeat.last_heartbeat_at).getTime() >= new Date(cutoff).getTime(),
+        ),
+        error: null,
+      }),
+    }),
+  });
+
   const fromSessions = () => ({
     update: (patch: Record<string, unknown>) => ({
       eq: (_col: string, sessionId: string) => ({
@@ -159,6 +177,7 @@ function buildAdminMock(state: MockState) {
     agent_runs: fromAgentRuns(),
     agent_jobs: fromAgentJobs(),
     workspace_agent_config: fromConfig(),
+    worker_heartbeats: fromWorkerHeartbeats(),
     sessions: fromSessions(),
   };
 
@@ -278,6 +297,25 @@ describe("sweepStalledRuns", () => {
         patch: { phase_status: "rejected" },
       },
     ]);
+  });
+
+  it("does not kill a stale run when a fresh worker heartbeat owns the job", async () => {
+    const state: MockState = {
+      runs: [activeRun()],
+      jobs: [job()],
+      configs: [],
+      heartbeats: [{ active_job_id: "job-1", last_heartbeat_at: new Date().toISOString() }],
+      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      rpcCalls: [],
+    };
+    const { admin, runUpdates, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual([]);
+    expect(result.stoppedSandboxIds).toEqual([]);
+    expect(runUpdates).toEqual([]);
+    expect(sessionUpdates).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
   it("marks a stalled run terminally errored when the job has no retries left", async () => {
