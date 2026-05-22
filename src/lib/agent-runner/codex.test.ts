@@ -2,7 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
-import { CodexRunner, parseCodexLine } from "./codex";
+import {
+  CODEX_EXTERNAL_SANDBOX_FLAG,
+  CODEX_SANDBOX_MODE,
+  CodexRunner,
+  codexExecArgs,
+  parseCodexLine,
+} from "./codex";
+
+function expectExternalSandboxMode(command: string) {
+  expect(command).toContain(shellQuote(CODEX_EXTERNAL_SANDBOX_FLAG));
+  expect(command).toContain(`'--sandbox' '${CODEX_SANDBOX_MODE}'`);
+  expect(command).toContain("'--cd' '/vercel/sandbox'");
+}
 
 describe("CodexRunner", () => {
   it("has the correct provider name", () => {
@@ -41,6 +53,25 @@ describe("CodexRunner", () => {
         }
       })(),
     ).rejects.toThrow(/requires a sandbox/);
+  });
+
+  it("builds Codex exec args for Vercel's external sandbox boundary", () => {
+    expect(codexExecArgs("gpt-5.5", "/vercel/sandbox")).toEqual([
+      "exec",
+      "--model",
+      "gpt-5.5",
+      "--sandbox",
+      CODEX_SANDBOX_MODE,
+      "-c",
+      'model_reasoning_effort="xhigh"',
+      "-c",
+      'cli_auth_credentials_store="file"',
+      CODEX_EXTERNAL_SANDBOX_FLAG,
+      "--cd",
+      "/vercel/sandbox",
+      "--json",
+      "-",
+    ]);
   });
 
   it("logs in with a Codex access token before running exec", async () => {
@@ -106,6 +137,7 @@ describe("CodexRunner", () => {
     expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.5'");
     expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
     expect(call.args[1]).toContain(`'-c' 'cli_auth_credentials_store="file"'`);
+    expectExternalSandboxMode(call.args[1]!);
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
     expect(call.opts.env).toMatchObject({
       CODEX_ACCESS_TOKEN: "tok",
@@ -127,6 +159,7 @@ describe("CodexRunner", () => {
 
     expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
     const execCall = sandbox.calls[1]!;
+    expectExternalSandboxMode(execCall.args[1]!);
     expect(execCall.opts.env).toMatchObject({
       CODEX_API_KEY: "sk-test",
       OPENAI_API_KEY: "sk-test",
@@ -232,6 +265,7 @@ describe("CodexRunner", () => {
       userId: "user-1",
     });
     expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
+    expectExternalSandboxMode(sandbox.calls[1]?.args[1] ?? "");
     expect(sandbox.calls[1]?.opts.env).toEqual({ CI: "1", CODEX_HOME: "/vercel/sandbox/.codex" });
   });
 
@@ -419,6 +453,57 @@ describe("CodexRunner", () => {
     expect((events[0] as { message: string }).message).toContain("exited with code 1");
     expect((events[0] as { message: string }).message).toContain("auth failed");
   });
+
+  it("surfaces a targeted error when Codex's inner sandbox fails under Vercel", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [{ data: "bwrap: No permissions to create a new namespace\n", stream: "stderr" }],
+      {
+        exitCode: 1,
+      },
+    );
+
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+    });
+    const events = [];
+    for await (const ev of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      events.push(ev);
+    }
+
+    expect(events[0]).toMatchObject({ type: "error" });
+    expect((events[0] as { message: string }).message).toContain("inner Bubblewrap sandbox");
+    expect((events[0] as { message: string }).message).toContain(CODEX_EXTERNAL_SANDBOX_FLAG);
+    expect((events[0] as { message: string }).message).toContain(
+      "bwrap: No permissions to create a new namespace",
+    );
+  });
+
+  it("does not classify unrelated bwrap stderr as a Vercel inner sandbox failure", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [{ data: "bwrap failed while parsing an unrelated argument\n", stream: "stderr" }],
+      {
+        exitCode: 1,
+      },
+    );
+
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+    });
+    const events = [];
+    for await (const ev of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      events.push(ev);
+    }
+
+    expect(events[0]).toMatchObject({ type: "error" });
+    expect((events[0] as { message: string }).message).not.toContain("inner Bubblewrap sandbox");
+    expect((events[0] as { message: string }).message).toContain(
+      "bwrap failed while parsing an unrelated argument",
+    );
+  });
 });
 
 describe("parseCodexLine", () => {
@@ -490,3 +575,7 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine("   ")).toBeNull();
   });
 });
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}

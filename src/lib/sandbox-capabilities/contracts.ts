@@ -5,6 +5,7 @@ export type SandboxCapabilityName =
   | "node"
   | "packageManager"
   | "agentCli"
+  | "codexExternalSandbox"
   | "playwrightPackage"
   | "chromium"
   | "screenshotSmoke";
