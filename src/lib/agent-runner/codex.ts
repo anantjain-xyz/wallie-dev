@@ -505,7 +505,7 @@ function codexExitErrorMessage(code: number, stderr: string): string {
 }
 
 function isCodexInnerSandboxFailure(stderr: string): boolean {
-  return /\b(?:bwrap|bubblewrap)\b|No permissions to create a new namespace/i.test(stderr);
+  return /(?:^|\n)\s*bwrap:\s*No permissions to create a new namespace\b/i.test(stderr);
 }
 
 function shellQuote(s: string): string {

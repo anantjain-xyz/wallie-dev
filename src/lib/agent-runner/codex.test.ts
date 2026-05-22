@@ -479,6 +479,31 @@ describe("CodexRunner", () => {
       "bwrap: No permissions to create a new namespace",
     );
   });
+
+  it("does not classify unrelated bwrap stderr as a Vercel inner sandbox failure", async () => {
+    const sandbox = new FakeSandbox();
+    sandbox.scriptExec(
+      "bash",
+      [{ data: "bwrap failed while parsing an unrelated argument\n", stream: "stderr" }],
+      {
+        exitCode: 1,
+      },
+    );
+
+    const runner = new CodexRunner({
+      credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+    });
+    const events = [];
+    for await (const ev of runner.start({ sessionId: "s", sandbox, prompt: "p" })) {
+      events.push(ev);
+    }
+
+    expect(events[0]).toMatchObject({ type: "error" });
+    expect((events[0] as { message: string }).message).not.toContain("inner Bubblewrap sandbox");
+    expect((events[0] as { message: string }).message).toContain(
+      "bwrap failed while parsing an unrelated argument",
+    );
+  });
 });
 
 describe("parseCodexLine", () => {
