@@ -17,11 +17,19 @@ export interface PollResult {
   outcome: "claimed" | "concurrency_limited" | "idle" | "error" | "success";
 }
 
+export interface PollRuntime {
+  setActiveJobId?: (jobId: string | null) => void;
+}
+
 /**
  * Execute one poll cycle: find a queued job, check concurrency, claim it,
  * and process it.
  */
-export async function pollOnce(admin: AdminClient, config: WorkerConfig): Promise<PollResult> {
+export async function pollOnce(
+  admin: AdminClient,
+  config: WorkerConfig,
+  runtime: PollRuntime = {},
+): Promise<PollResult> {
   // Fetch up to 10 queued candidates, oldest first.
   const { data: candidates, error: fetchError } = await admin
     .from("agent_jobs")
@@ -51,27 +59,31 @@ export async function pollOnce(admin: AdminClient, config: WorkerConfig): Promis
     }
 
     // Report heartbeat with active job.
+    runtime.setActiveJobId?.(claimed.id);
     await sendHeartbeat(admin, config.workerId, claimed.id);
 
-    // Touch last_activity_at on any linked agent_runs so the stall detector
-    // has a fresh baseline even if the processor crashes immediately.
-    await admin
-      .from("agent_runs")
-      .update({ last_activity_at: new Date().toISOString() })
-      .eq("agent_job_id", claimed.id)
-      .in("status", ["queued", "started", "running"]);
-
-    // Process the job.
     try {
-      await processClaimedJob(admin, claimed);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Worker job processing failed";
-      console.error("[worker] job processing error", { error: message, jobId: claimed.id });
-      await markJobError(admin, claimed, message);
-    }
+      // Touch last_activity_at on any linked agent_runs so the stall detector
+      // has a fresh baseline even if the processor crashes immediately.
+      await admin
+        .from("agent_runs")
+        .update({ last_activity_at: new Date().toISOString() })
+        .eq("agent_job_id", claimed.id)
+        .in("status", ["queued", "started", "running"]);
 
-    // Clear active job from heartbeat.
-    await sendHeartbeat(admin, config.workerId, null);
+      // Process the job.
+      try {
+        await processClaimedJob(admin, claimed);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Worker job processing failed";
+        console.error("[worker] job processing error", { error: message, jobId: claimed.id });
+        await markJobError(admin, claimed, message);
+      }
+    } finally {
+      // Clear active job from heartbeat.
+      runtime.setActiveJobId?.(null);
+      await sendHeartbeat(admin, config.workerId, null);
+    }
 
     return { jobId: claimed.id, outcome: "success" };
   }

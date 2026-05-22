@@ -26,6 +26,7 @@ async function main() {
   await registerWorker(admin, config.workerId);
 
   let shuttingDown = false;
+  let activeJobId: string | null = null;
 
   // Graceful shutdown handler.
   async function shutdown(signal: string) {
@@ -41,7 +42,7 @@ async function main() {
 
   // --- Heartbeat interval ---
   const heartbeatTimer = setInterval(() => {
-    void sendHeartbeat(admin, config.workerId, null);
+    void sendHeartbeat(admin, config.workerId, activeJobId);
   }, config.heartbeatIntervalMs);
 
   // --- Stall detection interval ---
@@ -90,7 +91,11 @@ async function main() {
   console.log("[worker] entering poll loop");
   while (!shuttingDown) {
     try {
-      const result = await pollOnce(admin, config);
+      const result = await pollOnce(admin, config, {
+        setActiveJobId: (jobId) => {
+          activeJobId = jobId;
+        },
+      });
 
       if (result.outcome === "idle" || result.outcome === "concurrency_limited") {
         // Nothing to do — sleep for the full poll interval.

@@ -193,7 +193,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
     await expect(response.json()).resolves.toEqual({
       applied: [
         { key: "concurrency_limit", value: 1 },
-        { key: "stall_timeout_ms", value: 300000 },
+        { key: "stall_timeout_ms", value: 900000 },
         { key: "max_retries", value: 3 },
       ],
       skippedKeys: [],
@@ -201,7 +201,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
     expect(upsert).toHaveBeenCalledWith(
       [
         { key: "concurrency_limit", value_json: 1, workspace_id: WORKSPACE_ID },
-        { key: "stall_timeout_ms", value_json: 300000, workspace_id: WORKSPACE_ID },
+        { key: "stall_timeout_ms", value_json: 900000, workspace_id: WORKSPACE_ID },
         { key: "max_retries", value_json: 3, workspace_id: WORKSPACE_ID },
       ],
       { onConflict: "workspace_id,key" },

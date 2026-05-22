@@ -46,7 +46,7 @@ export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
   agent_model: RECOMMENDED_AGENT_MODELS.codex,
   concurrency_limit: 1,
   max_retries: 3,
-  stall_timeout_ms: 300_000,
+  stall_timeout_ms: 900_000,
 } as const satisfies Record<AgentConfigKey, string | number>;
 
 export function getRecommendedAgentModel(provider: AgentProvider): string {

@@ -916,6 +916,7 @@ async function persistEvent(
       break;
     case "completion":
       if (isGenericRunnerCompletionSummary(event.summary)) {
+        await touchRunActivity(admin, runId);
         return;
       }
       kind = "completion";
@@ -933,10 +934,20 @@ async function persistEvent(
     message_md: messageMd,
     workspace_id: workspaceId,
   });
+
+  await touchRunActivity(admin, runId);
 }
 
 function isGenericRunnerCompletionSummary(summary: string) {
   return summary.trim().toLowerCase() === "codex session completed";
+}
+
+async function touchRunActivity(admin: AdminClient, runId: string): Promise<void> {
+  await admin
+    .from("agent_runs")
+    .update({ last_activity_at: new Date().toISOString() })
+    .eq("id", runId)
+    .in("status", ["queued", "started", "running"]);
 }
 
 async function markPipelineJobSuccess(

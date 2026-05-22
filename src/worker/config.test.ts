@@ -10,7 +10,7 @@ describe("worker/config", () => {
     expect(config.stallSweepIntervalMs).toBe(30_000);
     expect(config.reconcileIntervalMs).toBe(60_000);
     expect(config.sandboxReapIntervalMs).toBe(60_000);
-    expect(config.defaultStallTimeoutMs).toBe(300_000);
+    expect(config.defaultStallTimeoutMs).toBe(900_000);
     expect(config.defaultConcurrencyLimit).toBe(2);
     expect(config.workerId).toMatch(/^worker-/);
   });

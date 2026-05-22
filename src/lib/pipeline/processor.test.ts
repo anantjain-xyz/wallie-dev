@@ -652,6 +652,21 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
   });
 
+  it("refreshes run activity when runner events are persisted", async () => {
+    mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Spec body" }]));
+    const session = baseSession();
+    const { admin, updatedRuns } = buildAdminMock({
+      session,
+      agentConfig: [],
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    const activityUpdates = updatedRuns.filter((patch) => "last_activity_at" in patch);
+    expect(activityUpdates).toHaveLength(1);
+    expect(activityUpdates[0]).toEqual({ last_activity_at: expect.any(String) });
+  });
+
   it("resolves the session owner's Anthropic API key for Claude Code runs", async () => {
     const session = baseSession();
     const { admin } = buildAdminMock({

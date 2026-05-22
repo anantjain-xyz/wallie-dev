@@ -274,7 +274,7 @@ BEGIN
     (ws_id, 'agent_model', to_jsonb('claude-opus-4-7[1m]'::text), now() - interval '13 days'),
     (ws_id, 'concurrency_limit', to_jsonb(1), now() - interval '13 days'),
     (ws_id, 'max_retries', to_jsonb(3), now() - interval '13 days'),
-    (ws_id, 'stall_timeout_ms', to_jsonb(300000), now() - interval '13 days');
+    (ws_id, 'stall_timeout_ms', to_jsonb(900000), now() - interval '13 days');
 
   INSERT INTO public.sandbox_capability_checks
     (id, workspace_id, github_repository_id, status, capabilities, checked_at, created_at)
