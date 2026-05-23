@@ -58,8 +58,8 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
     repository: {
       defaultBranch: "main",
       defaultProgrammingLanguage: "TypeScript",
-      fullName: "anantjain-xyz/wallie-cc",
-      htmlUrl: "https://github.com/anantjain-xyz/wallie-cc",
+      fullName: "anantjain-xyz/wallie-dev",
+      htmlUrl: "https://github.com/anantjain-xyz/wallie-dev",
       id: "repo-1",
       isArchived: false,
       isPrivate: true,

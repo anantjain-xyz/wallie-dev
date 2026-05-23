@@ -40,7 +40,7 @@ A 10-minute tour of the repository, file by file.
 ### Top-Level Map
 
 ```
-wallie-cc/
+wallie-dev/
 |-- src/
 |   |-- app/           -> Next.js routes (pages + API)
 |   |-- components/    -> Shared React UI
@@ -272,7 +272,7 @@ supabase/
 
 ```bash
 git clone <this-repo>
-cd wallie-cc
+cd wallie-dev
 pnpm install
 ```
 
