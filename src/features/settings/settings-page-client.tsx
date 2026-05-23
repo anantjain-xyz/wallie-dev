@@ -28,7 +28,7 @@ import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 const ANCHORS: SettingsAnchor[] = [
   { id: "workspace", label: "Workspace" },
   { id: "github", label: "Connect GitHub" },
-  { id: "repository", label: "Analyze repository" },
+  { id: "repository", label: "Analyze repositories" },
   { id: "pipeline", label: "Review pipeline" },
   { id: "linear", label: "Configure Linear" },
   { id: "runtime", label: "Verify runtime" },
