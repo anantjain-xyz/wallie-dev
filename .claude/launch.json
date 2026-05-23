@@ -4,7 +4,7 @@
     {
       "name": "dev",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["/Users/anant/src/wallie-cc/.claude/dev.sh"],
+      "runtimeArgs": ["/Users/anant/src/wallie-dev/.claude/dev.sh"],
       "port": 3000,
       "autoPort": false
     }
