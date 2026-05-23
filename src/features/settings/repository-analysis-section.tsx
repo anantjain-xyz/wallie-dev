@@ -2,15 +2,22 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-import { SelectField } from "@/components/ui/select";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
+import {
+  mergeRepositoryOnboardingState,
+  RepositoryMetadataPills,
+  RepositorySetupControls,
+  RepositorySetupMessages,
+  RepositorySetupStatusBadge,
+} from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section, StatusBadge } from "@/features/settings/settings-ui";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
+import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 
 type RepositoryAnalysisSectionProps = {
   data: SettingsPageData;
@@ -88,6 +95,30 @@ function applySavedRepositoryProfile(
   };
 }
 
+function applyRepositoryOnboarding(
+  current: SettingsPageData,
+  repositoryId: string,
+  onboarding: RepositoryOnboardingState,
+): SettingsPageData {
+  const github = {
+    ...current.github,
+    repositories: mergeRepositoryOnboardingState(
+      current.github.repositories,
+      repositoryId,
+      onboarding,
+    ),
+  };
+
+  return {
+    ...current,
+    github,
+    setupHealth: {
+      ...current.setupHealth,
+      ...buildRepositorySetupHealth(github, current.onboarding.selectedGithubRepositoryId),
+    },
+  };
+}
+
 export function RepositoryAnalysisSection({
   data,
   setData,
@@ -104,11 +135,7 @@ export function RepositoryAnalysisSection({
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileAction, setProfileAction] = useState<ProfileAction>(null);
   const activeRepositoryRef = useRef(selectedRepository?.id ?? null);
-  const repositoryOptions = selectableRepositories.map((repository) => ({
-    label: repository.fullName,
-    value: repository.id,
-  }));
-  const selectedRepositoryId = selectedRepository?.id ?? "";
+  const selectedRepositoryId = selectedRepository?.id ?? null;
   const profileBusy = profileAction !== null;
 
   function updateProfileDraft(nextProfile: RepositoryProfileState, dirty = false) {
@@ -116,9 +143,9 @@ export function RepositoryAnalysisSection({
     setProfileDirty(dirty);
   }
 
-  async function selectRepository(repositoryId: string) {
+  async function selectRepository(repositoryId: string): Promise<boolean> {
     const repository = data.github.repositories.find((candidate) => candidate.id === repositoryId);
-    if (!repository || profileBusy) return;
+    if (!repository || profileBusy) return false;
 
     setProfileError(null);
     setProfileAction("selecting");
@@ -153,8 +180,10 @@ export function RepositoryAnalysisSection({
         setProfileDraft(repository.profile ?? null);
       }
       setProfileDirty(false);
+      return true;
     } catch (error) {
       setProfileError(error instanceof Error ? error.message : "Repository selection failed.");
+      return false;
     } finally {
       if (activeRepositoryRef.current === repository.id) {
         setProfileAction(null);
@@ -162,7 +191,9 @@ export function RepositoryAnalysisSection({
     }
   }
 
-  async function inferRepositoryProfile(repository: NonNullable<typeof selectedRepository>) {
+  async function inferRepositoryProfile(
+    repository: SettingsPageData["github"]["repositories"][number],
+  ) {
     if (profileBusy) return;
     activeRepositoryRef.current = repository.id;
     setProfileDraft(null);
@@ -192,6 +223,15 @@ export function RepositoryAnalysisSection({
         setProfileAction(null);
       }
     }
+  }
+
+  async function analyzeRepository(repository: SettingsPageData["github"]["repositories"][number]) {
+    if (selectedRepositoryId !== repository.id) {
+      const selected = await selectRepository(repository.id);
+      if (!selected) return;
+    }
+
+    await inferRepositoryProfile(repository);
   }
 
   async function saveRepositoryProfile() {
@@ -239,98 +279,117 @@ export function RepositoryAnalysisSection({
     }
   }
 
+  function updateRepositoryOnboarding(repositoryId: string, onboarding: RepositoryOnboardingState) {
+    setData((current) => applyRepositoryOnboarding(current, repositoryId, onboarding));
+  }
+
   return (
     <Section
       anchorId="repository"
-      tagline="Analyze and save the primary repository profile Wallie uses for sessions and runtime checks."
-      title="Analyze repository"
+      tagline="Prepare each synced repository for Wallie by installing skills and saving repository profiles."
+      title="Analyze repositories"
     >
       <div className="space-y-5">
-        {profileError ? (
-          <div
-            className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
-            role="alert"
-          >
-            {profileError}
-          </div>
-        ) : null}
-
-        <SelectField
-          disabled={!data.canManage || selectableRepositories.length === 0 || profileBusy}
-          fallbackLabel="No repositories available"
-          label="Repository"
-          onValueChange={(value) => void selectRepository(value)}
-          options={repositoryOptions}
-          value={selectedRepositoryId}
-        />
-
-        {selectedRepository ? (
-          <>
-            <div className="rounded-[6px] border border-border bg-surface p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="truncate text-[14px] font-semibold text-foreground">
-                      {selectedRepository.fullName}
-                    </h3>
-                    <StatusBadge tone="accent">Selected</StatusBadge>
-                    {selectedRepository.profile?.isPrimary ? (
-                      <StatusBadge tone="success">Primary</StatusBadge>
-                    ) : null}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {selectedRepository.defaultProgrammingLanguage ? (
-                      <span className="ui-pill">
-                        {selectedRepository.defaultProgrammingLanguage}
-                      </span>
-                    ) : null}
-                    {selectedRepository.defaultBranch ? (
-                      <span className="ui-pill font-mono">{selectedRepository.defaultBranch}</span>
-                    ) : null}
-                    <span className="ui-pill">
-                      {selectedRepository.isPrivate ? "Private" : "Public"}
-                    </span>
-                  </div>
-                  {selectedRepository.description ? (
-                    <p className="mt-3 text-[13px] leading-5 text-muted">
-                      {selectedRepository.description}
-                    </p>
-                  ) : null}
-                </div>
-
-                {!profileDraft && profileAction !== "analyzing" ? (
-                  <button
-                    className="ui-button-primary shrink-0"
-                    disabled={!data.canManage || profileBusy}
-                    onClick={() => void inferRepositoryProfile(selectedRepository)}
-                    type="button"
-                  >
-                    Analyze repository
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            {profileDraft ? (
-              <RepositoryProfileEditor
-                canManage={data.canManage && !profileBusy}
-                isAnalyzing={profileAction === "analyzing"}
-                isSaving={profileAction === "saving"}
-                onChange={updateProfileDraft}
-                onInfer={() => void inferRepositoryProfile(selectedRepository)}
-                onSave={() => void saveRepositoryProfile()}
-                profile={profileDraft}
-              />
-            ) : profileAction === "analyzing" ? (
-              <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
-                Analyzing repository...
-              </div>
-            ) : null}
-          </>
-        ) : (
+        {selectableRepositories.length === 0 ? (
           <p className="rounded-[6px] border border-border bg-surface p-4 text-[13px] leading-6 text-muted">
             Connect GitHub and sync repositories before analyzing repository setup.
           </p>
+        ) : (
+          <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+            {selectableRepositories.map((repository) => {
+              const selected = selectedRepositoryId === repository.id;
+              const showProfileEditor = selected && Boolean(profileDraft);
+              const rowProfileAction = selected ? profileAction : null;
+              const rowBusy = rowProfileAction !== null;
+
+              return (
+                <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <div className="min-w-0 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          className="truncate text-[14px] font-semibold text-foreground transition-colors duration-150 hover:text-accent"
+                          href={repository.htmlUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {repository.fullName}
+                        </a>
+                        {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
+                        {repository.profile?.isPrimary ? (
+                          <StatusBadge tone="success">Primary</StatusBadge>
+                        ) : null}
+                        <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                      </div>
+                      <RepositoryMetadataPills repository={repository} />
+                      {repository.description ? (
+                        <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
+                      {!selected ? (
+                        <button
+                          className="ui-button"
+                          disabled={!data.canManage || profileBusy}
+                          onClick={() => void selectRepository(repository.id)}
+                          type="button"
+                        >
+                          Use repository
+                        </button>
+                      ) : null}
+                      <RepositorySetupControls
+                        canManage={data.canManage}
+                        onChange={updateRepositoryOnboarding}
+                        repository={repository}
+                        setMessage={setFlashMessage}
+                        workspaceId={data.workspace.id}
+                      />
+                      {!showProfileEditor && rowProfileAction !== "analyzing" ? (
+                        <button
+                          className={repository.profile ? "ui-button" : "ui-button-primary"}
+                          disabled={!data.canManage || rowBusy || profileBusy}
+                          onClick={() =>
+                            repository.profile
+                              ? void selectRepository(repository.id)
+                              : void analyzeRepository(repository)
+                          }
+                          type="button"
+                        >
+                          {repository.profile ? "Edit profile" : "Analyze repository"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {selected && profileError ? (
+                    <div
+                      className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+                      role="alert"
+                    >
+                      {profileError}
+                    </div>
+                  ) : null}
+                  <RepositorySetupMessages repository={repository} />
+                  {showProfileEditor && profileDraft ? (
+                    <RepositoryProfileEditor
+                      canManage={data.canManage && !profileBusy}
+                      isAnalyzing={profileAction === "analyzing"}
+                      isSaving={profileAction === "saving"}
+                      onChange={updateProfileDraft}
+                      onInfer={() => void inferRepositoryProfile(repository)}
+                      onSave={() => void saveRepositoryProfile()}
+                      profile={profileDraft}
+                    />
+                  ) : selected && profileAction === "analyzing" ? (
+                    <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
+                      Analyzing repository...
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     </Section>

@@ -1,79 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { ArchiveIcon, BranchIcon, CodeIcon, GlobeIcon, LockIcon } from "@/components/shared/icons";
 import type {
   GitHubInstallResponse,
   GitHubRepositorySummary,
   GitHubRepositorySyncResponse,
 } from "@/features/github/contracts";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
+import { RepositoryMetadataPills } from "@/features/repositories/repository-setup-controls";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import type {
-  RepositoryOnboardingResponse,
-  RepositoryOnboardingState,
-} from "@/lib/repo-onboarding/contracts";
-import {
-  ConfigState,
-  dateFormatter,
-  interactiveLinkClass,
-  StatusBadge,
-} from "@/features/settings/settings-ui";
+import { ConfigState, dateFormatter, interactiveLinkClass } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
+import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
+
+export { mergeRepositoryOnboardingState } from "@/features/repositories/repository-setup-controls";
 
 type GitHubConnectionPanelProps = {
   canManage: boolean;
   github: WorkspaceGitHubData;
   hideArchivedRepositories?: boolean;
   onChange?: (github: WorkspaceGitHubData) => void;
-  onSelectRepository?: (repositoryId: string) => void;
-  renderRepositoryDetails?: (repository: WorkspaceGitHubRepository) => ReactNode;
-  allowManualSetupComplete?: boolean;
-  selectedRepositoryId?: string | null;
   setFlashMessage?: (message: FlashMessage) => void;
-  setupActionScope?: "all" | "none" | "selected";
   source?: "onboarding" | "settings";
   workspaceId: string;
 };
 
 function noopFlashMessage() {
   return undefined;
-}
-
-function RepoPropertyIcon({
-  type,
-}: {
-  type: "archived" | "branch" | "language" | "private" | "public";
-}) {
-  const className = "h-3.5 w-3.5 text-muted";
-
-  if (type === "language") return <CodeIcon className={className} />;
-  if (type === "branch") return <BranchIcon className={className} />;
-  if (type === "archived") return <ArchiveIcon className={className} />;
-  if (type === "private") return <LockIcon className={className} />;
-  return <GlobeIcon className={className} />;
-}
-
-function RepoPropertyPill({
-  icon,
-  label,
-  monospace = false,
-  value,
-}: {
-  icon: "archived" | "branch" | "language" | "private" | "public";
-  label: string;
-  monospace?: boolean;
-  value: string;
-}) {
-  return (
-    <span aria-label={`${label}: ${value}`} className="ui-pill" title={`${label}: ${value}`}>
-      <RepoPropertyIcon type={icon} />
-      <span className={monospace ? "font-mono" : undefined}>{value}</span>
-    </span>
-  );
 }
 
 function defaultOnboarding(repositoryId: string): RepositoryOnboardingState {
@@ -112,16 +67,6 @@ export function mergeRefreshedRepositories(
   );
 }
 
-export function mergeRepositoryOnboardingState(
-  repositories: readonly WorkspaceGitHubRepository[],
-  repositoryId: string,
-  onboarding: RepositoryOnboardingState,
-): WorkspaceGitHubRepository[] {
-  return repositories.map((repository) =>
-    repository.id === repositoryId ? { ...repository, onboarding } : repository,
-  );
-}
-
 export function primaryProfileForRepositories(
   github: Pick<WorkspaceGitHubData, "primaryProfile">,
   repositories: readonly WorkspaceGitHubRepository[],
@@ -133,49 +78,12 @@ export function primaryProfileForRepositories(
   );
 }
 
-export function repositoryOnboardingLabel(status: RepositoryOnboardingState["status"]): string {
-  switch (status) {
-    case "pr_open":
-      return "Setup PR open";
-    case "ready":
-      return "Ready";
-    case "conflict":
-      return "Conflict";
-    case "error":
-      return "Error";
-    default:
-      return "Not set up";
-  }
-}
-
-export function repositoryOnboardingBadgeTone(
-  status: RepositoryOnboardingState["status"],
-): "success" | "warning" | "danger" | "neutral" | "accent" {
-  switch (status) {
-    case "ready":
-      return "success";
-    case "pr_open":
-      return "accent";
-    case "conflict":
-      return "warning";
-    case "error":
-      return "danger";
-    default:
-      return "neutral";
-  }
-}
-
 export function GitHubConnectionPanel({
   canManage,
   github,
   hideArchivedRepositories = false,
   onChange,
-  onSelectRepository,
-  renderRepositoryDetails,
-  allowManualSetupComplete = false,
-  selectedRepositoryId,
   setFlashMessage = noopFlashMessage,
-  setupActionScope = "all",
   source = "settings",
   workspaceId,
 }: GitHubConnectionPanelProps) {
@@ -273,53 +181,6 @@ export function GitHubConnectionPanel({
     successText: "GitHub repositories refreshed.",
   });
 
-  const startOnboarding = useApiAction<RepositoryOnboardingResponse, [repositoryId: string]>({
-    call: (repositoryId) =>
-      fetch(`/api/workspaces/${workspaceId}/repositories/${repositoryId}/onboarding`, {
-        method: "POST",
-      }),
-    errorText: "Wallie setup failed.",
-    onSuccess: (payload, [repositoryId]) => {
-      const nextRepositories = mergeRepositoryOnboardingState(
-        latestRepositoriesRef.current,
-        repositoryId,
-        payload.onboarding,
-      );
-      if (!isControlled) setLocalRepositories(nextRepositories);
-      emitChange({ repositories: nextRepositories });
-    },
-    setFlashMessage,
-    successText: (payload) =>
-      payload.onboarding.status === "conflict"
-        ? "Wallie setup found existing skill conflicts."
-        : payload.onboarding.status === "ready"
-          ? "Repository already has the current Wallie skills."
-          : "Wallie setup PR created.",
-  });
-
-  const markOnboardingReady = useApiAction<RepositoryOnboardingResponse, [repositoryId: string]>({
-    call: (repositoryId) =>
-      fetch(`/api/workspaces/${workspaceId}/repositories/${repositoryId}/onboarding`, {
-        body: JSON.stringify({ action: "mark_ready" }),
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "PATCH",
-      }),
-    errorText: "Manual Wallie setup confirmation failed.",
-    onSuccess: (payload, [repositoryId]) => {
-      const nextRepositories = mergeRepositoryOnboardingState(
-        latestRepositoriesRef.current,
-        repositoryId,
-        payload.onboarding,
-      );
-      if (!isControlled) setLocalRepositories(nextRepositories);
-      emitChange({ repositories: nextRepositories });
-    },
-    setFlashMessage,
-    successText: "Repository marked ready for Wallie.",
-  });
-
   const visibleRepositories = useMemo(
     () =>
       hideArchivedRepositories
@@ -408,157 +269,24 @@ export function GitHubConnectionPanel({
         </p>
       ) : (
         <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
-          {visibleRepositories.map((repository) => {
-            const selected = selectedRepositoryId === repository.id;
-            const showSetupAction =
-              setupActionScope === "all" || (setupActionScope === "selected" && selected);
-            const showInstallSkillsAction =
-              showSetupAction && repository.onboarding.status !== "ready";
-            const showManualSetupComplete =
-              allowManualSetupComplete &&
-              showSetupAction &&
-              repository.onboarding.status !== "ready";
-            const showSetupHelp = source === "onboarding" && showInstallSkillsAction;
-            const setupActionBusy = startOnboarding.isBusy || markOnboardingReady.isBusy;
-            return (
-              <li className="flex flex-col gap-3 px-5 py-4" key={repository.id}>
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-                  <div className="min-w-0 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {onSelectRepository ? (
-                        <button
-                          className={`text-left text-[14px] ${interactiveLinkClass}`}
-                          disabled={!canManage}
-                          onClick={() => onSelectRepository(repository.id)}
-                          type="button"
-                        >
-                          {repository.fullName}
-                        </button>
-                      ) : (
-                        <a
-                          className={`text-[14px] ${interactiveLinkClass}`}
-                          href={repository.htmlUrl}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          {repository.fullName}
-                        </a>
-                      )}
-                      <StatusBadge
-                        tone={repositoryOnboardingBadgeTone(repository.onboarding.status)}
-                      >
-                        {repositoryOnboardingLabel(repository.onboarding.status)}
-                      </StatusBadge>
-                      {repository.profile?.isPrimary ? (
-                        <StatusBadge tone="success">Primary</StatusBadge>
-                      ) : null}
-                      {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {repository.defaultProgrammingLanguage ? (
-                        <RepoPropertyPill
-                          icon="language"
-                          label="Language"
-                          value={repository.defaultProgrammingLanguage}
-                        />
-                      ) : null}
-                      {repository.defaultBranch ? (
-                        <RepoPropertyPill
-                          icon="branch"
-                          label="Default branch"
-                          monospace
-                          value={repository.defaultBranch}
-                        />
-                      ) : null}
-                      <RepoPropertyPill
-                        icon={repository.isPrivate ? "private" : "public"}
-                        label="Visibility"
-                        value={repository.isPrivate ? "Private" : "Public"}
-                      />
-                      {repository.isArchived ? (
-                        <RepoPropertyPill icon="archived" label="Status" value="Archived" />
-                      ) : null}
-                    </div>
-                    {repository.description ? (
-                      <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
-                    ) : null}
-                    {showSetupHelp ? (
-                      <p className="max-w-[640px] text-[12px] leading-5 text-muted">
-                        Install skills opens a pull request that adds Wallie&apos;s repo-local
-                        workflow skills under{" "}
-                        <span className="font-mono text-foreground">.agents/skills</span>. Mark
-                        skills as installed if they already exist in the repository.
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    {onSelectRepository && !selected ? (
-                      <button
-                        className="ui-button"
-                        disabled={!canManage}
-                        onClick={() => onSelectRepository(repository.id)}
-                        type="button"
-                      >
-                        Select
-                      </button>
-                    ) : null}
-                    {showSetupAction && repository.onboarding.setupPrUrl ? (
-                      <a
-                        className="ui-button"
-                        href={repository.onboarding.setupPrUrl}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        View setup PR
-                      </a>
-                    ) : null}
-                    {showInstallSkillsAction ? (
-                      <button
-                        className="ui-button-primary"
-                        disabled={!canManage || repository.isArchived || setupActionBusy}
-                        onClick={() => void startOnboarding.run(repository.id)}
-                        type="button"
-                      >
-                        {startOnboarding.isBusy ? "Installing..." : "Install skills"}
-                      </button>
-                    ) : null}
-                    {showManualSetupComplete ? (
-                      <button
-                        className="ui-button"
-                        disabled={!canManage || repository.isArchived || setupActionBusy}
-                        onClick={() => void markOnboardingReady.run(repository.id)}
-                        type="button"
-                      >
-                        {markOnboardingReady.isBusy
-                          ? "Marking installed..."
-                          : "Mark skills as installed"}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                {repository.onboarding.status === "conflict" ? (
-                  <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] leading-5 text-warning">
-                    <p className="font-semibold">Existing skill files need review.</p>
-                    <ul className="mt-1 space-y-1">
-                      {repository.onboarding.conflictReport.map((conflict) => (
-                        <li key={conflict.path}>
-                          <span className="font-mono">{conflict.path}</span>: {conflict.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+          {visibleRepositories.map((repository) => (
+            <li className="flex flex-col gap-3 px-5 py-4" key={repository.id}>
+              <div className="min-w-0 space-y-2">
+                <a
+                  className={`text-[14px] ${interactiveLinkClass}`}
+                  href={repository.htmlUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {repository.fullName}
+                </a>
+                <RepositoryMetadataPills repository={repository} />
+                {repository.description ? (
+                  <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
                 ) : null}
-                {repository.onboarding.lastError ? (
-                  <p className="text-[12px] leading-5 text-danger">
-                    {repository.onboarding.lastError}
-                  </p>
-                ) : null}
-                {selected && renderRepositoryDetails ? renderRepositoryDetails(repository) : null}
-              </li>
-            );
-          })}
+              </div>
+            </li>
+          ))}
         </ul>
       )}
     </div>

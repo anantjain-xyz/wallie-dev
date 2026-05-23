@@ -43,6 +43,15 @@ import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
+import {
+  mergeRepositoryOnboardingState,
+  RepositoryMetadataPills,
+  RepositorySetupControls,
+  RepositorySetupMessages,
+  repositorySetupCanAdvance,
+  RepositorySetupStatusBadge,
+} from "@/features/repositories/repository-setup-controls";
+import type { FlashMessage } from "@/features/settings/settings-types";
 import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type {
@@ -60,6 +69,7 @@ import {
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
 import { type AgentConfigDrafts, applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
+import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type {
   SandboxCapabilityCheckLatestResponse,
@@ -1415,9 +1425,13 @@ function VerifyStep({
 function RepositoryAnalysisStep({
   data,
   isSaving,
+  onAnalyzeRepository,
   onInferRepository,
+  onRepositoryOnboardingChange,
   onRepositoryProfileSaved,
+  onRepositorySetupMessage,
   onSelectStep,
+  onSelectGithubRepository,
   profileAnalyzing,
   profileDraft,
   profileError,
@@ -1426,9 +1440,16 @@ function RepositoryAnalysisStep({
 }: {
   data: WorkspaceOnboardingData;
   isSaving: boolean;
+  onAnalyzeRepository: (repository: WorkspaceGitHubRepository) => void;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
+  onRepositoryOnboardingChange: (
+    repositoryId: string,
+    onboarding: RepositoryOnboardingState,
+  ) => void;
   onRepositoryProfileSaved: () => void;
+  onRepositorySetupMessage: (message: FlashMessage) => void;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
+  onSelectGithubRepository: (repository: WorkspaceGitHubRepository) => void;
   profileAnalyzing: boolean;
   profileDraft: EditableProfile | null;
   profileError: string | null;
@@ -1436,13 +1457,14 @@ function RepositoryAnalysisStep({
   updateProfileDraft: (profile: EditableProfile, dirty?: boolean) => void;
 }) {
   const selectedRepository = selectedRepositoryFromData(data);
+  const repositories = data.github.repositories.filter((repository) => !repository.isArchived);
 
-  if (!selectedRepository) {
+  if (repositories.length === 0) {
     return (
       <div className="rounded-[6px] border border-border bg-surface p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] leading-5 text-muted">
-            Select a GitHub repository before analyzing repository setup.
+            Connect GitHub and sync repositories before analyzing repository setup.
           </p>
           <button className="ui-button" onClick={() => onSelectStep("github")} type="button">
             Open GitHub
@@ -1453,78 +1475,98 @@ function RepositoryAnalysisStep({
   }
 
   return (
-    <div className="space-y-4">
-      {profileError ? (
-        <div
-          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
-          role="alert"
-        >
-          {profileError}
-        </div>
-      ) : null}
+    <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+      {repositories.map((repository) => {
+        const selected = selectedRepository?.id === repository.id;
+        const showProfileEditor = selected && Boolean(profileDraft);
+        const rowProfileBusy = selected && (profileAnalyzing || profileSaving);
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="truncate text-[14px] font-semibold text-foreground">
-                {selectedRepository.fullName}
-              </h3>
-              <Badge tone="accent">Selected</Badge>
-              <Badge
-                tone={selectedRepository.onboarding.status === "ready" ? "success" : "warning"}
+        return (
+          <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    className="truncate text-[14px] font-semibold text-foreground transition-colors duration-150 hover:text-accent"
+                    href={repository.htmlUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {repository.fullName}
+                  </a>
+                  {selected ? <Badge tone="accent">Selected</Badge> : null}
+                  {repository.profile?.isPrimary ? <Badge tone="success">Primary</Badge> : null}
+                  <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                </div>
+                <RepositoryMetadataPills repository={repository} />
+                {repository.description ? (
+                  <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
+                ) : null}
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
+                {!selected ? (
+                  <button
+                    className="ui-button"
+                    disabled={!data.canManage || isSaving || rowProfileBusy}
+                    onClick={() => onSelectGithubRepository(repository)}
+                    type="button"
+                  >
+                    Use repository
+                  </button>
+                ) : null}
+                <RepositorySetupControls
+                  canManage={data.canManage && !isSaving}
+                  onChange={onRepositoryOnboardingChange}
+                  repository={repository}
+                  setMessage={onRepositorySetupMessage}
+                  workspaceId={data.workspace.id}
+                />
+                {!showProfileEditor && !rowProfileBusy ? (
+                  <button
+                    className={repository.profile ? "ui-button" : "ui-button-primary"}
+                    disabled={!data.canManage || isSaving}
+                    onClick={() =>
+                      repository.profile
+                        ? onSelectGithubRepository(repository)
+                        : onAnalyzeRepository(repository)
+                    }
+                    type="button"
+                  >
+                    {repository.profile ? "Edit profile" : "Analyze repository"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {selected && profileError ? (
+              <div
+                className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+                role="alert"
               >
-                {selectedRepository.onboarding.status === "ready"
-                  ? "Setup ready"
-                  : repositorySetupCanAdvance(selectedRepository.onboarding.status)
-                    ? "Setup PR open"
-                    : "Setup not ready"}
-              </Badge>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {selectedRepository.defaultProgrammingLanguage ? (
-                <span className="ui-pill">{selectedRepository.defaultProgrammingLanguage}</span>
-              ) : null}
-              {selectedRepository.defaultBranch ? (
-                <span className="ui-pill font-mono">{selectedRepository.defaultBranch}</span>
-              ) : null}
-              <span className="ui-pill">{selectedRepository.isPrivate ? "Private" : "Public"}</span>
-            </div>
-          </div>
-
-          {!profileDraft && !profileAnalyzing ? (
-            <button
-              className="ui-button-primary shrink-0"
-              disabled={!data.canManage || isSaving}
-              onClick={() => onInferRepository(selectedRepository)}
-              type="button"
-            >
-              Analyze repository
-            </button>
-          ) : null}
-        </div>
-
-        {selectedRepository.description ? (
-          <p className="mt-3 text-[13px] leading-5 text-muted">{selectedRepository.description}</p>
-        ) : null}
-      </div>
-
-      {profileDraft ? (
-        <RepositoryProfileEditor
-          canManage={data.canManage && !isSaving}
-          isAnalyzing={profileAnalyzing}
-          isSaving={profileSaving}
-          onChange={updateProfileDraft}
-          onInfer={() => onInferRepository(selectedRepository)}
-          onSave={onRepositoryProfileSaved}
-          profile={profileDraft}
-        />
-      ) : profileAnalyzing ? (
-        <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
-          Analyzing repository...
-        </div>
-      ) : null}
-    </div>
+                {profileError}
+              </div>
+            ) : null}
+            <RepositorySetupMessages repository={repository} />
+            {showProfileEditor && profileDraft ? (
+              <RepositoryProfileEditor
+                canManage={data.canManage && !isSaving}
+                isAnalyzing={profileAnalyzing}
+                isSaving={profileSaving}
+                onChange={updateProfileDraft}
+                onInfer={() => onInferRepository(repository)}
+                onSave={onRepositoryProfileSaved}
+                profile={profileDraft}
+              />
+            ) : selected && profileAnalyzing ? (
+              <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
+                Analyzing repository...
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -1532,10 +1574,13 @@ function StepBody({
   data,
   isSaving,
   onCompleteStep,
+  onAnalyzeRepository,
   onDataChange,
   onInferRepository,
   onRefresh,
+  onRepositoryOnboardingChange,
   onRepositoryProfileSaved,
+  onRepositorySetupMessage,
   onRuntimeStateChange,
   onSelectStep,
   onSelectGithubRepository,
@@ -1549,10 +1594,16 @@ function StepBody({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
+  onAnalyzeRepository: (repository: WorkspaceGitHubRepository) => void;
   onDataChange: OnboardingDataChange;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
   onRefresh: (action: string) => Promise<void>;
+  onRepositoryOnboardingChange: (
+    repositoryId: string,
+    onboarding: RepositoryOnboardingState,
+  ) => void;
   onRepositoryProfileSaved: () => void;
+  onRepositorySetupMessage: (message: FlashMessage) => void;
   onRuntimeStateChange: (state: RuntimeCompletionState) => void;
   onSelectStep: (step: WorkspaceOnboardingStep) => void;
   onSelectGithubRepository: (repository: WorkspaceGitHubRepository) => void;
@@ -1589,17 +1640,10 @@ function StepBody({
   if (step === "github") {
     return (
       <GitHubConnectionPanel
-        allowManualSetupComplete
         canManage={data.canManage && !isSaving}
         github={data.github}
         hideArchivedRepositories
         onChange={updateGithub}
-        onSelectRepository={(repositoryId) => {
-          const repository = data.github.repositories.find((item) => item.id === repositoryId);
-          if (repository) onSelectGithubRepository(repository);
-        }}
-        selectedRepositoryId={selectedRepositoryFromData(data)?.id ?? null}
-        setupActionScope="selected"
         source="onboarding"
         workspaceId={data.workspace.id}
       />
@@ -1611,9 +1655,13 @@ function StepBody({
       <RepositoryAnalysisStep
         data={data}
         isSaving={isSaving}
+        onAnalyzeRepository={onAnalyzeRepository}
         onInferRepository={onInferRepository}
+        onRepositoryOnboardingChange={onRepositoryOnboardingChange}
         onRepositoryProfileSaved={onRepositoryProfileSaved}
+        onRepositorySetupMessage={onRepositorySetupMessage}
         onSelectStep={onSelectStep}
+        onSelectGithubRepository={onSelectGithubRepository}
         profileAnalyzing={profileAnalyzing}
         profileDraft={profileDraft}
         profileError={profileError}
@@ -1834,18 +1882,8 @@ function selectedRepositoryFromData(data: WorkspaceOnboardingData) {
   );
 }
 
-function repositorySetupCanAdvance(
-  status: WorkspaceOnboardingData["setupHealth"]["repositorySetup"]["status"],
-) {
-  return status === "pr_open" || status === "ready";
-}
-
 function canCompleteGitHubSetupStep(data: WorkspaceOnboardingData) {
-  return (
-    data.setupHealth.githubInstallation.connected &&
-    data.setupHealth.selectedRepository.configured &&
-    repositorySetupCanAdvance(data.setupHealth.repositorySetup.status)
-  );
+  return data.setupHealth.githubInstallation.connected && data.github.repositories.length > 0;
 }
 
 function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {
@@ -1855,6 +1893,13 @@ function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {
     Boolean(selectedRepositoryId) &&
     data.setupHealth.primaryRepositoryProfile.configured &&
     data.setupHealth.primaryRepositoryProfile.repositoryId === selectedRepositoryId
+  );
+}
+
+function canCompleteRepositoryStep(data: WorkspaceOnboardingData) {
+  return (
+    hasSelectedRepositoryProfile(data) &&
+    repositorySetupCanAdvance(data.setupHealth.repositorySetup.status)
   );
 }
 
@@ -1937,7 +1982,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     !activeStepAlreadyResolved;
   const githubContinueBlocked = activeStep.id === "github" && !canCompleteGitHubSetupStep(data);
   const repositoryContinueBlocked =
-    activeStep.id === "repository" && !hasSelectedRepositoryProfile(data);
+    activeStep.id === "repository" && !canCompleteRepositoryStep(data);
   const runtimeCompletionBlocked =
     activeStep.id === "runtime" &&
     !activeStepAlreadyResolved &&
@@ -2151,7 +2196,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     }
   }
 
-  async function selectGithubRepository(repository: WorkspaceGitHubRepository) {
+  async function selectGithubRepository(repository: WorkspaceGitHubRepository): Promise<boolean> {
     setProfileError(null);
 
     const patch = buildOnboardingRepositorySelectionPatch(
@@ -2165,11 +2210,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       setProfileDirty(false);
       setProfileAction(null);
       setProfileDraft(repository.profile ?? null);
-      return;
+      return true;
     }
 
     const nextData = await persistOnboarding(patch, "repository-selection");
-    if (!nextData) return;
+    if (!nextData) return false;
 
     selectedRepositoryIdRef.current = repository.id;
     setSelectedRepositoryId(repository.id);
@@ -2179,6 +2224,44 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       (item) => item.id === repository.id,
     );
     setProfileDraft(selectedRepository?.profile ?? null);
+    return true;
+  }
+
+  async function analyzeRepository(repository: WorkspaceGitHubRepository) {
+    const currentSelectedRepositoryId = selectedRepositoryFromData(latestDataRef.current)?.id;
+    if (currentSelectedRepositoryId !== repository.id) {
+      const selected = await selectGithubRepository(repository);
+      if (!selected) return;
+    }
+
+    await inferRepositoryProfile(repository);
+  }
+
+  function updateRepositoryOnboarding(repositoryId: string, onboarding: RepositoryOnboardingState) {
+    updateData((currentData) => {
+      const nextGithub = {
+        ...currentData.github,
+        repositories: mergeRepositoryOnboardingState(
+          currentData.github.repositories,
+          repositoryId,
+          onboarding,
+        ),
+      };
+
+      return {
+        ...currentData,
+        github: nextGithub,
+        setupHealth: applyGithubHealth(
+          currentData.setupHealth,
+          nextGithub,
+          currentData.onboarding.selectedGithubRepositoryId,
+        ),
+      };
+    });
+  }
+
+  function handleRepositorySetupMessage(message: FlashMessage) {
+    setError(message.kind === "error" ? message.text : null);
   }
 
   async function saveRepositoryProfile() {
@@ -2223,9 +2306,9 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         setProfileDirty(false);
       }
 
-      const autoContinuePatch = buildRepositoryProfileAutoContinuePatch(
-        latestDataRef.current.onboarding,
-      );
+      const autoContinuePatch = canCompleteRepositoryStep(nextData)
+        ? buildRepositoryProfileAutoContinuePatch(latestDataRef.current.onboarding)
+        : null;
       if (autoContinuePatch) {
         await persistOnboarding(autoContinuePatch, "repository-profile");
       }
@@ -2300,6 +2383,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               data={data}
               isSaving={isSaving}
               onCompleteStep={completeCurrentStep}
+              onAnalyzeRepository={(repository) => void analyzeRepository(repository)}
               onDataChange={updateData}
               onInferRepository={(repository) => void inferRepositoryProfile(repository)}
               onRefresh={async (action) => {
@@ -2308,7 +2392,9 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
                   throw new Error("Failed to refresh onboarding state.");
                 }
               }}
+              onRepositoryOnboardingChange={updateRepositoryOnboarding}
               onRepositoryProfileSaved={() => void saveRepositoryProfile()}
+              onRepositorySetupMessage={handleRepositorySetupMessage}
               onRuntimeStateChange={setRuntimeCompletionState}
               onSelectStep={(step) => void selectStep(step)}
               onSelectGithubRepository={(repository) => void selectGithubRepository(repository)}

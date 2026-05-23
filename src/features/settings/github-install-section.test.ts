@@ -91,19 +91,19 @@ describe("GitHubInstallSection", () => {
     expect(markup).toContain("Install GitHub App");
   });
 
-  it("renders refresh, manage, repository setup actions, and inline setup states", () => {
+  it("renders refresh, manage, and a read-only repository list", () => {
     const markup = renderSection(github());
 
     expect(markup).toContain("Connected");
     expect(markup).toContain("Refresh repositories");
     expect(markup).toContain("Manage on GitHub");
-    expect(markup).toContain("Install skills");
-    expect(markup).toContain("Not set up");
-    expect(markup).toContain("Setup PR open");
-    expect(markup).toContain("Ready");
-    expect(markup).toContain("Conflict");
-    expect(markup).toContain("Error");
-    expect(markup).toContain("Existing skill files need review.");
-    expect(markup).toContain("GitHub read failed");
+    expect(markup).toContain("acme/not-set-up");
+    expect(markup).toContain("acme/pr-open");
+    expect(markup).not.toContain("Install skills");
+    expect(markup).not.toContain("Mark skills as installed");
+    expect(markup).not.toContain("View setup PR");
+    expect(markup).not.toContain("Setup PR open");
+    expect(markup).not.toContain("Existing skill files need review.");
+    expect(markup).not.toContain("GitHub read failed");
   });
 });
