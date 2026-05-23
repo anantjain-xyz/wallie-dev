@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type {
   GitHubInstallResponse,
@@ -9,9 +9,8 @@ import type {
   GitHubRepositorySyncResponse,
 } from "@/features/github/contracts";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
-import { RepositoryMetadataPills } from "@/features/repositories/repository-setup-controls";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { ConfigState, dateFormatter, interactiveLinkClass } from "@/features/settings/settings-ui";
+import { ConfigState, dateFormatter } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 
@@ -20,7 +19,6 @@ export { mergeRepositoryOnboardingState } from "@/features/repositories/reposito
 type GitHubConnectionPanelProps = {
   canManage: boolean;
   github: WorkspaceGitHubData;
-  hideArchivedRepositories?: boolean;
   onChange?: (github: WorkspaceGitHubData) => void;
   setFlashMessage?: (message: FlashMessage) => void;
   source?: "onboarding" | "settings";
@@ -81,7 +79,6 @@ export function primaryProfileForRepositories(
 export function GitHubConnectionPanel({
   canManage,
   github,
-  hideArchivedRepositories = false,
   onChange,
   setFlashMessage = noopFlashMessage,
   source = "settings",
@@ -181,14 +178,6 @@ export function GitHubConnectionPanel({
     successText: "GitHub repositories refreshed.",
   });
 
-  const visibleRepositories = useMemo(
-    () =>
-      hideArchivedRepositories
-        ? repositories.filter((repository) => !repository.isArchived)
-        : repositories,
-    [hideArchivedRepositories, repositories],
-  );
-
   if (!githubInstallation) {
     return (
       <div className="space-y-6">
@@ -260,35 +249,6 @@ export function GitHubConnectionPanel({
           </Link>
         </div>
       </div>
-
-      {visibleRepositories.length === 0 ? (
-        <p className="text-[13px] leading-6 text-muted">
-          {hideArchivedRepositories
-            ? "No non-archived repositories are synced yet."
-            : "No repositories are synced yet."}
-        </p>
-      ) : (
-        <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
-          {visibleRepositories.map((repository) => (
-            <li className="flex flex-col gap-3 px-5 py-4" key={repository.id}>
-              <div className="min-w-0 space-y-2">
-                <a
-                  className={`text-[14px] ${interactiveLinkClass}`}
-                  href={repository.htmlUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {repository.fullName}
-                </a>
-                <RepositoryMetadataPills repository={repository} />
-                {repository.description ? (
-                  <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

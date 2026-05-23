@@ -91,14 +91,14 @@ describe("GitHubInstallSection", () => {
     expect(markup).toContain("Install GitHub App");
   });
 
-  it("renders refresh, manage, and a read-only repository list", () => {
+  it("renders refresh and manage without repository rows", () => {
     const markup = renderSection(github());
 
     expect(markup).toContain("Connected");
     expect(markup).toContain("Refresh repositories");
     expect(markup).toContain("Manage on GitHub");
-    expect(markup).toContain("acme/not-set-up");
-    expect(markup).toContain("acme/pr-open");
+    expect(markup).not.toContain("acme/not-set-up");
+    expect(markup).not.toContain("acme/pr-open");
     expect(markup).not.toContain("Install skills");
     expect(markup).not.toContain("Mark skills as installed");
     expect(markup).not.toContain("View setup PR");

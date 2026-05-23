@@ -141,7 +141,7 @@ describe("mergeRepositoryOnboardingState", () => {
 });
 
 describe("GitHubConnectionPanel", () => {
-  it("renders a read-only synced repository list without setup controls", () => {
+  it("renders connection controls without synced repository rows", () => {
     const repo1 = repository("repo-1", null);
     const repo2 = {
       ...repository("repo-2", profile("repo-2")),
@@ -176,52 +176,15 @@ describe("GitHubConnectionPanel", () => {
       }),
     );
 
-    expect(markup).toContain("acme/repo-1");
-    expect(markup).toContain("acme/repo-2");
     expect(markup).toContain("Refresh repositories");
     expect(markup).toContain("Manage on GitHub");
+    expect(markup).not.toContain("acme/repo-1");
+    expect(markup).not.toContain("acme/repo-2");
     expect(markup).not.toContain(">Select</button>");
     expect(markup).not.toContain("Install skills");
     expect(markup).not.toContain("Mark skills as installed");
     expect(markup).not.toContain("View setup PR");
     expect(markup).not.toContain("Primary");
     expect(markup).not.toContain("Setup PR open");
-  });
-
-  it("hides archived repositories when requested", () => {
-    const repo1 = repository("repo-1", null);
-    const repo2 = {
-      ...repository("archived-repo", null),
-      isArchived: true,
-    } satisfies WorkspaceGitHubRepository;
-    const github = {
-      installation: {
-        appId: 123,
-        id: "installation-1",
-        installationId: 456,
-        installationUrl: "https://github.com/settings/installations/456",
-        permissions: {},
-        suspended: false,
-        targetName: "acme",
-        targetType: "Organization",
-        updatedAt: "2026-05-16T18:00:00.000Z",
-      },
-      missingAppKeys: [],
-      missingWebhookKeys: [],
-      primaryProfile: null,
-      repositories: [repo1, repo2],
-    } satisfies WorkspaceGitHubData;
-
-    const markup = renderToStaticMarkup(
-      React.createElement(GitHubConnectionPanel, {
-        canManage: true,
-        github,
-        hideArchivedRepositories: true,
-        workspaceId: WORKSPACE_ID,
-      }),
-    );
-
-    expect(markup).toContain("acme/repo-1");
-    expect(markup).not.toContain("archived-repo");
   });
 });

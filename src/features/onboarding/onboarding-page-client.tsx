@@ -1639,7 +1639,6 @@ function StepBody({
       <GitHubConnectionPanel
         canManage={data.canManage && !isSaving}
         github={data.github}
-        hideArchivedRepositories
         onChange={updateGithub}
         source="onboarding"
         workspaceId={data.workspace.id}

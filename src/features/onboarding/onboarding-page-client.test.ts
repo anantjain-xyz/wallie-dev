@@ -451,7 +451,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html).toContain("acme/repo-a");
+    expect(html).not.toContain('href="https://github.com/acme/repo-a"');
     expect(html).not.toContain("Install skills");
     expect(html).not.toContain("Mark skills as installed");
     expect(primaryFooterButton(html)).not.toContain("disabled");
