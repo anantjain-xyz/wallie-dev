@@ -27,7 +27,7 @@
     "@supabase/supabase-js": "^2.101.0",
     "@vercel/sandbox": "^1.10.0",
     "clsx": "^2.1.1",
-    "next": "16.2.1",
+    "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
