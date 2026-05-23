@@ -237,7 +237,7 @@ export function buildVerifyChecklist(input: {
     },
     {
       detail: input.health.primaryRepositoryProfile.configured
-        ? (input.health.primaryRepositoryProfile.fullName ?? "Primary repository profile saved.")
+        ? (input.health.primaryRepositoryProfile.fullName ?? "Repository profile saved.")
         : input.health.selectedRepository.fullName
           ? `Analyze and save a repository profile for ${input.health.selectedRepository.fullName}.`
           : "Select a repository before saving a repository profile.",
@@ -322,7 +322,7 @@ export function buildVerifyChecklist(input: {
               ? (latestCheck?.errorText ?? "Latest sandbox capability check failed.")
               : primaryRepositoryId
                 ? "Run a sandbox capability check for the selected repository."
-                : "Save a primary repository profile before running a sandbox capability check.",
+                : "Save a repository profile before running a sandbox capability check.",
       id: "sandbox",
       label: "Sandbox capability check succeeded",
       passed: latestSelectedRepositoryCheckStatus === "success",

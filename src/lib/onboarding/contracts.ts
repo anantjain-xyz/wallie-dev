@@ -116,6 +116,7 @@ export type OnboardingSetupHealth = {
   workspaceSecrets: {
     configuredKeys: string[];
   };
+  // Temporary compatibility: saved repository profile readiness still mirrors legacy is_primary storage.
   primaryRepositoryProfile: {
     configured: boolean;
     fullName: string | null;

@@ -211,7 +211,7 @@ export async function saveWorkspaceRepositoryProfile(input: {
   if (error) {
     if (error.code === "23505") {
       throw new RepositoryProfileError(
-        "Only one primary repository profile can exist per workspace.",
+        "Only one saved repository profile can be active per workspace.",
         409,
       );
     }

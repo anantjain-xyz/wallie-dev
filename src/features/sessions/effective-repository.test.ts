@@ -179,7 +179,7 @@ describe("resolveEffectiveSessionRepository", () => {
     expect(resolution.repository?.fullName).toBe("acme/session");
   });
 
-  it("uses the workspace primary repository before onboarding fallback", async () => {
+  it("uses the workspace profile repository before onboarding fallback", async () => {
     const resolution = await resolveEffectiveSessionRepository({
       sessionId: SESSION_ID,
       supabase: buildSupabaseMock({

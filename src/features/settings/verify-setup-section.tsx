@@ -76,7 +76,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
           <div className="mb-4 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
             <p className="mt-1 text-[12px] leading-5 text-muted">
-              Run the check against the selected primary repository.
+              Run the check against the selected repository.
             </p>
           </div>
           <SandboxCapabilitySection

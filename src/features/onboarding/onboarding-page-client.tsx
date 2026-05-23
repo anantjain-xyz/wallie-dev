@@ -1376,7 +1376,7 @@ function VerifyStep({
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
             <p className="mt-1 text-[12px] leading-5 text-muted">
-              Checks run against the selected primary repository only.
+              Checks run against the selected repository.
             </p>
           </div>
           <Badge tone={sandboxStatusTone(check)}>{check?.status ?? "No check"}</Badge>
@@ -1500,7 +1500,6 @@ function RepositoryAnalysisStep({
                   {repository.fullName}
                 </a>
                 {selected ? <Badge tone="accent">Selected</Badge> : null}
-                {repository.profile?.isPrimary ? <Badge tone="success">Primary</Badge> : null}
                 <RepositorySetupStatusBadge status={repository.onboarding.status} />
               </div>
               <RepositoryMetadataPills repository={repository} />

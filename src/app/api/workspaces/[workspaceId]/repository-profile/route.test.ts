@@ -74,7 +74,7 @@ describe("repository profile route", () => {
     vi.clearAllMocks();
   });
 
-  it("saves a selected primary profile", async () => {
+  it("saves a selected repository profile", async () => {
     grantAccess();
     const admin = {};
     const profile = {
@@ -124,12 +124,12 @@ describe("repository profile route", () => {
     expect(mocked.saveWorkspaceRepositoryProfile).not.toHaveBeenCalled();
   });
 
-  it("returns primary uniqueness conflicts", async () => {
+  it("returns active profile uniqueness conflicts", async () => {
     grantAccess();
     mocked.createSupabaseAdminClient.mockReturnValue({});
     mocked.saveWorkspaceRepositoryProfile.mockRejectedValue(
       new RepositoryProfileError(
-        "Only one primary repository profile can exist per workspace.",
+        "Only one saved repository profile can be active per workspace.",
         409,
       ),
     );
@@ -138,7 +138,7 @@ describe("repository profile route", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "Only one primary repository profile can exist per workspace.",
+      error: "Only one saved repository profile can be active per workspace.",
     });
   });
 });

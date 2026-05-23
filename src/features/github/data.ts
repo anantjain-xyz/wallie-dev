@@ -72,6 +72,7 @@ export type WorkspaceGitHubData = {
   installation: GitHubInstallationSummary | null;
   missingAppKeys: string[];
   missingWebhookKeys: string[];
+  // Temporary compatibility: repository profiles are still sourced from the legacy is_primary row.
   primaryProfile: RepositoryProfileState | null;
   repositories: WorkspaceGitHubRepository[];
 };

@@ -313,7 +313,7 @@ describe("POST /api/sessions", () => {
     });
   });
 
-  it("defaults the session repository from the workspace primary repository", async () => {
+  it("defaults the session repository from the workspace profile repository", async () => {
     currentAdminMock = buildAdminMock({
       primaryRepositoryId: REPOSITORY_ID,
       repositories: [

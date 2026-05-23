@@ -323,9 +323,6 @@ export function RepositoryAnalysisSection({
                         {repository.fullName}
                       </a>
                       {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
-                      {repository.profile?.isPrimary ? (
-                        <StatusBadge tone="success">Primary</StatusBadge>
-                      ) : null}
                       <RepositorySetupStatusBadge status={repository.onboarding.status} />
                     </div>
                     <RepositoryMetadataPills repository={repository} />

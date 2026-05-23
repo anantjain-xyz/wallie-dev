@@ -710,7 +710,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.body).toContain("Drafted spec body");
   });
 
-  it("uses the selected primary repository profile before alphabetical fallback", async () => {
+  it("uses the selected saved repository profile before alphabetical fallback", async () => {
     const session = baseSession();
     const job = baseJob();
     const { admin } = buildAdminMock({
@@ -742,7 +742,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.repoId).toBe("repo-z");
   });
 
-  it("does not fall back to another repository when the selected primary repo is archived", async () => {
+  it("does not fall back to another repository when the selected saved repository is archived", async () => {
     const session = baseSession();
     const job = baseJob();
     const { admin } = buildAdminMock({

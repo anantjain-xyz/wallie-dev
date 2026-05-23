@@ -43,7 +43,7 @@ describe("workspace repository profiles schema", () => {
     expect(migration).toContain("internal.can_manage_workspace(workspace_id)");
   });
 
-  it("provides an atomic save function for switching the primary profile", () => {
+  it("provides an atomic save function for switching the active profile", () => {
     expect(migration).toContain(
       "create or replace function public.save_workspace_repository_profile",
     );
