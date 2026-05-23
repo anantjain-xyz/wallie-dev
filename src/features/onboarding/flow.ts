@@ -179,6 +179,23 @@ export function buildOnboardingContinuePatch(
   };
 }
 
+export function buildOnboardingStepCompletionPatch(
+  onboarding: WorkspaceOnboardingState,
+): WorkspaceOnboardingUpdatePayload | null {
+  const currentIndex = onboardingStepIndex(onboarding.currentStep);
+  const nextStep = WORKSPACE_ONBOARDING_STEPS[currentIndex + 1];
+
+  if (!nextStep || onboarding.status === "completed") {
+    return null;
+  }
+
+  return {
+    completedSteps: appendStep(onboarding.completedSteps, onboarding.currentStep),
+    skippedSteps: removeStep(onboarding.skippedSteps, onboarding.currentStep),
+    status: "in_progress",
+  };
+}
+
 export function buildOnboardingRepositorySelectionPatch(
   onboarding: WorkspaceOnboardingState,
   repositoryId: string,

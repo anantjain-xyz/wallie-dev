@@ -21,6 +21,7 @@ import {
   buildOnboardingRailNavigationPatch,
   buildOnboardingRepositorySelectionPatch,
   buildOnboardingSkipPatch,
+  buildOnboardingStepCompletionPatch,
   canSkipOnboardingStep,
   getOnboardingStepRailItems,
   onboardingStepIndex,
@@ -1847,11 +1848,11 @@ export function applySavedRepositoryProfileToData(
   };
 }
 
-export function buildRepositoryProfileAutoContinuePatch(
+export function buildRepositoryProfileCompletionPatch(
   onboarding: WorkspaceOnboardingData["onboarding"],
 ): WorkspaceOnboardingUpdatePayload | null {
   if (onboarding.currentStep !== "repository") return null;
-  return buildOnboardingContinuePatch(onboarding);
+  return buildOnboardingStepCompletionPatch(onboarding);
 }
 
 function initialProfileDraft(data: WorkspaceOnboardingData): EditableProfile | null {
@@ -2057,10 +2058,10 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   async function completeCurrentStep(action: string) {
-    const nextData = await persistOnboarding(
-      buildOnboardingContinuePatch(latestDataRef.current.onboarding),
-      action,
-    );
+    const patch = buildOnboardingStepCompletionPatch(latestDataRef.current.onboarding);
+    if (!patch) return;
+
+    const nextData = await persistOnboarding(patch, action);
     if (!nextData) {
       throw new Error("Failed to save onboarding state.");
     }
@@ -2302,11 +2303,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         setProfileDirty(false);
       }
 
-      const autoContinuePatch = canCompleteRepositoryStep(nextData)
-        ? buildRepositoryProfileAutoContinuePatch(latestDataRef.current.onboarding)
+      const completionPatch = canCompleteRepositoryStep(nextData)
+        ? buildRepositoryProfileCompletionPatch(latestDataRef.current.onboarding)
         : null;
-      if (autoContinuePatch) {
-        await persistOnboarding(autoContinuePatch, "repository-profile");
+      if (completionPatch) {
+        await persistOnboarding(completionPatch, "repository-profile");
       }
     } catch (caught) {
       setProfileError(

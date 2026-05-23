@@ -7,6 +7,7 @@ import {
   buildOnboardingRailNavigationPatch,
   buildOnboardingRepositorySelectionPatch,
   buildOnboardingSkipPatch,
+  buildOnboardingStepCompletionPatch,
   getOnboardingStepRailItems,
   mapOnboardingResumeState,
   shouldShowOnboardingResumeCta,
@@ -67,6 +68,28 @@ describe("onboarding flow helpers", () => {
       skippedSteps: [],
       status: "in_progress",
     });
+  });
+
+  it("marks a non-final step complete without advancing current step", () => {
+    expect(
+      buildOnboardingStepCompletionPatch(
+        onboardingState({
+          currentStep: "repository",
+          skippedSteps: ["repository"],
+          status: "not_started",
+        }),
+      ),
+    ).toEqual({
+      completedSteps: ["repository"],
+      skippedSteps: [],
+      status: "in_progress",
+    });
+  });
+
+  it("does not build a stay-put completion patch for the final step", () => {
+    expect(
+      buildOnboardingStepCompletionPatch(onboardingState({ currentStep: "verify" })),
+    ).toBeNull();
   });
 
   it("can advance to the next step without completing the current step", () => {
