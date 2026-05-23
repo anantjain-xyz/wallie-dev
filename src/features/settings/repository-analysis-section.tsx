@@ -328,16 +328,6 @@ export function RepositoryAnalysisSection({
                     </div>
 
                     <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
-                      {!selected ? (
-                        <button
-                          className="ui-button"
-                          disabled={!data.canManage || profileBusy}
-                          onClick={() => void selectRepository(repository.id)}
-                          type="button"
-                        >
-                          Use repository
-                        </button>
-                      ) : null}
                       <RepositorySetupControls
                         canManage={data.canManage}
                         onChange={updateRepositoryOnboarding}

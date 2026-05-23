@@ -1505,16 +1505,6 @@ function RepositoryAnalysisStep({
               </div>
 
               <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
-                {!selected ? (
-                  <button
-                    className="ui-button"
-                    disabled={!data.canManage || isSaving || rowProfileBusy}
-                    onClick={() => onSelectGithubRepository(repository)}
-                    type="button"
-                  >
-                    Use repository
-                  </button>
-                ) : null}
                 <RepositorySetupControls
                   canManage={data.canManage && !isSaving}
                   onChange={onRepositoryOnboardingChange}
