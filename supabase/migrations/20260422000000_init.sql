@@ -236,6 +236,7 @@ create table public.sessions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   archived_at timestamptz,
+  github_repository_id uuid references public.github_repositories(id) on delete set null,
   constraint sessions_workspace_number_unique unique (workspace_id, number),
   constraint sessions_number_positive_check check (number > 0),
   constraint sessions_rejection_count_nonnegative_check
@@ -627,6 +628,9 @@ create index sessions_workspace_current_stage_idx
 create index sessions_pipeline_id_idx
   on public.sessions (pipeline_id);
 
+create index sessions_github_repository_idx
+  on public.sessions (github_repository_id);
+
 create index pipelines_workspace_id_idx
   on public.pipelines (workspace_id);
 
@@ -953,6 +957,7 @@ declare
 begin
   perform internal.assert_workspace_match(new.workspace_id, 'public.pipelines', new.pipeline_id, 'pipeline_id');
   perform internal.assert_workspace_match(new.workspace_id, 'public.pipeline_stages', new.current_stage_id, 'current_stage_id');
+  perform internal.assert_workspace_match(new.workspace_id, 'public.github_repositories', new.github_repository_id, 'github_repository_id');
 
   -- For authenticated (non-service_role) inserts, default creator_member_id
   -- to the current workspace member and lock the field on update. Mirrors
@@ -1379,7 +1384,7 @@ as $$
       6,
       'monitor',
       'Monitor',
-      'Watch for regressions. Terminal phase — approving archives.',
+      'Watch for regressions. Terminal phase - approving archives.',
       'Verify that landing "{{session.title}}" has not introduced regressions.' || E'\n\n' ||
       '## Description' || E'\n\n' ||
       '{{session.prompt}}' || E'\n\n' ||
@@ -2763,6 +2768,9 @@ declare
     'public.agent_runs',
     'public.agent_run_messages',
     'public.sessions',
+    'public.session_artifacts',
+    'public.session_phase_completions',
+    'public.session_pull_requests',
     'public.pipelines',
     'public.pipeline_stages'
   ];
