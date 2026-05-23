@@ -1480,6 +1480,8 @@ function RepositoryAnalysisStep({
         const selected = selectedRepository?.id === repository.id;
         const showProfileEditor = selected && Boolean(profileDraft);
         const rowProfileBusy = selected && (profileAnalyzing || profileSaving);
+        const showSetupControls =
+          Boolean(repository.onboarding.setupPrUrl) || repository.onboarding.status !== "ready";
 
         return (
           <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
@@ -1505,13 +1507,6 @@ function RepositoryAnalysisStep({
               </div>
 
               <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
-                <RepositorySetupControls
-                  canManage={data.canManage && !isSaving}
-                  onChange={onRepositoryOnboardingChange}
-                  repository={repository}
-                  setMessage={onRepositorySetupMessage}
-                  workspaceId={data.workspace.id}
-                />
                 {!showProfileEditor && !rowProfileBusy ? (
                   <button
                     className={repository.profile ? "ui-button" : "ui-button-primary"}
@@ -1528,6 +1523,18 @@ function RepositoryAnalysisStep({
                 ) : null}
               </div>
             </div>
+
+            {showSetupControls ? (
+              <div className="flex flex-wrap items-center justify-start gap-2 border-t border-border pt-3 sm:justify-end">
+                <RepositorySetupControls
+                  canManage={data.canManage && !isSaving}
+                  onChange={onRepositoryOnboardingChange}
+                  repository={repository}
+                  setMessage={onRepositorySetupMessage}
+                  workspaceId={data.workspace.id}
+                />
+              </div>
+            ) : null}
 
             {selected && profileError ? (
               <div
