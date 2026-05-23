@@ -19,7 +19,7 @@ vi.mock("next/navigation", () => ({
 
 import {
   applySavedRepositoryProfileToData,
-  buildRepositoryProfileAutoContinuePatch,
+  buildRepositoryProfileCompletionPatch,
   isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
@@ -429,7 +429,7 @@ describe("OnboardingPageClient", () => {
     expect(isRepositorySelectionCurrent("repo-a", "repo-a")).toBe(true);
   });
 
-  it("builds repository auto-continue patches from the current step only", () => {
+  it("builds repository completion patches from the current step only", () => {
     const baseOnboarding = onboardingData().onboarding;
     const repositoryStep = onboardingData({
       onboarding: { ...baseOnboarding, currentStep: "repository" },
@@ -438,10 +438,12 @@ describe("OnboardingPageClient", () => {
       onboarding: { ...baseOnboarding, currentStep: "linear" },
     }).onboarding;
 
-    expect(buildRepositoryProfileAutoContinuePatch(repositoryStep)).toMatchObject({
-      currentStep: "pipeline",
+    expect(buildRepositoryProfileCompletionPatch(repositoryStep)).toEqual({
+      completedSteps: ["github", "repository"],
+      skippedSteps: [],
+      status: "in_progress",
     });
-    expect(buildRepositoryProfileAutoContinuePatch(linearStep)).toBeNull();
+    expect(buildRepositoryProfileCompletionPatch(linearStep)).toBeNull();
   });
 
   it("blocks the GitHub step until the selected repository setup PR is open or ready", () => {
