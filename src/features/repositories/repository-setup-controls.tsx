@@ -141,6 +141,18 @@ export function mergeRepositoryOnboardingState(
   );
 }
 
+export function sortRepositoriesForAnalysis(
+  repositories: readonly WorkspaceGitHubRepository[],
+): WorkspaceGitHubRepository[] {
+  return [...repositories].sort((left, right) => {
+    const leftRank = left.onboarding.status === "ready" ? 0 : 1;
+    const rightRank = right.onboarding.status === "ready" ? 0 : 1;
+
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.fullName.localeCompare(right.fullName);
+  });
+}
+
 export function RepositorySetupMessages({ repository }: { repository: WorkspaceGitHubRepository }) {
   return (
     <>

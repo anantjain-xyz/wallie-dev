@@ -42,6 +42,7 @@ import {
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
+import { prepareRepositoryForAnalysis } from "@/features/repositories/repository-analysis-workflow";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
   mergeRepositoryOnboardingState,
@@ -50,6 +51,7 @@ import {
   RepositorySetupMessages,
   repositorySetupCanAdvance,
   RepositorySetupStatusBadge,
+  sortRepositoriesForAnalysis,
 } from "@/features/repositories/repository-setup-controls";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
@@ -1457,7 +1459,9 @@ function RepositoryAnalysisStep({
   updateProfileDraft: (profile: EditableProfile, dirty?: boolean) => void;
 }) {
   const selectedRepository = selectedRepositoryFromData(data);
-  const repositories = data.github.repositories.filter((repository) => !repository.isArchived);
+  const repositories = sortRepositoriesForAnalysis(
+    data.github.repositories.filter((repository) => !repository.isArchived),
+  );
 
   if (repositories.length === 0) {
     return (
@@ -1482,8 +1486,9 @@ function RepositoryAnalysisStep({
         const rowProfileBusy = selected && (profileAnalyzing || profileSaving);
         const showSetupControls =
           Boolean(repository.onboarding.setupPrUrl) || repository.onboarding.status !== "ready";
-        const showProfileAction =
-          repository.onboarding.status === "ready" && !showProfileEditor && !rowProfileBusy;
+        const editExistingProfile =
+          repository.onboarding.status === "ready" && Boolean(repository.profile);
+        const showProfileAction = !showProfileEditor && !rowProfileBusy;
 
         return (
           <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
@@ -1511,16 +1516,16 @@ function RepositoryAnalysisStep({
               <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
                 {showProfileAction ? (
                   <button
-                    className={repository.profile ? "ui-button" : "ui-button-primary"}
+                    className={editExistingProfile ? "ui-button" : "ui-button-primary"}
                     disabled={!data.canManage || isSaving}
                     onClick={() =>
-                      repository.profile
+                      editExistingProfile
                         ? onSelectGithubRepository(repository)
                         : onAnalyzeRepository(repository)
                     }
                     type="button"
                   >
-                    {repository.profile ? "Edit profile" : "Analyze repository"}
+                    {editExistingProfile ? "Edit profile" : "Analyze repository"}
                   </button>
                 ) : null}
               </div>
@@ -2231,6 +2236,17 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     if (currentSelectedRepositoryId !== repository.id) {
       const selected = await selectGithubRepository(repository);
       if (!selected) return;
+    }
+
+    try {
+      await prepareRepositoryForAnalysis({
+        onChange: updateRepositoryOnboarding,
+        repository,
+        workspaceId: data.workspace.id,
+      });
+    } catch (caught) {
+      setProfileError(caught instanceof Error ? caught.message : "Wallie setup failed.");
+      return;
     }
 
     await inferRepositoryProfile(repository);

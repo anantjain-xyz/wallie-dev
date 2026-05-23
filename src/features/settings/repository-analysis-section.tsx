@@ -5,6 +5,7 @@ import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
+import { prepareRepositoryForAnalysis } from "@/features/repositories/repository-analysis-workflow";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
   mergeRepositoryOnboardingState,
@@ -12,6 +13,7 @@ import {
   RepositorySetupControls,
   RepositorySetupMessages,
   RepositorySetupStatusBadge,
+  sortRepositoriesForAnalysis,
 } from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -124,8 +126,8 @@ export function RepositoryAnalysisSection({
   setData,
   setFlashMessage,
 }: RepositoryAnalysisSectionProps) {
-  const selectableRepositories = data.github.repositories.filter(
-    (repository) => !repository.isArchived,
+  const selectableRepositories = sortRepositoriesForAnalysis(
+    data.github.repositories.filter((repository) => !repository.isArchived),
   );
   const selectedRepository = selectedRepositoryFromData(data);
   const [profileDraft, setProfileDraft] = useState<RepositoryProfileState | null>(() =>
@@ -231,6 +233,17 @@ export function RepositoryAnalysisSection({
       if (!selected) return;
     }
 
+    try {
+      await prepareRepositoryForAnalysis({
+        onChange: updateRepositoryOnboarding,
+        repository,
+        workspaceId: data.workspace.id,
+      });
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : "Wallie setup failed.");
+      return;
+    }
+
     await inferRepositoryProfile(repository);
   }
 
@@ -304,10 +317,9 @@ export function RepositoryAnalysisSection({
               const showSetupControls =
                 Boolean(repository.onboarding.setupPrUrl) ||
                 repository.onboarding.status !== "ready";
-              const showProfileAction =
-                repository.onboarding.status === "ready" &&
-                !showProfileEditor &&
-                rowProfileAction !== "analyzing";
+              const editExistingProfile =
+                repository.onboarding.status === "ready" && Boolean(repository.profile);
+              const showProfileAction = !showProfileEditor && rowProfileAction !== "analyzing";
 
               return (
                 <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
@@ -337,16 +349,16 @@ export function RepositoryAnalysisSection({
                     <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
                       {showProfileAction ? (
                         <button
-                          className={repository.profile ? "ui-button" : "ui-button-primary"}
+                          className={editExistingProfile ? "ui-button" : "ui-button-primary"}
                           disabled={!data.canManage || rowBusy || profileBusy}
                           onClick={() =>
-                            repository.profile
+                            editExistingProfile
                               ? void selectRepository(repository.id)
                               : void analyzeRepository(repository)
                           }
                           type="button"
                         >
-                          {repository.profile ? "Edit profile" : "Analyze repository"}
+                          {editExistingProfile ? "Edit profile" : "Analyze repository"}
                         </button>
                       ) : null}
                     </div>
