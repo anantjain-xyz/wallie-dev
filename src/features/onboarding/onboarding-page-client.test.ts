@@ -694,8 +694,72 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Analyze repositories");
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
-    expect(html).toContain(">Analyze repository</button>");
+    expect(html).not.toContain(">Analyze repository</button>");
     expect(primaryFooterButton(html)).toContain("disabled");
+  });
+
+  it("renders repository analysis in the setup action row after skills are ready", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [
+              repository("repo-a", {
+                onboarding: {
+                  conflictReport: [],
+                  githubRepositoryId: "repo-a",
+                  installedSkillHash: "hash-1",
+                  installedSkillVersion: 1,
+                  lastError: null,
+                  setupBranchName: null,
+                  setupPrNumber: null,
+                  setupPrUrl: null,
+                  status: "ready",
+                  updatedAt: "2026-05-16T18:00:00.000Z",
+                },
+              }),
+            ],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "repository",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: "repo-a",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain(">Analyze repository</button>");
+    expect(html).toContain(
+      'border-t border-border pt-3 sm:justify-end"><button class="ui-button-primary"',
+    );
+    expect(html).not.toContain("Install skills");
+    expect(html).not.toContain("Mark skills as installed");
   });
 
   it("allows repository analysis progression when legacy state has a primary profile but no selected repo id", () => {

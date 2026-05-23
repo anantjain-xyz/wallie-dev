@@ -5,7 +5,6 @@ import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
-import { prepareRepositoryForAnalysis } from "@/features/repositories/repository-analysis-workflow";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
   mergeRepositoryOnboardingState,
@@ -13,7 +12,6 @@ import {
   RepositorySetupControls,
   RepositorySetupMessages,
   RepositorySetupStatusBadge,
-  sortRepositoriesForAnalysis,
 } from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -126,8 +124,8 @@ export function RepositoryAnalysisSection({
   setData,
   setFlashMessage,
 }: RepositoryAnalysisSectionProps) {
-  const selectableRepositories = sortRepositoriesForAnalysis(
-    data.github.repositories.filter((repository) => !repository.isArchived),
+  const selectableRepositories = data.github.repositories.filter(
+    (repository) => !repository.isArchived,
   );
   const selectedRepository = selectedRepositoryFromData(data);
   const [profileDraft, setProfileDraft] = useState<RepositoryProfileState | null>(() =>
@@ -233,17 +231,6 @@ export function RepositoryAnalysisSection({
       if (!selected) return;
     }
 
-    try {
-      await prepareRepositoryForAnalysis({
-        onChange: updateRepositoryOnboarding,
-        repository,
-        workspaceId: data.workspace.id,
-      });
-    } catch (error) {
-      setProfileError(error instanceof Error ? error.message : "Wallie setup failed.");
-      return;
-    }
-
     await inferRepositoryProfile(repository);
   }
 
@@ -317,62 +304,61 @@ export function RepositoryAnalysisSection({
               const showSetupControls =
                 Boolean(repository.onboarding.setupPrUrl) ||
                 repository.onboarding.status !== "ready";
-              const editExistingProfile =
-                repository.onboarding.status === "ready" && Boolean(repository.profile);
-              const showProfileAction = !showProfileEditor && rowProfileAction !== "analyzing";
+              const showProfileAction =
+                repository.onboarding.status === "ready" &&
+                !showProfileEditor &&
+                rowProfileAction !== "analyzing";
+              const showActionRow = showSetupControls || showProfileAction;
 
               return (
                 <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <div className="min-w-0 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <a
-                          className="truncate text-[14px] font-semibold text-foreground transition-colors duration-150 hover:text-accent"
-                          href={repository.htmlUrl}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          {repository.fullName}
-                        </a>
-                        {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
-                        {repository.profile?.isPrimary ? (
-                          <StatusBadge tone="success">Primary</StatusBadge>
-                        ) : null}
-                        <RepositorySetupStatusBadge status={repository.onboarding.status} />
-                      </div>
-                      <RepositoryMetadataPills repository={repository} />
-                      {repository.description ? (
-                        <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        className="truncate text-[14px] font-semibold text-foreground transition-colors duration-150 hover:text-accent"
+                        href={repository.htmlUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        {repository.fullName}
+                      </a>
+                      {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
+                      {repository.profile?.isPrimary ? (
+                        <StatusBadge tone="success">Primary</StatusBadge>
                       ) : null}
+                      <RepositorySetupStatusBadge status={repository.onboarding.status} />
                     </div>
+                    <RepositoryMetadataPills repository={repository} />
+                    {repository.description ? (
+                      <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
+                    ) : null}
+                  </div>
 
-                    <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
+                  {showActionRow ? (
+                    <div className="flex flex-wrap items-center justify-start gap-2 border-t border-border pt-3 sm:justify-end">
+                      {showSetupControls ? (
+                        <RepositorySetupControls
+                          canManage={data.canManage}
+                          onChange={updateRepositoryOnboarding}
+                          repository={repository}
+                          setMessage={setFlashMessage}
+                          workspaceId={data.workspace.id}
+                        />
+                      ) : null}
                       {showProfileAction ? (
                         <button
-                          className={editExistingProfile ? "ui-button" : "ui-button-primary"}
+                          className={repository.profile ? "ui-button" : "ui-button-primary"}
                           disabled={!data.canManage || rowBusy || profileBusy}
                           onClick={() =>
-                            editExistingProfile
+                            repository.profile
                               ? void selectRepository(repository.id)
                               : void analyzeRepository(repository)
                           }
                           type="button"
                         >
-                          {editExistingProfile ? "Edit profile" : "Analyze repository"}
+                          {repository.profile ? "Edit profile" : "Analyze repository"}
                         </button>
                       ) : null}
-                    </div>
-                  </div>
-
-                  {showSetupControls ? (
-                    <div className="flex flex-wrap items-center justify-start gap-2 border-t border-border pt-3 sm:justify-end">
-                      <RepositorySetupControls
-                        canManage={data.canManage}
-                        onChange={updateRepositoryOnboarding}
-                        repository={repository}
-                        setMessage={setFlashMessage}
-                        workspaceId={data.workspace.id}
-                      />
                     </div>
                   ) : null}
 

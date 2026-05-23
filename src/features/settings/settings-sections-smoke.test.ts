@@ -484,7 +484,7 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Analyze repositories");
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
-    expect(html).toContain(">Analyze repository</button>");
+    expect(html).not.toContain(">Analyze repository</button>");
   });
 
   it("renders repository analysis only after skills are ready", () => {
@@ -546,6 +546,9 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain(">Analyze repository</button>");
+    expect(html).toContain(
+      'border-t border-border pt-3 sm:justify-end"><button class="ui-button-primary"',
+    );
     expect(html).not.toContain("Install skills");
     expect(html).not.toContain("Mark skills as installed");
   });
