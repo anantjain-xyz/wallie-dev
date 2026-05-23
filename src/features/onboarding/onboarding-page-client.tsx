@@ -1880,7 +1880,10 @@ function selectedRepositoryFromData(data: WorkspaceOnboardingData) {
 }
 
 function canCompleteGitHubSetupStep(data: WorkspaceOnboardingData) {
-  return data.setupHealth.githubInstallation.connected && data.github.repositories.length > 0;
+  return (
+    data.setupHealth.githubInstallation.connected &&
+    data.github.repositories.some((repository) => !repository.isArchived)
+  );
 }
 
 function hasSelectedRepositoryProfile(data: WorkspaceOnboardingData) {

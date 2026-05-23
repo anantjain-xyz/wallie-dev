@@ -459,6 +459,47 @@ describe("OnboardingPageClient", () => {
     expect(primaryFooterButton(html)).not.toContain("disabled");
   });
 
+  it("blocks the GitHub step when only archived repositories are synced", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [repository("archived-repo", { isArchived: true })],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: [],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "github",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: null,
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            githubInstallation: {
+              connected: true,
+              installationId: 456,
+              status: "present",
+              suspended: false,
+              targetName: "acme",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(primaryFooterButton(html)).toContain("disabled");
+  });
+
   it("blocks the repository step until setup is open or ready", () => {
     const primary = profile("repo-a");
     const blocked = renderToStaticMarkup(
