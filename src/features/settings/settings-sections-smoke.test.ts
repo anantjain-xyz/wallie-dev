@@ -484,7 +484,70 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Analyze repositories");
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
-    expect(html).toContain("Analyze repository");
+    expect(html).not.toContain(">Analyze repository</button>");
+  });
+
+  it("renders repository analysis only after skills are ready", () => {
+    const repository: SettingsPageData["github"]["repositories"][number] = {
+      defaultBranch: "main",
+      defaultProgrammingLanguage: "TypeScript",
+      description: null,
+      fullName: "acme/app",
+      htmlUrl: "https://github.com/acme/app",
+      id: "11111111-1111-4111-8111-111111111111",
+      isArchived: false,
+      isPrivate: true,
+      name: "app",
+      onboarding: {
+        conflictReport: [],
+        githubRepositoryId: "11111111-1111-4111-8111-111111111111",
+        installedSkillHash: "hash-1",
+        installedSkillVersion: 1,
+        lastError: null,
+        setupBranchName: null,
+        setupPrNumber: null,
+        setupPrUrl: null,
+        status: "ready",
+        updatedAt: null,
+      },
+      profile: null,
+      repoId: 1,
+    };
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData({
+          github: {
+            installation: {
+              appId: 123,
+              id: "installation-1",
+              installationId: 456,
+              installationUrl: "https://github.com/settings/installations/456",
+              permissions: {},
+              suspended: false,
+              targetName: "acme",
+              targetType: "Organization",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [repository],
+          },
+          onboarding: {
+            ...settingsData().onboarding,
+            selectedGithubRepositoryId: repository.id,
+          },
+        }),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain(">Analyze repository</button>");
+    expect(html).not.toContain("Install skills");
+    expect(html).not.toContain("Mark skills as installed");
   });
 
   it("renders provider access inside Verify runtime instead of a standalone Codex section", () => {

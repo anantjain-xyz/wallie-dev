@@ -694,6 +694,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Analyze repositories");
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
+    expect(html).not.toContain(">Analyze repository</button>");
     expect(primaryFooterButton(html)).toContain("disabled");
   });
 

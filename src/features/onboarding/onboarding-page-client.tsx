@@ -1482,6 +1482,8 @@ function RepositoryAnalysisStep({
         const rowProfileBusy = selected && (profileAnalyzing || profileSaving);
         const showSetupControls =
           Boolean(repository.onboarding.setupPrUrl) || repository.onboarding.status !== "ready";
+        const showProfileAction =
+          repository.onboarding.status === "ready" && !showProfileEditor && !rowProfileBusy;
 
         return (
           <li className="flex flex-col gap-4 px-5 py-4" key={repository.id}>
@@ -1507,7 +1509,7 @@ function RepositoryAnalysisStep({
               </div>
 
               <div className="flex shrink-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
-                {!showProfileEditor && !rowProfileBusy ? (
+                {showProfileAction ? (
                   <button
                     className={repository.profile ? "ui-button" : "ui-button-primary"}
                     disabled={!data.canManage || isSaving}
