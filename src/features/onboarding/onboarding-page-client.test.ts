@@ -805,7 +805,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Mark skills as installed");
   });
 
-  it("allows repository analysis progression when legacy state has a primary profile but no selected repo id", () => {
+  it("allows repository analysis progression when legacy state has an is_primary profile but no selected repo id", () => {
     const primary = profile("repo-a");
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
@@ -854,6 +854,7 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain("Repository profile");
+    expect(html).not.toContain(">Primary<");
     expect(primaryFooterButton(html)).not.toContain("disabled");
   });
 
@@ -1167,9 +1168,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Readiness checklist");
     expect(html).toContain('data-step-link="linear"');
     expect(html).toContain('data-step-link="runtime"');
-    expect(html).toContain(
-      "Save a primary repository profile before running a sandbox capability check.",
-    );
+    expect(html).toContain("Save a repository profile before running a sandbox capability check.");
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete setup</button>");
   });

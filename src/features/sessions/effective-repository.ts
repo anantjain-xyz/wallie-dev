@@ -20,6 +20,7 @@ export type EffectiveSessionRepository = {
 export type EffectiveSessionRepositorySource =
   | "session"
   | "session_pull_request"
+  // Temporary compatibility: legacy is_primary profiles still contribute a session default.
   | "workspace_primary_profile"
   | "workspace_onboarding";
 

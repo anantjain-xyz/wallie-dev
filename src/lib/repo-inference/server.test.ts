@@ -126,7 +126,7 @@ describe("saveWorkspaceRepositoryProfile", () => {
     });
   });
 
-  it("maps primary uniqueness errors returned by the atomic rpc", async () => {
+  it("maps active profile uniqueness errors returned by the atomic rpc", async () => {
     const { admin } = createAdminMock({
       data: null,
       error: { code: "23505", message: "duplicate key value violates unique constraint" },

@@ -67,7 +67,7 @@ function github(
 }
 
 describe("buildRepositorySetupHealth", () => {
-  it("marks a selected repository with a matching primary profile as configured", () => {
+  it("marks a selected repository with a matching legacy profile as configured", () => {
     const primary = profile("repo-1");
 
     expect(

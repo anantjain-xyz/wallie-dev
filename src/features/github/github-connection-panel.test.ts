@@ -80,7 +80,7 @@ function readyOnboarding(repositoryId: string): RepositoryOnboardingState {
 }
 
 describe("primaryProfileForRepositories", () => {
-  it("keeps the primary profile when the refreshed repositories still include it", () => {
+  it("keeps the legacy profile when the refreshed repositories still include it", () => {
     const primary = profile("repo-1");
 
     expect(
@@ -91,7 +91,7 @@ describe("primaryProfileForRepositories", () => {
     ).toBe(primary);
   });
 
-  it("clears the primary profile when refresh drops the selected repository", () => {
+  it("clears the legacy profile when refresh drops the selected repository", () => {
     expect(
       primaryProfileForRepositories({ primaryProfile: profile("repo-1") }, [
         repository("repo-2", null),
