@@ -5,7 +5,7 @@
 -- `sessions` is the pipeline source of truth. Upstream tracker references
 -- live on `sessions.linear_issue_id` / `sessions.linear_issue_url`.
 --
--- We seed eighteen sessions across the six pipeline phases (2-3 per column)
+-- We seed eighteen sessions across the five pipeline stages (2-3 per column)
 -- with a mix of statuses so the pipeline board looks realistic.
 -- =============================================================================
 
@@ -27,14 +27,13 @@ DECLARE
   mem2_id   uuid := 'c1b2c3d4-0002-4000-8000-000000000002';
   memw_id   uuid := 'c1b2c3d4-0003-4000-8000-000000000003';
 
-  -- Pipeline (default 6-stage seed)
+  -- Pipeline (default 5-stage seed)
   default_pipeline_id uuid := 'd1b2c3d4-0001-4000-8000-000000000001';
   stage_product_id     uuid;
   stage_design_id      uuid;
   stage_engineering_id uuid;
   stage_review_id      uuid;
   stage_land_id        uuid;
-  stage_monitor_id     uuid;
 
   -- Sessions
   sess1_id  uuid := 'a2b2c3d4-0001-4000-8000-000000000001';
@@ -190,7 +189,6 @@ BEGIN
   SELECT id INTO stage_engineering_id FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'engineering';
   SELECT id INTO stage_review_id      FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'review';
   SELECT id INTO stage_land_id        FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'land';
-  SELECT id INTO stage_monitor_id     FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'monitor';
 
   -- -------------------------------------------------------------------------
   -- 5b. Session number counter
@@ -448,7 +446,7 @@ BEGIN
     (sess5_id, ws_id, stage_engineering_id, 'engineering', now() - interval '4 hours',         mem2_id),
     (sess5_id, ws_id, stage_review_id, 'review',      now() - interval '3 hours',         mem1_id);
 
-  -- Session 6: monitor / approved, archived — shipped & watching metrics
+  -- Session 6: land / approved, archived — shipped
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -458,7 +456,7 @@ BEGIN
      'CI/CD pipeline with GitHub Actions',
      E'We need CI — tests + lint on PRs, staging deploy on merge, production gated.',
      mem1_id,
-     default_pipeline_id, stage_monitor_id, 'approved', 1,
+     default_pipeline_id, stage_land_id, 'approved', 1,
      now() - interval '10 days',
      now() - interval '13 days', now() - interval '10 days');
 
@@ -479,10 +477,7 @@ BEGIN
      now() - interval '11 days'),
     (sess6_id, ws_id, stage_land_id, 'land', 1,
      to_jsonb(E'# Land\n\nMerged to main; staging deployed automatically.\n'::text),
-     now() - interval '10 days 12 hours'),
-    (sess6_id, ws_id, stage_monitor_id, 'monitor', 1,
-     to_jsonb(E'# Monitor\n\nPipeline has been green for a week; closing out.\n'::text),
-     now() - interval '10 days');
+     now() - interval '10 days 12 hours');
 
   INSERT INTO public.session_phase_completions
     (session_id, workspace_id, stage_id, stage_slug, completed_at, completed_by_member_id)
@@ -491,8 +486,7 @@ BEGIN
     (sess6_id, ws_id, stage_design_id, 'design',      now() - interval '11 days 18 hours', mem1_id),
     (sess6_id, ws_id, stage_engineering_id, 'engineering', now() - interval '11 days 6 hours',  mem1_id),
     (sess6_id, ws_id, stage_review_id, 'review',      now() - interval '10 days 18 hours', mem1_id),
-    (sess6_id, ws_id, stage_land_id, 'land',        now() - interval '10 days 12 hours', mem1_id),
-    (sess6_id, ws_id, stage_monitor_id, 'monitor',     now() - interval '10 days',          mem1_id);
+    (sess6_id, ws_id, stage_land_id, 'land',        now() - interval '10 days 12 hours', mem1_id);
 
   -- -------------------------------------------------------------------------
   -- 7b. Additional sessions (multiple cards per pipeline column)
@@ -765,7 +759,7 @@ BEGIN
     (sess15_id, ws_id, stage_engineering_id, 'engineering', now() - interval '5 days',          mem1_id),
     (sess15_id, ws_id, stage_review_id, 'review',      now() - interval '3 days',          mem2_id);
 
-  -- Session 16: monitor / awaiting_review
+  -- Session 16: land / awaiting_review
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -775,7 +769,7 @@ BEGIN
      'Search and filter across all sessions',
      E'With dozens of sessions it is hard to find things. Add full-text search and phase/status filters.',
      mem2_id,
-     default_pipeline_id, stage_monitor_id, 'awaiting_review', 1,
+     default_pipeline_id, stage_land_id, 'awaiting_review', 1,
      now() - interval '11 days', now() - interval '7 days');
 
   INSERT INTO public.session_artifacts
@@ -795,10 +789,7 @@ BEGIN
      now() - interval '8 days 12 hours'),
     (sess16_id, ws_id, stage_land_id, 'land', 1,
      to_jsonb(E'# Land\n\nMerged and deployed to staging; search index backfill complete.'::text),
-     now() - interval '8 days'),
-    (sess16_id, ws_id, stage_monitor_id, 'monitor', 1,
-     to_jsonb(E'# Monitor\n\nSearch latency p95 under 200ms; monitoring for index drift.'::text),
-     now() - interval '7 days');
+     now() - interval '8 days');
 
   INSERT INTO public.session_phase_completions
     (session_id, workspace_id, stage_id, stage_slug, completed_at, completed_by_member_id)
@@ -806,10 +797,9 @@ BEGIN
     (sess16_id, ws_id, stage_product_id, 'product',     now() - interval '10 days 12 hours', mem2_id),
     (sess16_id, ws_id, stage_design_id, 'design',      now() - interval '9 days 18 hours',  mem1_id),
     (sess16_id, ws_id, stage_engineering_id, 'engineering', now() - interval '8 days 18 hours',  mem2_id),
-    (sess16_id, ws_id, stage_review_id, 'review',      now() - interval '8 days 6 hours',   mem1_id),
-    (sess16_id, ws_id, stage_land_id, 'land',        now() - interval '7 days 12 hours',  mem2_id);
+    (sess16_id, ws_id, stage_review_id, 'review',      now() - interval '8 days 6 hours',   mem1_id);
 
-  -- Session 17: monitor / agent_generating
+  -- Session 17: land / agent_generating
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -819,7 +809,7 @@ BEGIN
      'GitHub PR auto-link from branch naming convention',
      E'When a branch matches wallie-{number}, auto-associate the PR with the session and show it on the card.',
      mem1_id,
-     default_pipeline_id, stage_monitor_id, 'agent_generating', 0,
+     default_pipeline_id, stage_land_id, 'agent_generating', 0,
      now() - interval '12 days', now() - interval '8 days');
 
   INSERT INTO public.session_artifacts
@@ -836,10 +826,7 @@ BEGIN
      now() - interval '10 days'),
     (sess17_id, ws_id, stage_review_id, 'review', 1,
      to_jsonb(E'# Review\n\nPR approved — tested with various branch name formats.'::text),
-     now() - interval '9 days 12 hours'),
-    (sess17_id, ws_id, stage_land_id, 'land', 1,
-     to_jsonb(E'# Land\n\nMerged; existing PRs backfilled via one-time script.'::text),
-     now() - interval '9 days');
+     now() - interval '9 days 12 hours');
 
   INSERT INTO public.session_phase_completions
     (session_id, workspace_id, stage_id, stage_slug, completed_at, completed_by_member_id)
@@ -847,10 +834,9 @@ BEGIN
     (sess17_id, ws_id, stage_product_id, 'product',     now() - interval '11 days 12 hours', mem1_id),
     (sess17_id, ws_id, stage_design_id, 'design',      now() - interval '10 days 18 hours', mem2_id),
     (sess17_id, ws_id, stage_engineering_id, 'engineering', now() - interval '9 days 18 hours',  mem1_id),
-    (sess17_id, ws_id, stage_review_id, 'review',      now() - interval '9 days 6 hours',   mem2_id),
-    (sess17_id, ws_id, stage_land_id, 'land',        now() - interval '8 days 12 hours',  mem1_id);
+    (sess17_id, ws_id, stage_review_id, 'review',      now() - interval '9 days 6 hours',   mem2_id);
 
-  -- Session 18: monitor / awaiting_review (1 rejection)
+  -- Session 18: land / awaiting_review (1 rejection)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
@@ -860,7 +846,7 @@ BEGIN
      'Custom workspace branding and logo upload',
      E'Enterprise customers want their logo in the sidebar and on shared links. Upload to Storage, display in shell.',
      mem1_id,
-     default_pipeline_id, stage_monitor_id, 'awaiting_review', 1, 1,
+     default_pipeline_id, stage_land_id, 'awaiting_review', 1, 1,
      now() - interval '12 days', now() - interval '6 days');
 
   INSERT INTO public.session_artifacts
@@ -880,10 +866,7 @@ BEGIN
      now() - interval '8 days'),
     (sess18_id, ws_id, stage_land_id, 'land', 1,
      to_jsonb(E'# Land\n\nMerged and deployed; storage bucket policies configured.'::text),
-     now() - interval '7 days'),
-    (sess18_id, ws_id, stage_monitor_id, 'monitor', 1,
-     to_jsonb(E'# Monitor\n\nMonitoring image upload latency and CDN cache hit rate. One rejection for missing retina support — now fixed.'::text),
-     now() - interval '6 days');
+     now() - interval '7 days');
 
   INSERT INTO public.session_phase_completions
     (session_id, workspace_id, stage_id, stage_slug, completed_at, completed_by_member_id)
@@ -891,8 +874,7 @@ BEGIN
     (sess18_id, ws_id, stage_product_id, 'product',     now() - interval '11 days 12 hours', mem1_id),
     (sess18_id, ws_id, stage_design_id, 'design',      now() - interval '10 days',          mem2_id),
     (sess18_id, ws_id, stage_engineering_id, 'engineering', now() - interval '8 days 12 hours',  mem1_id),
-    (sess18_id, ws_id, stage_review_id, 'review',      now() - interval '7 days 12 hours',  mem2_id),
-    (sess18_id, ws_id, stage_land_id, 'land',        now() - interval '6 days 12 hours',  mem1_id);
+    (sess18_id, ws_id, stage_review_id, 'review',      now() - interval '7 days 12 hours',  mem2_id);
 
   -- -------------------------------------------------------------------------
   -- 9. GitHub branches / PRs (linked to sessions)

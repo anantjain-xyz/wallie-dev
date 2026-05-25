@@ -163,7 +163,6 @@ export async function reconcileLinearState(
                 result.canceled++;
                 break;
               case "land":
-              case "monitor":
               case "rework":
                 if (
                   (await routeSessionToStage(admin, session, {
