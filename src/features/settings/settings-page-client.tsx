@@ -12,11 +12,7 @@ import { LinearConfigurationSection } from "@/features/settings/linear-configura
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
-import {
-  type SettingsAnchor,
-  SettingsAnchorNav,
-  SettingsAnchorNavMobile,
-} from "@/features/settings/settings-anchor-nav";
+import { type SettingsAnchor, SettingsAnchorNav } from "@/features/settings/settings-anchor-nav";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
@@ -238,8 +234,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             {flashMessage.text}
           </div>
         ) : null}
-
-        <SettingsAnchorNavMobile anchors={ANCHORS} />
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
           <SettingsAnchorNav anchors={ANCHORS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
