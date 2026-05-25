@@ -199,7 +199,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 
   return (
     <div className="min-h-full bg-surface">
-      <header className="px-6 pb-10 pt-14 sm:px-8">
+      <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
         <div className="mx-auto w-full" style={{ maxWidth: boardContainerWidth }}>
           <div className="max-w-2xl space-y-2">
             <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
@@ -212,7 +212,47 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
         </div>
       </header>
 
-      <div className="overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8">
+      <div className="px-4 pb-10 md:hidden">
+        <div className="space-y-6">
+          {lanes.order.map((lane) => {
+            const items = lanes.buckets.get(lane.slug) ?? [];
+
+            return (
+              <section key={lane.slug} className="border-t border-border/70 pt-4 first:border-t-0">
+                <header className="mb-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h2 className="truncate text-[15px] font-semibold text-foreground">
+                      {lane.name}
+                    </h2>
+                    <span className="font-mono text-[11px] tabular-nums text-muted">
+                      {items.length}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[12px] leading-5 text-muted">{lane.description}</p>
+                </header>
+
+                <div className="space-y-2">
+                  {items.length === 0 ? (
+                    <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-[12px] text-muted">
+                      No sessions
+                    </p>
+                  ) : null}
+
+                  {items.map((card) => (
+                    <PipelineCard
+                      key={card.id}
+                      card={card}
+                      workspaceSlug={initialData.workspace.slug}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="hidden overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8 md:block">
         <div className="mx-auto flex" style={{ width: boardContainerWidth }}>
           {lanes.order.map((lane) => {
             const items = lanes.buckets.get(lane.slug) ?? [];
@@ -242,68 +282,13 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
                     <p className="py-8 text-[12px] text-muted">No sessions</p>
                   ) : null}
 
-                  {items.map((card) => {
-                    const pullRequests = card.pullRequests ?? [];
-                    const sessionHref = workspaceSessionDetailPath(
-                      initialData.workspace.slug,
-                      card.number,
-                    );
-
-                    return (
-                      <article
-                        key={card.id}
-                        className={cn(
-                          "relative rounded-[8px] border border-border/80 bg-surface p-3 transition-colors duration-150 hover:bg-surface-strong",
-                          card.phaseStatus === "rejected" &&
-                            "border-danger/30 border-l-2 border-l-danger",
-                        )}
-                      >
-                        <Link
-                          href={sessionHref}
-                          aria-label={`Open session ${card.title}`}
-                          className="absolute inset-0 z-10 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                        />
-                        <div className="flex min-w-0 items-start justify-between gap-3">
-                          <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">
-                            <span className="line-clamp-3 break-words">{card.title}</span>
-                          </h3>
-                          <SessionPhaseStatusLabel
-                            status={card.phaseStatus}
-                            className="mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4"
-                          />
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
-                          <SessionConnections
-                            className="relative z-20"
-                            compact
-                            quiet
-                            linearIssueId={card.linearIssueId}
-                            linearIssueUrl={card.linearIssueUrl}
-                            pullRequestCount={pullRequests.length}
-                            pullRequests={pullRequests}
-                          />
-
-                          <dl className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            {card.rejectionCount > 0 ? (
-                              <div className="flex items-center gap-1 text-danger">
-                                <dt className="sr-only">Rejections</dt>
-                                <dd>
-                                  {card.rejectionCount} rejection
-                                  {card.rejectionCount === 1 ? "" : "s"}
-                                </dd>
-                              </div>
-                            ) : null}
-
-                            <div className="flex items-center gap-1">
-                              <dt className="sr-only">Updated</dt>
-                              <dd>{relativeTime(card.updatedAt)}</dd>
-                            </div>
-                          </dl>
-                        </div>
-                      </article>
-                    );
-                  })}
+                  {items.map((card) => (
+                    <PipelineCard
+                      key={card.id}
+                      card={card}
+                      workspaceSlug={initialData.workspace.slug}
+                    />
+                  ))}
                 </div>
               </section>
             );
@@ -311,5 +296,69 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function PipelineCard({
+  card,
+  workspaceSlug,
+}: {
+  card: PipelineDashboardCard;
+  workspaceSlug: string;
+}) {
+  const pullRequests = card.pullRequests ?? [];
+  const sessionHref = workspaceSessionDetailPath(workspaceSlug, card.number);
+
+  return (
+    <article
+      className={cn(
+        "relative rounded-[8px] border border-border/80 bg-surface p-3 transition-colors duration-150 hover:bg-surface-strong",
+        card.phaseStatus === "rejected" && "border-danger/30 border-l-2 border-l-danger",
+      )}
+    >
+      <Link
+        href={sessionHref}
+        aria-label={`Open session ${card.title}`}
+        className="absolute inset-0 z-10 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      />
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">
+          <span className="line-clamp-3 break-words">{card.title}</span>
+        </h3>
+        <SessionPhaseStatusLabel
+          status={card.phaseStatus}
+          className="mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4"
+        />
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
+        <SessionConnections
+          className="relative z-20"
+          compact
+          quiet
+          linearIssueId={card.linearIssueId}
+          linearIssueUrl={card.linearIssueUrl}
+          pullRequestCount={pullRequests.length}
+          pullRequests={pullRequests}
+        />
+
+        <dl className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {card.rejectionCount > 0 ? (
+            <div className="flex items-center gap-1 text-danger">
+              <dt className="sr-only">Rejections</dt>
+              <dd>
+                {card.rejectionCount} rejection
+                {card.rejectionCount === 1 ? "" : "s"}
+              </dd>
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-1">
+            <dt className="sr-only">Updated</dt>
+            <dd>{relativeTime(card.updatedAt)}</dd>
+          </div>
+        </dl>
+      </div>
+    </article>
   );
 }

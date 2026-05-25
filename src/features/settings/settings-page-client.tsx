@@ -12,11 +12,7 @@ import { LinearConfigurationSection } from "@/features/settings/linear-configura
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
-import {
-  type SettingsAnchor,
-  SettingsAnchorNav,
-  SettingsAnchorNavMobile,
-} from "@/features/settings/settings-anchor-nav";
+import { type SettingsAnchor, SettingsAnchorNav } from "@/features/settings/settings-anchor-nav";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
@@ -217,10 +213,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
 
   return (
     <div className="min-h-full">
-      <div className="mx-auto max-w-[1080px] px-6 pb-24 pt-10 sm:px-8">
-        <header className="mb-10">
+      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
+        <header className="mb-8 sm:mb-10">
           <div className="min-w-0 space-y-2">
-            <h1 className="text-[28px] font-semibold tracking-tight text-foreground">Settings</h1>
+            <h1 className="text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
+              Settings
+            </h1>
             <p className="max-w-2xl text-[14px] leading-6 text-muted">
               Manage workspace identity, integrations, pipeline, and encrypted secrets.
             </p>
@@ -236,8 +234,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             {flashMessage.text}
           </div>
         ) : null}
-
-        <SettingsAnchorNavMobile anchors={ANCHORS} />
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
           <SettingsAnchorNav anchors={ANCHORS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />

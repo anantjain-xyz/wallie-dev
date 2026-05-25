@@ -104,7 +104,10 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
       <PageHeader title="Sessions" />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
-        <form onSubmit={handleSearchSubmit} className="relative min-w-[220px] flex-1 max-w-md">
+        <form
+          onSubmit={handleSearchSubmit}
+          className="relative w-full flex-none sm:max-w-md sm:flex-1 sm:min-w-[220px]"
+        >
           <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
           <input
             key={initialData.queryState.query}
@@ -195,7 +198,7 @@ function SessionRow({
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
 
   return (
-    <li className="relative flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-surface-strong md:flex-row md:items-center">
+    <li className="relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-surface-strong sm:px-5 md:flex-row md:items-center">
       <Link
         href={detailHref}
         className="absolute inset-0 z-10 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -206,9 +209,11 @@ function SessionRow({
       </Link>
 
       <div className="pointer-events-none relative z-20 flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-start gap-2 md:items-center">
           <span className="font-mono text-[11px] text-muted">#{session.number}</span>
-          <span className="truncate text-[14px] font-medium text-foreground">{session.title}</span>
+          <span className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate">
+            {session.title}
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>{session.currentStageName}</span>

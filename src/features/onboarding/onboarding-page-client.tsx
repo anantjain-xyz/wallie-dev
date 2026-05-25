@@ -1767,16 +1767,37 @@ function MobileStepControl({
   items: ReturnType<typeof getOnboardingStepRailItems>;
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
+  const buttonRefs = useRef(new Map<WorkspaceOnboardingStep, HTMLButtonElement>());
+  const activeStepId = items.find((step) => step.displayState === "active")?.id ?? null;
+
+  useEffect(() => {
+    if (!activeStepId) {
+      return;
+    }
+
+    buttonRefs.current.get(activeStepId)?.scrollIntoView({
+      block: "nearest",
+      inline: "center",
+    });
+  }, [activeStepId]);
+
   return (
     <div className="border-y border-border bg-surface px-4 py-2 lg:hidden">
-      <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Setup steps">
+      <div className="flex snap-x gap-2 overflow-x-auto scroll-px-4 pb-1" aria-label="Setup steps">
         {items.map((step) => (
           <button
+            ref={(node) => {
+              if (node) {
+                buttonRefs.current.set(step.id, node);
+              } else {
+                buttonRefs.current.delete(step.id);
+              }
+            }}
             key={step.id}
             type="button"
             aria-current={step.displayState === "active" ? "step" : undefined}
             className={cn(
-              "inline-flex h-9 min-w-[112px] items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-[12px] font-medium",
+              "inline-flex h-9 min-w-[112px] snap-start items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-[12px] font-medium",
               railStateClasses[step.displayState],
               (!canSelect || !step.isNavigable) && "cursor-not-allowed",
             )}
@@ -2335,8 +2356,8 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface text-foreground">
-      <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-6 pb-8 pt-10 sm:px-8">
+    <div className="flex min-h-[100svh] flex-col bg-surface text-foreground">
+      <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10">
         <div className="min-w-0 space-y-2">
           <h1 className="text-[28px] font-semibold tracking-tight text-foreground">
             Set up {data.workspace.name}
@@ -2362,7 +2383,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
 
       <main
         id="main-content"
-        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-6 pb-28 sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
+        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-28 sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
       >
         <aside className="hidden lg:block">
           <div className="sticky top-8">

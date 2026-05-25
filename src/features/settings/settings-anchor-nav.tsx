@@ -125,24 +125,3 @@ export function SettingsAnchorNav({
     </div>
   );
 }
-
-export function SettingsAnchorNavMobile({ anchors }: { anchors: SettingsAnchor[] }) {
-  return (
-    <nav aria-label="Settings sections" className="lg:hidden -mx-4 px-4 pb-4">
-      <ul className="flex gap-2 overflow-x-auto">
-        {anchors.map((anchor) => (
-          <Fragment key={anchor.id}>
-            {anchor.dividerBefore ? (
-              <li aria-hidden="true" className="w-px shrink-0 bg-border" />
-            ) : null}
-            <li className="shrink-0">
-              <a className="ui-tab" href={`#${anchor.id}`}>
-                {anchor.label}
-              </a>
-            </li>
-          </Fragment>
-        ))}
-      </ul>
-    </nav>
-  );
-}

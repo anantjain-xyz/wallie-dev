@@ -154,11 +154,11 @@ function CreateSessionDialogBody({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-10 backdrop-blur-sm">
+    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
       <div
         aria-labelledby={titleId}
         aria-modal="true"
-        className="ui-panel-elevated max-h-[calc(100vh-5rem)] w-full max-w-xl overflow-y-auto overscroll-contain p-6"
+        className="ui-panel-elevated relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto overscroll-contain bg-surface p-5 sm:max-h-[calc(100dvh-5rem)] sm:p-6"
         role="dialog"
       >
         <div>
