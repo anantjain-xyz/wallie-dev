@@ -159,8 +159,6 @@ linear/test-connection/                                         <- verify Linear
 secrets/ + secrets/[key]/                                       <- encrypted workspace creds
 workspaces/[workspaceId]/avatar/                                <- storage upload
 workspaces/[workspaceId]/pipeline/                              <- pipeline + stage editor
-workspaces/[workspaceId]/repositories/                          <- list / add tracked repos
-workspaces/[workspaceId]/repositories/[repositoryId]/           <- per-repo settings
 workspaces/[workspaceId]/repositories/[repositoryId]/inference/ <- run repo inference
 workspaces/[workspaceId]/repositories/[repositoryId]/onboarding/<- per-repo onboarding state
 workspaces/[workspaceId]/repository-profile/                    <- workspace_repository_profiles editor
@@ -500,7 +498,7 @@ Sessions are deduplicated on `(workspace_id, linear_issue_id)` -- one session pe
 
 ### Realtime
 
-The session detail page subscribes to Supabase Realtime channels on `sessions`, `session_artifacts`, and `session_phase_completions`, so phase transitions and status changes appear instantly in the UI.
+The session detail page subscribes to Supabase Realtime channels on `sessions`, `session_artifacts`, `session_phase_completions`, and `session_pull_requests`, so phase transitions, artifact writes, and PR-state updates appear instantly in the UI.
 
 ## Integrations
 
