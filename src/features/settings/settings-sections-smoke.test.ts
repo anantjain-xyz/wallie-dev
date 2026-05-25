@@ -210,7 +210,7 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Linear API key");
     expect(html).toContain("Linear routing");
     expect(html).toContain("••••1234");
-    expect(html).toContain("Test connection");
+    expect(html).not.toContain("Test connection");
   });
 
   it("renders Settings agent config selects with the shared combobox", () => {

@@ -208,7 +208,7 @@ function HealthBadge({ children, tone }: { children: string; tone: HealthTone })
 
 function presenceBadge(configured: boolean) {
   return configured
-    ? { tone: "success" as const, value: "Present" }
+    ? { tone: "success" as const, value: "Saved" }
     : { tone: "warning" as const, value: "Missing" };
 }
 
@@ -1352,8 +1352,8 @@ function VerifyStep({
                 <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={item.passed ? "success" : "warning"}>
-                  {item.passed ? "Ready" : "Blocked"}
+                <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
+                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </Badge>
                 {!item.passed && item.step !== "verify" ? (
                   <button
@@ -1921,6 +1921,13 @@ function selectOnboardingStepInData(
   };
 }
 
+export function scrollOnboardingSetupToTop(target?: {
+  scrollTo: (options: ScrollToOptions) => void;
+}) {
+  const scrollTarget = target ?? (typeof window === "undefined" ? null : window);
+  scrollTarget?.scrollTo({ behavior: "auto", left: 0, top: 0 });
+}
+
 export function OnboardingPageClient({ initialData }: OnboardingPageClientProps) {
   const router = useRouter();
   const [data, setData] = useState(initialData);
@@ -1950,6 +1957,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const saveInFlightRef = useRef(false);
   const latestDataRef = useRef(data);
   const selectedRepositoryIdRef = useRef(selectedRepositoryId);
+  const previousStepRef = useRef(initialData.onboarding.currentStep);
   const onboarding = data.onboarding;
   latestDataRef.current = data;
   selectedRepositoryIdRef.current = selectedRepositoryId;
@@ -1996,6 +2004,12 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   const verifyCompletionBlocked =
     activeStep.id === "verify" && verifyChecklist.some((item) => !item.passed);
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
+
+  useEffect(() => {
+    if (previousStepRef.current === onboarding.currentStep) return;
+    previousStepRef.current = onboarding.currentStep;
+    scrollOnboardingSetupToTop();
+  }, [onboarding.currentStep]);
 
   async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
     if (!data.canManage || saveInFlightRef.current) return null;

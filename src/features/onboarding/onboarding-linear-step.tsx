@@ -73,7 +73,7 @@ export function OnboardingLinearStep({
             }}
             onTestSucceeded={async () => {
               setTestPassed(true);
-              await completeIfReady({ keyPresent, routingSaved, testPassed: true });
+              await completeIfReady({ keyPresent: true, routingSaved, testPassed: true });
             }}
             workspaceId={workspaceId}
           />

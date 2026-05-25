@@ -24,6 +24,7 @@ import {
   isRepositorySelectionCurrent,
   OnboardingPageClient,
   RepositoryProfileEditor,
+  scrollOnboardingSetupToTop,
   updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
@@ -987,7 +988,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Replace Linear API key");
     expect(html).toContain('type="password"');
     expect(html).toContain("Save key");
-    expect(html).toContain("Test connection");
+    expect(html).not.toContain("Test connection");
     expect(html).not.toContain("Remove");
     expect(html).not.toContain("lin_api_plaintext");
   });
@@ -1320,7 +1321,9 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(running).toContain("Checking...");
+    expect(running).toContain(">Running</span>");
     expect(running).toContain("disabled");
+    expect(failed).toContain(">Failed</span>");
     expect(failed).toContain("Retry capability check");
     expect(failed).toContain("sandbox failed");
   });
@@ -1405,5 +1408,13 @@ describe("OnboardingPageClient", () => {
     expect(nextData.onboarding.currentStep).toBe("runtime");
     expect(nextData.onboarding.completedSteps).toEqual(["github", "repository", "pipeline"]);
     expect(nextData.setupHealth.latestSandboxCapabilityCheck?.id).toBe("check-2");
+  });
+
+  it("scrolls onboarding setup transitions back to the top", () => {
+    const scrollTo = vi.fn();
+
+    scrollOnboardingSetupToTop({ scrollTo });
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 0, top: 0 });
   });
 });
