@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 
@@ -10,7 +10,6 @@ describe("LinearKeyControls", () => {
       createElement(LinearKeyControls, {
         canManage: true,
         linearSecret: null,
-        setFlashMessage: vi.fn(),
         workspaceId: "00000000-0000-4000-8000-000000000001",
       }),
     );
@@ -34,7 +33,6 @@ describe("LinearKeyControls", () => {
           valuePreview: "••••1234",
           workspaceId: "00000000-0000-4000-8000-000000000001",
         },
-        setFlashMessage: vi.fn(),
         workspaceId: "00000000-0000-4000-8000-000000000001",
       }),
     );
@@ -60,7 +58,6 @@ describe("LinearKeyControls", () => {
           valuePreview: "••••1234",
           workspaceId: "00000000-0000-4000-8000-000000000001",
         },
-        setFlashMessage: vi.fn(),
         workspaceId: "00000000-0000-4000-8000-000000000001",
       }),
     );

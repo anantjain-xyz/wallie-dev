@@ -200,7 +200,6 @@ describe("Settings integration sections", () => {
           workspaceId,
         },
         routing: DEFAULT_LINEAR_ROUTING_CONFIG,
-        setFlashMessage: vi.fn(),
         setSecrets: vi.fn(),
         stages: pipeline.stages,
         workspaceId,
