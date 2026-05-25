@@ -66,9 +66,10 @@ export function LinearKeyControls({
     onSuccess: async (payload) => {
       setLinearApiKeyDraft("");
       await onSecretSaved?.(payload.secret);
+      await testLinearConnection.run();
     },
     setFlashMessage,
-    successText: "Linear API key saved.",
+    successText: null,
   });
 
   const deleteLinearKey = useApiAction<DeleteWorkspaceSecretResponse>({
@@ -84,6 +85,13 @@ export function LinearKeyControls({
     setFlashMessage,
     successText: "Linear API key removed.",
   });
+
+  const isSavingLinearKey = saveLinearKey.isBusy || testLinearConnection.isBusy;
+  const saveLinearKeyLabel = testLinearConnection.isBusy
+    ? "Testing…"
+    : saveLinearKey.isBusy
+      ? "Saving…"
+      : "Save key";
 
   function handleSaveLinearKey() {
     const value = linearApiKeyDraft.trim();
@@ -127,16 +135,8 @@ export function LinearKeyControls({
               {dateFormatter.format(new Date(linearSecret.updatedAt))}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="ui-button"
-              disabled={testLinearConnection.isBusy || saveLinearKey.isBusy}
-              onClick={() => void testLinearConnection.run()}
-              type="button"
-            >
-              {testLinearConnection.isBusy ? "Testing…" : "Test connection"}
-            </button>
-            {allowDelete ? (
+          {allowDelete ? (
+            <div className="flex flex-wrap gap-2">
               <button
                 className="ui-button-danger"
                 disabled={deleteLinearKey.isBusy}
@@ -145,8 +145,8 @@ export function LinearKeyControls({
               >
                 {deleteLinearKey.isBusy ? "Removing…" : "Remove"}
               </button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
 
         {allowReplace ? (
@@ -169,11 +169,11 @@ export function LinearKeyControls({
             <div className="flex justify-end">
               <button
                 className="ui-button-primary"
-                disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
+                disabled={isSavingLinearKey || !linearApiKeyDraft.trim()}
                 onClick={handleSaveLinearKey}
                 type="button"
               >
-                {saveLinearKey.isBusy ? "Saving…" : "Save key"}
+                {saveLinearKeyLabel}
               </button>
             </div>
           </div>
@@ -200,11 +200,11 @@ export function LinearKeyControls({
       <div className="flex justify-end">
         <button
           className="ui-button-primary"
-          disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
+          disabled={isSavingLinearKey || !linearApiKeyDraft.trim()}
           onClick={handleSaveLinearKey}
           type="button"
         >
-          {saveLinearKey.isBusy ? "Saving…" : "Save key"}
+          {saveLinearKeyLabel}
         </button>
       </div>
     </div>

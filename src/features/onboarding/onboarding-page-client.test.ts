@@ -987,7 +987,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Replace Linear API key");
     expect(html).toContain('type="password"');
     expect(html).toContain("Save key");
-    expect(html).toContain("Test connection");
+    expect(html).not.toContain("Test connection");
     expect(html).not.toContain("Remove");
     expect(html).not.toContain("lin_api_plaintext");
   });
