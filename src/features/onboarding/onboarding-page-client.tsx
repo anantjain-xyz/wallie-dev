@@ -208,7 +208,7 @@ function HealthBadge({ children, tone }: { children: string; tone: HealthTone })
 
 function presenceBadge(configured: boolean) {
   return configured
-    ? { tone: "success" as const, value: "Present" }
+    ? { tone: "success" as const, value: "Saved" }
     : { tone: "warning" as const, value: "Missing" };
 }
 
