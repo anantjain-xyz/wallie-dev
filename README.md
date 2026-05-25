@@ -359,7 +359,7 @@ After creation:
 Linear is pull-only -- no webhook, no OAuth.
 
 1. Generate a personal API key at <https://linear.app/settings/api>.
-2. After you create a workspace in Wallie, paste the key into **Settings -> Integrations -> Linear**. The Verify button calls `POST /api/linear/test-connection`.
+2. After you create a workspace in Wallie, paste the key into **Settings -> Integrations -> Linear**. Saving the key automatically calls `POST /api/linear/test-connection`.
 
 ### 7. Start the dev server
 

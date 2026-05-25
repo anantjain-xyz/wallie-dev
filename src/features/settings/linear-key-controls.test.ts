@@ -21,7 +21,7 @@ describe("LinearKeyControls", () => {
     expect(html).not.toContain("Test connection");
   });
 
-  it("renders only preview metadata and the test action when a key is configured", () => {
+  it("renders only preview metadata when a key is configured", () => {
     const html = renderToStaticMarkup(
       createElement(LinearKeyControls, {
         canManage: true,
@@ -41,7 +41,7 @@ describe("LinearKeyControls", () => {
 
     expect(html).toContain("Linear API key configured");
     expect(html).toContain("••••1234");
-    expect(html).toContain("Test connection");
+    expect(html).not.toContain("Test connection");
     expect(html).not.toContain("lin_api_plaintext");
   });
 
@@ -68,7 +68,7 @@ describe("LinearKeyControls", () => {
     expect(html).toContain("Replace Linear API key");
     expect(html).toContain('type="password"');
     expect(html).toContain("Save key");
-    expect(html).toContain("Test connection");
+    expect(html).not.toContain("Test connection");
     expect(html).not.toContain("Remove");
     expect(html).not.toContain("lin_api_plaintext");
   });
