@@ -31,7 +31,6 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
     mode: "settings",
     onboarding: data.onboarding,
   });
-  const blockers = checklist.filter((item) => !item.passed);
   const preferredRepositoryId =
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
@@ -39,11 +38,6 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   return (
     <Section
       anchorId="verify"
-      statusBadge={
-        <StatusBadge tone={blockers.length === 0 ? "success" : "warning"}>
-          {blockers.length === 0 ? "Ready" : `${blockers.length} blocked`}
-        </StatusBadge>
-      }
       tagline="Confirm setup health before Wallie starts running sessions against this workspace."
       title="Verify setup"
     >
