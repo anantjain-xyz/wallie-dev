@@ -4,7 +4,6 @@ import type { Dispatch, SetStateAction } from "react";
 
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
-import type { FlashMessage } from "@/features/settings/settings-types";
 import { interactiveLinkClass, Section, StatusBadge } from "@/features/settings/settings-ui";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
@@ -12,7 +11,6 @@ type LinearKeySectionProps = {
   canManage: boolean;
   isLoadingSecrets: boolean;
   linearSecret: WorkspaceSecretPreview | null;
-  setFlashMessage: (message: FlashMessage) => void;
   setSecrets: Dispatch<SetStateAction<WorkspaceSecretPreview[]>>;
   workspaceId: string;
 };
@@ -21,7 +19,6 @@ export function LinearKeySection({
   canManage,
   isLoadingSecrets,
   linearSecret,
-  setFlashMessage,
   setSecrets,
   workspaceId,
 }: LinearKeySectionProps) {
@@ -62,7 +59,6 @@ export function LinearKeySection({
           setSecrets((current) => current.filter((secret) => secret.key !== deletedKey))
         }
         onSecretSaved={(secret) => setSecrets((current) => upsertSecretPreview(current, secret))}
-        setFlashMessage={setFlashMessage}
         workspaceId={workspaceId}
       />
     </Section>

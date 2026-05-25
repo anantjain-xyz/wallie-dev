@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { SelectField } from "@/components/ui/select";
 import type { PipelineStage } from "@/features/sessions/types";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import {
   LINEAR_ROUTE_KEYS,
@@ -17,7 +18,6 @@ type LinearRoutingEditorProps = {
   canManage: boolean;
   onSaved?: (routing: LinearRoutingConfig) => Promise<void> | void;
   routing: LinearRoutingConfig;
-  setFlashMessage: (message: FlashMessage) => void;
   stages: PipelineStage[];
   workspaceId: string;
 };
@@ -124,7 +124,6 @@ export function LinearRoutingEditor({
   canManage,
   onSaved,
   routing,
-  setFlashMessage,
   stages,
   workspaceId,
 }: LinearRoutingEditorProps) {
@@ -133,7 +132,6 @@ export function LinearRoutingEditor({
       canManage={canManage}
       onSaved={onSaved}
       routing={routing}
-      setFlashMessage={setFlashMessage}
       stages={stages}
       workspaceId={workspaceId}
     />
@@ -144,11 +142,11 @@ export function LinearRoutingControls({
   canManage,
   onSaved,
   routing,
-  setFlashMessage,
   stages,
   workspaceId,
 }: LinearRoutingEditorProps) {
   const [draft, setDraft] = useState(() => routingDraftFromConfig(routing));
+  const [feedbackMessage, setFeedbackMessage] = useState<FlashMessage | null>(null);
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);
   const stageSelectOptions = useMemo(
@@ -174,15 +172,25 @@ export function LinearRoutingControls({
       setDraft(routingDraftFromConfig(payload.routing));
       await onSaved?.(payload.routing);
     },
-    setFlashMessage,
+    setFlashMessage: setFeedbackMessage,
     successText: "Linear routing saved.",
   });
 
+  function updateDraft(updater: (current: LinearRoutingDraft) => LinearRoutingDraft) {
+    setFeedbackMessage(null);
+    setDraft(updater);
+  }
+
   function updateStatus(key: LinearRouteKey, value: string) {
-    setDraft((current) => ({
+    updateDraft((current) => ({
       ...current,
       statusMappings: { ...current.statusMappings, [key]: value },
     }));
+  }
+
+  function handleSaveRouting() {
+    setFeedbackMessage(null);
+    void saveRouting.run();
   }
 
   return (
@@ -261,7 +269,7 @@ export function LinearRoutingControls({
             disabled={!canManage}
             label="Rework stage"
             onValueChange={(value) =>
-              setDraft((current) => ({ ...current, reworkStageSlug: value }))
+              updateDraft((current) => ({ ...current, reworkStageSlug: value }))
             }
             options={stageSelectOptions}
             value={draft.reworkStageSlug}
@@ -269,7 +277,9 @@ export function LinearRoutingControls({
           <SelectField
             disabled={!canManage}
             label="Land stage"
-            onValueChange={(value) => setDraft((current) => ({ ...current, landStageSlug: value }))}
+            onValueChange={(value) =>
+              updateDraft((current) => ({ ...current, landStageSlug: value }))
+            }
             options={stageSelectOptions}
             value={draft.landStageSlug}
           />
@@ -278,7 +288,7 @@ export function LinearRoutingControls({
             emptyOption={{ label: "None", value: "" }}
             label="Monitor stage"
             onValueChange={(value) =>
-              setDraft((current) => ({ ...current, monitorStageSlug: value }))
+              updateDraft((current) => ({ ...current, monitorStageSlug: value }))
             }
             options={stageSelectOptions}
             value={draft.monitorStageSlug}
@@ -287,15 +297,16 @@ export function LinearRoutingControls({
       </section>
 
       {canManage ? (
-        <div className="flex justify-end border-t border-border pt-4">
+        <div className="flex flex-col items-end gap-2 border-t border-border pt-4">
           <button
             className="ui-button-primary"
             disabled={saveRouting.isBusy || stages.length === 0}
-            onClick={() => void saveRouting.run()}
+            onClick={handleSaveRouting}
             type="button"
           >
             {saveRouting.isBusy ? "Saving…" : "Save routing"}
           </button>
+          <InlineActionMessage className="w-full sm:max-w-md" message={feedbackMessage} />
         </div>
       ) : null}
     </div>

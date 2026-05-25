@@ -55,6 +55,28 @@ export function toneClass(kind: FlashMessage["kind"]) {
   }
 }
 
+export function InlineActionMessage({
+  className = "",
+  message,
+}: {
+  className?: string;
+  message: FlashMessage | null;
+}) {
+  if (!message) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-live="polite"
+      className={`rounded-[6px] border px-3 py-2 text-[13px] leading-5 ${toneClass(message.kind)} ${className}`}
+      role={message.kind === "error" ? "alert" : "status"}
+    >
+      {message.text}
+    </div>
+  );
+}
+
 export function ConfigState({ missingKeys, title }: { missingKeys: string[]; title: string }) {
   if (missingKeys.length === 0) {
     return null;

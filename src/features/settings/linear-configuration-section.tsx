@@ -7,7 +7,6 @@ import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { LinearRoutingEditor } from "@/features/settings/linear-routing-editor";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type { SettingsPageData } from "@/features/settings/data";
-import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section, StatusBadge } from "@/features/settings/settings-ui";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
@@ -17,7 +16,6 @@ type LinearConfigurationSectionProps = {
   linearSecret: WorkspaceSecretPreview | null;
   onRoutingSaved?: (routing: SettingsPageData["linearRouting"]) => void;
   routing: SettingsPageData["linearRouting"];
-  setFlashMessage: (message: FlashMessage) => void;
   setSecrets: Dispatch<SetStateAction<WorkspaceSecretPreview[]>>;
   stages: PipelineStage[];
   workspaceId: string;
@@ -29,7 +27,6 @@ export function LinearConfigurationSection({
   linearSecret,
   onRoutingSaved,
   routing,
-  setFlashMessage,
   setSecrets,
   stages,
   workspaceId,
@@ -65,7 +62,6 @@ export function LinearConfigurationSection({
             onSecretSaved={(secret) =>
               setSecrets((current) => upsertSecretPreview(current, secret))
             }
-            setFlashMessage={setFlashMessage}
             workspaceId={workspaceId}
           />
         </div>
@@ -81,7 +77,6 @@ export function LinearConfigurationSection({
             canManage={canManage}
             onSaved={onRoutingSaved}
             routing={routing}
-            setFlashMessage={setFlashMessage}
             stages={stages}
             workspaceId={workspaceId}
           />

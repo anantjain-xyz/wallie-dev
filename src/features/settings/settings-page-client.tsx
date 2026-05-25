@@ -284,7 +284,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 setData((currentData) => applyLinearRoutingToSettingsData(currentData, routing))
               }
               routing={pageData.linearRouting}
-              setFlashMessage={setFlashMessage}
               setSecrets={setSecrets}
               stages={pageData.pipeline?.stages ?? []}
               workspaceId={pageData.workspace.id}

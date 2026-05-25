@@ -66,7 +66,6 @@ export function WorkspaceSecretsSections({
         canManage={canManage}
         isLoadingSecrets={isLoadingSecrets}
         linearSecret={linearSecret}
-        setFlashMessage={setFlashMessage}
         setSecrets={setSecrets}
         workspaceId={workspaceId}
       />

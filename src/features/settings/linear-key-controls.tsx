@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { dateFormatter } from "@/features/settings/settings-ui";
+import { dateFormatter, InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type {
   DeleteWorkspaceSecretResponse,
@@ -20,9 +20,10 @@ type LinearKeyControlsProps = {
   onSecretDeleted?: (deletedKey: string) => Promise<void> | void;
   onSecretSaved?: (secret: WorkspaceSecretPreview) => Promise<void> | void;
   onTestSucceeded?: () => Promise<void> | void;
-  setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
+
+type LinearKeyFeedbackSlot = "configured" | "initial" | "replace";
 
 export function LinearKeyControls({
   allowDelete = true,
@@ -33,10 +34,11 @@ export function LinearKeyControls({
   onSecretDeleted,
   onSecretSaved,
   onTestSucceeded,
-  setFlashMessage,
   workspaceId,
 }: LinearKeyControlsProps) {
   const [linearApiKeyDraft, setLinearApiKeyDraft] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState<FlashMessage | null>(null);
+  const [feedbackSlot, setFeedbackSlot] = useState<LinearKeyFeedbackSlot>("initial");
 
   const testLinearConnection = useApiAction<{ ok: true }>({
     call: () =>
@@ -47,7 +49,7 @@ export function LinearKeyControls({
     onSuccess: async () => {
       await onTestSucceeded?.();
     },
-    setFlashMessage,
+    setFlashMessage: setFeedbackMessage,
     successText: "Linear API key verified. Wallie can read issues from this workspace.",
   });
 
@@ -65,9 +67,10 @@ export function LinearKeyControls({
     errorText: "Linear API key save failed.",
     onSuccess: async (payload) => {
       setLinearApiKeyDraft("");
+      setFeedbackSlot(linearSecret ? "replace" : "configured");
       await onSecretSaved?.(payload.secret);
     },
-    setFlashMessage,
+    setFlashMessage: setFeedbackMessage,
     successText: "Linear API key saved.",
   });
 
@@ -79,21 +82,32 @@ export function LinearKeyControls({
       ),
     errorText: "Linear API key deletion failed.",
     onSuccess: async (payload) => {
+      setFeedbackSlot("initial");
       await onSecretDeleted?.(payload.deletedKey);
     },
-    setFlashMessage,
+    setFlashMessage: setFeedbackMessage,
     successText: "Linear API key removed.",
   });
 
   function handleSaveLinearKey() {
     const value = linearApiKeyDraft.trim();
+    const nextSlot = linearSecret ? "replace" : "initial";
 
     if (!value) {
-      setFlashMessage({ kind: "error", text: "Paste a Linear API key first." });
+      setFeedbackSlot(nextSlot);
+      setFeedbackMessage({ kind: "error", text: "Paste a Linear API key first." });
       return;
     }
 
+    setFeedbackSlot(nextSlot);
+    setFeedbackMessage(null);
     void saveLinearKey.run(value);
+  }
+
+  function handleTestLinearConnection() {
+    setFeedbackSlot("configured");
+    setFeedbackMessage(null);
+    void testLinearConnection.run();
   }
 
   function handleDeleteLinearKey() {
@@ -101,7 +115,14 @@ export function LinearKeyControls({
       return;
     }
 
+    setFeedbackSlot("configured");
+    setFeedbackMessage(null);
     void deleteLinearKey.run();
+  }
+
+  function handleDraftChange(value: string) {
+    setFeedbackMessage(null);
+    setLinearApiKeyDraft(value);
   }
 
   if (!canManage) {
@@ -131,7 +152,7 @@ export function LinearKeyControls({
             <button
               className="ui-button"
               disabled={testLinearConnection.isBusy || saveLinearKey.isBusy}
-              onClick={() => void testLinearConnection.run()}
+              onClick={handleTestLinearConnection}
               type="button"
             >
               {testLinearConnection.isBusy ? "Testing…" : "Test connection"}
@@ -148,6 +169,9 @@ export function LinearKeyControls({
             ) : null}
           </div>
         </div>
+        {feedbackSlot === "configured" ? (
+          <InlineActionMessage className="sm:ml-auto sm:max-w-md" message={feedbackMessage} />
+        ) : null}
 
         {allowReplace ? (
           <div className="space-y-3 border-t border-border pt-3">
@@ -159,22 +183,27 @@ export function LinearKeyControls({
                 autoComplete="off"
                 className="ui-input font-mono"
                 name="linearApiKey"
-                onChange={(event) => setLinearApiKeyDraft(event.target.value)}
+                onChange={(event) => handleDraftChange(event.target.value)}
                 placeholder="lin_api_…"
                 spellCheck={false}
                 type="password"
                 value={linearApiKeyDraft}
               />
             </label>
-            <div className="flex justify-end">
-              <button
-                className="ui-button-primary"
-                disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
-                onClick={handleSaveLinearKey}
-                type="button"
-              >
-                {saveLinearKey.isBusy ? "Saving…" : "Save key"}
-              </button>
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <button
+                  className="ui-button-primary"
+                  disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
+                  onClick={handleSaveLinearKey}
+                  type="button"
+                >
+                  {saveLinearKey.isBusy ? "Saving…" : "Save key"}
+                </button>
+              </div>
+              {feedbackSlot === "replace" ? (
+                <InlineActionMessage className="sm:ml-auto sm:max-w-md" message={feedbackMessage} />
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -190,22 +219,27 @@ export function LinearKeyControls({
           autoComplete="off"
           className="ui-input font-mono"
           name="linearApiKey"
-          onChange={(event) => setLinearApiKeyDraft(event.target.value)}
+          onChange={(event) => handleDraftChange(event.target.value)}
           placeholder="lin_api_…"
           spellCheck={false}
           type="password"
           value={linearApiKeyDraft}
         />
       </label>
-      <div className="flex justify-end">
-        <button
-          className="ui-button-primary"
-          disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
-          onClick={handleSaveLinearKey}
-          type="button"
-        >
-          {saveLinearKey.isBusy ? "Saving…" : "Save key"}
-        </button>
+      <div className="space-y-2">
+        <div className="flex justify-end">
+          <button
+            className="ui-button-primary"
+            disabled={saveLinearKey.isBusy || !linearApiKeyDraft.trim()}
+            onClick={handleSaveLinearKey}
+            type="button"
+          >
+            {saveLinearKey.isBusy ? "Saving…" : "Save key"}
+          </button>
+        </div>
+        {feedbackSlot === "initial" || feedbackSlot === "configured" ? (
+          <InlineActionMessage className="sm:ml-auto sm:max-w-md" message={feedbackMessage} />
+        ) : null}
       </div>
     </div>
   );

@@ -5,7 +5,6 @@ import { useRef, useState } from "react";
 import type { SessionPipeline } from "@/features/sessions/types";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { LinearRoutingControls } from "@/features/settings/linear-routing-editor";
-import type { FlashMessage } from "@/features/settings/settings-types";
 import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
@@ -30,7 +29,6 @@ export function OnboardingLinearStep({
   pipeline,
   workspaceId,
 }: OnboardingLinearStepProps) {
-  const [message, setMessage] = useState<FlashMessage | null>(null);
   const [keySavedInSession, setKeySavedInSession] = useState(false);
   const [routingSavedSignature, setRoutingSavedSignature] = useState<string | null>(null);
   const [testPassed, setTestPassed] = useState(false);
@@ -60,20 +58,6 @@ export function OnboardingLinearStep({
 
   return (
     <div className="space-y-5">
-      {message ? (
-        <div
-          aria-live="polite"
-          role={message.kind === "error" ? "alert" : "status"}
-          className={`rounded-[6px] border px-3 py-2 text-[13px] ${
-            message.kind === "error"
-              ? "border-danger/20 bg-danger-soft text-danger"
-              : "border-success/20 bg-success-soft text-success"
-          }`}
-        >
-          {message.text}
-        </div>
-      ) : null}
-
       <div className="rounded-[6px] border border-border bg-surface p-4">
         <h3 className="text-[14px] font-semibold text-foreground">Linear key</h3>
         <div className="mt-3">
@@ -91,7 +75,6 @@ export function OnboardingLinearStep({
               setTestPassed(true);
               await completeIfReady({ keyPresent, routingSaved, testPassed: true });
             }}
-            setFlashMessage={setMessage}
             workspaceId={workspaceId}
           />
         </div>
@@ -108,7 +91,6 @@ export function OnboardingLinearStep({
               await completeIfReady({ keyPresent, routingSaved: true, testPassed });
             }}
             routing={linearRouting}
-            setFlashMessage={setMessage}
             stages={stages}
             workspaceId={workspaceId}
           />
