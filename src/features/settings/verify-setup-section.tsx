@@ -59,8 +59,8 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
                 <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <StatusBadge tone={item.passed ? "success" : "warning"}>
-                  {item.passed ? "Ready" : "Blocked"}
+                <StatusBadge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
+                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </StatusBadge>
                 {!item.passed && item.step !== "verify" ? (
                   <a className="ui-button" href={`#${stepAnchor[item.step]}`}>

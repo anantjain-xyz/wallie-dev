@@ -206,6 +206,56 @@ describe("buildVerifyChecklist", () => {
     ]);
   });
 
+  it("labels sandbox checklist state without treating every non-success as blocked", () => {
+    const sandboxItem = (checkHealth: Partial<OnboardingSetupHealth>) =>
+      buildVerifyChecklist({
+        agentConfig: health().agentConfig.values,
+        health: health(checkHealth),
+        onboarding: onboarding(),
+      }).find((item) => item.id === "sandbox");
+
+    expect(sandboxItem({ latestSandboxCapabilityCheck: null })).toMatchObject({
+      passed: false,
+      statusLabel: "Not started",
+      statusTone: "neutral",
+    });
+    expect(
+      sandboxItem({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: repositoryId,
+          id: "check-2",
+          status: "running",
+        },
+      }),
+    ).toMatchObject({ passed: false, statusLabel: "Running", statusTone: "accent" });
+    expect(
+      sandboxItem({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: "sandbox failed",
+          githubRepositoryId: repositoryId,
+          id: "check-3",
+          status: "error",
+        },
+      }),
+    ).toMatchObject({ passed: false, statusLabel: "Failed", statusTone: "danger" });
+    expect(
+      sandboxItem({
+        latestSandboxCapabilityCheck: null,
+        primaryRepositoryProfile: {
+          configured: false,
+          fullName: null,
+          repositoryId: null,
+          status: "missing",
+        },
+      }),
+    ).toMatchObject({ passed: false, statusLabel: "Unavailable", statusTone: "neutral" });
+  });
+
   it("treats skipped optional steps as satisfied", () => {
     const checklist = buildVerifyChecklist({
       agentConfig: health().agentConfig.values,
