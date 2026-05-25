@@ -8,7 +8,7 @@ Wallie organizes work into **sessions**. Each session is pinned at create time t
 
 Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `product → design → engineering → review → land → monitor` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, prompt template, and approver list -- nothing in code distinguishes one stage from another.
 
-A single generic stage runner (`runStage()` in `src/lib/pipeline/processor.ts`) handles every stage:
+A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/processor.ts`, which delegates to an internal `runStage()` helper) handles every stage:
 
 1. Render the stage's prompt template against the session context (title, description, prior stage artifacts, last reviewer feedback).
 2. Spin up a sandbox cloned from the workspace's connected GitHub repo on a per-stage branch.
@@ -44,12 +44,13 @@ wallie-dev/
 |-- src/
 |   |-- app/           -> Next.js routes (pages + API)
 |   |-- components/    -> Shared React UI
+|   |-- env/           -> Zod-validated env schemas (client/server/deploy)
 |   |-- features/      -> Domain modules (sessions, github, settings...)
 |   |-- lib/           -> Core libraries (pipeline, auth, supabase...)
-|   |-- worker/        -> Background daemon (polls jobs)
-|   `-- middleware.ts  -> Auth gate
+|   `-- worker/        -> Background daemon (polls jobs)
 |-- supabase/
 |   `-- migrations/20260422000000_init.sql  -> Entire schema (one file)
+|-- middleware.ts      -> Auth gate (Supabase session refresh)
 `-- AGENTS.md          -> Arch rules (no ElectricSQL, no PGlite...)
 ```
 
@@ -117,14 +118,14 @@ If you read only five files to understand Wallie, read these:
 
 #### Database -- one file tells the whole story
 
-- [supabase/migrations/20260422000000_init.sql](supabase/migrations/20260422000000_init.sql) -- the consolidated init schema. Every table, RLS policy, trigger, and RPC (`approve_session_stage` is the star). Tables: `workspaces`, `workspace_members`, `sessions`, `session_artifacts`, `agent_jobs`, `agent_runs`, `agent_run_messages`, `workspace_secrets`, `github_installations`, `session_pull_requests`.
+- [supabase/migrations/20260422000000_init.sql](supabase/migrations/20260422000000_init.sql) -- the consolidated init schema. Every table, RLS policy, trigger, and RPC (`approve_session_stage` is the star). Domain tables (24+ in total) include `workspaces`, `workspace_members`, `sessions`, `session_artifacts`, `session_artifact_feedback`, `session_phase_completions`, `session_pull_requests`, `pipelines`, `pipeline_stages`, `agent_jobs`, `agent_runs`, `agent_run_messages`, `workspace_secrets`, `workspace_agent_config`, `workspace_linear_routing`, `workspace_repository_profiles`, `workspace_onboarding`, `repository_onboarding_status`, `sandbox_capability_checks`, `worker_heartbeats`, `github_installations`, `github_repositories`, `github_issue_branches`, `profiles`, `user_codex_credentials`, `user_claude_code_credentials`, `codex_device_auth_flows`.
 - [src/lib/supabase/database.types.ts](src/lib/supabase/database.types.ts) -- auto-generated types.
 
 #### Pipeline (`src/lib/pipeline/`) -- the brain
 
 The whole module is stage-agnostic. There are no per-phase files; one generic runner drives every user-defined stage by reading rows from `pipeline_stages`.
 
-- [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. `runStage()` renders the stage prompt, spins a sandbox, runs the agent, and writes the markdown artifact. Also exports `handleApproval` / `handleRejection`.
+- [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. The public entry is `processPipelineJob()`; its internal `runStage()` helper renders the stage prompt, spins a sandbox, runs the agent, and writes the markdown artifact. Also exports `handleApproval` / `handleRejection`.
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages` and the prior-stage artifact map used by the prompt template.
 - [state-machine.ts](src/lib/pipeline/state-machine.ts) -- status checks (`canApprove`, `canReject`, `isTerminal`). Stage ordering itself lives on `pipeline_stages.position` and is enumerated by the `approve_session_stage` RPC.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
@@ -139,53 +140,88 @@ The default `product → design → engineering → review → land → monitor`
 - [heartbeat.ts](src/worker/heartbeat.ts) -- worker registration.
 - [stall-detector.ts](src/worker/stall-detector.ts) -- resets runs stuck past timeout.
 - [reconciler.ts](src/worker/reconciler.ts) -- cancels jobs if Linear issue closed.
+- [sandbox-reaper.ts](src/worker/sandbox-reaper.ts) -- shuts down sandboxes whose owning run has ended.
 - [concurrency.ts](src/worker/concurrency.ts), [config.ts](src/worker/config.ts).
 
 #### API Routes (`src/app/api/`)
 
 ```
-agent-runs/                          <- enqueue a run (also kicks the queue in-process)
-agent-runs/[runId]/retry/            <- rerun a failed run
-sessions/[sessionId]/phase-action/   <- in-app approve/reject
-github/webhooks/                     <- PR/install events
-github/install/ + callback/          <- OAuth
-linear/test-connection/              <- verify API key
-secrets/                             <- encrypted workspace creds
-workspaces/[id]/avatar/              <- storage upload
+agent-runs/                                                     <- enqueue a run (also kicks the queue in-process)
+agent-runs/[runId]/retry/                                       <- rerun a failed run
+sessions/[sessionId]/phase-action/                              <- in-app approve / reject
+agent-config/                                                   <- workspace_agent_config CRUD (provider + model)
+codex/connection/                                               <- Codex device-auth flow + token verify
+claude-code/connection/                                         <- Anthropic API key verify
+github/install/ + github/callback/                              <- GitHub App install OAuth
+github/webhooks/                                                <- PR + install events
+github/refresh-repositories/                                    <- re-sync the installation's repo list
+linear/test-connection/                                         <- verify Linear API key
+secrets/ + secrets/[key]/                                       <- encrypted workspace creds
+workspaces/[workspaceId]/avatar/                                <- storage upload
+workspaces/[workspaceId]/pipeline/                              <- pipeline + stage editor
+workspaces/[workspaceId]/repositories/                          <- list / add tracked repos
+workspaces/[workspaceId]/repositories/[repositoryId]/           <- per-repo settings
+workspaces/[workspaceId]/repositories/[repositoryId]/inference/ <- run repo inference
+workspaces/[workspaceId]/repositories/[repositoryId]/onboarding/<- per-repo onboarding state
+workspaces/[workspaceId]/repository-profile/                    <- workspace_repository_profiles editor
+workspaces/[workspaceId]/sandbox-capability-check/              <- probe Vercel Sandbox readiness
+workspaces/[workspaceId]/linear-routing/                        <- workspace_linear_routing rules
+workspaces/[workspaceId]/onboarding/ + onboarding/complete/     <- per-workspace setup state
 ```
 
 #### Features (`src/features/`) -- domain-grouped
 
-- **sessions/** -- `server.ts` (RLS queries), `client.ts`, `model.ts`, `detail/` (with Realtime subscription in `session-detail-page-client.tsx`), `list/`, `create-session-dialog.tsx`.
-- **github/** -- `service.ts`, `webhooks.ts`, `contracts.ts`.
-- **issues/**, **pipeline/**, **settings/**, **wallie/** (legacy orchestration).
+- **sessions/** -- session CRUD and pages. `server.ts` (RLS queries), `client.ts`, `model.ts`, `create.ts`, `create-session-dialog.tsx`, `detail/` (with Realtime subscription in `session-detail-page-client.tsx`), `list/`, plus repo-resolution helpers.
+- **pipeline/** -- pipeline-editor page client and editor primitives (drag-to-reorder, prompt-template editing).
+- **github/** -- GitHub App install + sync: `service.ts`, `webhooks.ts`, `contracts.ts`.
+- **settings/** -- workspace settings panels (integrations, agent, members, etc.).
+- **onboarding/** -- multi-step workspace setup flow (Linear, GitHub, pipeline) used by the per-workspace onboarding route.
+- **wallie/** -- session-detail Wallie panel (`session-wallie-panel.tsx`) and its contracts / data helpers.
+- **workspaces/** -- workspace layout + membership data helpers.
+- **workspace-members/** -- member CRUD (model, server functions, types).
+- **repositories/** + **repository-profile/** -- repo-setup controls and repo-profile editor UI.
 
 #### Libraries (`src/lib/`)
 
-- **supabase/** -- `admin.ts` (service role), `server.ts` (RLS), `browser.ts` (anon), `middleware.ts`.
-- **secrets/** -- [crypto.ts](src/lib/secrets/crypto.ts) AES-256 encrypt/decrypt.
-- **linear/** -- [client.ts](src/lib/linear/client.ts) GraphQL.
-- **agent-runner/** -- [claude-code.ts](src/lib/agent-runner/claude-code.ts) spawns Claude Code CLI subprocess.
-- **workspaces.ts**, **storage/**, **routes.ts**, **env/**.
+- **supabase/** -- `admin.ts` (service role), `server.ts` (RLS), `browser.ts` (anon), `middleware.ts`, generated `database.types.ts`.
+- **secrets/** -- [crypto.ts](src/lib/secrets/crypto.ts) AES-256-GCM encrypt/decrypt for stored credentials.
+- **linear/** -- [client.ts](src/lib/linear/client.ts) GraphQL client.
+- **linear-routing/** -- per-workspace rules mapping a Linear issue to a tracked repository.
+- **agent-runner/** -- provider dispatch ([index.ts](src/lib/agent-runner/index.ts)) plus per-provider runners [codex.ts](src/lib/agent-runner/codex.ts) and [claude-code.ts](src/lib/agent-runner/claude-code.ts) that execute the agent CLI inside a Vercel Sandbox via `sandbox.exec()`.
+- **agent-config/** -- contracts + parsing for `workspace_agent_config` (provider, model, recommended defaults).
+- **agent-credentials/** -- resolves which user credential a session run should use.
+- **codex/** and **claude-code/** -- provider-specific token validation, device-auth flow (Codex), and `auth.json` shaping.
+- **sandbox/** -- Vercel Sandbox client wrapper plus an in-process `fake` implementation for tests.
+- **sandbox-capabilities/** -- probes sandboxes for required tools/runtimes and persists the result.
+- **repo-inference/** -- inspects a connected repo to infer language, frameworks, and install/test/dev commands.
+- **repo-onboarding/** -- planner + server state for the per-repo onboarding flow.
+- **onboarding/** -- shared contracts and migration helpers for the workspace onboarding pipeline.
+- **prompt-templates/** -- renders stage prompts; resolves `{{session.*}}`, `{{artifact.previousStages.*}}`, `{{attempt.feedback}}` placeholders.
+- **wallie/** -- job enqueue + run tracking ([service.ts](src/lib/wallie/service.ts)), HTTP helper, shared constants.
+- **storage/** -- Supabase Storage helpers (e.g. workspace-avatar upload).
+- **workspaces/**, **workspaces.ts** -- role-based access control.
+- **rate-limit.ts**, **routes.ts**, **auth.ts**, **site-config.ts**, **utils.ts** -- loose utilities.
 
 #### UI
 
 ```
 app/
-|-- layout.tsx, page.tsx         (root)
-|-- login/, signup/, auth/       (public)
-|-- onboarding/workspace/        (first-run)
-`-- w/[workspaceSlug]/           (protected -- all real UI)
-    |-- sessions/                   list + /[sessionNumber] detail
-    |-- issues/                     GitHub issue tracker
-    |-- pipeline/                   phase dashboard
-    `-- settings/                   integrations + secrets
+|-- layout.tsx, page.tsx              (root)
+|-- login/, signup/, auth/            (public)
+|-- onboarding/workspace/             (first-run: create a workspace)
+`-- w/[workspaceSlug]/                (protected workspace shell)
+    |-- onboarding/                   (post-workspace setup: Linear, GitHub, pipeline)
+    `-- (app)/                        (route group with the real product UI)
+        |-- sessions/                 list + /[sessionNumber] detail
+        |-- pipeline/                 pipeline editor
+        `-- settings/                 integrations, agent, members, secrets
 
 components/
 |-- app-shell/   (shell, header, sidebar)
 |-- auth/        (auth-entry-panel)
-|-- onboarding/  (workspace form)
-`-- shared/      (icons, dropdown, status-chip)
+|-- onboarding/  (workspace onboarding form)
+|-- shared/      (icons, dropdown, status-chip)
+`-- ui/          (page-shell, select, low-level primitives)
 ```
 
 ### Mental Model
@@ -220,38 +256,52 @@ Everything else is UI glue or integration plumbing.
 
 ```
 src/
-  app/                        # Next.js App Router
-    api/                      # Route handlers (webhooks, jobs, auth, secrets)
-      agent-runs/             # Enqueue + retry pipeline jobs
-      github/                 # GitHub App install, webhooks, repo sync
-      linear/                 # Linear API key verification
-      secrets/                # Encrypted credential CRUD
-      workspaces/             # Workspace creation, avatar upload
-    auth/                     # Auth flows (callback, email, signout, confirm)
-    login/, signup/           # Public auth pages
-    onboarding/               # First-time workspace setup
-    w/[workspaceSlug]/        # Workspace routes
-      sessions/               # Session list and detail pages
-      settings/               # Workspace + integration settings
-  components/                 # Shared UI (app shell, sidebar, dropdowns)
-  env/                        # Zod-validated environment variable schemas
-  features/                   # Feature modules
-    sessions/                 # Session CRUD, list, detail
-    github/                   # GitHub installation, repo sync, webhook handlers
-    settings/                 # Workspace settings page
-    wallie/                   # Legacy agent orchestration (being replaced)
-  lib/                        # Core logic
-    pipeline/                 # Generic stage runner, stage loaders, state machine
-    supabase/                 # DB clients, auth, middleware, generated types
-    secrets/                  # AES-256 encryption for stored credentials
-    linear/                   # Linear GraphQL client
-    wallie/                   # Job service, executor, HTTP client
-    workspaces/               # Access control (role-based)
-  worker/                     # Background daemon (heartbeat, poll loop, stall detector)
+  app/                          # Next.js App Router
+    api/                        # Route handlers (webhooks, jobs, auth, secrets)
+      agent-runs/               # Enqueue + retry pipeline jobs
+      sessions/[sessionId]/     # In-app approve / reject
+      agent-config/             # workspace_agent_config CRUD
+      codex/, claude-code/      # Provider connection / token flows
+      github/                   # GitHub App install, webhooks, repo refresh
+      linear/                   # Linear API key verification
+      secrets/                  # Encrypted credential CRUD
+      workspaces/[workspaceId]/ # Pipeline, repositories, onboarding, sandbox check, ...
+    auth/                       # Auth flows (callback, email, signout, confirm)
+    login/, signup/             # Public auth pages
+    onboarding/workspace/       # First-run: create a workspace
+    w/[workspaceSlug]/          # Protected workspace shell
+      onboarding/               # Post-workspace setup
+      (app)/                    # Route group with sessions / pipeline / settings
+  components/                   # Shared UI (app shell, sidebar, dropdowns, ui primitives)
+  env/                          # Zod-validated environment variable schemas
+  features/                     # Domain modules (sessions, pipeline, github, settings,
+                                #   onboarding, wallie, workspaces, workspace-members,
+                                #   repositories, repository-profile)
+  lib/                          # Core logic
+    pipeline/                   # Generic stage runner, stage loaders, state machine
+    supabase/                   # DB clients, auth, middleware, generated types
+    secrets/                    # AES-256-GCM encryption for stored credentials
+    linear/, linear-routing/    # Linear GraphQL client + per-workspace routing rules
+    agent-runner/               # Provider dispatch + Codex/Claude Code runners
+    agent-config/               # Provider + model parsing for workspace_agent_config
+    agent-credentials/          # Picks the user credential for a session run
+    codex/, claude-code/        # Provider token validation + auth flows
+    sandbox/                    # Vercel Sandbox wrapper (+ fake for tests)
+    sandbox-capabilities/       # Probe sandboxes for required tools
+    repo-inference/             # Infer language / framework / commands per repo
+    repo-onboarding/            # Per-repo onboarding planner + state
+    onboarding/                 # Workspace onboarding contracts + helpers
+    prompt-templates/           # Stage prompt rendering
+    wallie/                     # Job service, HTTP helper, constants
+    workspaces/                 # Access control (role-based)
+    storage/                    # Supabase Storage helpers
+  worker/                       # Background daemon (heartbeat, poll loop, stall detector,
+                                #   reconciler, sandbox-reaper)
+middleware.ts                   # Next.js middleware: Supabase auth session refresh
 supabase/
-  migrations/                 # SQL migrations (schema, RLS, triggers, RPCs)
-  seed.sql                    # Development seed data
-  config.toml                 # Supabase CLI config (local dev)
+  migrations/                   # SQL migrations (schema, RLS, triggers, RPCs)
+  seed.sql                      # Development seed data
+  config.toml                   # Supabase CLI config (local dev)
 ```
 
 ## Local Setup (End-to-End)
@@ -312,16 +362,21 @@ cp .env.example .env.local
 
 Fill in the required values. Integration variables can be left blank until you complete the GitHub app setup below.
 
-| Variable                               | Required | Description                                                                         |
-| -------------------------------------- | -------- | ----------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`) |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                        |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                     |
-| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                           |
-| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption    |
-| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                    |
-| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)      |
-| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                             |
+| Variable                               | Required | Description                                                                                                                                        |
+| -------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)                                                                |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                                                                                       |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                                                                                    |
+| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                                                                                          |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption                                                                   |
+| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                                                                                   |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)                                                                     |
+| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                                                                                            |
+| `VERCEL_TOKEN`                         | Sandbox  | Team-scoped Vercel token (<https://vercel.com/account/tokens>). Required unless running on Vercel infra (OIDC) or with `WALLIE_SANDBOX_IMPL=fake`. |
+| `VERCEL_TEAM_ID`                       | Sandbox  | Vercel team that owns the sandbox project. Same condition as `VERCEL_TOKEN`.                                                                       |
+| `VERCEL_PROJECT_ID`                    | Sandbox  | Vercel project the sandboxes are created under. Same condition as `VERCEL_TOKEN`.                                                                  |
+| `WALLIE_SANDBOX_IMPL`                  | No       | Sandbox implementation: `vercel` (default) or `fake` (tests / local without Vercel creds).                                                         |
+| `WALLIE_SANDBOX_BOOTSTRAP_PLAYWRIGHT`  | No       | Set to `0` to skip Playwright bootstrap inside sandboxes.                                                                                          |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
@@ -407,20 +462,20 @@ The worker heartbeats into `workers`, polls `agent_jobs`, does an atomic CAS cla
 
 ## Scripts
 
-| Command             | Description                                    |
-| ------------------- | ---------------------------------------------- |
-| `pnpm dev`          | Start Next.js dev server                       |
-| `pnpm build`        | Production build                               |
-| `pnpm start`        | Start production server                        |
-| `pnpm worker`       | Start the background worker daemon             |
-| `pnpm test`         | Run tests (Vitest)                             |
-| `pnpm test:watch`   | Run tests in watch mode                        |
-| `pnpm lint`         | Lint with ESLint (zero warnings)               |
-| `pnpm lint:fix`     | Auto-fix lint issues                           |
-| `pnpm format`       | Format with Prettier                           |
-| `pnpm format:check` | Check formatting                               |
-| `pnpm typecheck`    | TypeScript type check                          |
-| `pnpm check`        | Run all checks (format, lint, typecheck, test) |
+| Command             | Description                                          |
+| ------------------- | ---------------------------------------------------- |
+| `pnpm dev`          | Start Next.js dev server                             |
+| `pnpm build`        | Production build                                     |
+| `pnpm start`        | Start production server                              |
+| `pnpm worker`       | Start the background worker daemon                   |
+| `pnpm test`         | Run tests (Vitest)                                   |
+| `pnpm test:watch`   | Run tests in watch mode                              |
+| `pnpm lint`         | Lint with ESLint (zero warnings)                     |
+| `pnpm lint:fix`     | Auto-fix lint issues                                 |
+| `pnpm format`       | Format with Prettier                                 |
+| `pnpm format:check` | Check formatting                                     |
+| `pnpm typecheck`    | TypeScript type check                                |
+| `pnpm check`        | Run all checks (format:check, lint, typecheck, test) |
 
 ## Architecture Notes
 
@@ -445,7 +500,7 @@ Sessions are deduplicated on `(workspace_id, linear_issue_id)` -- one session pe
 
 ### Realtime
 
-The session list and detail pages subscribe to Supabase Realtime channels on the `sessions` table, so phase transitions and status changes appear instantly in the UI.
+The session detail page subscribes to Supabase Realtime channels on `sessions`, `session_artifacts`, and `session_phase_completions`, so phase transitions and status changes appear instantly in the UI.
 
 ## Integrations
 
