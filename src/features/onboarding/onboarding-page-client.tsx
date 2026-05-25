@@ -1245,7 +1245,6 @@ function VerifyStep({
     },
     onboarding: data.onboarding,
   });
-  const blockers = verifyBlockersFromChecklist(checklist);
   const isPolling = check?.status === "running";
   const canRunCapabilityCheck =
     data.canManage && Boolean(primaryRepositoryId) && busyAction === null && !isPolling;
@@ -1336,9 +1335,6 @@ function VerifyStep({
               Resolve blockers in their owning setup step, then complete onboarding.
             </p>
           </div>
-          <Badge tone={blockers.length === 0 ? "success" : "warning"}>
-            {blockers.length === 0 ? "Ready" : `${blockers.length} blocked`}
-          </Badge>
         </div>
 
         <div className="mt-4 space-y-2">
