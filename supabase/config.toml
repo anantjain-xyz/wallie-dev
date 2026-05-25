@@ -226,10 +226,31 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
-# Uncomment to customize email template
-# [auth.email.template.invite]
-# subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+# Auth email templates are versioned in this repo so local development and hosted Supabase can
+# share the same reviewed email copy and formatting.
+[auth.email.template.confirmation]
+subject = "Confirm your Wallie email"
+content_path = "./supabase/templates/auth/confirmation.html"
+
+[auth.email.template.invite]
+subject = "You have been invited to Wallie"
+content_path = "./supabase/templates/auth/invite.html"
+
+[auth.email.template.magic_link]
+subject = "Sign in to Wallie"
+content_path = "./supabase/templates/auth/magic_link.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new Wallie email"
+content_path = "./supabase/templates/auth/email_change.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Wallie password"
+content_path = "./supabase/templates/auth/recovery.html"
+
+[auth.email.template.reauthentication]
+subject = "{{ .Token }} is your Wallie verification code"
+content_path = "./supabase/templates/auth/reauthentication.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
