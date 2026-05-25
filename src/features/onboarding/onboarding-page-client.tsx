@@ -81,6 +81,7 @@ import type {
   UpsertWorkspaceSecretResponse,
   WorkspaceSecretPreview,
 } from "@/lib/secrets/contracts";
+import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -160,7 +161,7 @@ function Badge({ children, tone }: { children: string; tone: HealthTone }) {
   return (
     <span className={cn("ui-badge whitespace-nowrap", badgeToneClasses[tone])}>
       <span className="ui-badge-dot" />
-      {children}
+      {formatSentenceCaseLabel(children)}
     </span>
   );
 }
@@ -201,7 +202,7 @@ function HealthBadge({ children, tone }: { children: string; tone: HealthTone })
   return (
     <span className={cn("ui-badge whitespace-nowrap", toneClassName)}>
       <span className="ui-badge-dot" />
-      {children}
+      {formatSentenceCaseLabel(children)}
     </span>
   );
 }

@@ -3,6 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
+import { formatSentenceCaseLabel } from "@/lib/labels";
 
 export interface CodexConnectionStatus {
   accountEmail?: string | null;
@@ -346,7 +347,7 @@ export function CodexConnectionPanel({
                         ? deviceFlow.userCode
                           ? "Enter this code in ChatGPT"
                           : "Waiting for sign-in code..."
-                        : deviceFlow.status}
+                        : formatSentenceCaseLabel(deviceFlow.status)}
                   </p>
                   {deviceFlow.userCode ? (
                     <p className="font-mono text-[22px] font-semibold tracking-normal text-foreground">

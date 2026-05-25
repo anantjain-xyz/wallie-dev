@@ -8,10 +8,10 @@ import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 export type SessionPhaseStatus = PipelinePhaseStatus;
 
 export const SESSION_PHASE_STATUS_LABELS: Record<SessionPhaseStatus, string> = {
-  agent_generating: "drafting",
-  awaiting_review: "awaiting review",
-  approved: "approved",
-  rejected: "rejected",
+  agent_generating: "Drafting",
+  awaiting_review: "Awaiting review",
+  approved: "Approved",
+  rejected: "Rejected",
 };
 
 export type PipelineStage = {

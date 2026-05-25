@@ -6,6 +6,7 @@ import { SelectField } from "@/components/ui/select";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
+import { formatSentenceCaseLabel } from "@/lib/labels";
 import type {
   SandboxCapabilityCheckLatestResponse,
   SandboxCapabilityCheckResponse,
@@ -218,7 +219,7 @@ export function SandboxCapabilitySection({
                       : "text-muted"
                 }
               >
-                {check.status}
+                {formatSentenceCaseLabel(check.status)}
               </span>
             </p>
             <p className="text-[12px] text-muted">{new Date(check.checkedAt).toLocaleString()}</p>

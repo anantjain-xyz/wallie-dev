@@ -19,6 +19,7 @@ import {
 import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
+import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -79,7 +80,7 @@ function runStatusToneClass(status: WallieRun["status"]) {
 }
 
 function formatRunStatus(status: WallieRun["status"]) {
-  return status.replaceAll("_", " ");
+  return formatSentenceCaseLabel(status);
 }
 
 function buildDefaultExpandedRunIds(runs: readonly WallieRun[]) {

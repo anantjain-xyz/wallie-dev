@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { PageSection } from "@/components/ui/page-shell";
 import type { WorkspaceUsageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { formatSentenceCaseLabel } from "@/lib/labels";
 
 export const dateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -39,7 +40,7 @@ export function StatusBadge({
   return (
     <span className={`ui-badge ${toneClassName}`}>
       {withDot ? <span className="ui-badge-dot" /> : null}
-      {children}
+      {typeof children === "string" ? formatSentenceCaseLabel(children) : children}
     </span>
   );
 }

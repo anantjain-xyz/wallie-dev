@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { formatSentenceCaseLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
 const toneClasses = {
@@ -21,7 +22,7 @@ export function StatusChip({ children, tone = "planned" }: StatusChipProps) {
         toneClasses[tone],
       )}
     >
-      {children}
+      {typeof children === "string" ? formatSentenceCaseLabel(children) : children}
     </span>
   );
 }
