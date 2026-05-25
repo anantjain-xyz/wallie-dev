@@ -28,7 +28,6 @@ type LinearRoutingResponse = {
 
 type LinearRoutingDraft = {
   landStageSlug: string;
-  monitorStageSlug: string;
   reworkStageSlug: string;
   statusMappings: Record<LinearRouteKey, string>;
 };
@@ -57,7 +56,7 @@ export function splitStatuses(value: string): string[] {
 }
 
 export function validateLinearRoutingDraftStages(
-  draft: Pick<LinearRoutingDraft, "landStageSlug" | "monitorStageSlug" | "reworkStageSlug">,
+  draft: Pick<LinearRoutingDraft, "landStageSlug" | "reworkStageSlug">,
   stageOptions: readonly string[],
 ) {
   if (stageOptions.length === 0) {
@@ -76,17 +75,12 @@ export function validateLinearRoutingDraftStages(
     }
   }
 
-  if (draft.monitorStageSlug && !available.has(draft.monitorStageSlug)) {
-    return "Monitor stage must match a current default pipeline stage.";
-  }
-
   return null;
 }
 
 function routingDraftFromConfig(routing: LinearRoutingConfig): LinearRoutingDraft {
   return {
     landStageSlug: routing.landStageSlug,
-    monitorStageSlug: routing.monitorStageSlug ?? "",
     reworkStageSlug: routing.reworkStageSlug,
     statusMappings: Object.fromEntries(
       LINEAR_ROUTE_KEYS.map((key) => [key, joinStatuses(routing.statusMappings[key])]),
@@ -97,7 +91,6 @@ function routingDraftFromConfig(routing: LinearRoutingConfig): LinearRoutingDraf
 function buildRoutingPayload(draft: LinearRoutingDraft) {
   return {
     landStageSlug: draft.landStageSlug,
-    monitorStageSlug: draft.monitorStageSlug.trim() || null,
     reworkStageSlug: draft.reworkStageSlug,
     statusMappings: Object.fromEntries(
       LINEAR_ROUTE_KEYS.map((key) => [key, splitStatuses(draft.statusMappings[key])]),
@@ -108,11 +101,8 @@ function buildRoutingPayload(draft: LinearRoutingDraft) {
 function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
   switch (key) {
     case "merging":
-      return `Route to ${draft.landStageSlug} stage`;
     case "done":
-      return draft.monitorStageSlug
-        ? `Route to ${draft.monitorStageSlug} stage`
-        : "Archive session";
+      return `Route to ${draft.landStageSlug} stage`;
     case "rework":
       return `Restart at ${draft.reworkStageSlug} stage`;
     default:
@@ -259,12 +249,12 @@ export function LinearRoutingControls({
         <div className="max-w-2xl space-y-1">
           <h3 className="text-[14px] font-semibold text-foreground">Stage routing</h3>
           <p className="text-[13px] leading-5 text-muted">
-            Choose the pipeline stages Wallie should use when Linear moves a session into rework,
-            land, or monitor.
+            Choose the pipeline stages Wallie should use when Linear moves a session into rework or
+            land.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <SelectField
             disabled={!canManage}
             label="Rework stage"
@@ -282,16 +272,6 @@ export function LinearRoutingControls({
             }
             options={stageSelectOptions}
             value={draft.landStageSlug}
-          />
-          <SelectField
-            disabled={!canManage}
-            emptyOption={{ label: "None", value: "" }}
-            label="Monitor stage"
-            onValueChange={(value) =>
-              updateDraft((current) => ({ ...current, monitorStageSlug: value }))
-            }
-            options={stageSelectOptions}
-            value={draft.monitorStageSlug}
           />
         </div>
       </section>

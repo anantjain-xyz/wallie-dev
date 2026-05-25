@@ -6,7 +6,7 @@ AI-powered product development automation. Wallie turns Linear issues into struc
 
 Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. A worker drains the job queue, runs the session's current stage, and flips it to `awaiting_review` for a human to approve or reject from the in-app dashboard.
 
-Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `product → design → engineering → review → land → monitor` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, prompt template, and approver list -- nothing in code distinguishes one stage from another.
+Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `product → design → engineering → review → land` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, prompt template, and approver list -- nothing in code distinguishes one stage from another.
 
 A single generic stage runner (`runStage()` in `src/lib/pipeline/processor.ts`) handles every stage:
 
@@ -130,7 +130,7 @@ The whole module is stage-agnostic. There are no per-phase files; one generic ru
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
 - [types.ts](src/lib/pipeline/types.ts) -- pipeline job type, model, dedupe key helper.
 
-The default `product → design → engineering → review → land → monitor` seed lives in the `internal.default_pipeline_stages()` SQL function in the migration -- workspaces can edit, add, remove, or reorder stages from settings, and `renderStagePrompt` (in `src/lib/prompt-templates/`) handles the `{{session.title}}` / `{{session.prompt}}` / `{{artifact.previousStages.<slug>}}` / `{{attempt.feedback}}` placeholders.
+The default `product → design → engineering → review → land` seed lives in the `internal.default_pipeline_stages()` SQL function in the migration -- workspaces can edit, add, remove, or reorder stages from settings, and `renderStagePrompt` (in `src/lib/prompt-templates/`) handles the `{{session.title}}` / `{{session.prompt}}` / `{{artifact.previousStages.<slug>}}` / `{{attempt.feedback}}` placeholders.
 
 #### Worker (`src/worker/`) -- the daemon
 

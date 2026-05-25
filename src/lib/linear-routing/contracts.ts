@@ -37,7 +37,6 @@ export const DEFAULT_LINEAR_STATUS_MAPPINGS: Record<LinearRouteKey, string[]> = 
 
 export const DEFAULT_LINEAR_ROUTING_CONFIG = {
   landStageSlug: "land",
-  monitorStageSlug: "monitor" as string | null,
   reworkStageSlug: "engineering",
   statusMappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
 };
@@ -68,7 +67,6 @@ export const linearStatusMappingsSchema = z.object({
 
 export const linearRoutingUpdateSchema = z.object({
   landStageSlug: stageSlugSchema,
-  monitorStageSlug: stageSlugSchema.nullish(),
   reworkStageSlug: stageSlugSchema,
   statusMappings: linearStatusMappingsSchema,
 });
@@ -78,7 +76,6 @@ export type LinearRoutingUpdateInput = z.infer<typeof linearRoutingUpdateSchema>
 
 export type LinearRoutingConfig = {
   landStageSlug: string;
-  monitorStageSlug: string | null;
   reworkStageSlug: string;
   statusMappings: LinearStatusMappings;
 };
@@ -88,9 +85,8 @@ export type LinearRouteClassification =
   | { action: "start_or_continue"; route: "todo" | "in_progress"; statusName: string }
   | { action: "pause"; route: "in_review"; statusName: string }
   | { action: "rework"; route: "rework"; stageSlug: string; statusName: string }
-  | { action: "land"; route: "merging"; stageSlug: string; statusName: string }
-  | { action: "monitor"; route: "done"; stageSlug: string; statusName: string }
-  | { action: "archive"; route: "done" | "canceled"; statusName: string }
+  | { action: "land"; route: "merging" | "done"; stageSlug: string; statusName: string }
+  | { action: "archive"; route: "canceled"; statusName: string }
   | { action: "unmapped"; route: null; statusName: string };
 
 export function normalizeLinearStatusName(statusName: string): string {
@@ -120,7 +116,6 @@ export function coerceLinearRoutingConfig(value: unknown): LinearRoutingConfig {
   if (parsed.success) {
     return {
       landStageSlug: parsed.data.landStageSlug,
-      monitorStageSlug: parsed.data.monitorStageSlug ?? null,
       reworkStageSlug: parsed.data.reworkStageSlug,
       statusMappings: normalizeStatusMappings(parsed.data.statusMappings) as LinearStatusMappings,
     };
@@ -153,10 +148,7 @@ export function classifyLinearStatus(
       case "merging":
         return { action: "land", route, stageSlug: config.landStageSlug, statusName };
       case "done":
-        if (config.monitorStageSlug) {
-          return { action: "monitor", route, stageSlug: config.monitorStageSlug, statusName };
-        }
-        return { action: "archive", route, statusName };
+        return { action: "land", route, stageSlug: config.landStageSlug, statusName };
       case "canceled":
         return { action: "archive", route, statusName };
     }

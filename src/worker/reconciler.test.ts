@@ -27,7 +27,6 @@ type AgentJobRow = { id: string; job_type?: string; session_id: string; status?:
 type PipelineStageRow = { id: string; pipeline_id: string; position: number; slug: string };
 type RoutingRow = {
   land_stage_slug: string;
-  monitor_stage_slug: string | null;
   rework_stage_slug: string;
   status_mappings: unknown;
   workspace_id: string;
@@ -214,7 +213,6 @@ function makeFetchResponse(body: unknown, init: { status?: number; headers?: Hea
 function routingRow(overrides: Partial<RoutingRow> = {}): RoutingRow {
   return {
     land_stage_slug: "land",
-    monitor_stage_slug: "monitor",
     rework_stage_slug: "engineering",
     status_mappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
     workspace_id: "wA",
@@ -476,14 +474,17 @@ describe("reconcileLinearState", () => {
     }
   });
 
-  it("archives custom done statuses when monitor routing is disabled", async () => {
+  it("routes custom done statuses to the configured land stage", async () => {
     const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+      ],
       routingRows: [
         routingRow({
-          monitor_stage_slug: null,
           status_mappings: {
             ...DEFAULT_LINEAR_STATUS_MAPPINGS,
-            done: ["Ready to Archive"],
+            done: ["Ready to Land"],
           },
         }),
       ],
@@ -491,6 +492,8 @@ describe("reconcileLinearState", () => {
       sessions: [
         {
           id: "sCustomDone",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
           workspace_id: "wA",
           linear_issue_id: "iCustomDone",
           phase_status: "agent_generating",
@@ -504,7 +507,7 @@ describe("reconcileLinearState", () => {
       makeFetchResponse({
         data: {
           issues: {
-            nodes: [{ id: "iCustomDone", state: { name: "Ready to Archive", type: "started" } }],
+            nodes: [{ id: "iCustomDone", state: { name: "Ready to Land", type: "started" } }],
           },
         },
       }),
@@ -513,17 +516,28 @@ describe("reconcileLinearState", () => {
     const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
 
     expect(result.checked).toBe(1);
-    expect(result.canceled).toBe(1);
-    expect(
-      calls.find(
-        (c) =>
-          c.table === "sessions" &&
-          c.op === "update" &&
-          c.filters["eq.id"] === "sCustomDone" &&
-          c.update?.phase_status === "rejected" &&
-          typeof c.update.archived_at === "string",
-      ),
-    ).toBeDefined();
+    expect(result.canceled).toBe(0);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        filters: expect.objectContaining({ "eq.id": "sCustomDone" }),
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({
+          current_stage_id: "stage-land",
+          phase_status: "rejected",
+        }),
+      }),
+    );
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "insert",
+        table: "agent_jobs",
+        update: expect.objectContaining({
+          dedupe_key: "pipeline:iCustomDone:active",
+          session_id: "sCustomDone",
+        }),
+      }),
+    );
   });
 
   it("routes Rework to the configured stage, clears later artifacts, and queues a job", async () => {
@@ -668,19 +682,18 @@ describe("reconcileLinearState", () => {
     );
   });
 
-  it("routes Done to the configured monitor stage", async () => {
+  it("routes Done to the configured land stage", async () => {
     const fixture: Fixture = {
       pipelineStages: [
         { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
         { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
-        { id: "stage-monitor", pipeline_id: "pipe-1", position: 3, slug: "monitor" },
       ],
-      routingRows: [routingRow({ monitor_stage_slug: "monitor" })],
+      routingRows: [routingRow({ land_stage_slug: "land" })],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
       sessions: [
         {
           id: "sDone",
-          current_stage_id: "stage-land",
+          current_stage_id: "stage-engineering",
           pipeline_id: "pipe-1",
           workspace_id: "wA",
           linear_issue_id: "iDone",
@@ -708,7 +721,7 @@ describe("reconcileLinearState", () => {
         table: "sessions",
         update: expect.objectContaining({
           archived_at: null,
-          current_stage_id: "stage-monitor",
+          current_stage_id: "stage-land",
           phase_status: "rejected",
         }),
       }),
@@ -726,21 +739,21 @@ describe("reconcileLinearState", () => {
     );
   });
 
-  it("archives Done sessions when the configured monitor stage is missing", async () => {
+  it("archives Done sessions when the configured land stage is missing", async () => {
     const fixture: Fixture = {
       pipelineStages: [
         { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
         { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
       ],
-      routingRows: [routingRow({ monitor_stage_slug: "monitor" })],
+      routingRows: [routingRow({ land_stage_slug: "ship" })],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
       sessions: [
         {
-          id: "sDoneMissingMonitor",
+          id: "sDoneMissingLand",
           current_stage_id: "stage-land",
           pipeline_id: "pipe-1",
           workspace_id: "wA",
-          linear_issue_id: "iDoneMissingMonitor",
+          linear_issue_id: "iDoneMissingLand",
           phase_status: "awaiting_review",
           created_at: "2026-05-01T00:00:00Z",
         },
@@ -752,7 +765,7 @@ describe("reconcileLinearState", () => {
       makeFetchResponse({
         data: {
           issues: {
-            nodes: [{ id: "iDoneMissingMonitor", state: { name: "Done" } }],
+            nodes: [{ id: "iDoneMissingLand", state: { name: "Done" } }],
           },
         },
       }),
@@ -765,7 +778,7 @@ describe("reconcileLinearState", () => {
     expect(calls).toContainEqual(
       expect.objectContaining({
         filters: expect.objectContaining({
-          "eq.id": "sDoneMissingMonitor",
+          "eq.id": "sDoneMissingLand",
           "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
         }),
         op: "update",
@@ -779,18 +792,16 @@ describe("reconcileLinearState", () => {
     expect(calls.find((c) => c.table === "agent_jobs" && c.op === "insert")).toBeUndefined();
   });
 
-  it("does not reroute archived Done sessions back into monitor", async () => {
+  it("does not reroute archived Done sessions back into land", async () => {
     const fixture: Fixture = {
-      pipelineStages: [
-        { id: "stage-monitor", pipeline_id: "pipe-1", position: 1, slug: "monitor" },
-      ],
-      routingRows: [routingRow({ monitor_stage_slug: "monitor" })],
+      pipelineStages: [{ id: "stage-land", pipeline_id: "pipe-1", position: 1, slug: "land" }],
+      routingRows: [routingRow({ land_stage_slug: "land" })],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
       sessions: [
         {
           id: "sArchivedDone",
           archived_at: "2026-05-01T00:00:00Z",
-          current_stage_id: "stage-monitor",
+          current_stage_id: "stage-land",
           pipeline_id: "pipe-1",
           workspace_id: "wA",
           linear_issue_id: "iArchivedDone",

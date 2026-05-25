@@ -25,8 +25,8 @@ describe("linear routing contracts", () => {
       stageSlug: "land",
     });
     expect(classifyLinearStatus("Done")).toMatchObject({
-      action: "monitor",
-      stageSlug: "monitor",
+      action: "land",
+      stageSlug: "land",
     });
     expect(classifyLinearStatus("Canceled").action).toBe("archive");
     expect(classifyLinearStatus("Cancelled").action).toBe("archive");
@@ -37,11 +37,10 @@ describe("linear routing contracts", () => {
     const config = {
       ...DEFAULT_LINEAR_ROUTING_CONFIG,
       landStageSlug: "ship",
-      monitorStageSlug: "verify",
       reworkStageSlug: "build",
       statusMappings: {
         ...DEFAULT_LINEAR_ROUTING_CONFIG.statusMappings,
-        done: ["Ready to Monitor"],
+        done: ["Ready to Close"],
         merging: ["Ready to Ship"],
         rework: ["Needs Work"],
       },
@@ -55,21 +54,18 @@ describe("linear routing contracts", () => {
       action: "rework",
       stageSlug: "build",
     });
-    expect(classifyLinearStatus("Ready to Monitor", config)).toMatchObject({
-      action: "monitor",
-      stageSlug: "verify",
+    expect(classifyLinearStatus("Ready to Close", config)).toMatchObject({
+      action: "land",
+      route: "done",
+      stageSlug: "ship",
     });
   });
 
-  it("archives done statuses when monitor routing is explicitly disabled", () => {
-    expect(
-      classifyLinearStatus("Done", {
-        ...DEFAULT_LINEAR_ROUTING_CONFIG,
-        monitorStageSlug: null,
-      }),
-    ).toMatchObject({
-      action: "archive",
+  it("routes done statuses to land", () => {
+    expect(classifyLinearStatus("Done")).toMatchObject({
+      action: "land",
       route: "done",
+      stageSlug: "land",
     });
   });
 

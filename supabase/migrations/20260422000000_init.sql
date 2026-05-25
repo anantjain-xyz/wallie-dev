@@ -478,7 +478,6 @@ create table public.workspace_linear_routing (
   }'::jsonb,
   rework_stage_slug text not null default 'engineering',
   land_stage_slug text not null default 'land',
-  monitor_stage_slug text default 'monitor',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint workspace_linear_routing_workspace_unique unique (workspace_id),
@@ -490,9 +489,6 @@ create table public.workspace_linear_routing (
   ),
   constraint workspace_linear_routing_land_slug_format check (
     land_stage_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'
-  ),
-  constraint workspace_linear_routing_monitor_slug_format check (
-    monitor_stage_slug is null or monitor_stage_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'
   )
 );
 
@@ -1379,17 +1375,6 @@ as $$
       'Land',
       'Merge, tag, and roll out.',
       'Merge the approved change for "{{session.title}}". Confirm CI is green and the rollout plan is captured below.' || E'\n'
-    ),
-    (
-      6,
-      'monitor',
-      'Monitor',
-      'Watch for regressions. Terminal phase - approving archives.',
-      'Verify that landing "{{session.title}}" has not introduced regressions.' || E'\n\n' ||
-      '## Description' || E'\n\n' ||
-      '{{session.prompt}}' || E'\n\n' ||
-      '## Instructions' || E'\n\n' ||
-      'Run tests, lint, and a smoke check; produce a monitoring report with pass/fail status.' || E'\n'
     );
 $$;
 

@@ -17,7 +17,6 @@ type AdminClient = SupabaseClient<Database>;
 
 type LinearRoutingRow = {
   land_stage_slug: string;
-  monitor_stage_slug: string | null;
   rework_stage_slug: string;
   status_mappings: unknown;
 };
@@ -29,7 +28,7 @@ export async function loadLinearRoutingConfig(
   const loose = asLooseSupabaseClient(admin);
   const { data, error } = await loose
     .from("workspace_linear_routing")
-    .select("status_mappings, rework_stage_slug, land_stage_slug, monitor_stage_slug")
+    .select("status_mappings, rework_stage_slug, land_stage_slug")
     .eq("workspace_id", workspaceId)
     .maybeSingle();
 
@@ -39,7 +38,6 @@ export async function loadLinearRoutingConfig(
   const row = data as LinearRoutingRow;
   return coerceLinearRoutingConfig({
     landStageSlug: row.land_stage_slug,
-    monitorStageSlug: row.monitor_stage_slug,
     reworkStageSlug: row.rework_stage_slug,
     statusMappings: row.status_mappings,
   });
@@ -50,11 +48,9 @@ export async function validateLinearRoutingStages(input: {
   config: LinearRoutingUpdateInput;
   workspaceId: string;
 }): Promise<{ error?: string; ok: boolean }> {
-  const requiredSlugs = [
-    input.config.reworkStageSlug,
-    input.config.landStageSlug,
-    input.config.monitorStageSlug,
-  ].filter((slug): slug is string => Boolean(slug));
+  const requiredSlugs = [input.config.reworkStageSlug, input.config.landStageSlug].filter(
+    (slug): slug is string => Boolean(slug),
+  );
 
   const uniqueSlugs = [...new Set(requiredSlugs)];
   const { data, error } = await input.admin
@@ -100,7 +96,6 @@ export async function upsertLinearRoutingConfig(input: {
   const { error } = await loose.from("workspace_linear_routing").upsert(
     {
       land_stage_slug: parsed.landStageSlug,
-      monitor_stage_slug: parsed.monitorStageSlug ?? null,
       rework_stage_slug: parsed.reworkStageSlug,
       status_mappings: normalizedMappings,
       workspace_id: input.workspaceId,
@@ -112,7 +107,6 @@ export async function upsertLinearRoutingConfig(input: {
 
   return {
     landStageSlug: parsed.landStageSlug,
-    monitorStageSlug: parsed.monitorStageSlug ?? null,
     reworkStageSlug: parsed.reworkStageSlug,
     statusMappings: normalizedMappings,
   };

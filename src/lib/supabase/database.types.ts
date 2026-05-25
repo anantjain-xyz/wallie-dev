@@ -1209,7 +1209,6 @@ export type Database = {
           created_at: string
           id: string
           land_stage_slug: string
-          monitor_stage_slug: string | null
           rework_stage_slug: string
           status_mappings: Json
           updated_at: string
@@ -1219,7 +1218,6 @@ export type Database = {
           created_at?: string
           id?: string
           land_stage_slug?: string
-          monitor_stage_slug?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
@@ -1229,7 +1227,6 @@ export type Database = {
           created_at?: string
           id?: string
           land_stage_slug?: string
-          monitor_stage_slug?: string | null
           rework_stage_slug?: string
           status_mappings?: Json
           updated_at?: string
