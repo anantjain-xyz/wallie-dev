@@ -24,6 +24,7 @@ import {
   isRepositorySelectionCurrent,
   OnboardingPageClient,
   RepositoryProfileEditor,
+  scrollOnboardingSetupToTop,
   updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
@@ -1405,5 +1406,13 @@ describe("OnboardingPageClient", () => {
     expect(nextData.onboarding.currentStep).toBe("runtime");
     expect(nextData.onboarding.completedSteps).toEqual(["github", "repository", "pipeline"]);
     expect(nextData.setupHealth.latestSandboxCapabilityCheck?.id).toBe("check-2");
+  });
+
+  it("scrolls onboarding setup transitions back to the top", () => {
+    const scrollTo = vi.fn();
+
+    scrollOnboardingSetupToTop({ scrollTo });
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 0, top: 0 });
   });
 });
