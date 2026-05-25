@@ -9,7 +9,7 @@ type PageContainerProps = {
 
 export function PageContainer({ children, className }: PageContainerProps) {
   return (
-    <div className={cn("mx-auto max-w-[1080px] px-6 pb-24 pt-10 sm:px-8", className)}>
+    <div className={cn("mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10", className)}>
       {children}
     </div>
   );
@@ -35,7 +35,7 @@ export function PageHeader({
   title,
 }: PageHeaderProps) {
   return (
-    <header className="mb-10 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+    <header className="mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sm:mb-10">
       <div className="min-w-0 space-y-2">
         {eyebrow ? (
           <div
@@ -48,7 +48,9 @@ export function PageHeader({
             {eyebrow}
           </div>
         ) : null}
-        <h1 className="text-[28px] font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="break-words text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
+          {title}
+        </h1>
         {description ? (
           <p className="max-w-2xl text-[14px] leading-6 text-muted">{description}</p>
         ) : null}

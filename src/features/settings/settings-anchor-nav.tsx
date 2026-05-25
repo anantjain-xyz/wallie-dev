@@ -1,6 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+
+import { cn } from "@/lib/utils";
 
 export type SettingsAnchor = {
   dividerBefore?: boolean;
@@ -127,16 +129,83 @@ export function SettingsAnchorNav({
 }
 
 export function SettingsAnchorNavMobile({ anchors }: { anchors: SettingsAnchor[] }) {
+  const [activeId, setActiveId] = useState<string | null>(anchors[0]?.id ?? null);
+  const linkRefs = useRef(new Map<string, HTMLAnchorElement>());
+
+  useEffect(() => {
+    const sections = anchors
+      .map((anchor) => document.getElementById(anchor.id))
+      .filter((node): node is HTMLElement => node !== null);
+
+    if (sections.length === 0) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) {
+          setActiveId(visible[0].target.id);
+        }
+      },
+      {
+        rootMargin: "-96px 0px -60% 0px",
+        threshold: [0, 1],
+      },
+    );
+
+    for (const section of sections) {
+      observer.observe(section);
+    }
+
+    return () => observer.disconnect();
+  }, [anchors]);
+
+  useEffect(() => {
+    if (!activeId) {
+      return;
+    }
+
+    linkRefs.current.get(activeId)?.scrollIntoView({
+      block: "nearest",
+      inline: "center",
+    });
+  }, [activeId]);
+
+  function handleClick(event: React.MouseEvent<HTMLAnchorElement>, id: string) {
+    const target = document.getElementById(id);
+    if (target) {
+      event.preventDefault();
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      setActiveId(id);
+      window.history.replaceState(null, "", `#${id}`);
+    }
+  }
+
   return (
     <nav aria-label="Settings sections" className="lg:hidden -mx-4 px-4 pb-4">
-      <ul className="flex gap-2 overflow-x-auto">
+      <ul className="flex snap-x gap-2 overflow-x-auto scroll-px-4 pb-1">
         {anchors.map((anchor) => (
           <Fragment key={anchor.id}>
             {anchor.dividerBefore ? (
               <li aria-hidden="true" className="w-px shrink-0 bg-border" />
             ) : null}
-            <li className="shrink-0">
-              <a className="ui-tab" href={`#${anchor.id}`}>
+            <li className="shrink-0 snap-start">
+              <a
+                ref={(node) => {
+                  if (node) {
+                    linkRefs.current.set(anchor.id, node);
+                  } else {
+                    linkRefs.current.delete(anchor.id);
+                  }
+                }}
+                aria-current={anchor.id === activeId ? "true" : undefined}
+                className={cn("ui-tab", anchor.id === activeId && "ui-tab-active")}
+                href={`#${anchor.id}`}
+                onClick={(event) => handleClick(event, anchor.id)}
+              >
                 {anchor.label}
               </a>
             </li>

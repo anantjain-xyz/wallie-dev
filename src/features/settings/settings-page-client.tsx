@@ -217,10 +217,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
 
   return (
     <div className="min-h-full">
-      <div className="mx-auto max-w-[1080px] px-6 pb-24 pt-10 sm:px-8">
-        <header className="mb-10">
+      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
+        <header className="mb-8 sm:mb-10">
           <div className="min-w-0 space-y-2">
-            <h1 className="text-[28px] font-semibold tracking-tight text-foreground">Settings</h1>
+            <h1 className="text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
+              Settings
+            </h1>
             <p className="max-w-2xl text-[14px] leading-6 text-muted">
               Manage workspace identity, integrations, pipeline, and encrypted secrets.
             </p>

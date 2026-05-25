@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useState, useTransition } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -319,8 +319,8 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
       <div className="flex flex-col gap-6">
         <section className="rounded-[8px] border border-border bg-surface">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <div>
+          <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <h2 className="text-[13px] font-semibold text-foreground">
                 {selectedStage?.name ?? selectedStageSlug} artifact
               </h2>
@@ -333,7 +333,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             {selectedStageSlug === session.currentStageSlug ? (
               <SessionPhaseStatusLabel
                 status={session.phaseStatus}
-                className="shrink-0 text-right text-[11px] leading-4"
+                className="shrink-0 text-[11px] leading-4 sm:text-right"
               />
             ) : null}
           </div>
@@ -409,7 +409,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                     className="ui-textarea min-h-24"
                     placeholder="What should change? Wallie will regenerate this stage."
                   />
-                  <div className="flex items-center justify-end gap-2">
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
                     <button
                       type="button"
                       className="ui-button"
@@ -439,7 +439,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                   <button
                     type="button"
                     className="ui-button"
@@ -509,13 +509,29 @@ function StageRail({
   stageRail: StageRailEntry[];
   selectedStageSlug: string;
 }) {
+  const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  useEffect(() => {
+    buttonRefs.current.get(selectedStageSlug)?.scrollIntoView({
+      block: "nearest",
+      inline: "center",
+    });
+  }, [selectedStageSlug]);
+
   return (
-    <ol className="flex flex-wrap items-center gap-2">
+    <ol className="flex snap-x items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
       {stageRail.map((entry, index) => {
         const isSelected = entry.stage.slug === selectedStageSlug;
         return (
-          <li key={entry.stage.id} className="flex items-center gap-2">
+          <li key={entry.stage.id} className="flex shrink-0 snap-start items-center gap-2">
             <button
+              ref={(node) => {
+                if (node) {
+                  buttonRefs.current.set(entry.stage.slug, node);
+                } else {
+                  buttonRefs.current.delete(entry.stage.slug);
+                }
+              }}
               type="button"
               onClick={() => onSelect(entry.stage.slug)}
               className={cn(
@@ -530,7 +546,7 @@ function StageRail({
               <span>{entry.stage.name}</span>
             </button>
             {index < stageRail.length - 1 ? (
-              <span aria-hidden="true" className="h-px w-4 bg-border" />
+              <span aria-hidden="true" className="hidden h-px w-4 bg-border sm:block" />
             ) : null}
           </li>
         );

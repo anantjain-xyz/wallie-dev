@@ -26,7 +26,7 @@ export function AppShell({
   const navItems = getWorkspaceNavItems(workspace.slug);
 
   return (
-    <div className="h-screen overflow-hidden bg-background">
+    <div className="h-[100dvh] min-h-[100svh] overflow-hidden bg-background">
       <div className="flex h-full min-w-0 flex-col bg-surface">
         <ShellHeader
           defaultSessionGithubRepositoryId={defaultSessionGithubRepositoryId}

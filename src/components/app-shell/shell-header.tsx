@@ -74,56 +74,71 @@ export function ShellHeader({
   }
 
   const pipelineHref = workspaceBasePath(workspace.slug);
+  function renderNavLinks(className?: string) {
+    return navItems.map((item) => {
+      const active = isActive(pathname, workspace.slug, item);
+
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          aria-current={active ? "page" : undefined}
+          className={cn("ui-top-nav-tab", className, active && "ui-top-nav-tab-active")}
+        >
+          {item.label}
+        </Link>
+      );
+    });
+  }
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 min-w-0 items-center justify-between gap-3 border-b border-border bg-surface px-3 sm:px-5">
-      <Link
-        href={pipelineHref}
-        className="shrink-0 text-[15px] font-semibold tracking-tight text-foreground hover:opacity-80"
-      >
-        Wallie
-      </Link>
-      <nav className="min-w-0 flex-1 overflow-x-auto" aria-label="Workspace navigation">
-        <div className="flex min-w-max items-center gap-1">
-          {navItems.map((item) => {
-            const active = isActive(pathname, workspace.slug, item);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={cn("ui-top-nav-tab", active && "ui-top-nav-tab-active")}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
-
-      <div className="flex shrink-0 items-center gap-2">
-        {shouldResumeSetup ? (
-          <Link className="ui-button-primary" href={onboardingHref}>
-            Resume setup
-          </Link>
-        ) : (
-          <button
-            type="button"
-            className="ui-button-primary inline-flex items-center gap-2"
-            onClick={() => setUserCreateOpen(true)}
+    <>
+      <header className="sticky top-0 z-20 min-w-0 border-b border-border bg-surface">
+        <div className="flex h-14 min-w-0 items-center justify-between gap-3 px-3 sm:px-5">
+          <Link
+            href={pipelineHref}
+            className="shrink-0 text-[15px] font-semibold tracking-tight text-foreground hover:opacity-80"
           >
-            <PlusIcon className="h-3.5 w-3.5" />
-            New session
-          </button>
-        )}
-        <ThemeToggle />
-        <form action="/auth/signout" method="post">
-          <button type="submit" className="ui-icon-button" aria-label={signOutLabel}>
-            <LogoutIcon className="h-3.5 w-3.5" />
-          </button>
-        </form>
-      </div>
+            Wallie
+          </Link>
+          <nav className="hidden min-w-0 flex-1 sm:block" aria-label="Workspace navigation">
+            <div className="flex min-w-0 items-center gap-1">{renderNavLinks()}</div>
+          </nav>
+
+          <div className="flex shrink-0 items-center gap-2">
+            {shouldResumeSetup ? (
+              <Link className="ui-button-primary min-h-9" href={onboardingHref}>
+                Resume setup
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="ui-button-primary inline-flex h-9 w-9 items-center gap-2 px-0 sm:h-auto sm:w-auto sm:px-3"
+                aria-label="New session"
+                onClick={() => setUserCreateOpen(true)}
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">New session</span>
+              </button>
+            )}
+            <ThemeToggle />
+            <form action="/auth/signout" method="post">
+              <button type="submit" className="ui-icon-button" aria-label={signOutLabel}>
+                <LogoutIcon className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <nav
+          className="border-t border-border px-2 py-2 sm:hidden"
+          aria-label="Workspace navigation"
+        >
+          <div className="grid grid-cols-3 gap-1">
+            {renderNavLinks("w-full justify-center px-2")}
+          </div>
+        </nav>
+      </header>
 
       <CreateSessionDialog
         defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
@@ -133,6 +148,6 @@ export function ShellHeader({
         workspaceId={workspace.id}
         workspaceSlug={workspace.slug}
       />
-    </header>
+    </>
   );
 }
