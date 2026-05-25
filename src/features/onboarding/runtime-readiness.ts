@@ -38,6 +38,8 @@ export type RuntimeReadiness = {
   requirements: RuntimeRequirement[];
 };
 
+export type VerifyChecklistStatusTone = "accent" | "danger" | "neutral" | "success" | "warning";
+
 export type VerifyChecklistItem = {
   detail: string;
   id:
@@ -51,6 +53,8 @@ export type VerifyChecklistItem = {
     | "sandbox";
   label: string;
   passed: boolean;
+  statusLabel?: string;
+  statusTone?: VerifyChecklistStatusTone;
   step: WorkspaceOnboardingStep;
 };
 
@@ -212,6 +216,16 @@ export function buildVerifyChecklist(input: {
   const latestSelectedRepositoryCheckStatus = latestCheckMatchesPrimaryRepository
     ? latestCheck?.status
     : null;
+  const sandboxStatus =
+    latestSelectedRepositoryCheckStatus === "success"
+      ? ({ label: "Ready", tone: "success" } as const)
+      : latestSelectedRepositoryCheckStatus === "running"
+        ? ({ label: "Running", tone: "accent" } as const)
+        : latestSelectedRepositoryCheckStatus === "error"
+          ? ({ label: "Failed", tone: "danger" } as const)
+          : primaryRepositoryId
+            ? ({ label: "Not started", tone: "neutral" } as const)
+            : ({ label: "Unavailable", tone: "neutral" } as const);
   const stepSatisfied = (step: WorkspaceOnboardingStep) =>
     completedSteps.has(step) || (canSkipOnboardingStep(step) && skippedSteps.has(step));
   const useSetupHealth = input.mode === "settings";
@@ -324,8 +338,10 @@ export function buildVerifyChecklist(input: {
                 ? "Run a sandbox capability check for the selected repository."
                 : "Save a repository profile before running a sandbox capability check.",
       id: "sandbox",
-      label: "Sandbox capability check succeeded",
+      label: "Sandbox capability check",
       passed: latestSelectedRepositoryCheckStatus === "success",
+      statusLabel: sandboxStatus.label,
+      statusTone: sandboxStatus.tone,
       step: "verify",
     },
   ];

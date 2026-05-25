@@ -1352,8 +1352,8 @@ function VerifyStep({
                 <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={item.passed ? "success" : "warning"}>
-                  {item.passed ? "Ready" : "Blocked"}
+                <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
+                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </Badge>
                 {!item.passed && item.step !== "verify" ? (
                   <button
