@@ -272,6 +272,82 @@ describe("Codex device auth", () => {
     });
   });
 
+  it("extracts the current Codex CLI one-time code without using banner text", async () => {
+    const rows: FlowRow[] = [];
+    const admin = buildAdminMock(rows);
+    const command = new FakeCommand();
+    command.logChunks = [
+      {
+        data:
+          "\nWelcome to Codex [v0.133.0]\n" +
+          "OpenAI's command-line coding agent\n\n" +
+          "Follow these steps to sign in with ChatGPT using device code authorization:\n\n" +
+          "1. Open this link in your browser and sign in to your account\n" +
+          "   https://auth.openai.com/codex/device\n\n" +
+          "2. Enter this one-time code (expires in 15 minutes)\n" +
+          "   MMP2-IDEMJ\n\n" +
+          "Device codes are a common phishing target. Never share this code.\n",
+        stream: "stdout",
+      },
+    ];
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      runCommand: vi.fn().mockResolvedValue(command),
+      sandboxId: "sandbox-1",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.sandboxCreate.mockResolvedValue(sandbox);
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+
+    expect(snapshot).toMatchObject({
+      status: "prompted",
+      userCode: "MMP2-IDEMJ",
+      verificationUri: "https://auth.openai.com/codex/device",
+    });
+    expect(rows[0]).toMatchObject({
+      status: "prompted",
+      user_code: "MMP2-IDEMJ",
+      verification_uri: "https://auth.openai.com/codex/device",
+    });
+  });
+
+  it("does not surface unlabeled hyphenated setup text as a device code", async () => {
+    const rows: FlowRow[] = [];
+    const admin = buildAdminMock(rows);
+    const command = new FakeCommand();
+    command.logChunks = [
+      {
+        data: "Open https://auth.openai.com/codex/device\n" + "Preparing VERIFY-DEPS-BEFORE\n",
+        stream: "stdout",
+      },
+    ];
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      runCommand: vi.fn().mockResolvedValue(command),
+      sandboxId: "sandbox-1",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.sandboxCreate.mockResolvedValue(sandbox);
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+
+    expect(snapshot).toMatchObject({
+      status: "prompted",
+      userCode: null,
+      verificationUri: "https://auth.openai.com/codex/device",
+    });
+    expect(rows[0]).toMatchObject({
+      status: "prompted",
+      user_code: null,
+      verification_uri: "https://auth.openai.com/codex/device",
+    });
+  });
+
   it("starts local development auth without a Vercel Sandbox", async () => {
     process.env.CODEX_DEVICE_AUTH_MODE = "local";
     const rows: FlowRow[] = [];

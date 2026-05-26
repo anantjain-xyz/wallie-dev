@@ -625,11 +625,11 @@ function extractUserCode(output: string): string | null {
   const withoutUrls = output.replace(/https?:\/\/\S+/gi, " ");
   const labeledPatterns = [
     new RegExp(
-      `\\benter\\s+(?:this\\s+|the\\s+)?(?:user\\s+|device\\s+|verification\\s+)?code\\b(?:\\s+(?:shown|below|displayed))?(?:\\s+(?:in|on|at)\\b[^\\n:=-]*)?\\s*(?:is|:|=|-)?\\s*(${USER_CODE_PATTERN})`,
+      `\\benter\\s+(?:this\\s+|the\\s+)?(?:(?:one[-\\s]time|user|device|verification)\\s+)?code\\b(?:\\s*\\([^\\n)]*\\))?(?:\\s+(?:shown|below|displayed))?(?:\\s+(?:in|on|at)\\b[^\\n:=-]*)?\\s*(?:is|:|=|-)?\\s*(${USER_CODE_PATTERN})`,
       "gi",
     ),
     new RegExp(
-      `\\b(?:user\\s+|device\\s+|verification\\s+)?code\\b\\s*(?:is|:|=|-)\\s*(${USER_CODE_PATTERN})`,
+      `\\b(?:(?:one[-\\s]time|user|device|verification)\\s+)?code\\b(?:\\s*\\([^\\n)]*\\))?\\s*(?:is|:|=|-)\\s*(${USER_CODE_PATTERN})`,
       "gi",
     ),
     new RegExp(`\\btoken\\b\\s*(?:is|:|=|-)\\s*(${USER_CODE_PATTERN})`, "gi"),
@@ -642,21 +642,38 @@ function extractUserCode(output: string): string | null {
     }
   }
 
+  const lines = withoutUrls.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!isCodePromptLine(lines[index] ?? "")) continue;
+
+    for (const candidateLine of lines.slice(index + 1, index + 3)) {
+      const code = normalizeUserCode(candidateLine);
+      if (code) return code;
+    }
+  }
+
   for (const match of withoutUrls.matchAll(/\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b/gi)) {
-    const code = normalizeUserCode(match[0]);
+    const code = normalizeUserCode(match[0], { requireDigit: true });
     if (code) return code;
   }
 
   for (const line of withoutUrls.split(/\r?\n/)) {
     if (!/^[\sA-Z0-9-]+$/i.test(line.trim())) continue;
-    const code = normalizeUserCode(line);
+    const code = normalizeUserCode(line, { requireDigit: true });
     if (code) return code;
   }
 
   return null;
 }
 
-function normalizeUserCode(value: string | null | undefined): string | null {
+function isCodePromptLine(line: string): boolean {
+  return /\benter\b.*\b(?:(?:one[-\s]time|user|device|verification)\s+)?code\b/i.test(line);
+}
+
+function normalizeUserCode(
+  value: string | null | undefined,
+  options: { requireDigit?: boolean } = {},
+): string | null {
   if (!value) return null;
 
   const code = value
@@ -667,14 +684,15 @@ function normalizeUserCode(value: string | null | undefined): string | null {
     .toUpperCase();
 
   if (!/^[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})*$/.test(code)) return null;
-  if (!isLikelyUserCode(code)) return null;
+  if (!isLikelyUserCode(code, options)) return null;
   return code;
 }
 
-function isLikelyUserCode(code: string): boolean {
+function isLikelyUserCode(code: string, options: { requireDigit?: boolean } = {}): boolean {
   const segments = code.split("-");
   const compact = segments.join("");
   if (compact.length < 4 || compact.length > 32) return false;
+  if (options.requireDigit && !/\d/.test(compact)) return false;
   if (segments.some((segment) => USER_CODE_STOP_WORDS.has(segment))) return false;
   if (USER_CODE_STOP_WORDS.has(compact)) return false;
   if (segments.length > 1) return true;
