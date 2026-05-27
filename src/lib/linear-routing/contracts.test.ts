@@ -18,7 +18,7 @@ describe("linear routing contracts", () => {
     expect(classifyLinearStatus("In Review").action).toBe("pause");
     expect(classifyLinearStatus("Rework")).toMatchObject({
       action: "rework",
-      stageSlug: "engineering",
+      stageSlug: "build",
     });
     expect(classifyLinearStatus("Merging")).toMatchObject({
       action: "land",

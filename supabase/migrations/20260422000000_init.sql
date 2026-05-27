@@ -476,7 +476,7 @@ create table public.workspace_linear_routing (
     "done": ["done"],
     "canceled": ["canceled", "cancelled", "duplicate"]
   }'::jsonb,
-  rework_stage_slug text not null default 'engineering',
+  rework_stage_slug text not null default 'build',
   land_stage_slug text not null default 'land',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -1285,9 +1285,9 @@ execute function internal.touch_updated_at();
 -- ---------------------------------------------------------------------------
 
 -- Default stage seed shared by create_workspace and the "Reset to defaults"
--- button in the settings UI. Mirrors the legacy 6-phase pipeline so that
--- existing UX continues to work out of the box; workspaces can edit, add,
--- remove, or reorder stages from the settings page.
+-- button in the settings UI. Models Symphony's plan → build → review → land
+-- rhythm with full execution discipline baked into each prompt; workspaces can
+-- edit, add, remove, or reorder stages from the settings page.
 create or replace function internal.default_pipeline_stages()
 returns table (
   stage_position integer,
@@ -1303,78 +1303,80 @@ as $$
   values
     (
       1,
-      'product',
-      'Product',
-      'Write the product spec and approve the problem framing.',
-      '## Product Spec Request' || E'\n\n' ||
+      'plan',
+      'Plan',
+      'Frame the problem and lock the plan: spec, acceptance criteria, technical approach, and reproduction signal.',
+      '## Plan Request' || E'\n\n' ||
       '{{session.title}}' || E'\n\n' ||
       '## User Request' || E'\n\n' ||
       '{{session.prompt}}' || E'\n\n' ||
       '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
       '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
       '## Instructions' || E'\n\n' ||
-      'Produce a reviewable product specification only. Do not modify files, run implementation commands, create branches, install dependencies, or make code changes.' || E'\n\n' ||
+      'Produce a reviewable plan only. Do not modify files, run implementation commands, create branches, install dependencies, or make code changes.' || E'\n\n' ||
       'Cover:' || E'\n' ||
-      '- Problem and goals' || E'\n' ||
-      '- Non-goals' || E'\n' ||
-      '- Target users and workflows' || E'\n' ||
-      '- Functional requirements' || E'\n' ||
-      '- Acceptance criteria' || E'\n' ||
-      '- Open questions and risks' || E'\n'
+      '- **Problem & goals** — what we are solving and why, plus explicit non-goals.' || E'\n' ||
+      '- **Acceptance criteria** — a concrete checklist. If the request names any validation, test plan, or testing steps, copy them verbatim as required items (no optional downgrade). For user-facing work, include a UI walkthrough (launch path → interaction → expected result) as a required criterion.' || E'\n' ||
+      '- **Reproduction signal** — the current behavior before any change: the command, output, or UI state that demonstrates the problem (or confirms the feature is absent).' || E'\n' ||
+      '- **Technical approach** — key files, data model, API surface, and how the change fits existing patterns.' || E'\n' ||
+      '- **Validation plan** — how the change will be proven, including screenshots for user-facing states.' || E'\n' ||
+      '- **Risks & open questions.**' || E'\n'
     ),
     (
       2,
-      'design',
-      'Design',
-      'Resolve the design approach before engineering picks it up.',
-      'Design the technical approach for: {{session.title}}' || E'\n\n' ||
-      '## Description' || E'\n\n' ||
+      'build',
+      'Build',
+      'Implement the approved plan with small focused commits, validation evidence, and a clean PR.',
+      'Implement: {{session.title}}' || E'\n\n' ||
+      '## User Request' || E'\n\n' ||
       '{{session.prompt}}' || E'\n\n' ||
-      '{{#if artifact.previousStages.product}}## Approved Product Spec' || E'\n\n' ||
-      '{{artifact.previousStages.product}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.plan}}## Approved Plan' || E'\n\n' ||
+      '{{artifact.previousStages.plan}}' || E'\n{{/if}}' || E'\n\n' ||
       '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
       '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
       '## Instructions' || E'\n\n' ||
-      'Produce a concise technical design document that covers approach, key files, data model, API surface, testing, and risks.' || E'\n'
+      'Implement the change against the approved plan. Read the codebase first and follow existing patterns. Work in small, focused commits.' || E'\n\n' ||
+      '- **Reproduction first** — confirm the current behavior from the plan''s reproduction signal before changing code.' || E'\n' ||
+      '- **Validation is mandatory** — satisfy every acceptance-criteria and validation item from the plan. Prefer targeted proof that directly exercises the change, and re-run until green before publishing.' || E'\n' ||
+      '- **User-facing changes** — capture full-page screenshots of every state worth reviewing (happy path, loading, error, empty, mobile) and embed them in the PR description.' || E'\n' ||
+      '- **Clean up test data** — remove anything you created in external systems while validating; the end state must match the start state plus only the artifacts that belong to this change.' || E'\n' ||
+      '- Open a pull request and summarize the diff shape, the commits, and the validation evidence produced.' || E'\n'
     ),
     (
       3,
-      'engineering',
-      'Engineering',
-      'Scope the implementation plan and confirm the diff shape.',
-      'Implement: {{session.title}}' || E'\n\n' ||
-      '## Description' || E'\n\n' ||
-      '{{session.prompt}}' || E'\n\n' ||
-      '{{#if artifact.previousStages.product}}## Product Spec' || E'\n\n' ||
-      '{{artifact.previousStages.product}}' || E'\n{{/if}}' || E'\n\n' ||
-      '{{#if artifact.previousStages.design}}## Design Document' || E'\n\n' ||
-      '{{artifact.previousStages.design}}' || E'\n{{/if}}' || E'\n\n' ||
-      '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
-      '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
-      '## Instructions' || E'\n\n' ||
-      'Read the codebase, implement the change, follow existing patterns, and produce small focused commits.' || E'\n'
-    ),
-    (
-      4,
       'review',
       'Review',
-      'Human review of the generated change set.',
+      'Sweep PR feedback and verify the change against the plan before human sign-off.',
       'Review the implementation for: {{session.title}}' || E'\n\n' ||
-      '## Description' || E'\n\n' ||
+      '## User Request' || E'\n\n' ||
       '{{session.prompt}}' || E'\n\n' ||
-      '{{#if artifact.previousStages.engineering}}## Engineering Output' || E'\n\n' ||
-      '{{artifact.previousStages.engineering}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.plan}}## Approved Plan' || E'\n\n' ||
+      '{{artifact.previousStages.plan}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if artifact.previousStages.build}}## Build Output' || E'\n\n' ||
+      '{{artifact.previousStages.build}}' || E'\n{{/if}}' || E'\n\n' ||
       '{{#if attempt.feedback}}## Previous Feedback' || E'\n\n' ||
       '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
       '## Instructions' || E'\n\n' ||
-      'Verify the implementation matches the spec, call out risks, and report findings as a structured review.' || E'\n'
+      'Produce a structured review. Do not introduce new feature work.' || E'\n\n' ||
+      '- **Verify against the plan** — confirm every acceptance-criteria and validation item is met; call out any gap.' || E'\n' ||
+      '- **PR feedback sweep** — gather every actionable item from top-level PR comments, inline review comments, and review states. Each must be resolved (addressed or justified pushback); list any that remain open.' || E'\n' ||
+      '- **Checks & evidence** — confirm CI is green on the latest commit, that user-facing changes include the required screenshots, and that validation test data has been cleaned up.' || E'\n' ||
+      '- **Findings** — report risks, correctness concerns, and a clear recommendation. The change should not advance until findings are resolved and a human approves.' || E'\n'
     ),
     (
-      5,
+      4,
       'land',
       'Land',
-      'Merge, tag, and roll out.',
-      'Merge the approved change for "{{session.title}}". Confirm CI is green and the rollout plan is captured below.' || E'\n'
+      'Merge the approved change once CI is green, and capture the rollout.',
+      'Land the approved change for "{{session.title}}".' || E'\n\n' ||
+      '{{#if artifact.previousStages.review}}## Review Findings' || E'\n\n' ||
+      '{{artifact.previousStages.review}}' || E'\n{{/if}}' || E'\n\n' ||
+      '{{#if attempt.feedback}}## Previous Feedback' || E'\n\n' ||
+      '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
+      '## Instructions' || E'\n\n' ||
+      '- Confirm the PR is approved and all required checks are green before merging. If checks are red or the branch conflicts, resolve before proceeding.' || E'\n' ||
+      '- Squash-merge the PR and record the resulting merge SHA.' || E'\n' ||
+      '- Capture the rollout: tag or release if applicable, note any post-merge steps, and confirm the change is live.' || E'\n'
     );
 $$;
 

@@ -12,13 +12,13 @@ import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 const stages = [
   {
     approverMemberIds: [],
-    description: "Engineering",
-    id: "stage-engineering",
-    name: "Engineering",
+    description: "Build",
+    id: "stage-build",
+    name: "Build",
     pipelineId: "pipeline-1",
     position: 1,
     promptTemplateMd: "",
-    slug: "engineering",
+    slug: "build",
   },
   {
     approverMemberIds: [],
@@ -46,7 +46,7 @@ describe("Linear routing editor", () => {
       validateLinearRoutingDraftStages(
         {
           landStageSlug: "ship",
-          reworkStageSlug: "engineering",
+          reworkStageSlug: "build",
         },
         stages.map((stage) => stage.slug),
       ),
@@ -55,7 +55,7 @@ describe("Linear routing editor", () => {
       validateLinearRoutingDraftStages(
         {
           landStageSlug: "land",
-          reworkStageSlug: "engineering",
+          reworkStageSlug: "build",
         },
         stages.map((stage) => stage.slug),
       ),
@@ -82,10 +82,10 @@ describe("Linear routing editor", () => {
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).not.toContain("<select");
-    expect(html).toContain("Restart at engineering stage");
+    expect(html).toContain("Restart at build stage");
     expect(html).toContain("Route to land stage");
     expect(html).toContain("Save routing");
-    expect(html).toContain("engineering");
+    expect(html).toContain("build");
     expect(html).toContain("land");
   });
 

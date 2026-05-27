@@ -37,7 +37,7 @@ export const DEFAULT_LINEAR_STATUS_MAPPINGS: Record<LinearRouteKey, string[]> = 
 
 export const DEFAULT_LINEAR_ROUTING_CONFIG = {
   landStageSlug: "land",
-  reworkStageSlug: "engineering",
+  reworkStageSlug: "build",
   statusMappings: DEFAULT_LINEAR_STATUS_MAPPINGS,
 };
 
