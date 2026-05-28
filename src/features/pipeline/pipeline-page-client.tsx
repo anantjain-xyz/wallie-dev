@@ -206,7 +206,7 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
               Pipeline
             </h1>
             <p className="text-[14px] leading-6 text-muted">
-              Sessions move through these stages from product to land.
+              Sessions move through these stages in order, gated by approval at each step.
             </p>
           </div>
         </div>

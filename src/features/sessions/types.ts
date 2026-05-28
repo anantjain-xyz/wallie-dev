@@ -1,9 +1,9 @@
 import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 
-// Sessions used to be pinned to a hardcoded phase enum (product → design →
-// engineering → review → land). They now reference a workspace's
-// pipeline by id and advance through pipeline_stages by `position`. Stages
-// are user-editable in settings; the 5-stage shape is the seeded default.
+// Sessions used to be pinned to a hardcoded phase enum. They now reference a
+// workspace's pipeline by id and advance through pipeline_stages by `position`.
+// Stages are user-editable in settings; the seeded default is the
+// Symphony-inspired plan → build → review → land shape.
 
 export type SessionPhaseStatus = PipelinePhaseStatus;
 
