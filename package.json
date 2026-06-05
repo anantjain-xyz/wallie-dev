@@ -32,6 +32,7 @@
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.3.1",
+    "tsx": "^4.19.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -44,7 +45,6 @@
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.1",
     "tailwindcss": "^4",
-    "tsx": "^4.19.4",
     "typescript": "^5",
     "vitest": "^4.0.7"
   }

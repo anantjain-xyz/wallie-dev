@@ -42,12 +42,13 @@ async function main() {
 
   // --- Heartbeat interval ---
   const heartbeatTimer = setInterval(() => {
-    void sendHeartbeat(admin, config.workerId, activeJobId);
+    runTimerTask("heartbeat", () => sendHeartbeat(admin, config.workerId, activeJobId));
   }, config.heartbeatIntervalMs);
 
   // --- Stall detection interval ---
   const stallTimer = setInterval(() => {
-    void sweepStalledRuns(admin, config.defaultStallTimeoutMs).then((result) => {
+    runTimerTask("stall sweep", async () => {
+      const result = await sweepStalledRuns(admin, config.defaultStallTimeoutMs);
       if (result.stalledRunIds.length > 0) {
         console.log("[worker] stall sweep results", {
           stalledJobIds: result.stalledJobIds,
@@ -59,7 +60,8 @@ async function main() {
 
   // --- Reconciliation interval ---
   const reconcileTimer = setInterval(() => {
-    void reconcileLinearState(admin).then((result) => {
+    runTimerTask("reconciliation", async () => {
+      const result = await reconcileLinearState(admin);
       if (result.canceled > 0 || result.rateLimited) {
         console.log("[worker] reconciliation results", {
           canceled: result.canceled,
@@ -77,7 +79,8 @@ async function main() {
   // stall sweep so we still catch sandboxes whose linked run never made it
   // into the DB.
   const sandboxReapTimer = setInterval(() => {
-    void reapOrphanSandboxes(admin).then((result) => {
+    runTimerTask("sandbox reap", async () => {
+      const result = await reapOrphanSandboxes(admin);
       if (result.reapedSandboxIds.length > 0) {
         console.log("[worker] sandbox reap results", {
           activeProviderCount: result.activeProviderCount,
@@ -97,14 +100,14 @@ async function main() {
         },
       });
 
-      if (result.outcome === "idle" || result.outcome === "concurrency_limited") {
+      if (result.outcome === "idle") {
         // Nothing to do — sleep for the full poll interval.
         await delay(config.pollIntervalMs);
       } else if (result.outcome === "error") {
         // Back off slightly on errors to avoid tight retry loops.
         await delay(config.pollIntervalMs * 2);
       }
-      // On "success" or "claimed", loop immediately to check for more work.
+      // On "success", loop immediately to check for more work.
     } catch (error) {
       console.error("[worker] poll loop error", {
         error: error instanceof Error ? error.message : String(error),
@@ -122,6 +125,14 @@ async function main() {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runTimerTask(label: string, task: () => Promise<void>): void {
+  void task().catch((error) => {
+    console.error(`[worker] ${label} failed`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 // Run the worker.

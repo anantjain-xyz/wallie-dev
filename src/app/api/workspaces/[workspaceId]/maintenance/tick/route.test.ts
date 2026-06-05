@@ -60,9 +60,9 @@ function maintenanceResult() {
       terminalErroredJobIds: [],
     },
     processing: {
-      processedJobIds: ["job-next"],
-      result: "success",
-      runId: "run-next",
+      processedJobIds: [],
+      result: "delegated",
+      runId: null,
     },
     reconciliation: {
       canceled: 1,

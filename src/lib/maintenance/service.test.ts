@@ -1,14 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
-  processQueuedAgentJobs: vi.fn(),
   reapOrphanSandboxes: vi.fn(),
   reconcileLinearState: vi.fn(),
   sweepStalledRuns: vi.fn(),
-}));
-
-vi.mock("@/lib/wallie/service", () => ({
-  processQueuedAgentJobs: mocked.processQueuedAgentJobs,
 }));
 
 vi.mock("@/worker/reconciler", () => ({
@@ -43,12 +38,6 @@ function setupDefaults() {
     checked: 3,
     rateLimited: false,
   });
-  mocked.processQueuedAgentJobs.mockResolvedValue({
-    jobId: "job-next",
-    processed: true,
-    result: "success",
-    runId: "run-next",
-  });
 }
 
 describe("runMaintenanceTick", () => {
@@ -57,7 +46,7 @@ describe("runMaintenanceTick", () => {
     vi.clearAllMocks();
   });
 
-  it("runs workspace-scoped cleanup, reconciliation, and one queued job", async () => {
+  it("runs workspace-scoped cleanup and reconciliation while delegating queue processing", async () => {
     setupDefaults();
     const admin = {};
 
@@ -73,11 +62,6 @@ describe("runMaintenanceTick", () => {
       workspaceId: WORKSPACE_ID,
     });
     expect(mocked.reapOrphanSandboxes).toHaveBeenCalledWith(admin);
-    expect(mocked.processQueuedAgentJobs).toHaveBeenCalledWith({
-      admin,
-      signal: expect.any(AbortSignal),
-      workspaceId: WORKSPACE_ID,
-    });
     expect(result).toEqual({
       cleanup: {
         activeProviderSandboxCount: 2,
@@ -88,9 +72,9 @@ describe("runMaintenanceTick", () => {
         terminalErroredJobIds: [],
       },
       processing: {
-        processedJobIds: ["job-next"],
-        result: "success",
-        runId: "run-next",
+        processedJobIds: [],
+        result: "delegated",
+        runId: null,
       },
       reconciliation: {
         canceled: 1,
@@ -100,7 +84,7 @@ describe("runMaintenanceTick", () => {
     });
   });
 
-  it("skips queue processing when the time budget is nearly exhausted", async () => {
+  it("does not process queued jobs even when a tick budget is provided", async () => {
     setupDefaults();
 
     const result = await runMaintenanceTick({
@@ -109,48 +93,10 @@ describe("runMaintenanceTick", () => {
       workspaceId: WORKSPACE_ID,
     });
 
-    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
     expect(result.processing).toEqual({
       processedJobIds: [],
-      result: "budget_exhausted",
+      result: "delegated",
       runId: null,
-    });
-  });
-
-  it("aborts in-flight queue processing when the maintenance budget expires", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
-    setupDefaults();
-    mocked.processQueuedAgentJobs.mockImplementation(
-      ({ signal }: { signal: AbortSignal }) =>
-        new Promise((resolve) => {
-          signal.addEventListener(
-            "abort",
-            () =>
-              resolve({
-                jobId: "job-next",
-                processed: true,
-                result: "error",
-                runId: "run-next",
-              }),
-            { once: true },
-          );
-        }),
-    );
-
-    const pending = runMaintenanceTick({
-      admin: {} as never,
-      tickBudgetMs: 60_100,
-      workspaceId: WORKSPACE_ID,
-    });
-
-    await vi.runAllTimersAsync();
-    const result = await pending;
-
-    expect(result.processing).toEqual({
-      processedJobIds: ["job-next"],
-      result: "error",
-      runId: "run-next",
     });
   });
 });

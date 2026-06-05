@@ -43,6 +43,13 @@ interface WorkerHeartbeatRow {
   last_heartbeat_at: string;
 }
 
+interface AgentRunMessageInsert {
+  agent_run_id: string;
+  kind: string;
+  message_md: string;
+  workspace_id: string;
+}
+
 interface MockState {
   runs: AgentRunRow[];
   jobs: AgentJobRow[];
@@ -56,6 +63,7 @@ interface MockState {
 function buildAdminMock(state: MockState) {
   const runUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
   const jobUpdates: Array<{ id: string; patch: Record<string, unknown>; status?: string }> = [];
+  const runMessageInserts: AgentRunMessageInsert[] = [];
   const sessionUpdates: Array<{ id: string; patch: Record<string, unknown>; expected?: string }> =
     [];
 
@@ -72,13 +80,14 @@ function buildAdminMock(state: MockState) {
           return builder;
         },
         order: () => builder,
-        limit: async () => {
+        range: async (from: number, to: number) => {
           const statuses = filters.get("status") as string[] | undefined;
           const workspaceId = filters.get("workspace_id") as string | undefined;
           return {
             data: state.runs
               .filter((r) => !statuses || statuses.includes(r.status))
-              .filter((r) => !workspaceId || r.workspace_id === workspaceId),
+              .filter((r) => !workspaceId || r.workspace_id === workspaceId)
+              .slice(from, to + 1),
             error: null,
           };
         },
@@ -113,6 +122,14 @@ function buildAdminMock(state: MockState) {
           }
           return { data: row, error: null };
         },
+      }),
+      in: (_col: string, ids: string[]) => ({
+        eq: async (_col2: string, expectedStatus: string) => ({
+          data: state.jobs
+            .filter((row) => ids.includes(row.id) && row.status === expectedStatus)
+            .map((row) => ({ id: row.id })),
+          error: null,
+        }),
       }),
     }),
     update: (patch: Record<string, unknown>) => ({
@@ -173,6 +190,13 @@ function buildAdminMock(state: MockState) {
     }),
   });
 
+  const fromAgentRunMessages = () => ({
+    insert: async (row: AgentRunMessageInsert) => {
+      runMessageInserts.push(row);
+      return { error: null };
+    },
+  });
+
   const fromSessions = () => ({
     update: (patch: Record<string, unknown>) => ({
       eq: (_col: string, sessionId: string) => ({
@@ -191,6 +215,7 @@ function buildAdminMock(state: MockState) {
   const tables: Record<string, unknown> = {
     agent_runs: fromAgentRuns(),
     agent_jobs: fromAgentJobs(),
+    agent_run_messages: fromAgentRunMessages(),
     workspace_agent_config: fromConfig(),
     worker_heartbeats: fromWorkerHeartbeats(),
     sessions: fromSessions(),
@@ -218,6 +243,7 @@ function buildAdminMock(state: MockState) {
     },
     runUpdates,
     jobUpdates,
+    runMessageInserts,
     sessionUpdates,
   };
 }
@@ -281,7 +307,7 @@ describe("sweepStalledRuns", () => {
       sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
       rpcCalls: [],
     };
-    const { admin, runUpdates, sessionUpdates } = buildAdminMock(state);
+    const { admin, runMessageInserts, runUpdates, sessionUpdates } = buildAdminMock(state);
     const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
 
     expect(result.stalledRunIds).toEqual(["run-1"]);
@@ -292,6 +318,14 @@ describe("sweepStalledRuns", () => {
     // Run row was patched to error.
     expect(runUpdates).toHaveLength(1);
     expect(runUpdates[0].patch.status).toBe("error");
+    expect(runMessageInserts).toEqual([
+      {
+        agent_run_id: "run-1",
+        kind: "error",
+        message_md: expect.stringContaining("Stalled: no activity"),
+        workspace_id: "ws-1",
+      },
+    ]);
 
     // Sandbox stop call.
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1");
@@ -365,6 +399,84 @@ describe("sweepStalledRuns", () => {
     expect(runUpdates).toEqual([]);
     expect(sessionUpdates).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("does not stall a queued run before its job is claimed by a worker", async () => {
+    const state: MockState = {
+      runs: [activeRun({ status: "queued" })],
+      jobs: [job({ status: "queued" })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      rpcCalls: [],
+    };
+    const { admin, runMessageInserts, runUpdates, sessionUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(result.retriedJobIds).toEqual([]);
+    expect(runUpdates).toEqual([]);
+    expect(runMessageInserts).toEqual([]);
+    expect(sessionUpdates).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("can still recover a queued run once its job has been claimed", async () => {
+    const state: MockState = {
+      runs: [activeRun({ status: "queued" })],
+      jobs: [job({ status: "running" })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      rpcCalls: [],
+    };
+    const { admin } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual(["run-1"]);
+    expect(result.retriedJobIds).toEqual(["job-1"]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1");
+  });
+
+  it("scans past skipped queued runs to recover later stalled runs", async () => {
+    const queuedRuns = Array.from({ length: 101 }, (_, index) =>
+      activeRun({
+        agent_job_id: `queued-job-${index}`,
+        id: `queued-run-${index}`,
+        sandbox_id: null,
+        status: "queued",
+      }),
+    );
+    const queuedJobs = queuedRuns.map((run, index) =>
+      job({
+        id: run.agent_job_id!,
+        session_id: `queued-session-${index}`,
+        status: "queued",
+      }),
+    );
+    const state: MockState = {
+      runs: [
+        ...queuedRuns,
+        activeRun({
+          agent_job_id: "late-job",
+          id: "late-run",
+          sandbox_id: "late-sandbox",
+          status: "running",
+        }),
+      ],
+      jobs: [...queuedJobs, job({ id: "late-job", session_id: "late-session" })],
+      configs: [],
+      sessions: new Map([["late-session", { phase_status: "agent_generating" }]]),
+      rpcCalls: [],
+    };
+    const { admin, runUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual(["late-run"]);
+    expect(result.retriedJobIds).toEqual(["late-job"]);
+    expect(runUpdates).toHaveLength(1);
+    expect(runUpdates[0].id).toBe("late-run");
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("late-sandbox");
   });
 
   it("marks a stalled run terminally errored when the job has no retries left", async () => {

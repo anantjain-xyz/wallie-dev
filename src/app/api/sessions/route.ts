@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 import {
   createSessionPayloadSchema,
@@ -6,7 +6,7 @@ import {
 } from "@/features/sessions/create";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
-import { enqueueWallieRun, processQueuedAgentJobs } from "@/lib/wallie/service";
+import { enqueueWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
@@ -26,25 +26,6 @@ async function cleanupCreatedSession(input: {
   }
 
   return null;
-}
-
-function scheduleQueuedJob(jobId: string | null | undefined) {
-  if (!jobId) {
-    return;
-  }
-
-  after(async () => {
-    try {
-      await processQueuedAgentJobs({
-        requestedJobId: jobId,
-      });
-    } catch (error) {
-      console.error("Wallie initial session processing failed", {
-        error,
-        jobId,
-      });
-    }
-  });
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -292,8 +273,6 @@ export async function POST(request: Request) {
       triggerType: "assignment",
       workspace: access.context.workspace,
     });
-
-    scheduleQueuedJob(result.jobId);
 
     return NextResponse.json(
       {

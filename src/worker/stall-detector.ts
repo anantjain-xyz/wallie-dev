@@ -5,7 +5,18 @@ import { stopSandboxById } from "@/lib/sandbox";
 
 type AdminClient = SupabaseClient<Database>;
 
+const ACTIVE_RUN_PAGE_SIZE = 100;
 const FRESH_WORKER_HEARTBEAT_MS = 60_000;
+
+type ActiveRunRow = {
+  agent_job_id: string | null;
+  created_at: string;
+  id: string;
+  last_activity_at: string | null;
+  sandbox_id: string | null;
+  status: "queued" | "started" | "running";
+  workspace_id: string;
+};
 
 export interface StallSweepResult {
   stalledRunIds: string[];
@@ -37,32 +48,21 @@ export async function sweepStalledRuns(
     retriedJobIds: [],
   };
 
-  // Find all active runs. Include runs with NULL last_activity_at — those
-  // are pre-existing rows from before the column default was added, or edge
-  // cases where the default didn't fire. We use created_at as a fallback
-  // timestamp so no run can escape stall detection.
-  const activeRunQuery = admin
-    .from("agent_runs")
-    .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id")
-    .in("status", ["queued", "started", "running"]);
-  const scopedActiveRunQuery = options.workspaceId
-    ? activeRunQuery.eq("workspace_id", options.workspaceId)
-    : activeRunQuery;
-  const { data: activeRuns, error } = await scopedActiveRunQuery
-    .order("created_at", { ascending: true })
-    .limit(100);
+  const activeRuns = await loadActiveRuns(admin, options);
 
-  if (error) {
-    console.error("[stall-detector] failed to fetch active runs", { error: error.message });
-    return result;
-  }
-
-  if (!activeRuns || activeRuns.length === 0) {
+  if (activeRuns.length === 0) {
     return result;
   }
 
   // Load per-workspace stall timeouts and retry caps in bulk.
   const workspaceIds = [...new Set(activeRuns.map((r) => r.workspace_id))];
+  const runningJobIdsForQueuedRuns = await loadRunningJobIds(
+    admin,
+    activeRuns
+      .filter((run) => run.status === "queued")
+      .map((run) => run.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
   const stallTimeouts = await loadStallTimeouts(admin, workspaceIds);
   const maxRetries = await loadMaxRetries(admin, workspaceIds);
 
@@ -70,12 +70,20 @@ export async function sweepStalledRuns(
   const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, now);
 
   for (const run of activeRuns) {
+    if (
+      run.status === "queued" &&
+      (!run.agent_job_id || !runningJobIdsForQueuedRuns.has(run.agent_job_id))
+    ) {
+      continue;
+    }
+
     const timeoutMs = stallTimeouts.get(run.workspace_id) ?? defaultStallTimeoutMs;
     // Use last_activity_at if set, otherwise fall back to created_at so
     // runs that never received an activity event are still swept.
     const activityTimestamp = run.last_activity_at ?? run.created_at;
     const lastActivity = new Date(activityTimestamp).getTime();
     const elapsed = now - lastActivity;
+    const stallReason = formatStallReason(elapsed, timeoutMs);
 
     if (elapsed < timeoutMs) {
       continue;
@@ -104,6 +112,11 @@ export async function sweepStalledRuns(
     }
 
     result.stalledRunIds.push(run.id);
+    await insertRunErrorMessage(admin, {
+      message: stallReason,
+      runId: run.id,
+      workspaceId: run.workspace_id,
+    });
 
     // Stop the orphaned sandbox. Best-effort: stopSandboxById swallows its
     // own errors, so a stale or already-stopped sandbox cannot break the
@@ -120,11 +133,10 @@ export async function sweepStalledRuns(
     if (run.agent_job_id) {
       await resolveStalledJob({
         admin,
-        elapsedMs: elapsed,
         jobId: run.agent_job_id,
         maxRetries: maxRetries.get(run.workspace_id) ?? DEFAULT_MAX_RETRIES,
         result,
-        timeoutMs,
+        stallReason,
       });
 
       // Transition the session out of agent_generating so the UI is not
@@ -158,6 +170,68 @@ export async function sweepStalledRuns(
 
 const DEFAULT_MAX_RETRIES = 3;
 
+async function loadActiveRuns(
+  admin: AdminClient,
+  options: StallSweepOptions,
+): Promise<ActiveRunRow[]> {
+  const runs: ActiveRunRow[] = [];
+
+  for (let offset = 0; ; offset += ACTIVE_RUN_PAGE_SIZE) {
+    // Find all active runs. Include runs with NULL last_activity_at — those
+    // are pre-existing rows from before the column default was added, or edge
+    // cases where the default didn't fire. We use created_at as a fallback
+    // timestamp so no run can escape stall detection.
+    const activeRunQuery = admin
+      .from("agent_runs")
+      .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id")
+      .in("status", ["queued", "started", "running"]);
+    const scopedActiveRunQuery = options.workspaceId
+      ? activeRunQuery.eq("workspace_id", options.workspaceId)
+      : activeRunQuery;
+    const { data, error } = await scopedActiveRunQuery
+      .order("created_at", { ascending: true })
+      .range(offset, offset + ACTIVE_RUN_PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("[stall-detector] failed to fetch active runs", { error: error.message });
+      return runs;
+    }
+
+    if (!data || data.length === 0) {
+      return runs;
+    }
+
+    runs.push(...(data as ActiveRunRow[]));
+
+    if (data.length < ACTIVE_RUN_PAGE_SIZE) {
+      return runs;
+    }
+  }
+}
+
+function formatStallReason(elapsedMs: number, timeoutMs: number): string {
+  return `Stalled: no activity for ${Math.round(elapsedMs / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`;
+}
+
+async function insertRunErrorMessage(
+  admin: AdminClient,
+  input: { message: string; runId: string; workspaceId: string },
+): Promise<void> {
+  const { error } = await admin.from("agent_run_messages").insert({
+    agent_run_id: input.runId,
+    kind: "error" as const,
+    message_md: `**Error:** ${input.message}`,
+    workspace_id: input.workspaceId,
+  });
+
+  if (error) {
+    console.error("[stall-detector] failed to insert stalled run error message", {
+      error: error.message,
+      runId: input.runId,
+    });
+  }
+}
+
 async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise<Set<string>> {
   const cutoff = new Date(nowMs - FRESH_WORKER_HEARTBEAT_MS).toISOString();
   const { data, error } = await admin
@@ -177,6 +251,25 @@ async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise
   );
 }
 
+async function loadRunningJobIds(admin: AdminClient, jobIds: string[]): Promise<Set<string>> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_jobs")
+    .select("id")
+    .in("id", [...new Set(jobIds)])
+    .eq("status", "running");
+
+  if (error) {
+    console.error("[stall-detector] failed to load running jobs", { error: error.message });
+    return new Set();
+  }
+
+  return new Set((data ?? []).map((row) => row.id));
+}
+
 /**
  * Decide whether to retry the parent job (attempts remaining) or mark it
  * terminally errored (attempts exhausted). Mirrors the retry semantics in
@@ -185,14 +278,12 @@ async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise
  */
 async function resolveStalledJob(input: {
   admin: AdminClient;
-  elapsedMs: number;
   jobId: string;
   maxRetries: number;
   result: StallSweepResult;
-  timeoutMs: number;
+  stallReason: string;
 }): Promise<void> {
-  const { admin, elapsedMs, jobId, maxRetries, result, timeoutMs } = input;
-  const lastError = `Stalled: no activity for ${Math.round(elapsedMs / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`;
+  const { admin, jobId, maxRetries, result, stallReason } = input;
 
   // Read the current attempt count to decide retry vs terminal.
   const { data: jobRow } = await admin
@@ -213,7 +304,7 @@ async function resolveStalledJob(input: {
     if (!retryError) {
       // Record the stall reason on the row so operators see why it was
       // rescheduled. schedule_job_retry leaves last_error untouched.
-      await admin.from("agent_jobs").update({ last_error: lastError }).eq("id", jobId);
+      await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
       result.retriedJobIds.push(jobId);
       return;
     }
@@ -228,7 +319,7 @@ async function resolveStalledJob(input: {
     .from("agent_jobs")
     .update({
       finished_at: new Date().toISOString(),
-      last_error: lastError,
+      last_error: stallReason,
       status: "error",
     })
     .eq("id", jobId)

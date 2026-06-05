@@ -1,11 +1,10 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 import { handleApproval, handleRejection } from "@/lib/pipeline/processor";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { processQueuedAgentJobs } from "@/lib/wallie/service";
 
 type Params = { params: Promise<{ sessionId: string }> };
 
@@ -14,25 +13,6 @@ type PhaseActionBody = {
   feedbackText?: string;
   version: number;
 };
-
-function scheduleQueuedJob(jobId: string | null | undefined) {
-  if (!jobId) {
-    return;
-  }
-
-  after(async () => {
-    try {
-      await processQueuedAgentJobs({
-        requestedJobId: jobId,
-      });
-    } catch (error) {
-      console.error("Wallie phase-action follow-up processing failed", {
-        error,
-        jobId,
-      });
-    }
-  });
-}
 
 export async function POST(request: Request, { params }: Params) {
   const { sessionId } = await params;
@@ -114,7 +94,6 @@ export async function POST(request: Request, { params }: Params) {
     if (!result.success) {
       return NextResponse.json({ error: result.error ?? "Approval failed" }, { status: 409 });
     }
-    scheduleQueuedJob(result.jobId);
     return NextResponse.json({ success: true });
   }
 
@@ -133,7 +112,6 @@ export async function POST(request: Request, { params }: Params) {
     if (!result.success) {
       return NextResponse.json({ error: result.error ?? "Rejection failed" }, { status: 409 });
     }
-    scheduleQueuedJob(result.jobId);
     return NextResponse.json({ success: true });
   }
 
