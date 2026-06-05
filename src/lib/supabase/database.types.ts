@@ -1298,6 +1298,79 @@ export type Database = {
           },
         ]
       }
+      workspace_invitations: {
+        Row: {
+          accepted_at: string | null
+          accepted_by_member_id: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by_member_id: string | null
+          last_sent_at: string | null
+          revoked_at: string | null
+          role: Database["public"]["Enums"]["member_role"]
+          status: Database["public"]["Enums"]["workspace_invitation_status"]
+          token_hash: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by_member_id?: string | null
+          created_at?: string
+          email: string
+          expires_at: string
+          id?: string
+          invited_by_member_id?: string | null
+          last_sent_at?: string | null
+          revoked_at?: string | null
+          role?: Database["public"]["Enums"]["member_role"]
+          status?: Database["public"]["Enums"]["workspace_invitation_status"]
+          token_hash: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by_member_id?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by_member_id?: string | null
+          last_sent_at?: string | null
+          revoked_at?: string | null
+          role?: Database["public"]["Enums"]["member_role"]
+          status?: Database["public"]["Enums"]["workspace_invitation_status"]
+          token_hash?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_invitations_accepted_by_member_id_fkey"
+            columns: ["accepted_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_invitations_invited_by_member_id_fkey"
+            columns: ["invited_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_invitations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_onboarding: {
         Row: {
           completed_at: string | null
@@ -1510,6 +1583,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_workspace_invitation: {
+        Args: {
+          actor_avatar_url?: string
+          actor_email: string
+          actor_full_name?: string
+          actor_user_id: string
+          invitation_token_hash: string
+        }
+        Returns: Json
+      }
       acquire_codex_auth_lease: {
         Args: {
           lease_expires_at: string
@@ -1737,6 +1820,7 @@ export type Database = {
         | "awaiting_review"
         | "approved"
         | "rejected"
+      workspace_invitation_status: "pending" | "accepted" | "revoked"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1894,6 +1978,7 @@ export const Constants = {
         "approved",
         "rejected",
       ],
+      workspace_invitation_status: ["pending", "accepted", "revoked"],
     },
   },
 } as const

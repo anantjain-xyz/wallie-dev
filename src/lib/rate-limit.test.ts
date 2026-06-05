@@ -120,7 +120,7 @@ describe("rate-limit", () => {
   it("describeRateLimits surfaces every configured bucket", () => {
     const summary = describeRateLimits();
     const scopes = summary.map((s) => s.scope).sort();
-    expect(scopes).toEqual(["agentRuns", "phaseAction"]);
+    expect(scopes).toEqual(["agentRuns", "phaseAction", "workspaceInvites"]);
     for (const entry of summary) {
       const config = RATE_LIMITS[entry.scope];
       expect(entry.windowMs).toBe(config.windowMs);

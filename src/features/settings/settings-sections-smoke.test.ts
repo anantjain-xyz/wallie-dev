@@ -163,6 +163,7 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
       name: "Acme",
       slug: "acme",
     },
+    workspaceInvitations: [],
     workspaceMembers: [],
     workspaceSecrets: [],
     ...overrides,
@@ -253,6 +254,7 @@ describe("Settings integration sections", () => {
 
     const labels = [
       "Workspace",
+      "Members",
       "Connect GitHub",
       "Analyze repositories",
       "Review pipeline",
@@ -412,6 +414,8 @@ describe("Settings integration sections", () => {
       }),
     );
 
+    expect(html).toContain('id="members"');
+    expect(html).toContain("Pending invitations");
     expect(html).toContain('id="repository"');
     expect(html).toContain("Analyze repositories");
     expect(html).toContain('id="linear"');
@@ -420,6 +424,43 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Workspace secrets");
     expect(html).toContain('id="verify"');
     expect(html).toContain("Verify setup");
+  });
+
+  it("renders Members as read-only for non-managers", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData({
+          canManage: false,
+          currentMember: {
+            id: "member-2",
+            role: "member",
+          },
+          workspaceMembers: [
+            {
+              email: "owner@example.com",
+              fullName: "Owner",
+              id: "member-1",
+              role: "owner",
+            },
+            {
+              email: "member@example.com",
+              fullName: "Member",
+              id: "member-2",
+              role: "member",
+            },
+          ],
+        }),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain("Active members");
+    expect(html).toContain("owner@example.com");
+    expect(html).not.toContain("Pending invitations");
+    expect(html).not.toContain("teammate@company.com");
   });
 
   it("renders repository setup actions inside Settings Analyze repositories", () => {

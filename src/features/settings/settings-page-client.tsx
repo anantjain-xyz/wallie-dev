@@ -17,12 +17,14 @@ import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
+import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readiness";
 import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 
 const ANCHORS: SettingsAnchor[] = [
   { id: "workspace", label: "Workspace" },
+  { id: "members", label: "Members" },
   { id: "github", label: "Connect GitHub" },
   { id: "repository", label: "Analyze repositories" },
   { id: "pipeline", label: "Review pipeline" },
@@ -220,7 +222,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               Settings
             </h1>
             <p className="max-w-2xl text-[14px] leading-6 text-muted">
-              Manage workspace identity, integrations, pipeline, and encrypted secrets.
+              Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
             </p>
           </div>
         </header>
@@ -243,6 +245,13 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               canManage={isManager}
               setFlashMessage={setFlashMessage}
               workspace={pageData.workspace}
+            />
+            <WorkspaceMembersSection
+              canManage={isManager}
+              initialInvitations={pageData.workspaceInvitations}
+              setFlashMessage={setFlashMessage}
+              workspaceId={pageData.workspace.id}
+              workspaceMembers={pageData.workspaceMembers}
             />
             <GitHubInstallSection
               canManage={isManager}

@@ -9,7 +9,13 @@ import {
 import { describeRateLimits } from "@/lib/rate-limit";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  mapWorkspaceInvitationRow,
+  type WorkspaceInvitation,
+  type WorkspaceInvitationRow,
+} from "@/lib/workspace-invitations/contracts";
 
 const workspaceSelect = "id, name, slug, avatar_path";
 const currentMemberSelect = "id, role, is_active, kind";
@@ -52,10 +58,29 @@ export type SettingsPageData = {
     name: string;
     slug: string;
   };
+  workspaceInvitations: WorkspaceInvitation[];
   pipeline: WorkspaceOnboardingData["pipeline"];
   workspaceMembers: WorkspaceOnboardingData["workspaceMembers"];
   workspaceSecrets: WorkspaceOnboardingData["workspaceSecrets"];
 };
+
+async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceInvitation[]> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("workspace_invitations")
+    .select(
+      "id, workspace_id, email, role, status, invited_by_member_id, accepted_by_member_id, expires_at, last_sent_at, accepted_at, revoked_at, created_at, updated_at",
+    )
+    .eq("workspace_id", workspaceId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data ?? []) as WorkspaceInvitationRow[]).map(mapWorkspaceInvitationRow);
+}
 
 export async function loadSettingsPageData(workspaceSlug: string) {
   const supabase = await createSupabaseServerClient();
@@ -99,6 +124,9 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     notFound();
   }
   const onboardingData = onboardingResult.data;
+  const workspaceInvitations = onboardingData.canManage
+    ? await loadWorkspaceInvitations(workspace.id)
+    : [];
 
   // Load aggregate token usage for the workspace.
   const { data: usageRows } = await supabase
@@ -151,6 +179,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
       name: workspace.name,
       slug: workspace.slug,
     },
+    workspaceInvitations,
     pipeline: onboardingData.pipeline,
     workspaceMembers: onboardingData.workspaceMembers,
     workspaceSecrets: onboardingData.workspaceSecrets,

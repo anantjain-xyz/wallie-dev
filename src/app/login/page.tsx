@@ -25,7 +25,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   if (user) {
     await ensureProfileForUser(supabase, user);
-    redirect(await resolveAuthenticatedHomePath(supabase));
+    redirect(next === "/" ? await resolveAuthenticatedHomePath(supabase) : next);
   }
 
   return (
