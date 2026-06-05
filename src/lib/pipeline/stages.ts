@@ -55,8 +55,22 @@ export async function loadPipelineWithStages(
     id: pipelineRow.id,
     isDefault: pipelineRow.is_default,
     name: pipelineRow.name,
+    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
     stages: (stageRows ?? []).map(mapStageRow),
   };
+}
+
+export async function loadPipelineOperatingRules(
+  admin: AdminClient,
+  pipelineId: string,
+): Promise<string> {
+  const { data, error } = await admin
+    .from("pipelines")
+    .select("operating_rules_md")
+    .eq("id", pipelineId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.operating_rules_md ?? "";
 }
 
 export async function loadDefaultPipelineForWorkspace(

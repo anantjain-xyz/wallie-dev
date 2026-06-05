@@ -560,6 +560,7 @@ export type Database = {
           id: string
           is_default: boolean
           name: string
+          operating_rules_md: string
           updated_at: string
           workspace_id: string
         }
@@ -568,6 +569,7 @@ export type Database = {
           id?: string
           is_default?: boolean
           name?: string
+          operating_rules_md?: string
           updated_at?: string
           workspace_id: string
         }
@@ -576,6 +578,7 @@ export type Database = {
           id?: string
           is_default?: boolean
           name?: string
+          operating_rules_md?: string
           updated_at?: string
           workspace_id?: string
         }
@@ -1742,6 +1745,7 @@ export type Database = {
       }
       rewrite_default_pipeline: {
         Args: {
+          operating_rules_md?: string
           pipeline_name: string
           stage_payload: Json
           target_workspace_id: string

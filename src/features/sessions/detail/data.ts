@@ -83,7 +83,7 @@ export async function loadSessionDetailPageData(
   ] = await Promise.all([
     context.supabase
       .from("pipelines")
-      .select("id, name, is_default")
+      .select("id, name, is_default, operating_rules_md")
       .eq("id", sessionRow.pipeline_id)
       .maybeSingle(),
     context.supabase
@@ -136,6 +136,7 @@ export async function loadSessionDetailPageData(
     id: pipelineRow.id,
     isDefault: pipelineRow.is_default,
     name: pipelineRow.name,
+    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
     stages: pipelineStages,
   };
 

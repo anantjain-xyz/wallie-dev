@@ -61,6 +61,7 @@ const onboardingData: WorkspaceOnboardingData = {
     id: "pipeline-1",
     isDefault: true,
     name: "Default",
+    operatingRulesMd: "",
     stages: [
       {
         approverMemberIds: [],

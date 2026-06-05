@@ -77,6 +77,7 @@ async function putPipeline(body: unknown) {
 
 function rpcArgs() {
   return mocked.rpc.mock.calls[0]?.[1] as {
+    operating_rules_md: string;
     pipeline_name: string;
     stage_payload: Array<Record<string, unknown>>;
     target_workspace_id: string;
@@ -108,6 +109,7 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ success: true });
     expect(mocked.rpc).toHaveBeenCalledWith("rewrite_default_pipeline", {
+      operating_rules_md: "",
       pipeline_name: "Default",
       stage_payload: [
         baseStage({ approverMemberIds: [MEMBER_ID] }),
@@ -120,6 +122,34 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
       ],
       target_workspace_id: WORKSPACE_ID,
     });
+  });
+
+  it("forwards operating rules to the rewrite RPC", async () => {
+    grantAccess();
+    setupRpc();
+
+    const response = await putPipeline({
+      name: "Default",
+      operatingRulesMd: "## Operating rules\n- Be autonomous.",
+      stages: [baseStage()],
+    });
+
+    expect(response.status).toBe(200);
+    expect(rpcArgs().operating_rules_md).toBe("## Operating rules\n- Be autonomous.");
+  });
+
+  it("rejects operating rules longer than the allowed limit", async () => {
+    grantAccess();
+    setupRpc();
+
+    const response = await putPipeline({
+      name: "Default",
+      operatingRulesMd: "x".repeat(20001),
+      stages: [baseStage()],
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocked.rpc).not.toHaveBeenCalled();
   });
 
   it("surfaces a mid-write RPC failure after the single transactional call", async () => {

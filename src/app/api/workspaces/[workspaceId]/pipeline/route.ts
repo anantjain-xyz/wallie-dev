@@ -34,6 +34,7 @@ const stageInputSchema = z.object({
 
 const pipelineUpdateSchema = z.object({
   name: z.string().min(1).max(80).default("Default"),
+  operatingRulesMd: z.string().max(20000).default(""),
   stages: z.array(stageInputSchema).min(1, "Pipeline must have at least one stage."),
 });
 
@@ -59,6 +60,7 @@ export async function PUT(request: Request, context: RouteContext) {
   const admin = createSupabaseAdminClient();
 
   const { data, error } = await admin.rpc("rewrite_default_pipeline", {
+    operating_rules_md: parsed.operatingRulesMd,
     pipeline_name: parsed.name,
     stage_payload: parsed.stages,
     target_workspace_id: workspaceId,

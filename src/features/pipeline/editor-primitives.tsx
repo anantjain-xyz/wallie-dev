@@ -207,6 +207,36 @@ export function PipelineVariableHelp() {
   );
 }
 
+export function OperatingRulesField({
+  canManage,
+  compact = false,
+  onChange,
+  value,
+}: {
+  canManage: boolean;
+  compact?: boolean;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-[13px] font-medium text-foreground">Operating rules</span>
+      <textarea
+        value={value}
+        disabled={!canManage}
+        onChange={(event) => onChange(event.target.value)}
+        className={`ui-textarea font-mono text-[12px] ${compact ? "min-h-[120px]" : "min-h-[160px]"}`}
+        placeholder="Shared rules prepended to every stage prompt. Use {{session.title}} etc."
+        maxLength={20000}
+      />
+      <p className="text-[11px] text-muted">
+        Prepended to every stage prompt in this pipeline — cross-cutting rules like autonomy, git
+        safety, cleanup, and honest reporting.
+      </p>
+    </label>
+  );
+}
+
 export function StageRowEditor({
   canManage,
   compact = false,

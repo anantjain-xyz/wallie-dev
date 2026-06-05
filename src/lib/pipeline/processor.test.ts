@@ -28,6 +28,7 @@ const mocked = vi.hoisted(() => ({
   octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
+  loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
   loadWorkspaceAgentConfig: vi.fn(),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
   openSessionPullRequest: vi.fn().mockResolvedValue({
@@ -46,6 +47,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("./stages", () => ({
   loadStageById: mocked.loadStageById,
   loadCompletedStageArtifacts: mocked.loadCompletedStageArtifacts,
+  loadPipelineOperatingRules: mocked.loadPipelineOperatingRules,
 }));
 
 vi.mock("./pull-request", () => ({

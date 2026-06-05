@@ -16,6 +16,9 @@ export { renderTemplate, type TemplateVariables } from "./render";
  *   {{repo.defaultBranch}}                  — Repo context (empty if no repo connected)
  *   {{artifact.previousStages.<slug>}}      — Markdown of the latest approved
  *                                             artifact for any earlier stage
+ *
+ * The pipeline's operating rules (pipelines.operating_rules_md) are prepended to
+ * the stage template before rendering, so they can reference these variables too.
  */
 export function buildStageTemplateVariables(input: {
   sessionTitle: string;
@@ -60,8 +63,15 @@ export function renderStagePrompt(
     repoFullName?: string;
     repoDefaultBranch?: string;
     previousStages?: Record<string, string>;
+    // Workspace-editable operating rules (pipelines.operating_rules_md),
+    // prepended to every stage prompt. Empty/whitespace-only → no preamble.
+    operatingRulesMd?: string;
   },
 ): string {
   const variables = buildStageTemplateVariables({ ...input, stageSlug: stage.slug });
-  return renderTemplate(stage.promptTemplateMd, variables);
+  const operatingRules = input.operatingRulesMd?.trim() ? input.operatingRulesMd.trim() : "";
+  const source = operatingRules
+    ? `${operatingRules}\n\n${stage.promptTemplateMd}`
+    : stage.promptTemplateMd;
+  return renderTemplate(source, variables);
 }
