@@ -56,6 +56,7 @@ export type PipelinePhaseActionResult = {
 export async function processPipelineJob(input: {
   admin?: AdminClient;
   job: Tables<"agent_jobs">;
+  signal?: AbortSignal;
 }): Promise<ProcessPipelineJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
   const job = input.job;
@@ -99,7 +100,7 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
 
-    return await runStage({ admin, job, session, stage });
+    return await runStage({ admin, job, session, signal: input.signal, stage });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Pipeline job failed";
     await markPipelineJobError(admin, job, message);
@@ -117,10 +118,11 @@ export async function processPipelineJob(input: {
 async function runStage(input: {
   admin: AdminClient;
   job: Tables<"agent_jobs">;
+  signal?: AbortSignal;
   session: SessionRow;
   stage: PipelineStage;
 }): Promise<ProcessPipelineJobResult> {
-  const { admin, job, session, stage } = input;
+  const { admin, job, session, signal, stage } = input;
 
   const newVersion = session.current_artifact_version + 1;
 
@@ -194,12 +196,14 @@ async function runStage(input: {
       }
       const installationToken = await mintInstallationToken(github.installationId);
       branch = buildStageBranchName(session.id, stage.slug);
+      throwIfAborted(signal);
       sandbox = await createSessionSandbox({
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
         branch,
         installationToken,
         repoFullName: github.repo.full_name,
+        signal,
         sessionId: session.id,
       });
       if (runId) {
@@ -214,8 +218,10 @@ async function runStage(input: {
       prompt,
       runId: runId ?? undefined,
       sandbox: sandbox ?? undefined,
+      signal,
       sessionId: session.id,
     })) {
+      throwIfAborted(signal);
       if (runId) {
         await persistEvent(admin, runId, session.workspace_id, event);
       }
@@ -351,6 +357,11 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error("Pipeline job aborted.");
 }
 
 async function loadActiveSessionJob(

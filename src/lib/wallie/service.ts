@@ -802,13 +802,18 @@ async function loadProcessTargetJob(input: {
   );
 }
 
-async function processClaimedJob(input: { admin: AdminClient; job: AgentJobRow }) {
-  return processPipelineJob({ admin: input.admin, job: input.job });
+async function processClaimedJob(input: {
+  admin: AdminClient;
+  job: AgentJobRow;
+  signal?: AbortSignal;
+}) {
+  return processPipelineJob({ admin: input.admin, job: input.job, signal: input.signal });
 }
 
 export async function processQueuedAgentJobs(input?: {
   admin?: AdminClient;
   requestedJobId?: string;
+  signal?: AbortSignal;
   workspaceId?: string;
 }) {
   const admin = input?.admin ?? createSupabaseAdminClient();
@@ -830,5 +835,6 @@ export async function processQueuedAgentJobs(input?: {
   return processClaimedJob({
     admin,
     job: claimedJob,
+    signal: input?.signal,
   });
 }

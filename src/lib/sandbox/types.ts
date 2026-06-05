@@ -114,4 +114,6 @@ export interface CreateSessionSandboxInput {
   mode?: SandboxCheckoutMode;
   /** VM wall-clock timeout. Vercel caps at 45min Hobby / 5h Pro. Default: 30min. */
   timeoutMs?: number;
+  /** Optional deadline signal used by bounded route handlers. */
+  signal?: AbortSignal;
 }
