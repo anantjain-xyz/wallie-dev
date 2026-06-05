@@ -64,6 +64,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
       env: { ANTHROPIC_API_KEY: this.options.credential.secret, CI: "1" },
+      signal: input.signal,
     });
 
     let stdoutBuf = "";

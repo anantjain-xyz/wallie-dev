@@ -68,6 +68,8 @@ export interface AgentRunnerStartInput {
   runId?: string;
   /** Max output tokens for the agent (optional, provider-specific). */
   maxTokens?: number;
+  /** Optional deadline signal used by bounded route handlers. */
+  signal?: AbortSignal;
 }
 
 export interface AgentRunner {

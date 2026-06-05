@@ -110,10 +110,12 @@ function buildAdmin(fixture: Fixture) {
 
       if (op === "select" && table === "sessions") {
         const eqPhaseStatus = filters["eq.phase_status"] as string | undefined;
+        const eqWorkspaceId = filters["eq.workspace_id"] as string | undefined;
         const inPhaseStatuses = filters["in.phase_status"] as string[] | undefined;
         const isArchivedAt = filters["is.archived_at"];
         let rows = fixture.sessions
           .filter((s) => s.linear_issue_id !== null)
+          .filter((s) => !eqWorkspaceId || s.workspace_id === eqWorkspaceId)
           .filter((s) => !eqPhaseStatus || s.phase_status === eqPhaseStatus)
           .filter((s) => !inPhaseStatuses || inPhaseStatuses.includes(s.phase_status))
           .filter((s) => isArchivedAt !== null || s.archived_at == null)
@@ -291,6 +293,52 @@ describe("reconcileLinearState", () => {
     expect(result.checked).toBe(4);
     expect(result.canceled).toBe(0);
     expect(result.rateLimited).toBe(false);
+  });
+
+  it("only reconciles sessions in the requested workspace", async () => {
+    const fixture: Fixture = {
+      secrets: [
+        { workspace_id: "wA", encrypted_value: "keyA" },
+        { workspace_id: "wB", encrypted_value: "keyB" },
+      ],
+      sessions: [
+        {
+          id: "s1",
+          created_at: "2026-05-01T00:00:00Z",
+          linear_issue_id: "i1",
+          phase_status: "agent_generating",
+          workspace_id: "wA",
+        },
+        {
+          id: "s2",
+          created_at: "2026-05-01T00:00:01Z",
+          linear_issue_id: "i2",
+          phase_status: "agent_generating",
+          workspace_id: "wB",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+
+    fetchSpy.mockResolvedValue(makeFetchResponse({ data: { issues: { nodes: [] } } }));
+
+    const result = await reconcileLinearState(admin as never, {
+      sleep: vi.fn(),
+      workspaceId: "wA",
+    });
+
+    expect(result.checked).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string).variables.ids,
+    ).toEqual(["i1"]);
+    expect(
+      calls.find((call) => call.table === "sessions" && call.op === "select")?.filters,
+    ).toEqual(
+      expect.objectContaining({
+        "eq.workspace_id": "wA",
+      }),
+    );
   });
 
   it("cancels sessions whose Linear issue is in a terminal state", async () => {

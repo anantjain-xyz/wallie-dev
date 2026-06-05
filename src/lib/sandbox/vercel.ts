@@ -177,7 +177,7 @@ async function runSetup(
     browserBootstrapCmd,
   ].join(" && ");
 
-  const proc = await handle.exec("bash", ["-lc", script]);
+  const proc = await handle.exec("bash", ["-lc", script], { signal: input.signal });
   const stderr: string[] = [];
   for await (const log of proc.logs()) {
     if (log.stream === "stderr") stderr.push(log.data);

@@ -33,6 +33,8 @@ export type RateLimitResult = {
 export const RATE_LIMITS = {
   /** POST /api/agent-runs and /api/agent-runs/:id/retry — sandbox spawn. */
   agentRuns: { windowMs: 60_000, max: 10 },
+  /** POST /api/workspaces/:id/maintenance/tick — manual worker recovery. */
+  maintenance: { windowMs: 60_000, max: 3 },
   /** POST /api/sessions/:id/phase-action — approve/reject. */
   phaseAction: { windowMs: 60_000, max: 30 },
 } as const satisfies Record<string, RateLimitConfig>;
@@ -152,6 +154,12 @@ export function describeRateLimits(): Array<{
       scope: "agentRuns",
       description: "Per workspace member — caps sandbox spawns.",
       ...RATE_LIMITS.agentRuns,
+    },
+    {
+      endpoint: "POST /api/workspaces/:id/maintenance/tick",
+      scope: "maintenance",
+      description: "Per workspace member — caps manual worker recovery.",
+      ...RATE_LIMITS.maintenance,
     },
     {
       endpoint: "POST /api/sessions/:id/phase-action",
