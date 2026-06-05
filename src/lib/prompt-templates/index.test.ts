@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { renderStagePrompt } from "./index";
 
 const stage = {
-  promptTemplateMd: "Implement: {{session.title}}\n{{#if attempt.feedback}}Feedback: {{attempt.feedback}}{{/if}}",
+  promptTemplateMd:
+    "Implement: {{session.title}}\n{{#if attempt.feedback}}Feedback: {{attempt.feedback}}{{/if}}",
   slug: "build",
 };
 
