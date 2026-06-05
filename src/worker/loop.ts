@@ -35,6 +35,7 @@ export async function pollOnce(
     .from("agent_jobs")
     .select(jobSelect)
     .eq("status", "queued")
+    .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
     .order("created_at", { ascending: true })
     .limit(10);
 
