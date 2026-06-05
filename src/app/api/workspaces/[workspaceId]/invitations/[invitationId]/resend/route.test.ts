@@ -74,7 +74,9 @@ function setupDefaults() {
   mocked.createWorkspaceInvitationToken.mockReturnValue("new-token");
   mocked.hashWorkspaceInvitationToken.mockReturnValue("new-hash");
   mocked.workspaceInvitationExpiresAt.mockReturnValue(new Date("2026-06-12T12:00:00.000Z"));
-  mocked.buildWorkspaceInvitationAcceptUrl.mockReturnValue("http://localhost/invite/new-token");
+  mocked.buildWorkspaceInvitationAcceptUrl.mockReturnValue(
+    "http://localhost/auth/confirm?next=%2Finvite%2Fnew-token",
+  );
   mocked.sendWorkspaceInvitationEmail.mockResolvedValue(undefined);
 }
 
@@ -137,7 +139,7 @@ describe("POST /api/workspaces/[workspaceId]/invitations/[invitationId]/resend",
     );
     expect(mocked.sendWorkspaceInvitationEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        acceptUrl: "http://localhost/invite/new-token",
+        acceptUrl: "http://localhost/auth/confirm?next=%2Finvite%2Fnew-token",
         email: "new@example.com",
       }),
     );

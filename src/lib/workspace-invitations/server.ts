@@ -27,7 +27,10 @@ export function workspaceInvitationExpiresAt(now = new Date()) {
 }
 
 export function buildWorkspaceInvitationAcceptUrl(requestUrl: string, token: string) {
-  return new URL(`/invite/${encodeURIComponent(token)}`, requestUrl).toString();
+  const confirmUrl = new URL("/auth/confirm", requestUrl);
+  confirmUrl.searchParams.set("next", `/invite/${encodeURIComponent(token)}`);
+
+  return confirmUrl.toString();
 }
 
 function isAlreadyRegisteredAuthError(error: AuthErrorLike | null | undefined) {
