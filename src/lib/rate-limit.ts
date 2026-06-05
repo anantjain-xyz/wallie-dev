@@ -37,6 +37,8 @@ export const RATE_LIMITS = {
   maintenance: { windowMs: 60_000, max: 3 },
   /** POST /api/sessions/:id/phase-action — approve/reject. */
   phaseAction: { windowMs: 60_000, max: 30 },
+  /** POST /api/workspaces/:id/invitations and resend — email delivery. */
+  workspaceInvites: { windowMs: 60_000, max: 10 },
 } as const satisfies Record<string, RateLimitConfig>;
 
 export type RateLimiter = {
@@ -166,6 +168,12 @@ export function describeRateLimits(): Array<{
       scope: "phaseAction",
       description: "Per workspace member — caps approve/reject churn.",
       ...RATE_LIMITS.phaseAction,
+    },
+    {
+      endpoint: "POST /api/workspaces/:id/invitations",
+      scope: "workspaceInvites",
+      description: "Per workspace manager — caps invitation emails.",
+      ...RATE_LIMITS.workspaceInvites,
     },
   ];
 }
