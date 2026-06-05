@@ -49,7 +49,7 @@ wallie-dev/
 |   |-- lib/           -> Core libraries (pipeline, auth, supabase...)
 |   `-- worker/        -> Background daemon (polls jobs)
 |-- supabase/
-|   `-- migrations/20260422000000_init.sql  -> Entire schema (one file)
+|   `-- migrations/    -> Baseline schema + forward migrations
 |-- middleware.ts      -> Auth gate (Supabase session refresh)
 `-- AGENTS.md          -> Arch rules (no ElectricSQL, no PGlite...)
 ```
@@ -116,9 +116,10 @@ If you read only five files to understand Wallie, read these:
 
 ### Walkthrough by Domain
 
-#### Database -- one file tells the whole story
+#### Database -- migrations
 
-- [supabase/migrations/20260422000000_init.sql](supabase/migrations/20260422000000_init.sql) -- the consolidated init schema. Every table, RLS policy, trigger, and RPC (`approve_session_stage` is the star). Domain tables (24+ in total) include `workspaces`, `workspace_members`, `sessions`, `session_artifacts`, `session_artifact_feedback`, `session_phase_completions`, `session_pull_requests`, `pipelines`, `pipeline_stages`, `agent_jobs`, `agent_runs`, `agent_run_messages`, `workspace_secrets`, `workspace_agent_config`, `workspace_linear_routing`, `workspace_repository_profiles`, `workspace_onboarding`, `repository_onboarding_status`, `sandbox_capability_checks`, `worker_heartbeats`, `github_installations`, `github_repositories`, `github_issue_branches`, `profiles`, `user_codex_credentials`, `user_claude_code_credentials`, `codex_device_auth_flows`.
+- [supabase/migrations/20260422000000_init.sql](supabase/migrations/20260422000000_init.sql) -- the consolidated baseline schema. Every baseline table, RLS policy, trigger, and RPC (`approve_session_stage` is the star) lives here.
+- Forward migrations cover schema changes added after the baseline was already applied in production, such as [supabase/migrations/20260605000000_add_workspace_invitations.sql](supabase/migrations/20260605000000_add_workspace_invitations.sql).
 - [src/lib/supabase/database.types.ts](src/lib/supabase/database.types.ts) -- auto-generated types.
 
 #### Pipeline (`src/lib/pipeline/`) -- the brain
