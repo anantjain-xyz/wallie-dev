@@ -5,7 +5,18 @@ import { stopSandboxById } from "@/lib/sandbox";
 
 type AdminClient = SupabaseClient<Database>;
 
+const ACTIVE_RUN_PAGE_SIZE = 100;
 const FRESH_WORKER_HEARTBEAT_MS = 60_000;
+
+type ActiveRunRow = {
+  agent_job_id: string | null;
+  created_at: string;
+  id: string;
+  last_activity_at: string | null;
+  sandbox_id: string | null;
+  status: "queued" | "started" | "running";
+  workspace_id: string;
+};
 
 export interface StallSweepResult {
   stalledRunIds: string[];
@@ -37,27 +48,9 @@ export async function sweepStalledRuns(
     retriedJobIds: [],
   };
 
-  // Find all active runs. Include runs with NULL last_activity_at — those
-  // are pre-existing rows from before the column default was added, or edge
-  // cases where the default didn't fire. We use created_at as a fallback
-  // timestamp so no run can escape stall detection.
-  const activeRunQuery = admin
-    .from("agent_runs")
-    .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id")
-    .in("status", ["queued", "started", "running"]);
-  const scopedActiveRunQuery = options.workspaceId
-    ? activeRunQuery.eq("workspace_id", options.workspaceId)
-    : activeRunQuery;
-  const { data: activeRuns, error } = await scopedActiveRunQuery
-    .order("created_at", { ascending: true })
-    .limit(100);
+  const activeRuns = await loadActiveRuns(admin, options);
 
-  if (error) {
-    console.error("[stall-detector] failed to fetch active runs", { error: error.message });
-    return result;
-  }
-
-  if (!activeRuns || activeRuns.length === 0) {
+  if (activeRuns.length === 0) {
     return result;
   }
 
@@ -176,6 +169,45 @@ export async function sweepStalledRuns(
 }
 
 const DEFAULT_MAX_RETRIES = 3;
+
+async function loadActiveRuns(
+  admin: AdminClient,
+  options: StallSweepOptions,
+): Promise<ActiveRunRow[]> {
+  const runs: ActiveRunRow[] = [];
+
+  for (let offset = 0; ; offset += ACTIVE_RUN_PAGE_SIZE) {
+    // Find all active runs. Include runs with NULL last_activity_at — those
+    // are pre-existing rows from before the column default was added, or edge
+    // cases where the default didn't fire. We use created_at as a fallback
+    // timestamp so no run can escape stall detection.
+    const activeRunQuery = admin
+      .from("agent_runs")
+      .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id")
+      .in("status", ["queued", "started", "running"]);
+    const scopedActiveRunQuery = options.workspaceId
+      ? activeRunQuery.eq("workspace_id", options.workspaceId)
+      : activeRunQuery;
+    const { data, error } = await scopedActiveRunQuery
+      .order("created_at", { ascending: true })
+      .range(offset, offset + ACTIVE_RUN_PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("[stall-detector] failed to fetch active runs", { error: error.message });
+      return runs;
+    }
+
+    if (!data || data.length === 0) {
+      return runs;
+    }
+
+    runs.push(...(data as ActiveRunRow[]));
+
+    if (data.length < ACTIVE_RUN_PAGE_SIZE) {
+      return runs;
+    }
+  }
+}
 
 function formatStallReason(elapsedMs: number, timeoutMs: number): string {
   return `Stalled: no activity for ${Math.round(elapsedMs / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`;

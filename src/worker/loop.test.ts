@@ -125,6 +125,31 @@ describe("pollOnce", () => {
     expect(activeJobIds).toEqual(["job-1", null]);
   });
 
+  it("clears active ownership when the first heartbeat fails", async () => {
+    const claimedJob = { ...baseJob, status: "started" };
+    const activeJobIds: Array<string | null> = [];
+    const heartbeatError = new Error("heartbeat unavailable");
+    mocked.processPipelineJob.mockResolvedValue(undefined);
+    mocked.sendHeartbeat.mockRejectedValueOnce(heartbeatError).mockResolvedValueOnce(undefined);
+
+    const admin = {
+      from: vi.fn(),
+      rpc: vi.fn(async () => ({ data: [claimedJob], error: null })),
+    };
+
+    await expect(
+      pollOnce(admin as never, config, {
+        setActiveJobId: (jobId) => activeJobIds.push(jobId),
+      }),
+    ).rejects.toThrow("heartbeat unavailable");
+
+    expect(mocked.sendHeartbeat).toHaveBeenNthCalledWith(1, admin, "worker-test", "job-1");
+    expect(mocked.sendHeartbeat).toHaveBeenNthCalledWith(2, admin, "worker-test", null);
+    expect(activeJobIds).toEqual(["job-1", null]);
+    expect(admin.from).not.toHaveBeenCalled();
+    expect(mocked.processPipelineJob).not.toHaveBeenCalled();
+  });
+
   it("defines next-job claiming with ready-job and workspace-capacity checks", () => {
     const migrationSql = readFileSync(
       "supabase/migrations/20260605000001_add_claim_next_agent_job.sql",
@@ -136,5 +161,7 @@ describe("pollOnce", () => {
     expect(migrationSql).toContain("if running_count >= effective_limit then");
     expect(migrationSql).toContain("continue;");
     expect(migrationSql).toContain("for update skip locked");
+    expect(migrationSql).toContain("pg_advisory_xact_lock");
+    expect(migrationSql).toContain("hashtextextended(candidate.workspace_id::text, 0)");
   });
 });

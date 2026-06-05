@@ -43,11 +43,14 @@ export async function pollOnce(
 
   const claimed = claimResult.job;
 
-  // Report heartbeat with active job.
   runtime.setActiveJobId?.(claimed.id);
-  await sendHeartbeat(admin, config.workerId, claimed.id);
 
   try {
+    // Report heartbeat with active job. Keep this inside the cleanup block:
+    // the job is already claimed, so even an initial heartbeat failure must
+    // clear active ownership before the next interval tick.
+    await sendHeartbeat(admin, config.workerId, claimed.id);
+
     // Touch last_activity_at on any linked agent_runs so the stall detector
     // has a fresh baseline even if the processor crashes immediately.
     await admin

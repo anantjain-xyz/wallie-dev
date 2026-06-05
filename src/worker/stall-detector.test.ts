@@ -80,13 +80,14 @@ function buildAdminMock(state: MockState) {
           return builder;
         },
         order: () => builder,
-        limit: async () => {
+        range: async (from: number, to: number) => {
           const statuses = filters.get("status") as string[] | undefined;
           const workspaceId = filters.get("workspace_id") as string | undefined;
           return {
             data: state.runs
               .filter((r) => !statuses || statuses.includes(r.status))
-              .filter((r) => !workspaceId || r.workspace_id === workspaceId),
+              .filter((r) => !workspaceId || r.workspace_id === workspaceId)
+              .slice(from, to + 1),
             error: null,
           };
         },
@@ -434,6 +435,48 @@ describe("sweepStalledRuns", () => {
     expect(result.stalledRunIds).toEqual(["run-1"]);
     expect(result.retriedJobIds).toEqual(["job-1"]);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1");
+  });
+
+  it("scans past skipped queued runs to recover later stalled runs", async () => {
+    const queuedRuns = Array.from({ length: 101 }, (_, index) =>
+      activeRun({
+        agent_job_id: `queued-job-${index}`,
+        id: `queued-run-${index}`,
+        sandbox_id: null,
+        status: "queued",
+      }),
+    );
+    const queuedJobs = queuedRuns.map((run, index) =>
+      job({
+        id: run.agent_job_id!,
+        session_id: `queued-session-${index}`,
+        status: "queued",
+      }),
+    );
+    const state: MockState = {
+      runs: [
+        ...queuedRuns,
+        activeRun({
+          agent_job_id: "late-job",
+          id: "late-run",
+          sandbox_id: "late-sandbox",
+          status: "running",
+        }),
+      ],
+      jobs: [...queuedJobs, job({ id: "late-job", session_id: "late-session" })],
+      configs: [],
+      sessions: new Map([["late-session", { phase_status: "agent_generating" }]]),
+      rpcCalls: [],
+    };
+    const { admin, runUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual(["late-run"]);
+    expect(result.retriedJobIds).toEqual(["late-job"]);
+    expect(runUpdates).toHaveLength(1);
+    expect(runUpdates[0].id).toBe("late-run");
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("late-sandbox");
   });
 
   it("marks a stalled run terminally errored when the job has no retries left", async () => {

@@ -33,6 +33,8 @@ begin
 
     effective_limit := coalesce(configured_limit, default_concurrency_limit);
 
+    perform pg_advisory_xact_lock(hashtextextended(candidate.workspace_id::text, 0));
+
     select count(*) into running_count
     from public.agent_jobs
     where workspace_id = candidate.workspace_id
