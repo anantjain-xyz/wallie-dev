@@ -76,6 +76,7 @@ export class CodexRunner implements AgentRunner {
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
       env: { CI: "1", CODEX_HOME: codexHome, ...codexCredentialEnv(this.options.credential) },
+      signal: input.signal,
     });
 
     let stdoutBuf = "";
@@ -180,6 +181,7 @@ export class CodexRunner implements AgentRunner {
       {
         cwd: sandbox.repoPath,
         env: { CI: "1", CODEX_HOME: codexHome },
+        signal: input.signal,
       },
     );
 

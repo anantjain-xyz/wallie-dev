@@ -286,7 +286,7 @@ export function LinearRoutingControls({
           >
             {saveRouting.isBusy ? "Saving…" : "Save routing"}
           </button>
-          <InlineActionMessage className="w-full sm:max-w-md" message={feedbackMessage} />
+          <InlineActionMessage className="w-full" message={feedbackMessage} />
         </div>
       ) : null}
     </div>

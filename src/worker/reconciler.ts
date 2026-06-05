@@ -44,6 +44,8 @@ export interface ReconcileResult {
 export interface ReconcileOptions {
   /** Sleep function — overridable for tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** Optional workspace scope for manual maintenance ticks. */
+  workspaceId?: string;
 }
 
 class RateLimitedError extends Error {
@@ -87,6 +89,10 @@ export async function reconcileLinearState(
       .in("phase_status", RECONCILABLE_PHASE_STATUSES)
       .order("created_at", { ascending: true })
       .limit(RECONCILE_PAGE_SIZE);
+
+    if (options.workspaceId) {
+      query = query.eq("workspace_id", options.workspaceId);
+    }
 
     if (cursor) {
       query = query.gt("created_at", cursor);

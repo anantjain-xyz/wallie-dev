@@ -6,10 +6,35 @@ const CODE_LENGTH = 6;
 
 export function EmailCodeInputs() {
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const autoSubmittedRef = useRef(false);
 
   function focusInput(index: number) {
     inputRefs.current[index]?.focus();
     inputRefs.current[index]?.select();
+  }
+
+  function maybeSubmitCompletedCode() {
+    if (autoSubmittedRef.current) {
+      return;
+    }
+
+    const token = Array.from(
+      { length: CODE_LENGTH },
+      (_, index) => inputRefs.current[index]?.value ?? "",
+    ).join("");
+
+    if (!/^\d{6}$/.test(token)) {
+      return;
+    }
+
+    const form = inputRefs.current[0]?.form;
+
+    if (!form) {
+      return;
+    }
+
+    autoSubmittedRef.current = true;
+    form.requestSubmit();
   }
 
   function setDigits(startIndex: number, value: string) {
@@ -28,6 +53,7 @@ export function EmailCodeInputs() {
     });
 
     focusInput(Math.min(startIndex + digits.length, CODE_LENGTH - 1));
+    maybeSubmitCompletedCode();
   }
 
   return (
@@ -60,6 +86,8 @@ export function EmailCodeInputs() {
             if (event.currentTarget.value && index < CODE_LENGTH - 1) {
               focusInput(index + 1);
             }
+
+            maybeSubmitCompletedCode();
           }}
           onKeyDown={(event) => {
             if (event.key === "Backspace" && !event.currentTarget.value && index > 0) {

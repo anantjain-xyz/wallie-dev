@@ -14,6 +14,10 @@ export interface StallSweepResult {
   retriedJobIds: string[];
 }
 
+export interface StallSweepOptions {
+  workspaceId?: string;
+}
+
 /**
  * Sweep for stalled agent runs — runs in active status whose
  * last_activity_at is older than the workspace's stall_timeout_ms (or the
@@ -24,6 +28,7 @@ export interface StallSweepResult {
 export async function sweepStalledRuns(
   admin: AdminClient,
   defaultStallTimeoutMs: number,
+  options: StallSweepOptions = {},
 ): Promise<StallSweepResult> {
   const result: StallSweepResult = {
     stalledRunIds: [],
@@ -36,10 +41,14 @@ export async function sweepStalledRuns(
   // are pre-existing rows from before the column default was added, or edge
   // cases where the default didn't fire. We use created_at as a fallback
   // timestamp so no run can escape stall detection.
-  const { data: activeRuns, error } = await admin
+  const activeRunQuery = admin
     .from("agent_runs")
     .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id")
-    .in("status", ["queued", "started", "running"])
+    .in("status", ["queued", "started", "running"]);
+  const scopedActiveRunQuery = options.workspaceId
+    ? activeRunQuery.eq("workspace_id", options.workspaceId)
+    : activeRunQuery;
+  const { data: activeRuns, error } = await scopedActiveRunQuery
     .order("created_at", { ascending: true })
     .limit(100);
 

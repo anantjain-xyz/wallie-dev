@@ -276,6 +276,36 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain('href="#cloud-execution"');
   });
 
+  it("renders the maintenance action under Settings Usage for managers", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData(),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).toContain("Usage");
+    expect(html).toContain("Maintenance");
+    expect(html).toContain("Run maintenance");
+  });
+
+  it("hides the maintenance action for non-managers", () => {
+    const html = renderToStaticMarkup(
+      createElement(SettingsPageClient, {
+        initialData: settingsData({ canManage: false }),
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
+      }),
+    );
+
+    expect(html).not.toContain("Run maintenance");
+  });
+
   it("preserves legacy Settings hashes through onboarding-aligned anchors", () => {
     const redirects = {
       "cloud-execution": "verify",

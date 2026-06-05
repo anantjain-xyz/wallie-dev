@@ -60,16 +60,31 @@ function buildAdminMock(state: MockState) {
     [];
 
   const fromAgentRuns = () => ({
-    select: () => ({
-      in: () => ({
-        order: () => ({
-          limit: async () => ({
-            data: state.runs.filter((r) => ["queued", "started", "running"].includes(r.status)),
+    select: () => {
+      const filters = new Map<string, unknown>();
+      const builder = {
+        eq: (col: string, value: unknown) => {
+          filters.set(col, value);
+          return builder;
+        },
+        in: (col: string, value: unknown) => {
+          filters.set(col, value);
+          return builder;
+        },
+        order: () => builder,
+        limit: async () => {
+          const statuses = filters.get("status") as string[] | undefined;
+          const workspaceId = filters.get("workspace_id") as string | undefined;
+          return {
+            data: state.runs
+              .filter((r) => !statuses || statuses.includes(r.status))
+              .filter((r) => !workspaceId || r.workspace_id === workspaceId),
             error: null,
-          }),
-        }),
-      }),
-    }),
+          };
+        },
+      };
+      return builder;
+    },
     update: (patch: Record<string, unknown>) => ({
       eq: (_col: string, runId: string) => ({
         in: async () => {
@@ -297,6 +312,40 @@ describe("sweepStalledRuns", () => {
         patch: { phase_status: "rejected" },
       },
     ]);
+  });
+
+  it("only sweeps stalled runs in the requested workspace", async () => {
+    const state: MockState = {
+      configs: [],
+      jobs: [
+        job({ id: "job-1", session_id: "sess-1" }),
+        job({ id: "job-2", session_id: "sess-2" }),
+      ],
+      runs: [
+        activeRun({ id: "run-1", workspace_id: "ws-1", agent_job_id: "job-1" }),
+        activeRun({
+          id: "run-2",
+          workspace_id: "ws-2",
+          agent_job_id: "job-2",
+          sandbox_id: "sandbox-2",
+        }),
+      ],
+      rpcCalls: [],
+      sessions: new Map([
+        ["sess-1", { phase_status: "agent_generating" }],
+        ["sess-2", { phase_status: "agent_generating" }],
+      ]),
+    };
+    const { admin } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS, { workspaceId: "ws-1" });
+
+    expect(result.stalledRunIds).toEqual(["run-1"]);
+    expect(result.stoppedSandboxIds).toEqual(["sandbox-1"]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1");
+    expect(mocked.stopSandboxById).not.toHaveBeenCalledWith("sandbox-2");
+    expect(state.runs.find((run) => run.id === "run-1")?.status).toBe("error");
+    expect(state.runs.find((run) => run.id === "run-2")?.status).toBe("running");
   });
 
   it("does not kill a stale run when a fresh worker heartbeat owns the job", async () => {

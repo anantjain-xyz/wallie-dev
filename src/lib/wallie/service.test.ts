@@ -2,7 +2,12 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Tables } from "@/lib/supabase/database.types";
-import { claimQueuedJobCandidate, enqueueWallieRun } from "@/lib/wallie/service";
+import {
+  claimQueuedJobCandidate,
+  enqueueWallieRun,
+  processQueuedAgentJobs,
+} from "@/lib/wallie/service";
+import { processPipelineJob } from "@/lib/pipeline/processor";
 
 vi.mock("@/lib/pipeline/processor", () => ({
   processPipelineJob: vi.fn(),
@@ -34,6 +39,62 @@ describe("wallie service helpers", () => {
 
     expect(attempts).toEqual(["job-1", "job-2"]);
     expect(claimed?.id).toBe("job-2");
+  });
+
+  it("passes an abort signal into claimed pipeline job processing", async () => {
+    const signal = new AbortController().signal;
+    const queuedJob = buildAgentJobRow();
+    const claimedJob = buildAgentJobRow({
+      attempt_count: 1,
+      last_error: null,
+      started_at: baseTimestamp,
+      status: "running",
+    });
+    vi.mocked(processPipelineJob).mockResolvedValue({
+      jobId: "job-1",
+      processed: true,
+      result: "success",
+      runId: "run-1",
+    });
+    const admin = {
+      from: (table: string) => {
+        if (table !== "agent_jobs") throw new Error(`unexpected table: ${table}`);
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: queuedJob, error: null }),
+            }),
+          }),
+          update: () => ({
+            eq: () => ({
+              eq: () => ({
+                select: () => ({
+                  maybeSingle: async () => ({ data: claimedJob, error: null }),
+                }),
+              }),
+            }),
+          }),
+        };
+      },
+    };
+
+    const result = await processQueuedAgentJobs({
+      admin: admin as never,
+      requestedJobId: "job-1",
+      signal,
+    });
+
+    expect(result).toEqual({
+      jobId: "job-1",
+      processed: true,
+      result: "success",
+      runId: "run-1",
+    });
+    expect(processPipelineJob).toHaveBeenCalledWith({
+      admin,
+      job: claimedJob,
+      signal,
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import type { CodexConnectionStatus } from "@/features/settings/codex-connection
 import type { SettingsPageData } from "@/features/settings/data";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
+import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
@@ -345,6 +346,11 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               title="Usage"
             >
               <UsageSummary usage={pageData.usage} />
+              <MaintenancePanel
+                canManage={isManager}
+                setFlashMessage={setFlashMessage}
+                workspaceId={pageData.workspace.id}
+              />
             </Section>
 
             <Section

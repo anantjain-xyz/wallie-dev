@@ -3,6 +3,7 @@ import Link from "next/link";
 import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
 import { isLocalDev } from "@/env/deploy";
 import type { OAuthProvider } from "@/lib/auth-providers";
+import { loginPath } from "@/lib/routes";
 
 const authErrorMessages = {
   auth_callback_failed: "The sign-in callback did not complete. Start the flow again.",
@@ -27,11 +28,7 @@ type AuthEntryPanelProps = {
   statusCode?: string | null;
 };
 
-const emailCodeFallbackErrors = new Set([
-  "auth_confirmation_failed",
-  "email_code_failed",
-  "email_sign_in_failed",
-]);
+const emailCodeFallbackErrors = new Set(["auth_confirmation_failed", "email_code_failed"]);
 
 function buildOauthHref(provider: OAuthProvider, next: string) {
   const params = new URLSearchParams({
@@ -57,6 +54,7 @@ export function AuthEntryPanel({
   const showEmailCodeForm =
     canUseEmailCode &&
     (statusCode === "check_email" || (errorCode ? emailCodeFallbackErrors.has(errorCode) : false));
+  const requestAnotherCodeHref = loginPath(next);
 
   return (
     <div className="w-full max-w-[360px]">
@@ -82,30 +80,32 @@ export function AuthEntryPanel({
           </div>
         ) : null}
 
-        <form action="/auth/email" method="post" className="space-y-3">
-          <input type="hidden" name="next" value={next} />
+        {!showEmailCodeForm ? (
+          <form action="/auth/email" method="post" className="space-y-3">
+            <input type="hidden" name="next" value={next} />
 
-          <label className="block">
-            <span className="sr-only">Email</span>
-            <input
-              type="email"
-              name="email"
-              required
-              autoComplete="email"
-              inputMode="email"
-              placeholder="you@company.com"
-              spellCheck={false}
-              className="ui-input"
-            />
-          </label>
+            <label className="block">
+              <span className="sr-only">Email</span>
+              <input
+                type="email"
+                name="email"
+                required
+                autoComplete="email"
+                inputMode="email"
+                placeholder="you@company.com"
+                spellCheck={false}
+                className="ui-input"
+              />
+            </label>
 
-          <button type="submit" className="ui-button-primary w-full">
-            Send magic link
-          </button>
-        </form>
+            <button type="submit" className="ui-button-primary w-full">
+              Send magic link
+            </button>
+          </form>
+        ) : null}
 
         {showEmailCodeForm ? (
-          <div className="mt-4 border-t border-border pt-4">
+          <div>
             <p id="email-code-heading" className="mb-3 text-[12px] font-medium text-muted">
               Enter 6-digit code emailed to you
             </p>
@@ -121,6 +121,12 @@ export function AuthEntryPanel({
                 Continue with code
               </button>
             </form>
+            <Link
+              href={requestAnotherCodeHref}
+              className="mt-3 inline-flex w-full items-center justify-center text-[12px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              Request another code
+            </Link>
           </div>
         ) : null}
 
