@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
 
@@ -17,17 +17,32 @@ function renderPanel(props: Partial<Parameters<typeof AuthEntryPanel>[0]> = {}) 
   );
 }
 
+const originalVercelEnv = process.env.VERCEL_ENV;
+
 describe("AuthEntryPanel", () => {
+  beforeEach(() => {
+    process.env.VERCEL_ENV = "production";
+  });
+
+  afterEach(() => {
+    if (originalVercelEnv === undefined) {
+      delete process.env.VERCEL_ENV;
+      return;
+    }
+
+    process.env.VERCEL_ENV = originalVercelEnv;
+  });
+
   it("hides the email code form until code has been requested", () => {
     const html = renderPanel();
 
     expect(html).not.toContain("Enter 6-digit code emailed to you");
     expect(html).not.toContain("Continue with code");
+    expect(html).not.toContain("Request another code");
     expect(html).not.toContain('name="tokenDigit"');
   });
 
-  it("shows six code inputs without exposing the email after sending email auth", () => {
-    const initialHtml = renderPanel();
+  it("shows six code inputs without exposing the email form after sending email auth", () => {
     const html = renderPanel({
       canUseEmailCode: true,
       statusCode: "check_email",
@@ -35,14 +50,17 @@ describe("AuthEntryPanel", () => {
 
     expect(html).toContain("Enter 6-digit code emailed to you");
     expect(html).toContain("Continue with code");
+    expect(html).toContain("Request another code");
+    expect(html).toContain('href="/login?next=%2Fw%2Facme"');
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
-    expect(countMatches(html, 'type="email"')).toBe(countMatches(initialHtml, 'type="email"'));
+    expect(html).not.toContain("Send magic link");
+    expect(html).not.toContain('name="email"');
+    expect(html).not.toContain('type="email"');
+    expect(html).not.toContain("you@company.com");
     expect(html).not.toContain("owner@example.com");
-    expect(html).not.toContain('name="email" value=');
   });
 
   it("keeps the email code form visible for failed code retries", () => {
-    const initialHtml = renderPanel();
     const html = renderPanel({
       canUseEmailCode: true,
       errorCode: "email_code_failed",
@@ -50,23 +68,36 @@ describe("AuthEntryPanel", () => {
 
     expect(html).toContain("Enter 6-digit code emailed to you");
     expect(html).toContain("Wallie could not verify that code.");
+    expect(html).toContain("Request another code");
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
-    expect(countMatches(html, 'type="email"')).toBe(countMatches(initialHtml, 'type="email"'));
-    expect(html).not.toContain('name="email" value=');
+    expect(html).not.toContain("Send magic link");
+    expect(html).not.toContain('name="email"');
+    expect(html).not.toContain('type="email"');
   });
 
-  it("keeps the email code form visible after link and resend failures when email is stored", () => {
-    const authFailureHtml = renderPanel({
+  it("keeps the email code form visible after link failures when email is stored", () => {
+    const html = renderPanel({
       canUseEmailCode: true,
       errorCode: "auth_confirmation_failed",
     });
-    const resendFailureHtml = renderPanel({
+
+    expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
+    expect(html).toContain("Request another code");
+    expect(html).not.toContain("Send magic link");
+    expect(html).not.toContain('name="email"');
+  });
+
+  it("returns send failures to the original email form", () => {
+    const html = renderPanel({
       canUseEmailCode: true,
       errorCode: "email_sign_in_failed",
     });
 
-    expect(countMatches(authFailureHtml, 'name="tokenDigit"')).toBe(6);
-    expect(countMatches(resendFailureHtml, 'name="tokenDigit"')).toBe(6);
+    expect(html).toContain("Wallie could not send that magic link.");
+    expect(html).toContain("Send magic link");
+    expect(html).toContain('name="email"');
+    expect(html).not.toContain('name="tokenDigit"');
+    expect(html).not.toContain("Request another code");
   });
 
   it("does not show the email code form on fallback errors without stored email", () => {
