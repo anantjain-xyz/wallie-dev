@@ -76,6 +76,7 @@ export async function sweepStalledRuns(
     const activityTimestamp = run.last_activity_at ?? run.created_at;
     const lastActivity = new Date(activityTimestamp).getTime();
     const elapsed = now - lastActivity;
+    const stallReason = formatStallReason(elapsed, timeoutMs);
 
     if (elapsed < timeoutMs) {
       continue;
@@ -104,6 +105,11 @@ export async function sweepStalledRuns(
     }
 
     result.stalledRunIds.push(run.id);
+    await insertRunErrorMessage(admin, {
+      message: stallReason,
+      runId: run.id,
+      workspaceId: run.workspace_id,
+    });
 
     // Stop the orphaned sandbox. Best-effort: stopSandboxById swallows its
     // own errors, so a stale or already-stopped sandbox cannot break the
@@ -120,11 +126,10 @@ export async function sweepStalledRuns(
     if (run.agent_job_id) {
       await resolveStalledJob({
         admin,
-        elapsedMs: elapsed,
         jobId: run.agent_job_id,
         maxRetries: maxRetries.get(run.workspace_id) ?? DEFAULT_MAX_RETRIES,
         result,
-        timeoutMs,
+        stallReason,
       });
 
       // Transition the session out of agent_generating so the UI is not
@@ -158,6 +163,29 @@ export async function sweepStalledRuns(
 
 const DEFAULT_MAX_RETRIES = 3;
 
+function formatStallReason(elapsedMs: number, timeoutMs: number): string {
+  return `Stalled: no activity for ${Math.round(elapsedMs / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`;
+}
+
+async function insertRunErrorMessage(
+  admin: AdminClient,
+  input: { message: string; runId: string; workspaceId: string },
+): Promise<void> {
+  const { error } = await admin.from("agent_run_messages").insert({
+    agent_run_id: input.runId,
+    kind: "error" as const,
+    message_md: `**Error:** ${input.message}`,
+    workspace_id: input.workspaceId,
+  });
+
+  if (error) {
+    console.error("[stall-detector] failed to insert stalled run error message", {
+      error: error.message,
+      runId: input.runId,
+    });
+  }
+}
+
 async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise<Set<string>> {
   const cutoff = new Date(nowMs - FRESH_WORKER_HEARTBEAT_MS).toISOString();
   const { data, error } = await admin
@@ -185,14 +213,12 @@ async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise
  */
 async function resolveStalledJob(input: {
   admin: AdminClient;
-  elapsedMs: number;
   jobId: string;
   maxRetries: number;
   result: StallSweepResult;
-  timeoutMs: number;
+  stallReason: string;
 }): Promise<void> {
-  const { admin, elapsedMs, jobId, maxRetries, result, timeoutMs } = input;
-  const lastError = `Stalled: no activity for ${Math.round(elapsedMs / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`;
+  const { admin, jobId, maxRetries, result, stallReason } = input;
 
   // Read the current attempt count to decide retry vs terminal.
   const { data: jobRow } = await admin
@@ -213,7 +239,7 @@ async function resolveStalledJob(input: {
     if (!retryError) {
       // Record the stall reason on the row so operators see why it was
       // rescheduled. schedule_job_retry leaves last_error untouched.
-      await admin.from("agent_jobs").update({ last_error: lastError }).eq("id", jobId);
+      await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
       result.retriedJobIds.push(jobId);
       return;
     }
@@ -228,7 +254,7 @@ async function resolveStalledJob(input: {
     .from("agent_jobs")
     .update({
       finished_at: new Date().toISOString(),
-      last_error: lastError,
+      last_error: stallReason,
       status: "error",
     })
     .eq("id", jobId)

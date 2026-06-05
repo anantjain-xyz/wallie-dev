@@ -352,7 +352,7 @@ export function SessionWalliePanel({
           ? {
               kind: "success",
               text: payload.processScheduled
-                ? "Wallie queued the retry and scheduled processing in the background."
+                ? "Wallie queued the retry for the worker."
                 : "Wallie queued the retry.",
             }
           : {

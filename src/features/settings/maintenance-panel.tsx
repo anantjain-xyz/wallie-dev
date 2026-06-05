@@ -27,6 +27,12 @@ function countChanged(payload: MaintenanceTickResponse): number {
 
 function successText(payload: MaintenanceTickResponse): string {
   const changed = countChanged(payload);
+  if (payload.processing.result === "delegated") {
+    if (changed === 0) {
+      return "Maintenance complete. No stuck work was found; queued jobs remain with the worker.";
+    }
+    return `Maintenance complete. ${changed} item${changed === 1 ? "" : "s"} recovered or checked; queued jobs remain with the worker.`;
+  }
   if (changed === 0 && payload.processing.result === "idle") {
     return "Maintenance complete. No stuck work was found.";
   }

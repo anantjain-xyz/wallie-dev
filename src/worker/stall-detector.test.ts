@@ -43,6 +43,13 @@ interface WorkerHeartbeatRow {
   last_heartbeat_at: string;
 }
 
+interface AgentRunMessageInsert {
+  agent_run_id: string;
+  kind: string;
+  message_md: string;
+  workspace_id: string;
+}
+
 interface MockState {
   runs: AgentRunRow[];
   jobs: AgentJobRow[];
@@ -56,6 +63,7 @@ interface MockState {
 function buildAdminMock(state: MockState) {
   const runUpdates: Array<{ id: string; patch: Record<string, unknown> }> = [];
   const jobUpdates: Array<{ id: string; patch: Record<string, unknown>; status?: string }> = [];
+  const runMessageInserts: AgentRunMessageInsert[] = [];
   const sessionUpdates: Array<{ id: string; patch: Record<string, unknown>; expected?: string }> =
     [];
 
@@ -173,6 +181,13 @@ function buildAdminMock(state: MockState) {
     }),
   });
 
+  const fromAgentRunMessages = () => ({
+    insert: async (row: AgentRunMessageInsert) => {
+      runMessageInserts.push(row);
+      return { error: null };
+    },
+  });
+
   const fromSessions = () => ({
     update: (patch: Record<string, unknown>) => ({
       eq: (_col: string, sessionId: string) => ({
@@ -191,6 +206,7 @@ function buildAdminMock(state: MockState) {
   const tables: Record<string, unknown> = {
     agent_runs: fromAgentRuns(),
     agent_jobs: fromAgentJobs(),
+    agent_run_messages: fromAgentRunMessages(),
     workspace_agent_config: fromConfig(),
     worker_heartbeats: fromWorkerHeartbeats(),
     sessions: fromSessions(),
@@ -218,6 +234,7 @@ function buildAdminMock(state: MockState) {
     },
     runUpdates,
     jobUpdates,
+    runMessageInserts,
     sessionUpdates,
   };
 }
@@ -281,7 +298,7 @@ describe("sweepStalledRuns", () => {
       sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
       rpcCalls: [],
     };
-    const { admin, runUpdates, sessionUpdates } = buildAdminMock(state);
+    const { admin, runMessageInserts, runUpdates, sessionUpdates } = buildAdminMock(state);
     const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
 
     expect(result.stalledRunIds).toEqual(["run-1"]);
@@ -292,6 +309,14 @@ describe("sweepStalledRuns", () => {
     // Run row was patched to error.
     expect(runUpdates).toHaveLength(1);
     expect(runUpdates[0].patch.status).toBe("error");
+    expect(runMessageInserts).toEqual([
+      {
+        agent_run_id: "run-1",
+        kind: "error",
+        message_md: expect.stringContaining("Stalled: no activity"),
+        workspace_id: "ws-1",
+      },
+    ]);
 
     // Sandbox stop call.
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1");

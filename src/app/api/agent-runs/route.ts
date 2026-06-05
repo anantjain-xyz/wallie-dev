@@ -1,9 +1,9 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 import { enqueueAgentRunSchema, type AgentRunActionResponse } from "@/features/wallie/contracts";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { buildAgentRunActionErrorResponse, buildAgentRunActionResponse } from "@/lib/wallie/http";
-import { enqueueWallieRun, processQueuedAgentJobs } from "@/lib/wallie/service";
+import { enqueueWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 export async function POST(request: Request) {
@@ -49,21 +49,6 @@ export async function POST(request: Request) {
       workspace: access.context.workspace,
     });
     const processScheduled = result.created && result.jobId !== null;
-
-    if (processScheduled && result.jobId) {
-      after(async () => {
-        try {
-          await processQueuedAgentJobs({
-            requestedJobId: result.jobId ?? undefined,
-          });
-        } catch (error) {
-          console.error("Wallie enqueue follow-up processing failed", {
-            error,
-            jobId: result.jobId,
-          });
-        }
-      });
-    }
 
     const response: AgentRunActionResponse = buildAgentRunActionResponse({
       created: result.created,

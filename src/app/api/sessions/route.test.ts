@@ -4,7 +4,6 @@ const mocked = vi.hoisted(() => ({
   after: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
   enqueueWallieRun: vi.fn(),
-  processQueuedAgentJobs: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
 
@@ -22,7 +21,6 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/wallie/service", () => ({
   enqueueWallieRun: mocked.enqueueWallieRun,
-  processQueuedAgentJobs: mocked.processQueuedAgentJobs,
 }));
 
 vi.mock("@/lib/workspaces/access", () => ({
@@ -246,10 +244,9 @@ describe("POST /api/sessions", () => {
       jobId: "job-1",
       run: { id: "run-1" },
     });
-    mocked.processQueuedAgentJobs.mockResolvedValue({ processed: true });
   });
 
-  it("creates a session, queues the first Wallie run, and schedules processing", async () => {
+  it("creates a session and queues the first Wallie run for the worker", async () => {
     const response = await POST(
       makeRequest({
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
@@ -287,10 +284,7 @@ describe("POST /api/sessions", () => {
         triggerType: "assignment",
       }),
     );
-    expect(mocked.after).toHaveBeenCalledTimes(1);
-    const scheduled = mocked.after.mock.calls[0]![0] as () => Promise<void>;
-    await scheduled();
-    expect(mocked.processQueuedAgentJobs).toHaveBeenCalledWith({ requestedJobId: "job-1" });
+    expect(mocked.after).not.toHaveBeenCalled();
   });
 
   it("pins the selected repository on the created session", async () => {

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": null,
+    "watchPatterns": [
+      "package.json",
+      "pnpm-lock.yaml",
+      "railway.json",
+      "scripts/register-server-only.mjs",
+      "src/env/**",
+      "src/features/github/**",
+      "src/features/sessions/**",
+      "src/features/wallie/**",
+      "src/lib/agent-config/**",
+      "src/lib/agent-runner/**",
+      "src/lib/claude-code/**",
+      "src/lib/codex/**",
+      "src/lib/github/**",
+      "src/lib/maintenance/**",
+      "src/lib/pipeline/**",
+      "src/lib/prompt-templates/**",
+      "src/lib/sandbox/**",
+      "src/lib/supabase/**",
+      "src/lib/wallie/**",
+      "src/worker/**"
+    ]
+  },
+  "deploy": {
+    "startCommand": "pnpm worker",
+    "healthcheckPath": null,
+    "restartPolicyType": "ALWAYS"
+  }
+}

@@ -104,6 +104,7 @@ describe("POST /api/agent-runs rate limiting", () => {
     expect(body.retryAfterSeconds).toBeGreaterThan(0);
 
     expect(mocked.enqueueWallieRun).toHaveBeenCalledTimes(cap);
+    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
   });
 
   it("isolates per-(workspace, user) buckets", async () => {
@@ -147,5 +148,6 @@ describe("POST /api/agent-runs rate limiting", () => {
     expect(body.created).toBe(false);
     expect(body.processScheduled).toBe(false);
     expect(body.run.id).toBe("run-existing");
+    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
   });
 });

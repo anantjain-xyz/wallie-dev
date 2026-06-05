@@ -116,5 +116,6 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
       sessionId: "sess-1",
       version: 1,
     });
+    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
   });
 });
