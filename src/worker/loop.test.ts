@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import type { WorkerConfig } from "./config";
 
@@ -55,49 +56,31 @@ describe("pollOnce", () => {
     vi.useRealTimers();
   });
 
-  it("filters out future scheduled jobs before limiting candidates", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-05T12:00:00.000Z"));
-
-    const calls: Array<{ args: unknown[]; method: string }> = [];
-    const query = {
-      eq: vi.fn((column: string, value: string) => {
-        calls.push({ args: [column, value], method: "eq" });
-        return query;
-      }),
-      limit: vi.fn(async (count: number) => {
-        calls.push({ args: [count], method: "limit" });
-        return { data: [], error: null };
-      }),
-      or: vi.fn((filter: string) => {
-        calls.push({ args: [filter], method: "or" });
-        return query;
-      }),
-      order: vi.fn((column: string, options: { ascending: boolean }) => {
-        calls.push({ args: [column, options], method: "order" });
-        return query;
-      }),
-      select: vi.fn((selection: string) => {
-        calls.push({ args: [selection], method: "select" });
-        return query;
-      }),
-    };
+  it("delegates candidate selection to the concurrency-aware claim RPC", async () => {
     const admin = {
-      from: vi.fn((table: string) => {
-        expect(table).toBe("agent_jobs");
-        return query;
-      }),
+      from: vi.fn(),
+      rpc: vi.fn(async () => ({ data: [], error: null })),
     };
 
     const result = await pollOnce(admin as never, config);
 
     expect(result).toEqual({ jobId: null, outcome: "idle" });
-    expect(query.or).toHaveBeenCalledWith(
-      "scheduled_at.is.null,scheduled_at.lte.2026-06-05T12:00:00.000Z",
-    );
-    expect(calls.findIndex((call) => call.method === "or")).toBeLessThan(
-      calls.findIndex((call) => call.method === "limit"),
-    );
+    expect(admin.rpc).toHaveBeenCalledWith("claim_next_agent_job", {
+      default_concurrency_limit: 2,
+    });
+    expect(admin.from).not.toHaveBeenCalled();
+  });
+
+  it("backs off when the claim RPC fails", async () => {
+    const admin = {
+      from: vi.fn(),
+      rpc: vi.fn(async () => ({ data: null, error: { message: "rpc unavailable" } })),
+    };
+
+    const result = await pollOnce(admin as never, config);
+
+    expect(result).toEqual({ jobId: null, outcome: "error" });
+    expect(admin.from).not.toHaveBeenCalled();
   });
 
   it("claims and processes the first ready candidate", async () => {
@@ -106,13 +89,6 @@ describe("pollOnce", () => {
     mocked.processPipelineJob.mockResolvedValue(undefined);
     mocked.sendHeartbeat.mockResolvedValue(undefined);
 
-    const jobQuery = {
-      eq: vi.fn(() => jobQuery),
-      limit: vi.fn(async () => ({ data: [baseJob], error: null })),
-      or: vi.fn(() => jobQuery),
-      order: vi.fn(() => jobQuery),
-      select: vi.fn(() => jobQuery),
-    };
     const runStatusUpdate = {
       in: vi.fn(async () => ({ error: null })),
     };
@@ -124,9 +100,6 @@ describe("pollOnce", () => {
     };
     const admin = {
       from: vi.fn((table: string) => {
-        if (table === "agent_jobs") {
-          return jobQuery;
-        }
         if (table === "agent_runs") {
           return runQuery;
         }
@@ -140,9 +113,8 @@ describe("pollOnce", () => {
     });
 
     expect(result).toEqual({ jobId: "job-1", outcome: "success" });
-    expect(admin.rpc).toHaveBeenCalledWith("claim_agent_job", {
+    expect(admin.rpc).toHaveBeenCalledWith("claim_next_agent_job", {
       default_concurrency_limit: 2,
-      target_job_id: "job-1",
     });
     expect(mocked.processPipelineJob).toHaveBeenCalledWith({
       admin,
@@ -151,5 +123,18 @@ describe("pollOnce", () => {
     expect(mocked.sendHeartbeat).toHaveBeenCalledWith(admin, "worker-test", "job-1");
     expect(mocked.sendHeartbeat).toHaveBeenCalledWith(admin, "worker-test", null);
     expect(activeJobIds).toEqual(["job-1", null]);
+  });
+
+  it("defines next-job claiming with ready-job and workspace-capacity checks", () => {
+    const migrationSql = readFileSync(
+      "supabase/migrations/20260605000001_add_claim_next_agent_job.sql",
+      "utf8",
+    );
+
+    expect(migrationSql).toContain("create or replace function public.claim_next_agent_job");
+    expect(migrationSql).toContain("(scheduled_at is null or scheduled_at <= now())");
+    expect(migrationSql).toContain("if running_count >= effective_limit then");
+    expect(migrationSql).toContain("continue;");
+    expect(migrationSql).toContain("for update skip locked");
   });
 });

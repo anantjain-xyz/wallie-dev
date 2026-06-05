@@ -9,17 +9,19 @@ import { sendHeartbeat } from "./heartbeat";
 type AdminClient = SupabaseClient<Database>;
 type AgentJobRow = Tables<"agent_jobs">;
 
-const jobSelect =
-  "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, scheduled_at, started_at, finished_at, created_at, updated_at";
-
 export interface PollResult {
   jobId: string | null;
-  outcome: "claimed" | "concurrency_limited" | "idle" | "error" | "success";
+  outcome: "idle" | "error" | "success";
 }
 
 export interface PollRuntime {
   setActiveJobId?: (jobId: string | null) => void;
 }
+
+type ClaimNextResult =
+  | { job: AgentJobRow; outcome: "claimed" }
+  | { outcome: "error" }
+  | { outcome: "idle" };
 
 /**
  * Execute one poll cycle: find a queued job, check concurrency, claim it,
@@ -30,92 +32,71 @@ export async function pollOnce(
   config: WorkerConfig,
   runtime: PollRuntime = {},
 ): Promise<PollResult> {
-  // Fetch up to 10 queued candidates, oldest first.
-  const { data: candidates, error: fetchError } = await admin
-    .from("agent_jobs")
-    .select(jobSelect)
-    .eq("status", "queued")
-    .or(`scheduled_at.is.null,scheduled_at.lte.${new Date().toISOString()}`)
-    .order("created_at", { ascending: true })
-    .limit(10);
-
-  if (fetchError) {
-    console.error("[worker] failed to fetch candidates", { error: fetchError.message });
+  const claimResult = await claimNextJobAtomic(admin, config.defaultConcurrencyLimit);
+  if (claimResult.outcome === "error") {
     return { jobId: null, outcome: "error" };
   }
 
-  if (!candidates || candidates.length === 0) {
+  if (claimResult.outcome === "idle") {
     return { jobId: null, outcome: "idle" };
   }
 
-  // Try each candidate with an atomic concurrency-aware claim.
-  // The RPC checks the workspace's concurrency limit and CAS-claims the job
-  // in a single transaction, preventing two workers from both observing
-  // capacity and then each claiming a different job.
-  for (const candidate of candidates as AgentJobRow[]) {
-    const claimed = await claimJobAtomic(admin, candidate.id, config.defaultConcurrencyLimit);
-    if (!claimed) {
-      // Either at capacity or another worker claimed it — try next.
-      continue;
-    }
+  const claimed = claimResult.job;
 
-    // Report heartbeat with active job.
-    runtime.setActiveJobId?.(claimed.id);
-    await sendHeartbeat(admin, config.workerId, claimed.id);
+  // Report heartbeat with active job.
+  runtime.setActiveJobId?.(claimed.id);
+  await sendHeartbeat(admin, config.workerId, claimed.id);
 
+  try {
+    // Touch last_activity_at on any linked agent_runs so the stall detector
+    // has a fresh baseline even if the processor crashes immediately.
+    await admin
+      .from("agent_runs")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("agent_job_id", claimed.id)
+      .in("status", ["queued", "started", "running"]);
+
+    // Process the job.
     try {
-      // Touch last_activity_at on any linked agent_runs so the stall detector
-      // has a fresh baseline even if the processor crashes immediately.
-      await admin
-        .from("agent_runs")
-        .update({ last_activity_at: new Date().toISOString() })
-        .eq("agent_job_id", claimed.id)
-        .in("status", ["queued", "started", "running"]);
-
-      // Process the job.
-      try {
-        await processClaimedJob(admin, claimed);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Worker job processing failed";
-        console.error("[worker] job processing error", { error: message, jobId: claimed.id });
-        await markJobError(admin, claimed, message);
-      }
-    } finally {
-      // Clear active job from heartbeat.
-      runtime.setActiveJobId?.(null);
-      await sendHeartbeat(admin, config.workerId, null);
+      await processClaimedJob(admin, claimed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Worker job processing failed";
+      console.error("[worker] job processing error", { error: message, jobId: claimed.id });
+      await markJobError(admin, claimed, message);
     }
-
-    return { jobId: claimed.id, outcome: "success" };
+  } finally {
+    // Clear active job from heartbeat.
+    runtime.setActiveJobId?.(null);
+    await sendHeartbeat(admin, config.workerId, null);
   }
 
-  // All candidates were concurrency-limited or claimed by others.
-  return { jobId: null, outcome: "concurrency_limited" };
+  return { jobId: claimed.id, outcome: "success" };
 }
 
 /**
- * Atomic concurrency-aware claim via Postgres RPC.
- * The function checks the workspace's concurrency limit and CAS-claims the
- * job in a single transaction, so two workers cannot both observe capacity
- * and then each claim a different job.
+ * Atomic concurrency-aware claim via Postgres RPC. The function selects and
+ * claims the oldest ready job whose workspace still has capacity in one
+ * transaction, so one saturated workspace cannot hide ready work for another.
  */
-async function claimJobAtomic(
+async function claimNextJobAtomic(
   admin: AdminClient,
-  jobId: string,
   defaultConcurrencyLimit: number,
-): Promise<AgentJobRow | null> {
-  const { data, error } = await admin.rpc("claim_agent_job", {
-    target_job_id: jobId,
+): Promise<ClaimNextResult> {
+  const { data, error } = await admin.rpc("claim_next_agent_job", {
     default_concurrency_limit: defaultConcurrencyLimit,
   });
 
   if (error) {
-    console.error("[worker] atomic claim failed", { error: error.message, jobId });
-    return null;
+    console.error("[worker] atomic claim failed", { error: error.message });
+    return { outcome: "error" };
   }
 
   const row = Array.isArray(data) ? data[0] : null;
-  return (row as AgentJobRow | null) ?? null;
+  if (!row) {
+    return { outcome: "idle" };
+  }
+
+  return { job: row as AgentJobRow, outcome: "claimed" };
 }
 
 async function processClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {

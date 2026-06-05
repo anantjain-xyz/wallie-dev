@@ -63,6 +63,13 @@ export async function sweepStalledRuns(
 
   // Load per-workspace stall timeouts and retry caps in bulk.
   const workspaceIds = [...new Set(activeRuns.map((r) => r.workspace_id))];
+  const runningJobIdsForQueuedRuns = await loadRunningJobIds(
+    admin,
+    activeRuns
+      .filter((run) => run.status === "queued")
+      .map((run) => run.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
   const stallTimeouts = await loadStallTimeouts(admin, workspaceIds);
   const maxRetries = await loadMaxRetries(admin, workspaceIds);
 
@@ -70,6 +77,13 @@ export async function sweepStalledRuns(
   const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, now);
 
   for (const run of activeRuns) {
+    if (
+      run.status === "queued" &&
+      (!run.agent_job_id || !runningJobIdsForQueuedRuns.has(run.agent_job_id))
+    ) {
+      continue;
+    }
+
     const timeoutMs = stallTimeouts.get(run.workspace_id) ?? defaultStallTimeoutMs;
     // Use last_activity_at if set, otherwise fall back to created_at so
     // runs that never received an activity event are still swept.
@@ -203,6 +217,25 @@ async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise
       .map((row) => row.active_job_id)
       .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
   );
+}
+
+async function loadRunningJobIds(admin: AdminClient, jobIds: string[]): Promise<Set<string>> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_jobs")
+    .select("id")
+    .in("id", [...new Set(jobIds)])
+    .eq("status", "running");
+
+  if (error) {
+    console.error("[stall-detector] failed to load running jobs", { error: error.message });
+    return new Set();
+  }
+
+  return new Set((data ?? []).map((row) => row.id));
 }
 
 /**
