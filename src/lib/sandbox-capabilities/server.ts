@@ -235,6 +235,10 @@ export async function completeSandboxCapabilityCheck(input: {
       agentProvider: provider,
       baseBranch: input.repository.default_branch ?? "main",
       branch: `wallie/capability-check-${randomUUID().slice(0, 8)}`,
+      commitAuthor: {
+        email: "wallie@example.local",
+        name: "Wallie",
+      },
       implementation: "vercel",
       installationToken,
       repoFullName: input.repository.full_name,

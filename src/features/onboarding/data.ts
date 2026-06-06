@@ -465,7 +465,7 @@ async function buildWorkspaceOnboardingData(
   const onboarding = mapOnboardingRow(onboardingRow);
   const canManage =
     context.currentMember.role === "owner" || context.currentMember.role === "admin";
-  const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
+  const github = await loadWorkspaceGitHubData(admin, context.workspace.id, context.user.id);
   const [
     setupHealth,
     pipeline,

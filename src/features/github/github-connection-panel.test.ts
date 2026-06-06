@@ -79,6 +79,18 @@ function readyOnboarding(repositoryId: string): RepositoryOnboardingState {
   };
 }
 
+function githubData(overrides: Partial<WorkspaceGitHubData> = {}): WorkspaceGitHubData {
+  return {
+    authorIdentity: overrides.authorIdentity ?? null,
+    installation: overrides.installation ?? null,
+    missingAppKeys: overrides.missingAppKeys ?? [],
+    missingAuthorKeys: overrides.missingAuthorKeys ?? [],
+    missingWebhookKeys: overrides.missingWebhookKeys ?? [],
+    primaryProfile: overrides.primaryProfile ?? null,
+    repositories: overrides.repositories ?? [],
+  };
+}
+
 describe("primaryProfileForRepositories", () => {
   it("keeps the legacy profile when the refreshed repositories still include it", () => {
     const primary = profile("repo-1");
@@ -141,6 +153,48 @@ describe("mergeRepositoryOnboardingState", () => {
 });
 
 describe("GitHubConnectionPanel", () => {
+  it("lets non-managers connect their own disconnected commit author identity", () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: false,
+        github: githubData(),
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(markup).toContain("Commit author");
+    expect(markup).toContain("not connected");
+    expect(markup).toContain("Connect author");
+    expect(markup).toContain('<button class="ui-button" type="button">Connect author</button>');
+  });
+
+  it("renders the connected commit author and reconnect state", () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: false,
+        github: githubData({
+          authorIdentity: {
+            authorEmail: "12345+anant@users.noreply.github.com",
+            authorEmailSource: "github_noreply",
+            authorEmailVerifiedAt: "2026-05-16T18:00:00.000Z",
+            authorName: "Anant Jain",
+            connectedAt: "2026-05-16T18:00:00.000Z",
+            githubAvatarUrl: "https://avatars.githubusercontent.com/u/12345?v=4",
+            githubLogin: "anant",
+            githubUserId: 12345,
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            userId: "user-1",
+          },
+        }),
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(markup).toContain("@anant");
+    expect(markup).toContain("Anant Jain &lt;12345+anant@users.noreply.github.com&gt;");
+    expect(markup).toContain("Reconnect author");
+  });
+
   it("renders connection controls without synced repository rows", () => {
     const repo1 = repository("repo-1", null);
     const repo2 = {
@@ -151,6 +205,7 @@ describe("GitHubConnectionPanel", () => {
       },
     } satisfies WorkspaceGitHubRepository;
     const github = {
+      authorIdentity: null,
       installation: {
         appId: 123,
         id: "installation-1",
@@ -163,6 +218,7 @@ describe("GitHubConnectionPanel", () => {
         updatedAt: "2026-05-16T18:00:00.000Z",
       },
       missingAppKeys: [],
+      missingAuthorKeys: [],
       missingWebhookKeys: [],
       primaryProfile: null,
       repositories: [repo1, repo2],

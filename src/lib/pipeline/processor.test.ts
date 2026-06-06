@@ -6,39 +6,56 @@ import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
-const mocked = vi.hoisted(() => ({
-  createSupabaseAdminClient: vi.fn(),
-  createAgentRunner: vi.fn(),
-  createSessionSandbox: vi.fn().mockResolvedValue({
-    id: "sandbox-1",
-    repoPath: "/vercel/sandbox",
-    exec: vi.fn(),
-    readFile: vi.fn(),
-    stop: vi.fn().mockResolvedValue(undefined),
-    writeFile: vi.fn(),
-  }),
-  getCodexCredentialForSession: vi.fn().mockResolvedValue({
-    expiresAt: null,
-    secret: "codex-token",
-    type: "codex_access_token",
-  }),
-  getClaudeCodeCredentialForSession: vi.fn().mockResolvedValue({
-    secret: "sk-ant-test",
-  }),
-  octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
-  loadStageById: vi.fn(),
-  loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
-  loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
-  loadWorkspaceAgentConfig: vi.fn(),
-  renderStagePrompt: vi.fn(() => "rendered prompt"),
-  openSessionPullRequest: vi.fn().mockResolvedValue({
-    kind: "success",
-    isDraft: false,
-    prNumber: 42,
-    prState: "open",
-    prUrl: "https://github.com/acme/app/pull/42",
-  }),
-}));
+const mocked = vi.hoisted(() => {
+  class GitHubAuthorMissingError extends Error {
+    readonly code = "github_author_missing";
+    readonly statusCode = 409;
+
+    constructor(message = "Connect your GitHub commit author identity before starting Wallie.") {
+      super(message);
+      this.name = "GitHubAuthorMissingError";
+    }
+  }
+
+  return {
+    GitHubAuthorMissingError,
+    createSupabaseAdminClient: vi.fn(),
+    createAgentRunner: vi.fn(),
+    createSessionSandbox: vi.fn().mockResolvedValue({
+      id: "sandbox-1",
+      repoPath: "/vercel/sandbox",
+      exec: vi.fn(),
+      readFile: vi.fn(),
+      stop: vi.fn().mockResolvedValue(undefined),
+      writeFile: vi.fn(),
+    }),
+    getCodexCredentialForSession: vi.fn().mockResolvedValue({
+      expiresAt: null,
+      secret: "codex-token",
+      type: "codex_access_token",
+    }),
+    getClaudeCodeCredentialForSession: vi.fn().mockResolvedValue({
+      secret: "sk-ant-test",
+    }),
+    octokitRequest: vi.fn().mockResolvedValue({ data: { token: "gh-token" } }),
+    loadStageById: vi.fn(),
+    loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
+    loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
+    loadWorkspaceAgentConfig: vi.fn(),
+    renderStagePrompt: vi.fn(() => "rendered prompt"),
+    resolveCommitAuthorForRun: vi.fn().mockResolvedValue({
+      email: "12345+anant@users.noreply.github.com",
+      name: "Anant Jain",
+    }),
+    openSessionPullRequest: vi.fn().mockResolvedValue({
+      kind: "success",
+      isDraft: false,
+      prNumber: 42,
+      prState: "open",
+      prUrl: "https://github.com/acme/app/pull/42",
+    }),
+  };
+});
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
@@ -95,6 +112,11 @@ vi.mock("@/lib/claude-code/tokens", () => ({
 
 vi.mock("@/features/github/config", () => ({
   resolveGitHubAppConfig: vi.fn(() => ({})),
+}));
+
+vi.mock("@/features/github/author-identity", () => ({
+  GitHubAuthorMissingError: mocked.GitHubAuthorMissingError,
+  resolveCommitAuthorForRun: mocked.resolveCommitAuthorForRun,
 }));
 
 vi.mock("@octokit/app", () => ({
@@ -569,6 +591,10 @@ describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.loadStageById.mockResolvedValue(productStage);
+    mocked.resolveCommitAuthorForRun.mockResolvedValue({
+      email: "12345+anant@users.noreply.github.com",
+      name: "Anant Jain",
+    });
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
         { type: "text", text: "Drafted spec body" },
@@ -1016,6 +1042,49 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
+  it("passes the resolved requester commit author into sandbox creation", async () => {
+    const session = baseSession({ creator_member_id: "mem-creator" });
+    const job = baseJob({ requested_by_member_id: "mem-requester" });
+    const { admin } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job });
+
+    expect(result.result).toBe("success");
+    expect(mocked.resolveCommitAuthorForRun).toHaveBeenCalledWith(admin, {
+      fallbackMemberId: "mem-creator",
+      requestedByMemberId: "mem-requester",
+    });
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commitAuthor: {
+          email: "12345+anant@users.noreply.github.com",
+          name: "Anant Jain",
+        },
+      }),
+    );
+  });
+
+  it("blocks before sandbox creation when the requester has no commit author identity", async () => {
+    mocked.resolveCommitAuthorForRun.mockRejectedValueOnce(
+      new Error("Connect your GitHub commit author identity before starting Wallie."),
+    );
+    const session = baseSession({ creator_member_id: "mem-creator" });
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({ requested_by_member_id: "mem-requester" }),
+    });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
+  });
+
   it("aborts the stage when persisting the sandbox id fails", async () => {
     const session = baseSession();
     const { admin, insertedArtifacts, updatedRuns, updatedSessions } = buildAdminMock({
@@ -1061,13 +1130,32 @@ describe("processPipelineJob (generic stage runner)", () => {
 
 // ---- handleApproval -----------------------------------------------------
 
+function buildApprovalAdmin(rpc: ReturnType<typeof vi.fn>, session = baseSession()) {
+  return createProcessorTestAdminClient({
+    from: (name: string) => {
+      if (name !== "sessions") return {};
+
+      return {
+        select: () => {
+          const builder = {
+            eq: () => builder,
+            maybeSingle: async () => ({ data: session, error: null }),
+          };
+          return builder;
+        },
+      };
+    },
+    rpc: rpc as (fn: string, args?: unknown) => unknown,
+  });
+}
+
 describe("handleApproval", () => {
   it("calls approve_session_stage with the approver id and returns success on a non-empty result", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: [{ id: "sess-1", current_stage_id: "stage-design" }],
       error: null,
     });
-    const admin = createProcessorTestAdminClient({ from: () => ({}), rpc });
+    const admin = buildApprovalAdmin(rpc);
     const result = await handleApproval({
       admin,
       approverMemberId: "mem-1",
@@ -1087,7 +1175,7 @@ describe("handleApproval", () => {
   it("returns an authorization error when the RPC returns an empty result", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
     const result = await handleApproval({
-      admin: createProcessorTestAdminClient({ from: () => ({}), rpc }),
+      admin: buildApprovalAdmin(rpc),
       approverMemberId: null,
       expectedWorkspaceId: "ws-1",
       sessionId: "sess-1",
@@ -1095,6 +1183,27 @@ describe("handleApproval", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("not authorized");
+  });
+
+  it("blocks approval before the stage RPC when the approver has no commit author identity", async () => {
+    mocked.resolveCommitAuthorForRun.mockRejectedValueOnce(
+      new mocked.GitHubAuthorMissingError("Connect your GitHub commit author identity first."),
+    );
+    const rpc = vi.fn();
+
+    const result = await handleApproval({
+      admin: buildApprovalAdmin(rpc),
+      approverMemberId: "mem-1",
+      expectedWorkspaceId: "ws-1",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      error: "Connect your GitHub commit author identity first.",
+      success: false,
+    });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
@@ -1424,6 +1533,36 @@ describe("handleRejection", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("Version mismatch");
+  });
+
+  it("blocks rejection before feedback or CAS writes when the requester has no commit author identity", async () => {
+    mocked.resolveCommitAuthorForRun.mockRejectedValueOnce(
+      new mocked.GitHubAuthorMissingError("Connect your GitHub commit author identity first."),
+    );
+    const session = baseSession({
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+    });
+    const { admin, enqueuedJobs, insertedFeedback, sessionUpdates } = buildRejectionMock({
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      error: "Connect your GitHub commit author identity first.",
+      success: false,
+    });
+    expect(sessionUpdates).toHaveLength(0);
+    expect(insertedFeedback).toHaveLength(0);
+    expect(enqueuedJobs).toHaveLength(0);
   });
 
   it("rejects with 'race' when the rejection_count CAS finds no matching row", async () => {

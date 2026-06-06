@@ -44,6 +44,36 @@ const LEGACY_ANCHOR_REDIRECTS: Record<string, string> = {
 };
 
 function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]) {
+  switch (searchState.githubAuthorStatus) {
+    case "connected":
+      return {
+        kind: "success",
+        text: "GitHub commit author connected.",
+      } satisfies FlashMessage;
+    case "config_missing":
+      return {
+        kind: "error",
+        text: "GitHub author authorization completed, but Wallie is missing server config needed to save it.",
+      } satisfies FlashMessage;
+    case "wrong_user":
+      return {
+        kind: "error",
+        text: "GitHub author authorization returned for a different signed-in Wallie user.",
+      } satisfies FlashMessage;
+    case "failed":
+      return {
+        kind: "error",
+        text: "GitHub author authorization failed. Try connecting again.",
+      } satisfies FlashMessage;
+    case "invalid_state":
+      return {
+        kind: "error",
+        text: "GitHub author authorization state expired or could not be verified. Start the flow again from settings.",
+      } satisfies FlashMessage;
+    default:
+      break;
+  }
+
   switch (searchState.githubStatus) {
     case "connected":
       return {

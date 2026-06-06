@@ -83,6 +83,11 @@ export type SandboxCheckoutMode =
   /** Clone and check out an existing PR branch (review phase). */
   | { kind: "checkout-pr"; prBranch: string };
 
+export type SandboxCommitAuthor = {
+  email: string;
+  name: string;
+};
+
 /**
  * Summary of a running sandbox returned by `listRunningSandboxes`. The
  * reaper uses these fields to decide whether a sandbox is an orphan worth
@@ -105,6 +110,8 @@ export interface CreateSessionSandboxInput {
   baseBranch: string;
   /** Short-lived GitHub App installation token — passed as clone credentials + push credentials. */
   installationToken: string;
+  /** Git commit metadata used by agent commits pushed from the sandbox. */
+  commitAuthor: SandboxCommitAuthor;
   agentProvider: AgentProvider;
   /**
    * Override the configured sandbox implementation. Capability checks use this

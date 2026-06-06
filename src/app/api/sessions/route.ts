@@ -4,6 +4,7 @@ import {
   createSessionPayloadSchema,
   normalizeCreateSessionPayload,
 } from "@/features/sessions/create";
+import { resolveCommitAuthorForMember } from "@/features/github/author-identity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import { enqueueWallieRun } from "@/lib/wallie/service";
@@ -167,6 +168,15 @@ export async function POST(request: Request) {
   }
 
   const admin = createSupabaseAdminClient();
+  const commitAuthor = await resolveCommitAuthorForMember(admin, access.context.currentMember.id);
+
+  if (!commitAuthor) {
+    return NextResponse.json(
+      { error: "Connect your GitHub commit author identity before starting Wallie." },
+      { status: 409 },
+    );
+  }
+
   let githubRepositoryId: string | null = null;
   try {
     if (normalized.githubRepositoryId) {

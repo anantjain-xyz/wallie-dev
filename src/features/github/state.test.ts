@@ -2,6 +2,11 @@ import { createHmac } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  buildGitHubNoReplyEmail,
+  createGitHubAuthorState,
+  verifyGitHubAuthorState,
+} from "@/features/github/author-identity";
 import { createGitHubInstallState, verifyGitHubInstallState } from "@/features/github/state";
 import { verifyGitHubWebhookRequest } from "@/features/github/webhooks";
 
@@ -77,6 +82,34 @@ describe("github install state", () => {
     expect(signature).toBeTruthy();
     expect(verifyGitHubInstallState(`${tamperedPayload}.${signature}`, testEnv)).toBeNull();
     expect(verifyGitHubInstallState(`${payload}.invalid`, testEnv)).toBeNull();
+  });
+});
+
+describe("github author state", () => {
+  it("round-trips a signed author authorization state payload", () => {
+    const token = createGitHubAuthorState(
+      {
+        source: "settings",
+        userId: "user-123",
+        workspaceId: "workspace-123",
+        workspaceSlug: "northwind-labs",
+      },
+      testEnv,
+    );
+
+    expect(verifyGitHubAuthorState(token, testEnv)).toMatchObject({
+      source: "settings",
+      userId: "user-123",
+      version: 1,
+      workspaceId: "workspace-123",
+      workspaceSlug: "northwind-labs",
+    });
+  });
+
+  it("derives the GitHub no-reply commit email without using private email", () => {
+    expect(buildGitHubNoReplyEmail(12345, "OctoCat")).toBe(
+      "12345+octocat@users.noreply.github.com",
+    );
   });
 });
 

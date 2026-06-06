@@ -6,6 +6,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
+import {
+  GitHubAuthorMissingError,
+  resolveCommitAuthorForRun,
+} from "@/features/github/author-identity";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import {
   buildWallieBlockingReasons,
@@ -26,13 +30,21 @@ type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type SessionForRun = Pick<
   Tables<"sessions">,
-  "created_at" | "current_stage_id" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+  | "created_at"
+  | "creator_member_id"
+  | "current_stage_id"
+  | "id"
+  | "number"
+  | "prompt_md"
+  | "title"
+  | "workspace_id"
 >;
 type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
 
-const sessionSelect = "id, workspace_id, number, title, prompt_md, current_stage_id, created_at";
+const sessionSelect =
+  "id, workspace_id, number, title, prompt_md, creator_member_id, current_stage_id, created_at";
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
@@ -187,6 +199,29 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
   });
 }
 
+async function assertCommitAuthorForRun(input: {
+  admin: AdminClient;
+  fallbackMemberId: string | null | undefined;
+  requestedByMemberId: string | null | undefined;
+}) {
+  try {
+    await resolveCommitAuthorForRun(input.admin, {
+      fallbackMemberId: input.fallbackMemberId,
+      requestedByMemberId: input.requestedByMemberId,
+    });
+  } catch (error) {
+    if (error instanceof GitHubAuthorMissingError) {
+      throw new WallieActionError({
+        code: "github_author_missing",
+        message: error.message,
+        statusCode: error.statusCode,
+      });
+    }
+
+    throw error;
+  }
+}
+
 function createRunInsert(input: {
   sessionId: string;
   jobId: string;
@@ -254,7 +289,14 @@ async function loadSessionForRun(
 
   return data as Pick<
     Tables<"sessions">,
-    "created_at" | "current_stage_id" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+    | "created_at"
+    | "creator_member_id"
+    | "current_stage_id"
+    | "id"
+    | "number"
+    | "prompt_md"
+    | "title"
+    | "workspace_id"
   >;
 }
 
@@ -458,6 +500,7 @@ async function waitForRunByJobId(
 
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
+  requestedByMemberId?: string | null;
   sessionId: string | null;
   requestedRunType?: WallieRunMode;
   supabase: SupabaseServerClient;
@@ -517,6 +560,12 @@ async function validateQueuedRunRequest(input: {
   if (blockingError) {
     throw blockingError;
   }
+
+  await assertCommitAuthorForRun({
+    admin: input.admin,
+    fallbackMemberId: session.creator_member_id,
+    requestedByMemberId: input.requestedByMemberId,
+  });
 
   return {
     activeRun,
@@ -634,6 +683,7 @@ export async function enqueueWallieRun(input: {
   const admin = input.admin ?? createSupabaseAdminClient();
   const validated = await validateQueuedRunRequest({
     admin,
+    requestedByMemberId: input.requestedByMemberId,
     sessionId: input.sessionId,
     supabase: input.supabase,
     workspace: input.workspace,
@@ -687,6 +737,7 @@ export async function retryWallieRun(input: {
 
   const validated = await validateQueuedRunRequest({
     admin,
+    requestedByMemberId: input.requestedByMemberId,
     sessionId: existingRun.session_id,
     requestedRunType: parseWallieRunMode(existingRun.run_type),
     supabase: input.supabase,

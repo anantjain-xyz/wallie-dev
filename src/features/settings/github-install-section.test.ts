@@ -46,29 +46,33 @@ function repository(
 }
 
 function github(overrides: Partial<SettingsPageData["github"]> = {}): SettingsPageData["github"] {
+  const defaultInstallation = {
+    appId: 123,
+    id: "installation-1",
+    installationId: 456,
+    installationUrl: "https://github.com/settings/installations/456",
+    permissions: {},
+    suspended: false,
+    targetName: "acme",
+    targetType: "Organization",
+    updatedAt: "2026-05-16T18:00:00.000Z",
+  };
+
   return {
-    installation: {
-      appId: 123,
-      id: "installation-1",
-      installationId: 456,
-      installationUrl: "https://github.com/settings/installations/456",
-      permissions: {},
-      suspended: false,
-      targetName: "acme",
-      targetType: "Organization",
-      updatedAt: "2026-05-16T18:00:00.000Z",
-    },
-    missingAppKeys: [],
-    missingWebhookKeys: [],
-    primaryProfile: null,
-    repositories: [
+    authorIdentity: overrides.authorIdentity ?? null,
+    installation:
+      overrides.installation === undefined ? defaultInstallation : overrides.installation,
+    missingAppKeys: overrides.missingAppKeys ?? [],
+    missingAuthorKeys: overrides.missingAuthorKeys ?? [],
+    missingWebhookKeys: overrides.missingWebhookKeys ?? [],
+    primaryProfile: overrides.primaryProfile ?? null,
+    repositories: overrides.repositories ?? [
       repository("not-set-up", "not_set_up"),
       repository("pr-open", "pr_open"),
       repository("ready", "ready"),
       repository("conflict", "conflict"),
       repository("error", "error"),
     ],
-    ...overrides,
   };
 }
 

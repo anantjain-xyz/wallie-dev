@@ -3,6 +3,11 @@ import "server-only";
 import { App } from "@octokit/app";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  GitHubAuthorMissingError,
+  resolveCommitAuthorForMember,
+  type GitHubCommitAuthor,
+} from "@/features/github/author-identity";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import {
@@ -308,6 +313,7 @@ async function readExistingFile(input: {
 
 async function createSetupPullRequest(input: {
   baseBranch: string;
+  commitAuthor: GitHubCommitAuthor;
   files: readonly { content: string; path: string }[];
   octokit: InstallationOctokit;
   owner: string;
@@ -352,6 +358,10 @@ async function createSetupPullRequest(input: {
   const { data: commit } = await input.octokit.request<{ sha: string }>(
     "POST /repos/{owner}/{repo}/git/commits",
     {
+      author: {
+        email: input.commitAuthor.email,
+        name: input.commitAuthor.name,
+      },
       message: "chore: set up Wallie workflow skills",
       owner: input.owner,
       parents: [baseRef.object.sha],
@@ -390,6 +400,7 @@ export async function startRepositoryOnboarding(input: {
   admin: AdminClient;
   githubAppFactory?: () => GitHubAppLike;
   repositoryId: string;
+  requestedByMemberId: string;
   workspaceId: string;
 }): Promise<StartRepositoryOnboardingResult> {
   const { installation, repository } = await loadRepository(input.admin, input);
@@ -443,9 +454,18 @@ export async function startRepositoryOnboarding(input: {
     return { onboarding };
   }
 
+  const commitAuthor = await resolveCommitAuthorForMember(input.admin, input.requestedByMemberId);
+
+  if (!commitAuthor) {
+    throw new GitHubAuthorMissingError(
+      "Connect your GitHub commit author identity before creating setup PRs.",
+    );
+  }
+
   try {
     const pr = await createSetupPullRequest({
       baseBranch,
+      commitAuthor,
       files: plan.filesToCreate,
       octokit,
       owner,

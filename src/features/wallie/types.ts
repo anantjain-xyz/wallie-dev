@@ -9,7 +9,8 @@ export type WallieBlockingCode =
   | "active_run"
   | "missing_secret"
   | "repository_archived"
-  | "repository_unavailable";
+  | "repository_unavailable"
+  | "github_author_missing";
 
 export type WallieActionErrorCode =
   | WallieBlockingCode

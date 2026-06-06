@@ -167,8 +167,8 @@ async function runSetup(
   // in .git/config. Store the token in a credential helper as a belt-and-suspenders.
   const script = [
     `set -euo pipefail`,
-    `git -C ${shellQuote(REPO_PATH)} config user.email "wallie@wallie.cc"`,
-    `git -C ${shellQuote(REPO_PATH)} config user.name "Wallie"`,
+    `git -C ${shellQuote(REPO_PATH)} config user.email ${shellQuote(input.commitAuthor.email)}`,
+    `git -C ${shellQuote(REPO_PATH)} config user.name ${shellQuote(input.commitAuthor.name)}`,
     `git -C ${shellQuote(REPO_PATH)} ${checkoutArgs}`,
     `printf "https://x-access-token:%s@github.com\\n" "$GH_TOKEN" > $HOME/.git-credentials`,
     `chmod 600 $HOME/.git-credentials`,

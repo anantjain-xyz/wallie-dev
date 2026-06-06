@@ -4,6 +4,7 @@ import {
   repositoryOnboardingManualReadyPayloadSchema,
   repositoryOnboardingParamsSchema,
 } from "@/lib/repo-onboarding/contracts";
+import { GitHubAuthorMissingError } from "@/features/github/author-identity";
 import {
   getRepositoryOnboardingState,
   markRepositoryOnboardingReady,
@@ -33,10 +34,18 @@ async function authorize(context: RouteContext) {
     return { error: access.error, status: access.status };
   }
 
-  return { parsed: parsed.data, status: 200 as const };
+  return {
+    currentMemberId: access.context.currentMember.id,
+    parsed: parsed.data,
+    status: 200 as const,
+  };
 }
 
-function manualReadyErrorResponse(error: unknown) {
+function repositoryOnboardingErrorResponse(error: unknown) {
+  if (error instanceof GitHubAuthorMissingError) {
+    return NextResponse.json({ error: error.message }, { status: error.statusCode });
+  }
+
   const message = error instanceof Error ? error.message : null;
   if (message === "Repository not found.") {
     return NextResponse.json({ error: message }, { status: 404 });
@@ -74,11 +83,17 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  const result = await startRepositoryOnboarding({
-    admin,
-    repositoryId: authorized.parsed.repositoryId,
-    workspaceId: authorized.parsed.workspaceId,
-  });
+  let result;
+  try {
+    result = await startRepositoryOnboarding({
+      admin,
+      repositoryId: authorized.parsed.repositoryId,
+      requestedByMemberId: authorized.currentMemberId,
+      workspaceId: authorized.parsed.workspaceId,
+    });
+  } catch (caught) {
+    return repositoryOnboardingErrorResponse(caught);
+  }
 
   return NextResponse.json(result, { status: 200 });
 }
@@ -113,7 +128,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       workspaceId: authorized.parsed.workspaceId,
     });
   } catch (caught) {
-    return manualReadyErrorResponse(caught);
+    return repositoryOnboardingErrorResponse(caught);
   }
 
   return NextResponse.json(result, { status: 200 });

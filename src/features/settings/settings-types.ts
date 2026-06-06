@@ -4,6 +4,7 @@ export type SettingsPageClientProps = {
   initialData: SettingsPageData;
   searchState: {
     githubStatus: string | null;
+    githubAuthorStatus: string | null;
     codexStatus: string | null;
   };
 };

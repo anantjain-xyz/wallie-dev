@@ -116,8 +116,9 @@ function workspaceSecret(
 
 type OnboardingDataOverrides = Omit<
   Partial<WorkspaceOnboardingData>,
-  "onboarding" | "setupHealth" | "workspace"
+  "github" | "onboarding" | "setupHealth" | "workspace"
 > & {
+  github?: Partial<WorkspaceOnboardingData["github"]>;
   onboarding?: Partial<WorkspaceOnboardingData["onboarding"]>;
   setupHealth?: Partial<WorkspaceOnboardingData["setupHealth"]>;
   workspace?: Partial<WorkspaceOnboardingData["workspace"]>;
@@ -126,6 +127,7 @@ type OnboardingDataOverrides = Omit<
 function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboardingData {
   const pipeline = overrides.pipeline === undefined ? configuredPipeline : overrides.pipeline;
   const {
+    github: githubOverride,
     onboarding: onboardingOverride,
     setupHealth: setupHealthOverride,
     workspace: workspaceOverride,
@@ -140,11 +142,13 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
     canManage: true,
     currentMember: { id: "member-1", role: "owner" },
     github: {
-      installation: null,
-      missingAppKeys: [],
-      missingWebhookKeys: [],
-      primaryProfile: null,
-      repositories: [],
+      authorIdentity: githubOverride?.authorIdentity ?? null,
+      installation: githubOverride?.installation ?? null,
+      missingAppKeys: githubOverride?.missingAppKeys ?? [],
+      missingAuthorKeys: githubOverride?.missingAuthorKeys ?? [],
+      missingWebhookKeys: githubOverride?.missingWebhookKeys ?? [],
+      primaryProfile: githubOverride?.primaryProfile ?? null,
+      repositories: githubOverride?.repositories ?? [],
     },
     linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
     linearSecret: null,

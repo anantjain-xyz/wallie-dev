@@ -19,11 +19,15 @@ describe("parseServerEnv", () => {
     const parsed = parseServerEnv({
       ...validEnv,
       GITHUB_APP_ID: "",
+      GITHUB_APP_CLIENT_ID: "",
+      GITHUB_APP_CLIENT_SECRET: "",
       GITHUB_APP_PRIVATE_KEY: "",
       GITHUB_WEBHOOK_SECRET: "",
     });
 
     expect(parsed.GITHUB_APP_ID).toBeUndefined();
+    expect(parsed.GITHUB_APP_CLIENT_ID).toBeUndefined();
+    expect(parsed.GITHUB_APP_CLIENT_SECRET).toBeUndefined();
     expect(parsed.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
     expect(parsed.GITHUB_WEBHOOK_SECRET).toBeUndefined();
   });
