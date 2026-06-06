@@ -276,10 +276,16 @@ async function runStage(input: {
         workspaceId: session.workspace_id,
       });
 
-      if (prOutcome.kind !== "success" && prOutcome.kind !== "no_commits") {
-        // PR plumbing is recoverable — the artifact is durable and the reviewer
-        // can approve the artifact directly. Surface the failure for ops without
-        // blocking the stage.
+      // PR plumbing is recoverable — the artifact is durable and the reviewer
+      // can approve the artifact directly — so we never block the stage. But we
+      // always surface the outcome: `no_commits` used to be fully silent, which
+      // is exactly how empty `session_pull_requests` went unnoticed.
+      if (prOutcome.kind === "no_commits") {
+        console.info("Stage produced no pull request (no commits ahead of base)", {
+          sessionId: session.id,
+          stageSlug: stage.slug,
+        });
+      } else if (prOutcome.kind !== "success") {
         console.error("Failed to open session pull request", {
           kind: prOutcome.kind,
           reason: prOutcome.reason,

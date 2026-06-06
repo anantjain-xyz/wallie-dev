@@ -54,15 +54,41 @@ function makeAppFactory(octokit: { request: unknown }): GithubAppFactory {
     }) as unknown as ReturnType<GithubAppFactory>;
 }
 
-function scriptHappyPathSandbox(sandbox: FakeSandbox) {
-  // git rev-list base..HEAD --count → "1\n" (one commit ahead).
-  sandbox.scriptExec(
-    (call) => call.cmd === "bash" && call.args.join(" ").includes("rev-list"),
-    [{ stream: "stdout", data: "1\n" }],
-  );
-  // git push --force origin <branch> → exit 0.
-  sandbox.scriptExec((call) => call.cmd === "bash" && call.args.join(" ").includes("git push"), []);
+/** A 422 GitHub error shaped like octokit's RequestError (detail in `errors`). */
+function github422(detailMessage: string): Error {
+  return Object.assign(new Error("Validation Failed"), {
+    status: 422,
+    errors: [{ message: detailMessage }],
+  });
 }
+
+/** Script the sandbox commit-ahead probe (`git merge-base --is-ancestor`). */
+function scriptCommitsAhead(sandbox: FakeSandbox, verdict: "NONE" | "AHEAD" | "UNKNOWN") {
+  sandbox.scriptExec(
+    (call) => call.cmd === "bash" && call.args.join(" ").includes("merge-base"),
+    [{ stream: "stdout", data: `${verdict}\n` }],
+  );
+}
+
+function scriptPush(sandbox: FakeSandbox, opts: { fail?: boolean } = {}) {
+  sandbox.scriptExec(
+    (call) => call.cmd === "bash" && call.args.join(" ").includes("push --force"),
+    opts.fail ? [{ stream: "stderr", data: "remote: Permission denied\n" }] : [],
+    opts.fail ? { exitCode: 1 } : {},
+  );
+}
+
+function scriptBranchDelete(sandbox: FakeSandbox) {
+  sandbox.scriptExec((call) => call.cmd === "bash" && call.args.join(" ").includes("--delete"), []);
+}
+
+const openPr = {
+  draft: false,
+  html_url: "https://github.com/acme/app/pull/42",
+  merged_at: null,
+  number: 42,
+  state: "open" as const,
+};
 
 const baseInput = {
   baseBranch: "main",
@@ -81,39 +107,10 @@ describe("openSessionPullRequest", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns no_commits when the working branch is even with base", async () => {
+  it("records the PR the stage agent already opened, without touching the sandbox", async () => {
     const sandbox = new FakeSandbox();
-    sandbox.scriptExec(
-      (call) => call.cmd === "bash" && call.args.join(" ").includes("rev-list"),
-      [{ stream: "stdout", data: "0\n" }],
-    );
-    const octokit = makeOctokitWithSequence([]);
-    const { admin, upserts } = buildAdminMock();
-
-    const outcome = await openSessionPullRequest({
-      ...baseInput,
-      admin: admin as never,
-      githubAppFactory: makeAppFactory(octokit),
-      sandbox,
-    });
-
-    expect(outcome).toEqual({ kind: "no_commits" });
-    expect(octokit.calls).toHaveLength(0);
-    expect(upserts).toHaveLength(0);
-  });
-
-  it("pushes, opens the PR, and upserts the session_pull_requests row", async () => {
-    const sandbox = new FakeSandbox();
-    scriptHappyPathSandbox(sandbox);
-    const octokit = makeOctokitWithSequence([
-      {
-        draft: false,
-        html_url: "https://github.com/acme/app/pull/42",
-        merged_at: null,
-        number: 42,
-        state: "open",
-      },
-    ]);
+    // pulls.list (find existing) returns the agent's PR.
+    const octokit = makeOctokitWithSequence([[openPr]]);
     const { admin, upserts } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
@@ -130,22 +127,17 @@ describe("openSessionPullRequest", () => {
       prState: "open",
       prUrl: "https://github.com/acme/app/pull/42",
     });
-    expect(octokit.calls).toEqual([
-      {
-        route: "POST /repos/{owner}/{repo}/pulls",
-        params: {
-          base: "main",
-          body: "spec body",
-          head: "wallie/product-sess-1",
-          owner: "acme",
-          repo: "app",
-          title: "Product: Add SSO",
-        },
-      },
-    ]);
+    // No create, no git work — GitHub already had the PR.
+    expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
+    expect(octokit.calls[0]!.params).toMatchObject({
+      head: "acme:wallie/product-sess-1",
+      owner: "acme",
+      repo: "app",
+      state: "all",
+    });
+    expect(sandbox.calls).toHaveLength(0);
     expect(upserts).toHaveLength(1);
-    const { row, options } = upserts[0]!;
-    expect(row).toEqual({
+    expect(upserts[0]!.row).toEqual({
       branch_name: "wallie/product-sess-1",
       github_repository_id: "repo-1",
       is_draft: false,
@@ -155,26 +147,33 @@ describe("openSessionPullRequest", () => {
       session_id: "sess-1",
       workspace_id: "ws-1",
     });
-    expect(options).toEqual({ onConflict: "workspace_id,branch_name" });
+    expect(upserts[0]!.options).toEqual({ onConflict: "workspace_id,branch_name" });
   });
 
-  it("recovers an existing PR via pulls.list when pulls.create returns 422 already_exists", async () => {
+  it("prefers an open PR over a stale closed one for the same branch", async () => {
     const sandbox = new FakeSandbox();
-    scriptHappyPathSandbox(sandbox);
-    const alreadyExists = Object.assign(new Error("A pull request already exists for the branch"), {
-      status: 422,
+    const closed = { ...openPr, number: 40, state: "closed" as const, merged_at: null };
+    const octokit = makeOctokitWithSequence([[closed, openPr]]);
+    const { admin, upserts } = buildAdminMock();
+
+    await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
     });
+
+    expect(upserts[0]!.row.pull_request_number).toBe(42);
+    expect(upserts[0]!.row.pull_request_state).toBe("open");
+  });
+
+  it("pushes and opens a PR when none exists and the branch is ahead of base", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
     const octokit = makeOctokitWithSequence([
-      alreadyExists,
-      [
-        {
-          draft: true,
-          html_url: "https://github.com/acme/app/pull/41",
-          merged_at: null,
-          number: 41,
-          state: "open",
-        },
-      ],
+      [], // no existing PR
+      openPr, // create succeeds
     ]);
     const { admin, upserts } = buildAdminMock();
 
@@ -187,6 +186,63 @@ describe("openSessionPullRequest", () => {
 
     expect(outcome.kind).toBe("success");
     expect(octokit.calls.map((c) => c.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls",
+      "POST /repos/{owner}/{repo}/pulls",
+    ]);
+    expect(octokit.calls[1]!.params).toEqual({
+      base: "main",
+      body: "spec body",
+      head: "wallie/product-sess-1",
+      owner: "acme",
+      repo: "app",
+      title: "Product: Add SSO",
+    });
+    expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
+    expect(upserts[0]!.row.pull_request_number).toBe(42);
+  });
+
+  it("returns no_commits without pushing when no PR exists and the branch is not ahead", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const octokit = makeOctokitWithSequence([[]]); // no existing PR
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome).toEqual({ kind: "no_commits" });
+    // Only the existence check hit GitHub; we never tried to create.
+    expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
+    // No branch was pushed, so nothing to clean up.
+    expect(sandbox.calls.some((c) => c.args.join(" ").includes("push"))).toBe(false);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("recovers via pulls.list when create races and returns 422 already_exists", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const octokit = makeOctokitWithSequence([
+      [], // initial lookup: none
+      github422("A pull request already exists for acme:wallie/product-sess-1"),
+      [{ ...openPr, number: 41, draft: true }], // recovery lookup
+    ]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("success");
+    expect(octokit.calls.map((c) => c.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls",
       "POST /repos/{owner}/{repo}/pulls",
       "GET /repos/{owner}/{repo}/pulls",
     ]);
@@ -194,18 +250,35 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.row.is_draft).toBe(true);
   });
 
-  it("returns push_failed without calling Octokit when git push fails", async () => {
+  it("returns no_commits and deletes the pushed branch when GitHub reports no commits between", async () => {
     const sandbox = new FakeSandbox();
-    sandbox.scriptExec(
-      (call) => call.cmd === "bash" && call.args.join(" ").includes("rev-list"),
-      [{ stream: "stdout", data: "1\n" }],
-    );
-    sandbox.scriptExec(
-      (call) => call.cmd === "bash" && call.args.join(" ").includes("git push"),
-      [{ stream: "stderr", data: "remote: Permission denied\n" }],
-      { exitCode: 1 },
-    );
-    const octokit = makeOctokitWithSequence([]);
+    // commit probe can't decide (shallow boundary) → fall through to GitHub.
+    scriptCommitsAhead(sandbox, "UNKNOWN");
+    scriptPush(sandbox);
+    scriptBranchDelete(sandbox);
+    const octokit = makeOctokitWithSequence([
+      [], // no existing PR
+      github422("No commits between main and wallie/product-sess-1"),
+    ]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome).toEqual({ kind: "no_commits" });
+    expect(sandbox.calls.some((c) => c.args.join(" ").includes("--delete"))).toBe(true);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("returns push_failed without calling create when the push fails", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox, { fail: true });
+    const octokit = makeOctokitWithSequence([[]]); // no existing PR
     const { admin, upserts } = buildAdminMock();
 
     const outcome = await openSessionPullRequest({
@@ -216,21 +289,23 @@ describe("openSessionPullRequest", () => {
     });
 
     expect(outcome.kind).toBe("push_failed");
-    expect(octokit.calls).toHaveLength(0);
+    // Only the lookup hit GitHub; we never attempted to create the PR.
+    expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
     expect(upserts).toHaveLength(0);
   });
 
   it("marks the PR state as merged when GitHub reports a merged_at timestamp", async () => {
     const sandbox = new FakeSandbox();
-    scriptHappyPathSandbox(sandbox);
     const octokit = makeOctokitWithSequence([
-      {
-        draft: false,
-        html_url: "https://github.com/acme/app/pull/40",
-        merged_at: "2026-05-01T00:00:00Z",
-        number: 40,
-        state: "closed",
-      },
+      [
+        {
+          draft: false,
+          html_url: "https://github.com/acme/app/pull/40",
+          merged_at: "2026-05-01T00:00:00Z",
+          number: 40,
+          state: "closed",
+        },
+      ],
     ]);
     const { admin, upserts } = buildAdminMock();
 
@@ -242,5 +317,39 @@ describe("openSessionPullRequest", () => {
     });
 
     expect(upserts[0]!.row.pull_request_state).toBe("merged");
+  });
+
+  it("returns pr_failed when the upsert fails", async () => {
+    const sandbox = new FakeSandbox();
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    const { admin, upserts } = buildAdminMock({ upsertError: { message: "db down" } });
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome).toEqual({ kind: "pr_failed", reason: "db down" });
+    expect(upserts).toHaveLength(1);
+  });
+
+  it("returns pr_failed for an invalid repo full_name", async () => {
+    const sandbox = new FakeSandbox();
+    const octokit = makeOctokitWithSequence([]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      repoFullName: "no-slash",
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("pr_failed");
+    expect(octokit.calls).toHaveLength(0);
+    expect(upserts).toHaveLength(0);
   });
 });
