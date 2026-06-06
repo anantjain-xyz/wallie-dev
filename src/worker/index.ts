@@ -135,6 +135,10 @@ function runTimerTask(label: string, task: () => Promise<void>): void {
   });
 }
 
+// Process-level crash handlers (uncaughtException / unhandledRejection) are
+// installed by ./scripts/install-crash-handlers.mjs, preloaded via `node
+// --import` so they cover import-time failures in this module's graph too.
+
 // Run the worker.
 main().catch((error) => {
   console.error("[worker] fatal error", { error: error instanceof Error ? error.message : error });

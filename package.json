@@ -18,7 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
-    "worker": "node --env-file-if-exists=.env.local --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts"
+    "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts"
   },
   "dependencies": {
     "@octokit/app": "^16.1.2",
