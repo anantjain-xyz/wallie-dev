@@ -25,6 +25,7 @@ import {
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
+import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 
 import { openSessionPullRequest } from "./pull-request";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
@@ -200,6 +201,10 @@ async function runStage(input: {
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
       const installationToken = await mintInstallationToken(github.installationId);
+      const vercelConnection = await loadRequiredVercelSandboxConnection(
+        admin,
+        session.workspace_id,
+      );
       branch = buildStageBranchName(session.id, stage.slug);
       throwIfAborted(signal);
       sandbox = await createSessionSandbox({
@@ -210,9 +215,14 @@ async function runStage(input: {
         repoFullName: github.repo.full_name,
         signal,
         sessionId: session.id,
+        vercelCredentials: vercelConnection.credentials,
       });
       if (runId) {
-        await updateRunSandbox(admin, runId, sandbox.id);
+        await updateRunSandbox(admin, runId, sandbox.id, {
+          provider: "vercel",
+          projectId: vercelConnection.credentials.projectId,
+          teamId: vercelConnection.credentials.teamId,
+        });
       }
     }
 
@@ -872,10 +882,20 @@ async function updateRunSandbox(
   admin: AdminClient,
   runId: string,
   sandboxId: string,
+  metadata: {
+    projectId: string;
+    provider: "vercel";
+    teamId: string;
+  },
 ): Promise<void> {
   const { error } = await admin
     .from("agent_runs")
-    .update({ sandbox_id: sandboxId })
+    .update({
+      sandbox_id: sandboxId,
+      sandbox_provider: metadata.provider,
+      sandbox_vercel_project_id: metadata.projectId,
+      sandbox_vercel_team_id: metadata.teamId,
+    })
     .eq("id", runId);
   if (error) {
     throw error;

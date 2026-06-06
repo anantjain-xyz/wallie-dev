@@ -29,6 +29,8 @@ import {
   workspaceOnboardingStepSchema,
 } from "@/lib/onboarding/contracts";
 import { type WorkspaceAccessContext, requireWorkspaceAccessById } from "@/lib/workspaces/access";
+import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
+import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 const onboardingSelect =
   "id, workspace_id, status, current_step, selected_github_repository_id, completed_steps, skipped_steps, dismissed_at, completed_at, created_at, updated_at";
@@ -52,6 +54,7 @@ export type WorkspaceOnboardingData = {
   onboarding: WorkspaceOnboardingState;
   pipeline: SessionPipeline | null;
   setupHealth: OnboardingSetupHealth;
+  vercelSandboxConnection: VercelSandboxConnectionPreview | null;
   workspace: {
     id: string;
     name: string;
@@ -238,6 +241,7 @@ async function loadSetupHealth(
     { data: codexCredentials, error: codexError },
     { data: claudeCodeCredentials, error: claudeCodeError },
     { data: sandboxRows, error: sandboxError },
+    vercelSandboxConnection,
   ] = await Promise.all([
     admin
       .from("pipelines")
@@ -270,6 +274,7 @@ async function loadSetupHealth(
       .eq("user_id", context.user.id)
       .maybeSingle(),
     latestSandboxQuery,
+    loadVercelSandboxConnectionPreview(admin, workspaceId),
   ]);
 
   const firstError =
@@ -322,6 +327,25 @@ async function loadSetupHealth(
       updatedAt: github.installation?.updatedAt ?? null,
     },
     latestSandboxCapabilityCheck: mapSandboxCapabilityCheck(sandboxRows?.[0]),
+    vercelSandboxConnection: vercelSandboxConnection
+      ? {
+          connected: vercelSandboxConnection.status === "connected",
+          lastValidationError: vercelSandboxConnection.lastValidationError,
+          projectId: vercelSandboxConnection.projectId,
+          projectName: vercelSandboxConnection.projectName,
+          status: vercelSandboxConnection.status,
+          teamId: vercelSandboxConnection.teamId,
+          updatedAt: vercelSandboxConnection.updatedAt,
+        }
+      : {
+          connected: false,
+          lastValidationError: null,
+          projectId: null,
+          projectName: null,
+          status: "missing",
+          teamId: null,
+          updatedAt: null,
+        },
     linearKey: {
       configured: Boolean(linearSecret),
       status: linearSecret ? "present" : "missing",
@@ -474,6 +498,7 @@ async function buildWorkspaceOnboardingData(
     linearSecret,
     workspaceSecrets,
     agentConfig,
+    vercelSandboxConnection,
   ] = await Promise.all([
     loadSetupHealth(context, github, onboarding.selectedGithubRepositoryId, admin, {
       includeSecretKeyInventory: canManage,
@@ -484,6 +509,7 @@ async function buildWorkspaceOnboardingData(
     canManage ? loadLinearSecretPreview(admin, context.workspace.id) : Promise.resolve(null),
     canManage ? loadWorkspaceSecretPreviews(admin, context.workspace.id) : Promise.resolve([]),
     loadAgentConfig(admin, context.workspace.id),
+    loadVercelSandboxConnectionPreview(admin, context.workspace.id),
   ]);
 
   return {
@@ -499,6 +525,7 @@ async function buildWorkspaceOnboardingData(
     onboarding,
     pipeline,
     setupHealth,
+    vercelSandboxConnection,
     workspace: {
       id: context.workspace.id,
       name: context.workspace.name,

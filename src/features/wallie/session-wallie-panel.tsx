@@ -307,6 +307,7 @@ export function SessionWalliePanel({
     missingSecretKeys: initialData.missingSecretKeys,
     mode: initialData.mode,
     repository: initialData.repository,
+    vercelSandboxConnection: initialData.vercelSandboxConnection,
   }).filter((reason) => reason.code !== "active_run");
 
   async function queueRun(endpoint: string, body: Record<string, string>) {

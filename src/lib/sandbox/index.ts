@@ -1,4 +1,9 @@
-import type { CreateSessionSandboxInput, RunningSandboxSummary, SandboxHandle } from "./types";
+import type {
+  CreateSessionSandboxInput,
+  RunningSandboxSummary,
+  SandboxHandle,
+  VercelSandboxCredentials,
+} from "./types";
 
 export type {
   AgentProvider,
@@ -10,6 +15,7 @@ export type {
   SandboxHandle,
   SandboxImplementation,
   SandboxLogEntry,
+  VercelSandboxCredentials,
 } from "./types";
 export { FakeSandbox } from "./fake";
 
@@ -46,14 +52,17 @@ export async function createSessionSandbox(
  * terminate orphans. Idempotent and best-effort: errors are logged, not
  * thrown, so a single bad ID does not break a batch sweep.
  */
-export async function stopSandboxById(sandboxId: string): Promise<void> {
+export async function stopSandboxById(
+  sandboxId: string,
+  options: { vercelCredentials?: VercelSandboxCredentials } = {},
+): Promise<void> {
   if (resolveImpl() === "fake") {
     const { stopFakeSandboxById } = await import("./fake");
     await stopFakeSandboxById(sandboxId);
     return;
   }
   const { stopVercelSandboxById } = await import("./vercel");
-  await stopVercelSandboxById(sandboxId);
+  await stopVercelSandboxById(sandboxId, options.vercelCredentials);
 }
 
 /**
@@ -61,11 +70,13 @@ export async function stopSandboxById(sandboxId: string): Promise<void> {
  * `running`). The reaper cross-references these against active `agent_runs`
  * rows to find orphans.
  */
-export async function listRunningSandboxes(): Promise<RunningSandboxSummary[]> {
+export async function listRunningSandboxes(
+  options: { vercelCredentials?: VercelSandboxCredentials } = {},
+): Promise<RunningSandboxSummary[]> {
   if (resolveImpl() === "fake") {
     const { listRunningFakeSandboxes } = await import("./fake");
     return listRunningFakeSandboxes();
   }
   const { listRunningVercelSandboxes } = await import("./vercel");
-  return listRunningVercelSandboxes();
+  return listRunningVercelSandboxes(options.vercelCredentials);
 }

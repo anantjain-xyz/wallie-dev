@@ -14,6 +14,7 @@ import type {
   WallieSessionRepository,
   WallieRun,
   WallieRunMessage,
+  WallieVercelSandboxConnectionStatus,
 } from "@/features/wallie/types";
 
 function sortRuns(left: Pick<WallieRun, "createdAt">, right: Pick<WallieRun, "createdAt">) {
@@ -155,6 +156,7 @@ export function buildWallieSessionData(input: {
     | "status"
     | "triggered_by_member_id"
   >[];
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
 }) {
   const messagesByRunId = new Map<string, WallieRunMessage[]>();
 
@@ -181,6 +183,7 @@ export function buildWallieSessionData(input: {
     missingSecretKeys: input.missingSecretKeys,
     mode,
     repository: input.repository,
+    vercelSandboxConnection: input.vercelSandboxConnection,
   });
 
   return {
@@ -191,5 +194,6 @@ export function buildWallieSessionData(input: {
     repository: input.repository,
     requiredSecretKeys: [...WALLIE_REQUIRED_SECRET_KEYS],
     runs,
+    vercelSandboxConnection: input.vercelSandboxConnection,
   } satisfies WallieSessionData;
 }

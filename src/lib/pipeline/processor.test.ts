@@ -30,6 +30,7 @@ const mocked = vi.hoisted(() => ({
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
   loadWorkspaceAgentConfig: vi.fn(),
+  loadRequiredVercelSandboxConnection: vi.fn(),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
   openSessionPullRequest: vi.fn().mockResolvedValue({
     kind: "success",
@@ -70,6 +71,10 @@ vi.mock("@/lib/agent-runner", () => ({
 
 vi.mock("@/lib/sandbox", () => ({
   createSessionSandbox: mocked.createSessionSandbox,
+}));
+
+vi.mock("@/lib/vercel-sandbox/server", () => ({
+  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
 }));
 
 vi.mock("@/lib/codex/tokens", () => ({
@@ -560,6 +565,10 @@ describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.loadStageById.mockResolvedValue(productStage);
+    mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
+      credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      preview: { workspaceId: "ws-1" },
+    });
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
         { type: "text", text: "Drafted spec body" },
@@ -579,6 +588,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job });
 
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      }),
+    );
     expect(insertedArtifacts).toHaveLength(1);
     const artifact = insertedArtifacts[0]!;
     expect(artifact.stage_slug).toBe("product");
@@ -868,6 +882,24 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
+  it("aborts before sandbox creation when Vercel Sandbox is not connected", async () => {
+    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
+      new Error("Connect a Vercel Sandbox account before starting Wallie runs."),
+    );
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
+  });
+
   it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {
     mocked.createSessionSandbox.mockRejectedValueOnce(new Error("vercel sandbox unavailable"));
     const session = baseSession();
@@ -897,7 +929,12 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.runId).toBe("run-1");
     expect(insertedArtifacts).toHaveLength(0);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(updatedRuns[1]).toEqual({ sandbox_id: "sandbox-1" });
+    expect(updatedRuns[1]).toEqual({
+      sandbox_id: "sandbox-1",
+      sandbox_provider: "vercel",
+      sandbox_vercel_project_id: "prj_123",
+      sandbox_vercel_team_id: "team_123",
+    });
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },

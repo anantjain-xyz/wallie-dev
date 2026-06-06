@@ -126,6 +126,15 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
         updatedAt: null,
       },
       latestSandboxCapabilityCheck: null,
+      vercelSandboxConnection: {
+        connected: true,
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
       linearKey: {
         configured: false,
         status: "missing",
@@ -156,6 +165,17 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
       workspaceSecrets: {
         configuredKeys: [],
       },
+    },
+    vercelSandboxConnection: {
+      lastValidatedAt: "2026-05-16T18:00:00.000Z",
+      lastValidationError: null,
+      projectId: "prj_123",
+      projectName: "wallie-sandboxes",
+      status: "connected",
+      teamId: "team_123",
+      tokenPreview: "vca_...123",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+      workspaceId,
     },
     workspace: {
       avatarPath: null,
@@ -886,6 +906,7 @@ describe("Settings integration sections", () => {
           },
         ],
         setFlashMessage: vi.fn(),
+        vercelSandboxConnected: true,
         workspaceId,
       }),
     );

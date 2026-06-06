@@ -77,6 +77,12 @@ export interface SandboxHandle {
 export type AgentProvider = "codex" | "claude-code";
 export type SandboxImplementation = "vercel" | "fake";
 
+export type VercelSandboxCredentials = {
+  projectId: string;
+  teamId: string;
+  token: string;
+};
+
 export type SandboxCheckoutMode =
   /** Clone baseBranch and create a new `branch` from it (default). */
   | { kind: "fresh-branch" }
@@ -116,4 +122,6 @@ export interface CreateSessionSandboxInput {
   timeoutMs?: number;
   /** Optional deadline signal used by bounded route handlers. */
   signal?: AbortSignal;
+  /** Required for Vercel-backed session sandboxes. */
+  vercelCredentials?: VercelSandboxCredentials;
 }

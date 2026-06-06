@@ -66,6 +66,14 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
     },
     requiredSecretKeys: [],
     runs: [run()],
+    vercelSandboxConnection: {
+      connected: true,
+      lastValidationError: null,
+      projectId: "prj_123",
+      projectName: "wallie-sandboxes",
+      status: "connected",
+      teamId: "team_123",
+    },
     ...overrides,
   };
 }

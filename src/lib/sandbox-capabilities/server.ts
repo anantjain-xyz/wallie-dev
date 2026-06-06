@@ -13,6 +13,7 @@ import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider } from "@/lib/sandbox/types";
 import { asLooseSupabaseClient } from "@/lib/supabase/loose";
 import type { Database } from "@/lib/supabase/database.types";
+import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 import {
   capabilityReportSucceeded,
   probeSandboxCapabilities,
@@ -224,6 +225,10 @@ export async function completeSandboxCapabilityCheck(input: {
   try {
     const agentConfig = await loadWorkspaceAgentConfig(input.admin, input.workspaceId);
     const provider = agentConfig.provider as AgentProvider;
+    const vercelConnection = await loadRequiredVercelSandboxConnection(
+      input.admin,
+      input.workspaceId,
+    );
     const installationToken = await mintInstallationToken(input.admin, input.repository);
     if (provider === "codex") {
       await getCodexCredentialForUser(input.admin, input.userId);
@@ -240,6 +245,7 @@ export async function completeSandboxCapabilityCheck(input: {
       repoFullName: input.repository.full_name,
       sessionId: randomUUID(),
       timeoutMs: 30 * 60_000,
+      vercelCredentials: vercelConnection.credentials,
     });
     console.info("[sandbox-capability-check] sandbox started", {
       agentProvider: provider,

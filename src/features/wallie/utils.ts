@@ -6,6 +6,7 @@ import type {
   WallieBlockingReason,
   WallieSessionRepository,
   WallieRunMode,
+  WallieVercelSandboxConnectionStatus,
 } from "@/features/wallie/types";
 
 export function inferWallieRunMode(githubRepositoryId: string | null | undefined): WallieRunMode {
@@ -40,9 +41,11 @@ export function buildWallieBlockingReasons(input: {
   missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
 }) {
   const reasons: WallieBlockingReason[] = [];
   const repositoryIsArchived = input.repository ? input.repository.isArchived : false;
+  const vercelConnection = input.vercelSandboxConnection;
 
   if (input.hasActiveRun) {
     reasons.push({
@@ -70,6 +73,21 @@ export function buildWallieBlockingReasons(input: {
     reasons.push({
       code: "missing_secret",
       message: `Wallie is missing required workspace secrets: ${input.missingSecretKeys.join(", ")}.`,
+    });
+  }
+
+  if (vercelConnection.status === "missing") {
+    reasons.push({
+      code: "vercel_sandbox_connection_missing",
+      message:
+        "Connect a Vercel Sandbox account in workspace settings before starting Wallie runs.",
+    });
+  } else if (!vercelConnection.connected) {
+    reasons.push({
+      code: "vercel_sandbox_connection_invalid",
+      message:
+        vercelConnection.lastValidationError ??
+        "The saved Vercel Sandbox connection is invalid. Reconnect it in workspace settings.",
     });
   }
 

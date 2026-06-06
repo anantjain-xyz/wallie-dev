@@ -89,6 +89,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             preferredRepositoryId={preferredRepositoryId}
             repositories={data.github.repositories}
             setFlashMessage={setFlashMessage}
+            vercelSandboxConnected={data.setupHealth.vercelSandboxConnection.connected}
             workspaceId={data.workspace.id}
           />
         </div>

@@ -156,6 +156,9 @@ export type Database = {
           output_tokens: number | null
           run_type: string
           sandbox_id: string | null
+          sandbox_provider: string | null
+          sandbox_vercel_project_id: string | null
+          sandbox_vercel_team_id: string | null
           session_id: string
           stage_id: string | null
           stage_name: string | null
@@ -179,6 +182,9 @@ export type Database = {
           output_tokens?: number | null
           run_type: string
           sandbox_id?: string | null
+          sandbox_provider?: string | null
+          sandbox_vercel_project_id?: string | null
+          sandbox_vercel_team_id?: string | null
           session_id: string
           stage_id?: string | null
           stage_name?: string | null
@@ -202,6 +208,9 @@ export type Database = {
           output_tokens?: number | null
           run_type?: string
           sandbox_id?: string | null
+          sandbox_provider?: string | null
+          sandbox_vercel_project_id?: string | null
+          sandbox_vercel_team_id?: string | null
           session_id?: string
           stage_id?: string | null
           stage_name?: string | null
@@ -1546,6 +1555,66 @@ export type Database = {
             foreignKeyName: "workspace_secrets_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_vercel_sandbox_connections: {
+        Row: {
+          created_at: string
+          created_by_member_id: string | null
+          encrypted_token: string
+          last_validated_at: string | null
+          last_validation_error: string | null
+          project_id: string
+          project_name: string | null
+          status: string
+          team_id: string
+          token_preview: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_token: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          project_id: string
+          project_name?: string | null
+          status?: string
+          team_id: string
+          token_preview?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_token?: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          project_id?: string
+          project_name?: string | null
+          status?: string
+          team_id?: string
+          token_preview?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_vercel_sandbox_connections_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_vercel_sandbox_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },

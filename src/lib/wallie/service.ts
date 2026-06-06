@@ -17,9 +17,11 @@ import type {
   WallieBlockingReason,
   WallieSessionRepository,
   WallieRunMode,
+  WallieVercelSandboxConnectionStatus,
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { buildWallieJobDedupeKey, WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
+import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -36,7 +38,7 @@ const sessionSelect = "id, workspace_id, number, title, prompt_md, current_stage
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 const DEFAULT_RUN_LOOKUP_RETRY = {
   initialDelayMs: 40,
   maxDelayMs: 640,
@@ -297,6 +299,33 @@ async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
   return [...WALLIE_REQUIRED_SECRET_KEYS].filter((secretKey) => !availableKeys.has(secretKey));
 }
 
+async function loadWallieVercelSandboxConnection(
+  admin: AdminClient,
+  workspaceId: string,
+): Promise<WallieVercelSandboxConnectionStatus> {
+  const connection = await loadVercelSandboxConnectionPreview(admin, workspaceId);
+
+  if (!connection) {
+    return {
+      connected: false,
+      lastValidationError: null,
+      projectId: null,
+      projectName: null,
+      status: "missing",
+      teamId: null,
+    };
+  }
+
+  return {
+    connected: connection.status === "connected",
+    lastValidationError: connection.lastValidationError,
+    projectId: connection.projectId,
+    projectName: connection.projectName,
+    status: connection.status,
+    teamId: connection.teamId,
+  };
+}
+
 async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
   const { data, error } = await admin
     .from("agent_runs")
@@ -474,15 +503,17 @@ async function validateQueuedRunRequest(input: {
   }
 
   const workspace = input.workspace;
-  const [repositoryResolution, missingSecretKeys, activeRun] = await Promise.all([
-    resolveEffectiveSessionRepository({
-      sessionId: session.id,
-      supabase: input.admin,
-      workspaceId: workspace.id,
-    }),
-    loadMissingSecretKeys(input.admin, workspace.id),
-    loadActiveRunForSession(input.admin, session.id),
-  ]);
+  const [repositoryResolution, missingSecretKeys, activeRun, vercelSandboxConnection] =
+    await Promise.all([
+      resolveEffectiveSessionRepository({
+        sessionId: session.id,
+        supabase: input.admin,
+        workspaceId: workspace.id,
+      }),
+      loadMissingSecretKeys(input.admin, workspace.id),
+      loadActiveRunForSession(input.admin, session.id),
+      loadWallieVercelSandboxConnection(input.admin, workspace.id),
+    ]);
   const repository: WallieSessionRepository | null = repositoryResolution.repository
     ? {
         defaultBranch: repositoryResolution.repository.defaultBranch,
@@ -511,6 +542,7 @@ async function validateQueuedRunRequest(input: {
     missingSecretKeys,
     mode: runType,
     repository,
+    vercelSandboxConnection,
   });
   const blockingError = toBlockingActionError(blockingReasons, missingSecretKeys);
 

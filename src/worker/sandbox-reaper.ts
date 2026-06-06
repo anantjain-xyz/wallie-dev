@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
+import { loadConnectedVercelSandboxConnections } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -41,49 +42,60 @@ export async function reapOrphanSandboxes(
     reapedSandboxIds: [],
   };
 
-  const providerSandboxes = await listRunningSandboxes();
-  result.activeProviderCount = providerSandboxes.length;
+  const connections = await loadConnectedVercelSandboxConnections(admin);
 
-  if (providerSandboxes.length === 0) {
+  if (connections.length === 0) {
     return result;
   }
 
-  // Drop sandboxes inside the grace window — the processor may still be
-  // mid-INSERT for the corresponding agent_runs row.
   const ageCutoff = Date.now() - graceMs;
-  const candidates = providerSandboxes.filter((s) => s.createdAt <= ageCutoff);
 
-  if (candidates.length === 0) {
-    return result;
-  }
-
-  // Cross-reference: which of these sandbox IDs are claimed by an active
-  // agent_run? Anything not in this set is an orphan.
-  const candidateIds = candidates.map((s) => s.id);
-  const { data: claimedRuns, error } = await admin
-    .from("agent_runs")
-    .select("sandbox_id")
-    .in("sandbox_id", candidateIds)
-    .in("status", ["queued", "started", "running"]);
-
-  if (error) {
-    console.error("[sandbox-reaper] failed to load claimed runs", { error: error.message });
-    return result;
-  }
-
-  const claimed = new Set(
-    (claimedRuns ?? []).map((r) => r.sandbox_id).filter((id): id is string => id !== null),
-  );
-
-  const orphans = candidates.filter((s) => !claimed.has(s.id));
-
-  for (const orphan of orphans) {
-    await stopSandboxById(orphan.id);
-    result.reapedSandboxIds.push(orphan.id);
-    console.log("[sandbox-reaper] stopped orphan sandbox", {
-      ageMs: Date.now() - orphan.createdAt,
-      sandboxId: orphan.id,
+  for (const connection of connections) {
+    const providerSandboxes = await listRunningSandboxes({
+      vercelCredentials: connection.credentials,
     });
+    result.activeProviderCount += providerSandboxes.length;
+
+    // Drop sandboxes inside the grace window — the processor may still be
+    // mid-INSERT for the corresponding agent_runs row.
+    const candidates = providerSandboxes.filter((s) => s.createdAt <= ageCutoff);
+
+    if (candidates.length === 0) {
+      continue;
+    }
+
+    // Cross-reference: which of these sandbox IDs are claimed by an active
+    // agent_run in this same Vercel project? Anything else is an orphan.
+    const candidateIds = candidates.map((s) => s.id);
+    const { data: claimedRuns, error } = await admin
+      .from("agent_runs")
+      .select("sandbox_id")
+      .eq("sandbox_provider", "vercel")
+      .eq("sandbox_vercel_team_id", connection.credentials.teamId)
+      .eq("sandbox_vercel_project_id", connection.credentials.projectId)
+      .in("sandbox_id", candidateIds)
+      .in("status", ["queued", "started", "running"]);
+
+    if (error) {
+      console.error("[sandbox-reaper] failed to load claimed runs", { error: error.message });
+      continue;
+    }
+
+    const claimed = new Set(
+      (claimedRuns ?? []).map((r) => r.sandbox_id).filter((id): id is string => id !== null),
+    );
+
+    const orphans = candidates.filter((s) => !claimed.has(s.id));
+
+    for (const orphan of orphans) {
+      await stopSandboxById(orphan.id, { vercelCredentials: connection.credentials });
+      result.reapedSandboxIds.push(orphan.id);
+      console.log("[sandbox-reaper] stopped orphan sandbox", {
+        ageMs: Date.now() - orphan.createdAt,
+        sandboxId: orphan.id,
+        workspaceId: connection.preview.workspaceId,
+      });
+    }
   }
 
   return result;

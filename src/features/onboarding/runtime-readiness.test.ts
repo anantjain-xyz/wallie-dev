@@ -54,6 +54,15 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       id: "check-1",
       status: "success",
     },
+    vercelSandboxConnection: {
+      connected: true,
+      lastValidationError: null,
+      projectId: "prj_123",
+      projectName: "wallie-sandboxes",
+      status: "connected",
+      teamId: "team_123",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    },
     selectedRepository: {
       configured: true,
       fullName: "acme/app",
