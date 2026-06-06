@@ -730,12 +730,18 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("fails the stage when persisting a run message fails", async () => {
     mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Spec body" }]));
     const session = baseSession();
-    const { admin, insertedArtifacts, insertedMessages, updatedJobs, updatedRuns, updatedSessions } =
-      buildAdminMock({
-        session,
-        agentConfig: [],
-        messageInsertError: { message: "message insert failed" },
-      });
+    const {
+      admin,
+      insertedArtifacts,
+      insertedMessages,
+      updatedJobs,
+      updatedRuns,
+      updatedSessions,
+    } = buildAdminMock({
+      session,
+      agentConfig: [],
+      messageInsertError: { message: "message insert failed" },
+    });
 
     const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
 
@@ -884,6 +890,38 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(result.result).toBe("success");
     consoleError.mockRestore();
+  });
+
+  it("does not persist the stage completion message when artifact persistence fails", async () => {
+    const session = baseSession();
+    const { admin, insertedMessages, updatedRuns, updatedSessions } = buildAdminMock({
+      session,
+      artifactInsertError: { message: "artifact insert failed" },
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "text",
+        message_md: "Drafted spec body",
+      }),
+      expect.objectContaining({
+        kind: "completion",
+        message_md: "Done",
+      }),
+    ]);
+    expect(insertedMessages).not.toContainEqual(
+      expect.objectContaining({
+        message_md: "Product run completed",
+      }),
+    );
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
   });
 
   it("returns success without running the agent when the CAS claim fails (terminal state)", async () => {

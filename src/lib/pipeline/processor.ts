@@ -250,15 +250,6 @@ async function runStage(input: {
       throw new MissingReviewableOutputError(message);
     }
 
-    if (runId) {
-      await persistEvent(admin, runId, session.workspace_id, {
-        type: "completion",
-        taskComplete: true,
-        summary: `${stage.name} run completed`,
-      });
-      await markRunSuccess(admin, runId, usage);
-    }
-
     await insertArtifact(admin, {
       artifactJson: artifactMarkdown,
       sessionId: session.id,
@@ -305,6 +296,15 @@ async function runStage(input: {
       })
       .eq("id", session.id);
     if (pointerError) throw pointerError;
+
+    if (runId) {
+      await persistEvent(admin, runId, session.workspace_id, {
+        type: "completion",
+        taskComplete: true,
+        summary: `${stage.name} run completed`,
+      });
+      await markRunSuccess(admin, runId, usage);
+    }
   } catch (error) {
     if (runId) {
       await markRunError(admin, runId);
