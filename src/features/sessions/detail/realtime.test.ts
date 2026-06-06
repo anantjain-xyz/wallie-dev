@@ -25,6 +25,7 @@ const baseSession: SessionDetail = {
     id: "pipe-1",
     isDefault: true,
     name: "Default",
+    operatingRulesMd: "",
     stages: [
       {
         approverMemberIds: [],

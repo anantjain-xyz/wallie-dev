@@ -171,7 +171,12 @@ BEGIN
     (memw_id, ws_id, 'system', 'agent', 'wallie', 'Wallie', now() - interval '14 days');
 
   -- -------------------------------------------------------------------------
-  -- 5a. Default pipeline + 4 seeded stages (plan → build → review → land).
+  -- 5a. Default pipeline + seeded stages.
+  --
+  -- The shipped default is plan → build → land (see
+  -- 20260606000000_pipeline_symphony_alignment.sql). This demo workspace
+  -- customizes it with an explicit Review stage between Build and Land so the
+  -- seeded board below can show review-stage sessions.
   -- -------------------------------------------------------------------------
   INSERT INTO public.pipelines (id, workspace_id, name, is_default)
   VALUES (default_pipeline_id, ws_id, 'Default', true);
@@ -181,6 +186,21 @@ BEGIN
   )
   SELECT default_pipeline_id, ws_id, s.stage_position, s.slug, s.name, s.description, s.prompt_template_md
   FROM internal.default_pipeline_stages() s;
+
+  -- Make room at position 3 and insert the demo-only Review stage (plan=1,
+  -- build=2, review=3, land=4).
+  UPDATE public.pipeline_stages
+    SET position = 4
+    WHERE pipeline_id = default_pipeline_id AND slug = 'land';
+
+  INSERT INTO public.pipeline_stages (
+    pipeline_id, workspace_id, position, slug, name, description, prompt_template_md
+  )
+  VALUES (
+    default_pipeline_id, ws_id, 3, 'review', 'Review',
+    'Sweep PR feedback and verify the change against the plan before human sign-off.',
+    E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nProduce a structured review. Confirm every acceptance-criteria and validation item is met, sweep all actionable PR feedback to resolution, confirm CI is green on the latest commit, and report findings with a clear recommendation. Do not introduce new feature work.'
+  );
 
   SELECT id INTO stage_plan_id   FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'plan';
   SELECT id INTO stage_build_id  FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'build';

@@ -29,6 +29,7 @@ export type SessionPipeline = {
   id: string;
   isDefault: boolean;
   name: string;
+  operatingRulesMd: string;
   stages: PipelineStage[];
 };
 

@@ -6,6 +6,7 @@ import {
   appendDraftStage,
   keepKnownApproverIds,
   moveDraftStage,
+  OperatingRulesField,
   PipelineEditorControls,
   PipelineVariableHelp,
   removeDraftStage,
@@ -32,6 +33,7 @@ export function PipelineEditor({
   workspaceMembers,
 }: PipelineEditorProps) {
   const [name, setName] = useState(pipeline?.name ?? "Default");
+  const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
     keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
@@ -53,7 +55,7 @@ export function PipelineEditor({
     setStages(stagesToSave);
 
     const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
-      body: JSON.stringify({ name, stages: stagesToSave }),
+      body: JSON.stringify({ name, operatingRulesMd: operatingRules, stages: stagesToSave }),
       headers: { "Content-Type": "application/json" },
       method: "PUT",
     });
@@ -116,6 +118,12 @@ export function PipelineEditor({
         </label>
         <PipelineVariableHelp />
       </div>
+
+      <OperatingRulesField
+        canManage={canManage}
+        onChange={setOperatingRules}
+        value={operatingRules}
+      />
 
       <ol className="space-y-3">
         {stages.map((stage, index) => (

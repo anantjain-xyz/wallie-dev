@@ -24,6 +24,7 @@ const pipeline = {
   id: "pipeline-1",
   isDefault: true,
   name: "Default",
+  operatingRulesMd: "",
   stages: [
     {
       approverMemberIds: [],
@@ -182,6 +183,7 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain("Pipeline name");
+    expect(html).toContain("Operating rules");
     expect(html).toContain("Product");
     expect(html).toContain("Save pipeline");
   });

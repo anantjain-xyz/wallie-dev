@@ -27,7 +27,7 @@ import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest } from "./pull-request";
-import { loadCompletedStageArtifacts, loadStageById } from "./stages";
+import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
 import { PIPELINE_JOB_TYPE } from "./types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -143,9 +143,14 @@ async function runStage(input: {
   // rename in the editor doesn't cause us to miss the prior attempt.
   const attemptFeedback = await loadLatestFeedback(admin, session.id, stage.id);
 
+  // Workspace-editable operating rules for this pipeline, prepended to the
+  // stage prompt so the cross-cutting discipline applies to every stage.
+  const operatingRulesMd = await loadPipelineOperatingRules(admin, stage.pipelineId);
+
   const prompt = renderStagePrompt(stage, {
     attemptFeedback,
     attemptNumber: session.rejection_count + 1,
+    operatingRulesMd,
     previousStages,
     sessionPrompt: session.prompt_md,
     sessionTitle: session.title,

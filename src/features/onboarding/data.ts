@@ -344,7 +344,7 @@ async function loadDefaultPipeline(
 ): Promise<SessionPipeline | null> {
   const { data: pipelineRow, error: pipelineError } = await context.supabase
     .from("pipelines")
-    .select("id, name, is_default")
+    .select("id, name, is_default, operating_rules_md")
     .eq("workspace_id", context.workspace.id)
     .eq("is_default", true)
     .maybeSingle();
@@ -377,6 +377,7 @@ async function loadDefaultPipeline(
     id: pipelineRow.id,
     isDefault: pipelineRow.is_default,
     name: pipelineRow.name,
+    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
     stages,
   };
 }
