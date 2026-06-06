@@ -165,6 +165,7 @@ async function runStage(input: {
   let branch: string | null = null;
   const collectedText: string[] = [];
   let artifactInserted = false;
+  let sessionPointerAdvanced = false;
   try {
     const resolvedRunner = await resolveAgentRunner({
       admin,
@@ -296,6 +297,7 @@ async function runStage(input: {
       })
       .eq("id", session.id);
     if (pointerError) throw pointerError;
+    sessionPointerAdvanced = true;
 
     if (runId) {
       await persistEvent(admin, runId, session.workspace_id, {
@@ -327,7 +329,14 @@ async function runStage(input: {
         .eq("version", newVersion);
     }
 
-    await updateSessionStatus(admin, session.id, "rejected");
+    if (sessionPointerAdvanced) {
+      await updateSessionStatusAfterStageFailure(admin, session.id, {
+        currentArtifactVersion: session.current_artifact_version,
+        phaseStatus: "rejected",
+      });
+    } else {
+      await updateSessionStatus(admin, session.id, "rejected");
+    }
     const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message, {
       retry: !(error instanceof MissingReviewableOutputError),
@@ -680,6 +689,24 @@ async function updateSessionStatus(
   const { error } = await admin
     .from("sessions")
     .update({ phase_status: status })
+    .eq("id", sessionId);
+  if (error) throw error;
+}
+
+async function updateSessionStatusAfterStageFailure(
+  admin: AdminClient,
+  sessionId: string,
+  input: {
+    currentArtifactVersion: number;
+    phaseStatus: SessionRow["phase_status"];
+  },
+): Promise<void> {
+  const { error } = await admin
+    .from("sessions")
+    .update({
+      current_artifact_version: input.currentArtifactVersion,
+      phase_status: input.phaseStatus,
+    })
     .eq("id", sessionId);
   if (error) throw error;
 }

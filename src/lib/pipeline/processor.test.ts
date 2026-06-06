@@ -175,6 +175,7 @@ interface MockOptions {
   claimSucceeds?: boolean;
   artifactInsertError?: { message: string } | null;
   messageInsertError?: { message: string } | null;
+  messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
@@ -346,7 +347,10 @@ function buildAdminMock(opts: MockOptions) {
 
   const agentRunMessagesTable = {
     insert: async (row: Record<string, unknown>) => {
-      if (opts.messageInsertError) {
+      if (
+        opts.messageInsertError &&
+        (!opts.messageInsertErrorOnMessage || row.message_md === opts.messageInsertErrorOnMessage)
+      ) {
         return { error: opts.messageInsertError };
       }
 
@@ -921,6 +925,50 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
       { phase_status: "rejected" },
+    ]);
+  });
+
+  it("rolls back the artifact pointer when the stage completion message fails", async () => {
+    const session = baseSession({ current_artifact_version: 2 });
+    const {
+      admin,
+      insertedArtifacts,
+      insertedMessages,
+      updatedJobs,
+      updatedRuns,
+      updatedSessions,
+    } = buildAdminMock({
+      session,
+      messageInsertError: { message: "completion insert failed" },
+      messageInsertErrorOnMessage: "Product run completed",
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(insertedArtifacts[0]).toMatchObject({
+      version: 3,
+    });
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "text",
+        message_md: "Drafted spec body",
+      }),
+      expect.objectContaining({
+        kind: "completion",
+        message_md: "Done",
+      }),
+    ]);
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "completion insert failed",
+      status: "error",
+    });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { current_artifact_version: 3, phase_status: "awaiting_review" },
+      { current_artifact_version: 2, phase_status: "rejected" },
     ]);
   });
 
