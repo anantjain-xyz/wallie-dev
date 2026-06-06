@@ -11,6 +11,7 @@ import type {
   SandboxHandle,
   SandboxLogEntry,
 } from "./types";
+import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
 
 // In-memory registry shared by FakeSandbox + the listing/stop helpers, so
 // tests can simulate "the provider knows about these sandboxes" without
@@ -223,12 +224,12 @@ function initializeLocalGitCheckout(
 
   const env = {
     ...localSandboxEnv(repoPath),
-    GIT_AUTHOR_EMAIL: "wallie@example.local",
-    GIT_AUTHOR_NAME: "Wallie",
+    GIT_AUTHOR_EMAIL: WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email,
+    GIT_AUTHOR_NAME: WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name,
   };
   runGit(repoPath, ["init", "-q"], env);
-  runGit(repoPath, ["config", "user.email", "wallie@example.local"], env);
-  runGit(repoPath, ["config", "user.name", "Wallie"], env);
+  runGit(repoPath, ["config", "user.email", WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email], env);
+  runGit(repoPath, ["config", "user.name", WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name], env);
   runGit(repoPath, ["checkout", "-B", input.baseBranch], env);
   runGit(repoPath, ["add", "README.md"], env);
   runGit(repoPath, ["commit", "-qm", "Initial fake sandbox checkout"], env);
