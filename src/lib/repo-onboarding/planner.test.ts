@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildRepositoryOnboardingPlan } from "@/lib/repo-onboarding/planner";
 import {
   DEFAULT_WALLIE_SKILLS,
+  WALLIE_AGENTS_INSTRUCTIONS,
   WALLIE_AGENTS_INSTRUCTIONS_PATH,
   WALLIE_SKILL_VERSION,
 } from "@/lib/repo-onboarding/skills";
@@ -80,5 +81,17 @@ describe("repository onboarding planner", () => {
         reason: "github_read_failed",
       },
     ]);
+  });
+
+  it("documents screenshot commits as temporary proof artifacts that must be reverted", () => {
+    const screenshotSkill = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "screenshot");
+    expect(screenshotSkill).toBeDefined();
+    const content = screenshotSkill!.content;
+
+    expect(content).toContain("never be part of the final PR diff");
+    expect(content).toContain("commit-SHA raw GitHub URLs");
+    expect(content).toContain("git revert <screenshot-commit-sha>");
+    expect(content).not.toContain("git push --force-with-lease");
+    expect(WALLIE_AGENTS_INSTRUCTIONS).toContain("never leave them in the final PR diff");
   });
 });

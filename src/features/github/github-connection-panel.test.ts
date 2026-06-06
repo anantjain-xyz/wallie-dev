@@ -69,7 +69,7 @@ function readyOnboarding(repositoryId: string): RepositoryOnboardingState {
     conflictReport: [],
     githubRepositoryId: repositoryId,
     installedSkillHash: "hash-1",
-    installedSkillVersion: 1,
+    installedSkillVersion: 2,
     lastError: null,
     setupBranchName: null,
     setupPrNumber: null,

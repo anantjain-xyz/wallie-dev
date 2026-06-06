@@ -758,7 +758,7 @@ describe("OnboardingPageClient", () => {
                   conflictReport: [],
                   githubRepositoryId: "repo-a",
                   installedSkillHash: "hash-1",
-                  installedSkillVersion: 1,
+                  installedSkillVersion: 2,
                   lastError: null,
                   setupBranchName: null,
                   setupPrNumber: null,
