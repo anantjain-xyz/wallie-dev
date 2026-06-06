@@ -107,8 +107,10 @@ describe("openSessionPullRequest", () => {
     vi.restoreAllMocks();
   });
 
-  it("records the PR the stage agent already opened, without touching the sandbox", async () => {
+  it("refreshes the remote branch before reusing the PR the agent already opened", async () => {
     const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
     // pulls.list (find existing) returns the agent's PR.
     const octokit = makeOctokitWithSequence([[openPr]]);
     const { admin, upserts } = buildAdminMock();
@@ -127,7 +129,8 @@ describe("openSessionPullRequest", () => {
       prState: "open",
       prUrl: "https://github.com/acme/app/pull/42",
     });
-    // No create, no git work — GitHub already had the PR.
+    // Reuses the existing PR (no create), but still pushes this run's commits so
+    // a stage retry doesn't leave the PR pinned to the previous run's commits.
     expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
     expect(octokit.calls[0]!.params).toMatchObject({
       head: "acme:wallie/product-sess-1",
@@ -135,7 +138,7 @@ describe("openSessionPullRequest", () => {
       repo: "app",
       state: "all",
     });
-    expect(sandbox.calls).toHaveLength(0);
+    expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
     expect(upserts).toHaveLength(1);
     expect(upserts[0]!.row).toEqual({
       branch_name: "wallie/product-sess-1",
@@ -150,8 +153,29 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.options).toEqual({ onConflict: "workspace_id,branch_name" });
   });
 
+  it("does not push when reusing a PR but the branch is not ahead of base", async () => {
+    // e.g. base advanced past the branch; force-pushing would reset the PR head.
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE");
+    const octokit = makeOctokitWithSequence([[openPr]]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("success");
+    expect(sandbox.calls.some((c) => c.args.join(" ").includes("push"))).toBe(false);
+    expect(upserts[0]!.row.pull_request_number).toBe(42);
+  });
+
   it("prefers an open PR over a stale closed one for the same branch", async () => {
     const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
     const closed = { ...openPr, number: 40, state: "closed" as const, merged_at: null };
     const octokit = makeOctokitWithSequence([[closed, openPr]]);
     const { admin, upserts } = buildAdminMock();
@@ -296,6 +320,7 @@ describe("openSessionPullRequest", () => {
 
   it("marks the PR state as merged when GitHub reports a merged_at timestamp", async () => {
     const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "NONE"); // merged PR: commits already landed
     const octokit = makeOctokitWithSequence([
       [
         {
@@ -321,6 +346,8 @@ describe("openSessionPullRequest", () => {
 
   it("returns pr_failed when the upsert fails", async () => {
     const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
     const octokit = makeOctokitWithSequence([[openPr]]);
     const { admin, upserts } = buildAdminMock({ upsertError: { message: "db down" } });
 

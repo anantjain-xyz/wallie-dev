@@ -49,11 +49,11 @@ export type OpenSessionPullRequestOutcome =
 
 /**
  * After a stage agent finishes, record its work as a PR:
- *   1. Look up an existing PR for the stage branch. Stage agents are instructed
- *      to open their own PR (and usually do), so GitHub — not the local sandbox
- *      — is the source of truth for "is there a PR to record".
- *   2. If none exists, check whether the branch is actually ahead of base, then
- *      `git push` and open the PR ourselves.
+ *   1. Detect whether the sandbox branch is ahead of base, and look up any PR
+ *      already open for the branch (stage agents are instructed to open their
+ *      own, so GitHub — not the local sandbox — is the source of truth).
+ *   2. Push this run's commits to the remote so the PR reflects them, then
+ *      reuse the existing PR or open a new one.
  *   3. Upsert a `session_pull_requests` row keyed on (workspace, branch).
  *
  * Why GitHub-first: the sandbox is a shallow, single-revision clone, so a
@@ -62,6 +62,13 @@ export type OpenSessionPullRequestOutcome =
  * `git rev-list <base>..HEAD`, which silently resolved to 0/an error and made
  * this function return `no_commits` even though the agent had already pushed a
  * branch and opened a PR — so nothing was ever recorded.
+ *
+ * Why we push even when a PR already exists: a stage retry gets a *fresh*
+ * sandbox branch cut from base, so the new run's commits are local-only until
+ * pushed. Skipping the push for an existing PR would leave that PR pinned to the
+ * previous run's commits while Wallie shows the new artifact. We only push when
+ * the branch is genuinely ahead — pushing a not-ahead branch would force-reset
+ * the remote back to base.
  *
  * Remote failures are recoverable — the artifact is already persisted and the
  * reviewer can approve it from the dashboard — so this function never throws on
@@ -81,24 +88,33 @@ export async function openSessionPullRequest(
 
   let pr: GitHubPullRequestResponse;
   try {
-    // 1. The stage agent usually opens its own PR — find and record it.
-    const existing = await findPullRequestForHead({ head: input.branch, octokit, owner, repo });
-    if (existing) {
-      pr = existing;
-    } else {
-      // 2. No PR yet. Only push + open one if the branch is genuinely ahead of
-      // base; "no" avoids creating junk branches for analysis-only stages
-      // (plan/review/land). "unknown" falls through and lets GitHub adjudicate.
-      const ahead = await commitsAheadOfBase(input.sandbox, input.baseBranch);
-      if (ahead === "no") {
-        return { kind: "no_commits" };
-      }
+    // Does this run's sandbox branch carry commits the base doesn't? "no"
+    // avoids pushing junk for analysis-only stages (plan/review/land);
+    // "unknown" falls through and lets GitHub adjudicate.
+    const ahead = await commitsAheadOfBase(input.sandbox, input.baseBranch);
 
+    // Reuse the PR the stage agent (or a prior run) already opened, if any.
+    const existing = await findPullRequestForHead({ head: input.branch, octokit, owner, repo });
+
+    if (!existing && ahead === "no") {
+      return { kind: "no_commits" };
+    }
+
+    // Push this run's commits so an existing PR is refreshed (stage retry) and a
+    // new PR opens against the right head. Never push a not-ahead branch — that
+    // would force-reset the remote (and an existing PR) back to base.
+    if (ahead !== "no") {
       const pushError = await pushSandboxBranch(input.sandbox, input.branch);
       if (pushError) {
         return { kind: "push_failed", reason: pushError };
       }
+    }
 
+    if (existing) {
+      pr = existing;
+    } else {
+      // No PR yet (ahead is "yes" or "unknown"); open one. Let GitHub — which
+      // sees the full history — be the final arbiter of "no commits".
       try {
         pr = await openPullRequest({
           base: input.baseBranch,
@@ -111,7 +127,6 @@ export async function openSessionPullRequest(
         });
       } catch (error) {
         if (isNoCommitsError(error)) {
-          // GitHub knows the full history: the branch has nothing to propose.
           // Drop the branch we just pushed so we don't leave it behind.
           await deleteRemoteBranch(input.sandbox, input.branch);
           return { kind: "no_commits" };
