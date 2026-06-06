@@ -242,7 +242,7 @@ Everything else is UI glue or integration plumbing.
 | Language        | TypeScript (strict mode)                       |
 | UI              | React 19, Tailwind CSS 4                       |
 | Database        | Supabase PostgreSQL 17 with Row-Level Security |
-| Auth            | Supabase Auth (email + OAuth)                  |
+| Auth            | Supabase Auth (email magic link + code)        |
 | Realtime        | Supabase Realtime (live session updates)       |
 | Storage         | Supabase Storage (workspace avatars)           |
 | AI              | Codex CLI or Claude Code CLI                   |
