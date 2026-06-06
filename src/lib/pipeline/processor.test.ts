@@ -1130,9 +1130,31 @@ describe("processPipelineJob (generic stage runner)", () => {
 
 // ---- handleApproval -----------------------------------------------------
 
-function buildApprovalAdmin(rpc: ReturnType<typeof vi.fn>, session = baseSession()) {
+function buildApprovalAdmin(
+  rpc: ReturnType<typeof vi.fn>,
+  opts: { hasNextStage?: boolean; session?: Tables<"sessions"> } = {},
+) {
+  const session = opts.session ?? baseSession();
   return createProcessorTestAdminClient({
     from: (name: string) => {
+      if (name === "pipeline_stages") {
+        return {
+          select: () => {
+            const builder = {
+              eq: () => builder,
+              gt: () => builder,
+              limit: () => builder,
+              maybeSingle: async () => ({
+                data: opts.hasNextStage ? { id: "stage-next" } : null,
+                error: null,
+              }),
+              order: () => builder,
+            };
+            return builder;
+          },
+        };
+      }
+
       if (name !== "sessions") return {};
 
       return {
@@ -1152,6 +1174,7 @@ function buildApprovalAdmin(rpc: ReturnType<typeof vi.fn>, session = baseSession
 describe("handleApproval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.loadStageById.mockResolvedValue(productStage);
     mocked.resolveCommitAuthorForRun.mockResolvedValue({
       email: "12345+anant@users.noreply.github.com",
       name: "Anant Jain",
@@ -1213,6 +1236,31 @@ describe("handleApproval", () => {
     expect(result).toEqual({ jobId: null, success: true });
     expect(rpc).toHaveBeenCalled();
     expect(mocked.resolveCommitAuthorForRun).not.toHaveBeenCalled();
+  });
+
+  it("blocks non-terminal approval before the stage RPC when the approver has no commit author identity", async () => {
+    mocked.resolveCommitAuthorForRun.mockRejectedValueOnce(
+      new mocked.GitHubAuthorMissingError("Connect your GitHub commit author identity first."),
+    );
+    const rpc = vi.fn();
+
+    const result = await handleApproval({
+      admin: buildApprovalAdmin(rpc, { hasNextStage: true }),
+      approverMemberId: "mem-1",
+      expectedWorkspaceId: "ws-1",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      error: "Connect your GitHub commit author identity first.",
+      success: false,
+    });
+    expect(mocked.resolveCommitAuthorForRun).toHaveBeenCalledWith(expect.anything(), {
+      fallbackMemberId: null,
+      requestedByMemberId: "mem-1",
+    });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
@@ -1283,6 +1331,18 @@ describe("handleApproval", () => {
             }),
           }),
         }),
+      },
+      pipeline_stages: {
+        select: () => {
+          const builder = {
+            eq: () => builder,
+            gt: () => builder,
+            limit: () => builder,
+            maybeSingle: async () => ({ data: { id: "stage-next" }, error: null }),
+            order: () => builder,
+          };
+          return builder;
+        },
       },
     };
     const admin = createProcessorTestAdminClient({
