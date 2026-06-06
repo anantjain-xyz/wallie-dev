@@ -9,7 +9,7 @@ const testEnv = {
   GITHUB_APP_ID: "12345",
   GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----",
   GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
-  NEXT_PUBLIC_APP_URL: "https://wallie.cc",
+  NEXT_PUBLIC_APP_URL: "https://www.wallie.dev",
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "supabase-publishable-key",
   NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_SECRET_KEY: "secret-key",

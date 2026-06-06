@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { emailCodeAuthCookieName } from "@/lib/auth-email-code-cookie";
 
@@ -27,7 +27,12 @@ function createEmailRequest(input: { email: string; next?: string }) {
 }
 
 describe("POST /auth/email", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://www.wallie.dev");
+  });
+
   afterEach(() => {
+    vi.unstubAllEnvs();
     mocked.createSupabaseServerClient.mockReset();
     mocked.signInWithOtp.mockReset();
   });
@@ -50,7 +55,7 @@ describe("POST /auth/email", () => {
     expect(mocked.signInWithOtp).toHaveBeenCalledWith({
       email: "owner@example.com",
       options: {
-        emailRedirectTo: "http://localhost:3000/auth/confirm?next=%2Fw%2Facme",
+        emailRedirectTo: "https://www.wallie.dev/auth/confirm?next=%2Fw%2Facme",
       },
     });
     expect(response.status).toBe(303);

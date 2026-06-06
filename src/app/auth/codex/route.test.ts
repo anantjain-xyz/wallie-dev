@@ -53,11 +53,11 @@ describe("GET /auth/codex", () => {
   });
 
   it("redirects direct authenticated navigation back to settings with a device-flow flash", async () => {
-    const response = await GET(new NextRequest("https://preview.wallie.cc/auth/codex"));
+    const response = await GET(new NextRequest("https://preview.wallie.dev/auth/codex"));
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "https://preview.wallie.cc/settings/integrations?codex_connect=chatgpt_device_required",
+      "https://preview.wallie.dev/settings/integrations?codex_connect=chatgpt_device_required",
     );
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();

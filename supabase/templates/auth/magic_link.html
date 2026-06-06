@@ -91,7 +91,7 @@
                   <tr>
                     <td style="border-radius: 6px; background: #5e6ad2; text-align: center">
                       <a
-                        href="{{ .ConfirmationURL }}"
+                        href="{{ .RedirectTo }}&amp;token_hash={{ .TokenHash }}&amp;type=email"
                         style="
                           display: inline-block;
                           padding: 12px 18px;
@@ -173,14 +173,14 @@
                   If the button does not work, copy and paste this link into your browser:
                   <br />
                   <a
-                    href="{{ .ConfirmationURL }}"
+                    href="{{ .RedirectTo }}&amp;token_hash={{ .TokenHash }}&amp;type=email"
                     style="
                       color: #5e6ad2;
                       overflow-wrap: anywhere;
                       word-break: break-word;
                       text-decoration: underline;
                     "
-                    >{{ .ConfirmationURL }}</a
+                    >{{ .RedirectTo }}&amp;token_hash={{ .TokenHash }}&amp;type=email</a
                   >
                 </p>
               </td>
