@@ -7,6 +7,7 @@
       "package.json",
       "pnpm-lock.yaml",
       "railway.json",
+      "scripts/install-crash-handlers.mjs",
       "scripts/register-server-only.mjs",
       "src/env/**",
       "src/features/github/**",

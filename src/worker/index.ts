@@ -135,28 +135,9 @@ function runTimerTask(label: string, task: () => Promise<void>): void {
   });
 }
 
-/**
- * Surface otherwise-silent process-level failures. Without these, an uncaught
- * exception or unhandled promise rejection escaping the poll loop kills the
- * process with no `[worker]` log line — leaving only pnpm's generic
- * `ELIFECYCLE Command failed`. We log the full stack, then exit so the platform
- * can restart us cleanly (process state is undefined after these events, so
- * continuing is unsafe).
- */
-function installCrashHandlers(): void {
-  process.on("uncaughtException", (error) => {
-    // Pass the raw error as the second arg so the full stack renders natively.
-    console.error("[worker] uncaught exception — exiting", error);
-    process.exit(1);
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    console.error("[worker] unhandled rejection — exiting", reason);
-    process.exit(1);
-  });
-}
-
-installCrashHandlers();
+// Process-level crash handlers (uncaughtException / unhandledRejection) are
+// installed by ./scripts/install-crash-handlers.mjs, preloaded via `node
+// --import` so they cover import-time failures in this module's graph too.
 
 // Run the worker.
 main().catch((error) => {
