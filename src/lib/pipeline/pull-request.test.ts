@@ -191,6 +191,36 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.row.pull_request_state).toBe("open");
   });
 
+  it("opens a fresh PR instead of reusing a closed, unmerged one for new work", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const closed = { ...openPr, number: 40, state: "closed" as const, merged_at: null };
+    const reopened = { ...openPr, number: 43 };
+    const octokit = makeOctokitWithSequence([
+      [closed], // only PR for the branch is closed + unmerged
+      reopened, // create a new one
+    ]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("success");
+    // Did not reuse the closed PR — pushed and created a new reviewable one.
+    expect(octokit.calls.map((c) => c.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls",
+      "POST /repos/{owner}/{repo}/pulls",
+    ]);
+    expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
+    expect(upserts[0]!.row.pull_request_number).toBe(43);
+    expect(upserts[0]!.row.pull_request_state).toBe("open");
+  });
+
   it("pushes and opens a PR when none exists and the branch is ahead of base", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");

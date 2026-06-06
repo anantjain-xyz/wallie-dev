@@ -49,11 +49,11 @@ export type OpenSessionPullRequestOutcome =
 
 /**
  * After a stage agent finishes, record its work as a PR:
- *   1. Detect whether the sandbox branch is ahead of base, and look up any PR
- *      already open for the branch (stage agents are instructed to open their
- *      own, so GitHub — not the local sandbox — is the source of truth).
- *   2. Push this run's commits to the remote so the PR reflects them, then
- *      reuse the existing PR or open a new one.
+ *   1. Detect whether the sandbox branch is ahead of base, and look up the
+ *      latest PR for the branch (stage agents are instructed to open their own,
+ *      so GitHub — not the local sandbox — is the source of truth).
+ *   2. Push this run's commits to the remote, then reuse the PR only if it is
+ *      still open; a closed/merged PR can't carry new work, so open a fresh one.
  *   3. Upsert a `session_pull_requests` row keyed on (workspace, branch).
  *
  * Why GitHub-first: the sandbox is a shallow, single-revision clone, so a
@@ -93,28 +93,37 @@ export async function openSessionPullRequest(
     // "unknown" falls through and lets GitHub adjudicate.
     const ahead = await commitsAheadOfBase(input.sandbox, input.baseBranch);
 
-    // Reuse the PR the stage agent (or a prior run) already opened, if any.
+    // The most recent PR for this branch, if any. Only an *open* one is
+    // reusable: a closed/merged PR can't carry this run's commits for review.
     const existing = await findPullRequestForHead({ head: input.branch, octokit, owner, repo });
+    const reusable = existing && existing.state === "open" && !existing.merged_at;
 
-    if (!existing && ahead === "no") {
-      return { kind: "no_commits" };
-    }
-
-    // Push this run's commits so an existing PR is refreshed (stage retry) and a
-    // new PR opens against the right head. Never push a not-ahead branch — that
-    // would force-reset the remote (and an existing PR) back to base.
-    if (ahead !== "no") {
+    if (reusable) {
+      // Refresh the open PR with this run's commits (a stage retry gets a fresh
+      // sandbox branch). Never push a not-ahead branch — that would force-reset
+      // the remote (and the PR) back to base.
+      if (ahead !== "no") {
+        const pushError = await pushSandboxBranch(input.sandbox, input.branch);
+        if (pushError) {
+          return { kind: "push_failed", reason: pushError };
+        }
+      }
+      pr = existing;
+    } else if (ahead === "no") {
+      // Nothing new to propose. Preserve the link to the most recent PR if one
+      // exists (e.g. already merged); otherwise there's simply nothing to do.
+      if (!existing) {
+        return { kind: "no_commits" };
+      }
+      pr = existing;
+    } else {
+      // New work, but no open PR to land it in (none yet, or the prior one was
+      // closed/merged). Push and open a fresh, reviewable PR. Let GitHub — which
+      // sees the full history — be the final arbiter of "no commits".
       const pushError = await pushSandboxBranch(input.sandbox, input.branch);
       if (pushError) {
         return { kind: "push_failed", reason: pushError };
       }
-    }
-
-    if (existing) {
-      pr = existing;
-    } else {
-      // No PR yet (ahead is "yes" or "unknown"); open one. Let GitHub — which
-      // sees the full history — be the final arbiter of "no commits".
       try {
         pr = await openPullRequest({
           base: input.baseBranch,
@@ -132,7 +141,7 @@ export async function openSessionPullRequest(
           return { kind: "no_commits" };
         }
         if (!isAlreadyExistsError(error)) throw error;
-        // Race: a PR appeared between our lookup and create. Recover it.
+        // Race: an open PR appeared between our lookup and create. Recover it.
         const recovered = await findPullRequestForHead({
           head: input.branch,
           octokit,
@@ -266,9 +275,10 @@ interface GitHubPullRequestResponse {
 }
 
 /**
- * Find the PR for a head branch, preferring an open one. Returns null when no
- * PR has ever been opened for the branch. Searches `state: all` so a PR the
- * stage agent already merged (or closed) is still recorded.
+ * Find the latest PR for a head branch, preferring an open one. Returns null
+ * when no PR has ever been opened. Searches `state: all` so a merged PR is still
+ * recorded (link preservation); callers decide reuse — only an open PR is reused
+ * for new work, a closed/merged one is not.
  */
 async function findPullRequestForHead(input: {
   head: string;
