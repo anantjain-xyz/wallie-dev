@@ -4,6 +4,7 @@ import {
   upsertVercelSandboxConnectionSchema,
   type VercelSandboxConnectionResponse,
 } from "@/lib/vercel-sandbox/contracts";
+import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import {
   acquireVercelSandboxConnectionMutationLock,
   loadVercelSandboxConnection,
@@ -24,7 +25,6 @@ type RouteContext = {
 
 const activeRunStatuses = ["queued", "started", "running"] as const;
 const activeJobStatuses = ["queued", "started", "running"] as const;
-const activeCapabilityCheckMaxAgeMs = 60 * 60 * 1000;
 type AgentRunSandboxRow = Pick<
   Tables<"agent_runs">,
   "agent_job_id" | "sandbox_id" | "status" | "workspace_id"
@@ -120,7 +120,7 @@ function isActiveCapabilityCheck(row: CapabilityCheckSandboxRow, now = Date.now(
   if (row.status !== "running") return false;
   const checkedAt = Date.parse(row.checked_at);
   if (Number.isNaN(checkedAt)) return true;
-  return now - checkedAt <= activeCapabilityCheckMaxAgeMs;
+  return now - checkedAt <= STALE_SANDBOX_CAPABILITY_CHECK_MS;
 }
 
 function vercelProjectChanged(

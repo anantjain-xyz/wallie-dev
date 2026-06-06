@@ -11,6 +11,7 @@ import { processPipelineJob } from "@/lib/pipeline/processor";
 
 const mocks = vi.hoisted(() => ({
   loadVercelSandboxConnectionPreview: vi.fn(),
+  resolveSandboxImplementation: vi.fn(() => "vercel"),
 }));
 
 vi.mock("@/lib/pipeline/processor", () => ({
@@ -21,8 +22,14 @@ vi.mock("@/lib/vercel-sandbox/server", () => ({
   loadVercelSandboxConnectionPreview: mocks.loadVercelSandboxConnectionPreview,
 }));
 
+vi.mock("@/lib/sandbox", () => ({
+  resolveSandboxImplementation: mocks.resolveSandboxImplementation,
+}));
+
 beforeEach(() => {
   mocks.loadVercelSandboxConnectionPreview.mockReset();
+  mocks.resolveSandboxImplementation.mockReset();
+  mocks.resolveSandboxImplementation.mockReturnValue("vercel");
   mocks.loadVercelSandboxConnectionPreview.mockResolvedValue({
     lastValidatedAt: baseTimestamp,
     lastValidationError: null,
@@ -610,6 +617,27 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     expect(insertedRunRows).toHaveLength(0);
+  });
+
+  it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
+    mocks.resolveSandboxImplementation.mockReturnValueOnce("fake");
+    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+    });
+
+    await enqueueWallieRun({
+      admin,
+      sessionId: "sess-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      triggerType: "manual_run",
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    expect(insertedRunRows).toHaveLength(1);
   });
 });
 

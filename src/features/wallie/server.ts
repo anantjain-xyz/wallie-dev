@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { resolveSandboxImplementation } from "@/lib/sandbox";
 import type { Tables } from "@/lib/supabase/database.types";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import { buildWallieSessionData } from "@/features/wallie/data";
@@ -83,6 +84,7 @@ export async function loadWallieSessionData(input: {
     messages: messageRows,
     missingSecretKeys,
     repository: input.repository,
+    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
     runs: (runRows ?? []) as Array<
       Pick<
         Tables<"agent_runs">,

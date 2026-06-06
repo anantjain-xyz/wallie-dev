@@ -20,6 +20,7 @@ import type {
   WallieVercelSandboxConnectionStatus,
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
+import { resolveSandboxImplementation } from "@/lib/sandbox";
 import { buildWallieJobDedupeKey, WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 
@@ -542,6 +543,7 @@ async function validateQueuedRunRequest(input: {
     missingSecretKeys,
     mode: runType,
     repository,
+    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
     vercelSandboxConnection,
   });
   const blockingError = toBlockingActionError(blockingReasons, missingSecretKeys);

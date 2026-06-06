@@ -141,6 +141,7 @@ export function buildWallieSessionData(input: {
   >[];
   missingSecretKeys: string[];
   repository: WallieSessionRepository | null;
+  requiresVercelSandbox: boolean;
   runs: readonly Pick<
     Tables<"agent_runs">,
     | "created_at"
@@ -183,6 +184,7 @@ export function buildWallieSessionData(input: {
     missingSecretKeys: input.missingSecretKeys,
     mode,
     repository: input.repository,
+    requiresVercelSandbox: input.requiresVercelSandbox,
     vercelSandboxConnection: input.vercelSandboxConnection,
   });
 
@@ -192,6 +194,7 @@ export function buildWallieSessionData(input: {
     missingSecretKeys: input.missingSecretKeys,
     mode,
     repository: input.repository,
+    requiresVercelSandbox: input.requiresVercelSandbox,
     requiredSecretKeys: [...WALLIE_REQUIRED_SECRET_KEYS],
     runs,
     vercelSandboxConnection: input.vercelSandboxConnection,

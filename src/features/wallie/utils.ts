@@ -41,10 +41,12 @@ export function buildWallieBlockingReasons(input: {
   missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;
+  requiresVercelSandbox?: boolean;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
 }) {
   const reasons: WallieBlockingReason[] = [];
   const repositoryIsArchived = input.repository ? input.repository.isArchived : false;
+  const requiresVercelSandbox = input.requiresVercelSandbox ?? true;
   const vercelConnection = input.vercelSandboxConnection;
 
   if (input.hasActiveRun) {
@@ -74,6 +76,10 @@ export function buildWallieBlockingReasons(input: {
       code: "missing_secret",
       message: `Wallie is missing required workspace secrets: ${input.missingSecretKeys.join(", ")}.`,
     });
+  }
+
+  if (!requiresVercelSandbox) {
+    return reasons;
   }
 
   if (vercelConnection.status === "missing") {

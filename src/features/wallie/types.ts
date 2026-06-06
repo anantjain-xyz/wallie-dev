@@ -77,6 +77,7 @@ export type WallieSessionData = {
   missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;
+  requiresVercelSandbox: boolean;
   requiredSecretKeys: string[];
   runs: WallieRun[];
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;

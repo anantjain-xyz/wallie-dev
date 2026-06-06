@@ -2,11 +2,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
+import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import { loadConnectedVercelSandboxConnections } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
 type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "agent_job_id" | "sandbox_id" | "status">;
-type CapabilityCheckSandboxRow = Pick<Tables<"sandbox_capability_checks">, "sandbox_id" | "status">;
+type CapabilityCheckSandboxRow = Pick<
+  Tables<"sandbox_capability_checks">,
+  "checked_at" | "sandbox_id" | "status"
+>;
 
 export interface SandboxReapResult {
   /** Sandbox IDs visible in the provider that we stopped because no active run owns them. */
@@ -116,7 +120,7 @@ async function loadKnownProjectSandboxState(input: {
       .in("sandbox_id", input.candidateIds),
     input.admin
       .from("sandbox_capability_checks")
-      .select("sandbox_id, status")
+      .select("sandbox_id, status, checked_at")
       .eq("sandbox_provider", "vercel")
       .eq("sandbox_vercel_team_id", input.teamId)
       .eq("sandbox_vercel_project_id", input.projectId)
@@ -152,7 +156,7 @@ async function loadKnownProjectSandboxState(input: {
   for (const row of checkRows) {
     if (!row.sandbox_id) continue;
     known.add(row.sandbox_id);
-    if (row.status === "running") {
+    if (isActiveCapabilityCheck(row)) {
       active.add(row.sandbox_id);
     }
   }
@@ -201,4 +205,11 @@ async function loadActiveAgentJobIds(
 
 function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {
   return status === "queued" || status === "started" || status === "running";
+}
+
+function isActiveCapabilityCheck(row: CapabilityCheckSandboxRow, now = Date.now()) {
+  if (row.status !== "running") return false;
+  const checkedAt = Date.parse(row.checked_at);
+  if (Number.isNaN(checkedAt)) return true;
+  return now - checkedAt <= STALE_SANDBOX_CAPABILITY_CHECK_MS;
 }

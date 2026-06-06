@@ -19,6 +19,7 @@ import { reapOrphanSandboxes } from "./sandbox-reaper";
 
 interface ClaimedRow {
   agent_job_id?: string | null;
+  checked_at?: string;
   sandbox_id: string;
   sandbox_provider?: string;
   sandbox_vercel_project_id?: string;
@@ -47,6 +48,7 @@ function buildAdminMock(
         sandbox_provider: "vercel",
         sandbox_vercel_project_id: "prj_123",
         sandbox_vercel_team_id: "team_123",
+        checked_at: new Date().toISOString(),
         status: "running",
         workspace_id: "workspace-1",
         ...row,
@@ -244,6 +246,42 @@ describe("reapOrphanSandboxes", () => {
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-orphan", {
       vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
     });
+  });
+
+  it("reaps stale running sandbox capability checks after the stale cutoff", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "stale-capability-check", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([], {
+      checks: [
+        {
+          checked_at: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+          sandbox_id: "stale-capability-check",
+          status: "running",
+        },
+      ],
+    });
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual(["stale-capability-check"]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("stale-capability-check", {
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
+  });
+
+  it("keeps fresh running sandbox capability checks active", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "fresh-capability-check", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([], {
+      checks: [{ sandbox_id: "fresh-capability-check", status: "running" }],
+    });
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
   it("does not reap a sandbox whose agent job is still active after run completion", async () => {
