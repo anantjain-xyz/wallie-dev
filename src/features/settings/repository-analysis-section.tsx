@@ -8,6 +8,7 @@ import { buildRepositorySetupHealth } from "@/features/onboarding/repository-hea
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
   mergeRepositoryOnboardingState,
+  hasCurrentWallieSkills,
   RepositoryMetadataPills,
   RepositorySetupControls,
   RepositorySetupMessages,
@@ -303,7 +304,8 @@ export function RepositoryAnalysisSection({
               const rowBusy = rowProfileAction !== null;
               const showSetupControls =
                 Boolean(repository.onboarding.setupPrUrl) ||
-                repository.onboarding.status !== "ready";
+                repository.onboarding.status !== "ready" ||
+                !hasCurrentWallieSkills(repository.onboarding);
               const showProfileAction =
                 repository.onboarding.status === "ready" &&
                 !showProfileEditor &&
