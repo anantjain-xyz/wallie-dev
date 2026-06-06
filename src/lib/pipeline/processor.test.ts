@@ -174,6 +174,7 @@ interface MockOptions {
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   claimSucceeds?: boolean;
   artifactInsertError?: { message: string } | null;
+  messageInsertError?: { message: string } | null;
   pointerUpdateError?: { message: string } | null;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
@@ -345,6 +346,10 @@ function buildAdminMock(opts: MockOptions) {
 
   const agentRunMessagesTable = {
     insert: async (row: Record<string, unknown>) => {
+      if (opts.messageInsertError) {
+        return { error: opts.messageInsertError };
+      }
+
       insertedMessages.push(row);
       return { error: null };
     },
@@ -571,7 +576,7 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("renders the stage prompt, runs the agent, writes the artifact, and flips status", async () => {
     const session = baseSession();
     const job = baseJob();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({
+    const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
       session,
       agentConfig: [],
     });
@@ -585,6 +590,20 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(artifact.version).toBe(1);
     expect(artifact.artifact_json).toContain("Drafted spec body");
     expect(artifact.artifact_json).not.toContain("Done");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "text",
+        message_md: "Drafted spec body",
+      }),
+      expect.objectContaining({
+        kind: "completion",
+        message_md: "Done",
+      }),
+      expect.objectContaining({
+        kind: "completion",
+        message_md: "Product run completed",
+      }),
+    ]);
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
@@ -703,8 +722,35 @@ describe("processPipelineJob (generic stage runner)", () => {
     await processPipelineJob({ admin, job: baseJob() });
 
     const activityUpdates = updatedRuns.filter((patch) => "last_activity_at" in patch);
-    expect(activityUpdates).toHaveLength(1);
+    expect(activityUpdates).toHaveLength(2);
     expect(activityUpdates[0]).toEqual({ last_activity_at: expect.any(String) });
+    expect(activityUpdates[1]).toEqual({ last_activity_at: expect.any(String) });
+  });
+
+  it("fails the stage when persisting a run message fails", async () => {
+    mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Spec body" }]));
+    const session = baseSession();
+    const { admin, insertedArtifacts, insertedMessages, updatedJobs, updatedRuns, updatedSessions } =
+      buildAdminMock({
+        session,
+        agentConfig: [],
+        messageInsertError: { message: "message insert failed" },
+      });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toHaveLength(0);
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "message insert failed",
+      status: "error",
+    });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
   });
 
   it("resolves the session owner's Anthropic API key for Claude Code runs", async () => {

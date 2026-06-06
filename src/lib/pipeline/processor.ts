@@ -251,6 +251,11 @@ async function runStage(input: {
     }
 
     if (runId) {
+      await persistEvent(admin, runId, session.workspace_id, {
+        type: "completion",
+        taskComplete: true,
+        summary: `${stage.name} run completed`,
+      });
       await markRunSuccess(admin, runId, usage);
     }
 
@@ -955,12 +960,15 @@ async function persistEvent(
       break;
   }
 
-  await admin.from("agent_run_messages").insert({
+  const { error } = await admin.from("agent_run_messages").insert({
     agent_run_id: runId,
     kind,
     message_md: messageMd,
     workspace_id: workspaceId,
   });
+  if (error) {
+    throw error;
+  }
 
   await touchRunActivity(admin, runId);
 }
