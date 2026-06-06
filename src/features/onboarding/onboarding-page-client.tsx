@@ -1901,7 +1901,6 @@ function selectedRepositoryFromData(data: WorkspaceOnboardingData) {
 
 function canCompleteGitHubSetupStep(data: WorkspaceOnboardingData) {
   return (
-    Boolean(data.github.authorIdentity) &&
     data.setupHealth.githubInstallation.connected &&
     data.github.repositories.some((repository) => !repository.isArchived)
   );

@@ -5,10 +5,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import type { PipelineStage } from "@/features/sessions/types";
-import {
-  GitHubAuthorMissingError,
-  resolveCommitAuthorForRun,
-} from "@/features/github/author-identity";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
@@ -205,17 +201,12 @@ async function runStage(input: {
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
       const installationToken = await mintInstallationToken(github.installationId);
-      const commitAuthor = await resolveCommitAuthorForRun(admin, {
-        fallbackMemberId: session.creator_member_id,
-        requestedByMemberId: job.requested_by_member_id,
-      });
       branch = buildStageBranchName(session.id, stage.slug);
       throwIfAborted(signal);
       sandbox = await createSessionSandbox({
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
         branch,
-        commitAuthor,
         installationToken,
         repoFullName: github.repo.full_name,
         signal,
@@ -442,13 +433,6 @@ async function enqueueSessionJobWithRun(input: {
     loadSessionById(input.admin, input.sessionId),
   ]);
   const stage = session ? await loadStageById(input.admin, session.current_stage_id) : null;
-  if (!session) {
-    throw new Error("Session not found.");
-  }
-  await resolveCommitAuthorForRun(input.admin, {
-    fallbackMemberId: session.creator_member_id,
-    requestedByMemberId: input.requestedByMemberId,
-  });
   const { data: job, error: jobError } = await input.admin
     .from("agent_jobs")
     .insert({
@@ -512,26 +496,6 @@ export async function handleApproval(input: {
   version: number;
 }): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const session = await loadSessionById(admin, input.sessionId);
-
-  if (!session || session.workspace_id !== input.expectedWorkspaceId) {
-    return { error: "Session not found.", success: false };
-  }
-
-  if (await approvalWouldQueueNextRun(admin, session)) {
-    try {
-      await resolveCommitAuthorForRun(admin, {
-        fallbackMemberId: session.creator_member_id,
-        requestedByMemberId: input.approverMemberId,
-      });
-    } catch (error) {
-      if (error instanceof GitHubAuthorMissingError) {
-        return { error: error.message, success: false };
-      }
-
-      throw error;
-    }
-  }
 
   // The RPC enforces the approver gate (per-stage approver list, with
   // owner/admin fallback), records the completion, and advances to the next
@@ -569,10 +533,6 @@ export async function handleApproval(input: {
 
       return { jobId: queued.jobId, success: true };
     } catch (error) {
-      if (error instanceof GitHubAuthorMissingError) {
-        return { error: error.message, success: false };
-      }
-
       console.error("Approved stage but failed to queue Wallie", {
         error: getErrorMessage(error, "Approved stage but failed to queue Wallie."),
         sessionId: input.sessionId,
@@ -583,26 +543,6 @@ export async function handleApproval(input: {
   }
 
   return { jobId: null, success: true };
-}
-
-async function approvalWouldQueueNextRun(
-  admin: AdminClient,
-  session: SessionRow,
-): Promise<boolean> {
-  const stage = await loadStageById(admin, session.current_stage_id);
-  if (!stage) return false;
-
-  const { data, error } = await admin
-    .from("pipeline_stages")
-    .select("id")
-    .eq("pipeline_id", stage.pipelineId)
-    .gt("position", stage.position)
-    .order("position", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  return Boolean(data);
 }
 
 export async function handleRejection(input: {
@@ -630,19 +570,6 @@ export async function handleRejection(input: {
 
   if (session.current_artifact_version !== input.version) {
     return { error: "Version mismatch: a newer version exists.", success: false };
-  }
-
-  try {
-    await resolveCommitAuthorForRun(admin, {
-      fallbackMemberId: session.creator_member_id,
-      requestedByMemberId: input.requestedByMemberId,
-    });
-  } catch (error) {
-    if (error instanceof GitHubAuthorMissingError) {
-      return { error: error.message, success: false };
-    }
-
-    throw error;
   }
 
   const stage = await loadStageById(admin, session.current_stage_id);

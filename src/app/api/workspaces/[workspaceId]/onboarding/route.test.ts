@@ -28,10 +28,8 @@ const onboardingData: WorkspaceOnboardingData = {
     role: "owner",
   },
   github: {
-    authorIdentity: null,
     installation: null,
     missingAppKeys: [],
-    missingAuthorKeys: [],
     missingWebhookKeys: [],
     primaryProfile: null,
     repositories: [],

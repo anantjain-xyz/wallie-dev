@@ -10,7 +10,6 @@ import type {
   SandboxExecOptions,
   SandboxHandle,
   SandboxLogEntry,
-  SandboxCommitAuthor,
 } from "./types";
 
 // In-memory registry shared by FakeSandbox + the listing/stop helpers, so
@@ -81,7 +80,6 @@ interface ExecScript {
 export interface FakeSandboxOptions {
   baseBranch?: string;
   branch?: string;
-  commitAuthor?: SandboxCommitAuthor;
   /**
    * When true, commands that are not explicitly scripted execute on the local
    * machine in a temporary git checkout. Unit tests keep this false so
@@ -116,7 +114,6 @@ export class FakeSandbox implements SandboxHandle {
       initializeLocalGitCheckout(this.repoPath, {
         baseBranch: opts.baseBranch ?? "main",
         branch: opts.branch ?? "wallie/fake-stage",
-        commitAuthor: opts.commitAuthor ?? { email: "wallie@example.local", name: "Wallie" },
       });
     }
 
@@ -219,19 +216,19 @@ export class FakeSandbox implements SandboxHandle {
 
 function initializeLocalGitCheckout(
   repoPath: string,
-  input: { baseBranch: string; branch: string; commitAuthor: SandboxCommitAuthor },
+  input: { baseBranch: string; branch: string },
 ): void {
   mkdirSync(repoPath, { recursive: true });
   writeFileSync(join(repoPath, "README.md"), "# Wallie fake sandbox\n");
 
   const env = {
     ...localSandboxEnv(repoPath),
-    GIT_AUTHOR_EMAIL: input.commitAuthor.email,
-    GIT_AUTHOR_NAME: input.commitAuthor.name,
+    GIT_AUTHOR_EMAIL: "wallie@example.local",
+    GIT_AUTHOR_NAME: "Wallie",
   };
   runGit(repoPath, ["init", "-q"], env);
-  runGit(repoPath, ["config", "user.email", input.commitAuthor.email], env);
-  runGit(repoPath, ["config", "user.name", input.commitAuthor.name], env);
+  runGit(repoPath, ["config", "user.email", "wallie@example.local"], env);
+  runGit(repoPath, ["config", "user.name", "Wallie"], env);
   runGit(repoPath, ["checkout", "-B", input.baseBranch], env);
   runGit(repoPath, ["add", "README.md"], env);
   runGit(repoPath, ["commit", "-qm", "Initial fake sandbox checkout"], env);

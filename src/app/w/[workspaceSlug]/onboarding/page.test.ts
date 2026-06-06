@@ -40,10 +40,8 @@ const onboardingData = {
   canManage: false,
   currentMember: { id: "member-1", role: "member" },
   github: {
-    authorIdentity: null,
     installation: null,
     missingAppKeys: [],
-    missingAuthorKeys: [],
     missingWebhookKeys: [],
     primaryProfile: null,
     repositories: [],

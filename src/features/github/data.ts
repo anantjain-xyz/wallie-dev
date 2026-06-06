@@ -3,9 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getGitHubConfigStatus } from "@/features/github/config";
-import { loadGitHubAuthorIdentityForUser } from "@/features/github/author-identity";
 import type {
-  GitHubAuthorIdentitySummary,
   GitHubInstallationSummary,
   GitHubRepositorySummary,
 } from "@/features/github/contracts";
@@ -71,10 +69,8 @@ export type WorkspaceGitHubRepository = GitHubRepositorySummary & {
 };
 
 export type WorkspaceGitHubData = {
-  authorIdentity: GitHubAuthorIdentitySummary | null;
   installation: GitHubInstallationSummary | null;
   missingAppKeys: string[];
-  missingAuthorKeys: string[];
   missingWebhookKeys: string[];
   // Temporary compatibility: repository profiles are still sourced from the legacy is_primary row.
   primaryProfile: RepositoryProfileState | null;
@@ -155,14 +151,12 @@ function mapRepositoryOnboardingState(
 export async function loadWorkspaceGitHubData(
   admin: AdminClient,
   workspaceId: string,
-  currentUserId?: string | null,
 ): Promise<WorkspaceGitHubData> {
   const [
     { data: installationRows, error: installationError },
     { data: repositoryRows, error: repositoryError },
     { data: onboardingRows, error: onboardingError },
     { data: profileRows, error: profileError },
-    authorIdentity,
   ] = await Promise.all([
     admin
       .from("github_installations")
@@ -183,7 +177,6 @@ export async function loadWorkspaceGitHubData(
       .from("workspace_repository_profiles")
       .select(profileSelect)
       .eq("workspace_id", workspaceId),
-    currentUserId ? loadGitHubAuthorIdentityForUser(admin, currentUserId) : Promise.resolve(null),
   ]);
 
   const firstError = installationError ?? repositoryError ?? onboardingError ?? profileError;
@@ -209,7 +202,6 @@ export async function loadWorkspaceGitHubData(
   });
 
   return {
-    authorIdentity,
     installation: installationRows?.[0] ? mapInstallation(installationRows[0]) : null,
     ...getGitHubConfigStatus(),
     primaryProfile: primaryProfileRow ? mapRepositoryProfileRow(primaryProfileRow) : null,

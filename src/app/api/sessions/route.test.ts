@@ -5,10 +5,6 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   enqueueWallieRun: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
-  resolveCommitAuthorForMember: vi.fn().mockResolvedValue({
-    email: "12345+anant@users.noreply.github.com",
-    name: "Anant Jain",
-  }),
 }));
 
 vi.mock("next/server", async () => {
@@ -29,10 +25,6 @@ vi.mock("@/lib/wallie/service", () => ({
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
-}));
-
-vi.mock("@/features/github/author-identity", () => ({
-  resolveCommitAuthorForMember: mocked.resolveCommitAuthorForMember,
 }));
 
 import { POST } from "./route";
@@ -247,10 +239,6 @@ describe("POST /api/sessions", () => {
     setupAccess();
     currentAdminMock = buildAdminMock();
     mocked.createSupabaseAdminClient.mockReturnValue(currentAdminMock.admin);
-    mocked.resolveCommitAuthorForMember.mockResolvedValue({
-      email: "12345+anant@users.noreply.github.com",
-      name: "Anant Jain",
-    });
     mocked.enqueueWallieRun.mockResolvedValue({
       created: true,
       jobId: "job-1",
@@ -376,23 +364,6 @@ describe("POST /api/sessions", () => {
     const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
 
     expect(response.status).toBe(409);
-    expect(currentAdminMock.insertedSessions).toHaveLength(0);
-    expect(mocked.enqueueWallieRun).not.toHaveBeenCalled();
-  });
-
-  it("rejects session creation before inserting when the requester has no commit author identity", async () => {
-    mocked.resolveCommitAuthorForMember.mockResolvedValueOnce(null);
-
-    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      error: "Connect your GitHub commit author identity before starting Wallie.",
-    });
-    expect(mocked.resolveCommitAuthorForMember).toHaveBeenCalledWith(
-      currentAdminMock.admin,
-      MEMBER_ID,
-    );
     expect(currentAdminMock.insertedSessions).toHaveLength(0);
     expect(mocked.enqueueWallieRun).not.toHaveBeenCalled();
   });

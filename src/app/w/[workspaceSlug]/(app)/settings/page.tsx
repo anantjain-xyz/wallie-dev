@@ -7,7 +7,6 @@ type SettingsPageProps = {
   }>;
   searchParams: Promise<{
     github?: string;
-    github_author?: string;
     codex_connect?: string;
   }>;
 };
@@ -22,7 +21,6 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
       initialData={data}
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
-        githubAuthorStatus: resolvedSearchParams.github_author ?? null,
         codexStatus: resolvedSearchParams.codex_connect ?? null,
       }}
     />

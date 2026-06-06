@@ -1083,48 +1083,6 @@ export type Database = {
         }
         Relationships: []
       }
-      user_github_identities: {
-        Row: {
-          author_email: string
-          author_email_source: string
-          author_email_verified_at: string | null
-          author_name: string
-          connected_at: string
-          created_at: string
-          github_avatar_url: string | null
-          github_login: string
-          github_user_id: number
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          author_email: string
-          author_email_source?: string
-          author_email_verified_at?: string | null
-          author_name: string
-          connected_at?: string
-          created_at?: string
-          github_avatar_url?: string | null
-          github_login: string
-          github_user_id: number
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          author_email?: string
-          author_email_source?: string
-          author_email_verified_at?: string | null
-          author_name?: string
-          connected_at?: string
-          created_at?: string
-          github_avatar_url?: string | null
-          github_login?: string
-          github_user_id?: number
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       user_codex_credentials: {
         Row: {
           access_token_expires_at: string | null

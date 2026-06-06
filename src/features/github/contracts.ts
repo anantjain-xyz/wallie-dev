@@ -34,25 +34,8 @@ export type GitHubInstallationSummary = {
   updatedAt: string;
 };
 
-export type GitHubAuthorIdentitySummary = {
-  authorEmail: string;
-  authorEmailSource: "github_noreply";
-  authorEmailVerifiedAt: string | null;
-  authorName: string;
-  connectedAt: string;
-  githubAvatarUrl: string | null;
-  githubLogin: string;
-  githubUserId: number;
-  updatedAt: string;
-  userId: string;
-};
-
 export type GitHubInstallResponse = {
   installUrl: string;
-};
-
-export type GitHubAuthorConnectResponse = {
-  authorizeUrl: string;
 };
 
 export type GitHubRepositorySyncResponse = {

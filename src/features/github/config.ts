@@ -1,7 +1,6 @@
 import { parseServerEnv } from "@/env/server";
 
 export const githubAppEnvKeys = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"] as const;
-export const githubAuthorEnvKeys = ["GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET"] as const;
 export const githubWebhookEnvKeys = [
   "GITHUB_APP_ID",
   "GITHUB_APP_PRIVATE_KEY",
@@ -18,7 +17,6 @@ export function getMissingGitHubEnvKeys(
 export function getGitHubConfigStatus(input: Record<string, string | undefined> = process.env) {
   return {
     missingAppKeys: getMissingGitHubEnvKeys(githubAppEnvKeys, input),
-    missingAuthorKeys: getMissingGitHubEnvKeys(githubAuthorEnvKeys, input),
     missingWebhookKeys: getMissingGitHubEnvKeys(githubWebhookEnvKeys, input),
   };
 }
@@ -50,19 +48,4 @@ export function resolveGitHubWebhookSecret(
   }
 
   return env.GITHUB_WEBHOOK_SECRET;
-}
-
-export function resolveGitHubAuthorOAuthConfig(
-  input: Record<string, string | undefined> = process.env,
-) {
-  const env = parseServerEnv(input);
-
-  if (!env.GITHUB_APP_CLIENT_ID || !env.GITHUB_APP_CLIENT_SECRET) {
-    throw new Error("GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET are required.");
-  }
-
-  return {
-    clientId: env.GITHUB_APP_CLIENT_ID,
-    clientSecret: env.GITHUB_APP_CLIENT_SECRET,
-  };
 }

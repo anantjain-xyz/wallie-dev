@@ -116,9 +116,8 @@ function workspaceSecret(
 
 type OnboardingDataOverrides = Omit<
   Partial<WorkspaceOnboardingData>,
-  "github" | "onboarding" | "setupHealth" | "workspace"
+  "onboarding" | "setupHealth" | "workspace"
 > & {
-  github?: Partial<WorkspaceOnboardingData["github"]>;
   onboarding?: Partial<WorkspaceOnboardingData["onboarding"]>;
   setupHealth?: Partial<WorkspaceOnboardingData["setupHealth"]>;
   workspace?: Partial<WorkspaceOnboardingData["workspace"]>;
@@ -127,7 +126,6 @@ type OnboardingDataOverrides = Omit<
 function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboardingData {
   const pipeline = overrides.pipeline === undefined ? configuredPipeline : overrides.pipeline;
   const {
-    github: githubOverride,
     onboarding: onboardingOverride,
     setupHealth: setupHealthOverride,
     workspace: workspaceOverride,
@@ -142,13 +140,11 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
     canManage: true,
     currentMember: { id: "member-1", role: "owner" },
     github: {
-      authorIdentity: githubOverride?.authorIdentity ?? null,
-      installation: githubOverride?.installation ?? null,
-      missingAppKeys: githubOverride?.missingAppKeys ?? [],
-      missingAuthorKeys: githubOverride?.missingAuthorKeys ?? [],
-      missingWebhookKeys: githubOverride?.missingWebhookKeys ?? [],
-      primaryProfile: githubOverride?.primaryProfile ?? null,
-      repositories: githubOverride?.repositories ?? [],
+      installation: null,
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [],
     },
     linearRouting: DEFAULT_LINEAR_ROUTING_CONFIG,
     linearSecret: null,
@@ -276,23 +272,6 @@ function connectedInstallation() {
   };
 }
 
-function connectedAuthorIdentity(): NonNullable<
-  WorkspaceOnboardingData["github"]["authorIdentity"]
-> {
-  return {
-    authorEmail: "12345+anant@users.noreply.github.com",
-    authorEmailSource: "github_noreply",
-    authorEmailVerifiedAt: "2026-05-16T18:00:00.000Z",
-    authorName: "Anant Jain",
-    connectedAt: "2026-05-16T18:00:00.000Z",
-    githubAvatarUrl: "https://avatars.githubusercontent.com/u/12345?v=4",
-    githubLogin: "anant",
-    githubUserId: 12345,
-    updatedAt: "2026-05-16T18:00:00.000Z",
-    userId: "user-1",
-  };
-}
-
 function onboardingWithSelectedRepository(
   setupStatus: WorkspaceGitHubRepository["onboarding"]["status"],
 ) {
@@ -313,7 +292,6 @@ function onboardingWithSelectedRepository(
 
   return onboardingData({
     github: {
-      authorIdentity: connectedAuthorIdentity(),
       installation: connectedInstallation(),
       missingAppKeys: [],
       missingWebhookKeys: [],
@@ -481,24 +459,6 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Install skills");
     expect(html).not.toContain("Mark skills as installed");
     expect(primaryFooterButton(html)).not.toContain("disabled");
-  });
-
-  it("blocks the GitHub step until a commit author identity is connected", () => {
-    const data = onboardingWithSelectedRepository("not_set_up");
-    const html = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: {
-          ...data,
-          github: {
-            ...data.github,
-            authorIdentity: null,
-          },
-        },
-      }),
-    );
-
-    expect(html).toContain("Connect author");
-    expect(primaryFooterButton(html)).toContain("disabled");
   });
 
   it("blocks the GitHub step when only archived repositories are synced", () => {

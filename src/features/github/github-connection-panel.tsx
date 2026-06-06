@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import type {
-  GitHubAuthorConnectResponse,
   GitHubInstallResponse,
   GitHubRepositorySummary,
   GitHubRepositorySyncResponse,
@@ -146,22 +145,6 @@ export function GitHubConnectionPanel({
     successText: null,
   });
 
-  const launchAuthorConnect = useApiAction<GitHubAuthorConnectResponse>({
-    call: () => {
-      const params = new URLSearchParams({ workspaceId });
-      if (source === "onboarding") params.set("source", "onboarding");
-      return fetch(`/api/github/author?${params.toString()}`, {
-        method: "GET",
-      });
-    },
-    errorText: "GitHub author connection failed.",
-    onSuccess: (payload) => {
-      window.location.assign(payload.authorizeUrl);
-    },
-    setFlashMessage,
-    successText: null,
-  });
-
   const refreshRepositories = useApiAction<GitHubRepositorySyncResponse>({
     call: () =>
       fetch("/api/github/refresh-repositories", {
@@ -194,49 +177,11 @@ export function GitHubConnectionPanel({
     setFlashMessage,
     successText: "GitHub repositories refreshed.",
   });
-  const hasGitHubAuthorConfig = github.missingAuthorKeys.length === 0;
-  const authorIdentity = github.authorIdentity;
-
-  const authorPanel = (
-    <div className="flex flex-wrap items-start justify-between gap-4 border-t border-border pt-5">
-      <div className="space-y-1">
-        <p className="text-[14px] font-medium text-foreground">
-          Commit author{" "}
-          {authorIdentity ? (
-            <span className="font-mono">@{authorIdentity.githubLogin}</span>
-          ) : (
-            <span className="text-muted">not connected</span>
-          )}
-        </p>
-        <p className="max-w-2xl text-[12px] leading-5 text-muted">
-          {authorIdentity
-            ? `${authorIdentity.authorName} <${authorIdentity.authorEmail}>`
-            : "Connect a GitHub account before starting Wallie runs that create PR commits."}
-        </p>
-      </div>
-      <button
-        className="ui-button"
-        disabled={!hasGitHubAuthorConfig || launchAuthorConnect.isBusy}
-        onClick={() => void launchAuthorConnect.run()}
-        type="button"
-      >
-        {launchAuthorConnect.isBusy
-          ? "Connecting..."
-          : authorIdentity
-            ? "Reconnect author"
-            : "Connect author"}
-      </button>
-    </div>
-  );
 
   if (!githubInstallation) {
     return (
       <div className="space-y-6">
         <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
-        <ConfigState
-          missingKeys={github.missingAuthorKeys}
-          title="GitHub author connection disabled"
-        />
         <ConfigState
           missingKeys={github.missingWebhookKeys.filter(
             (key) => !github.missingAppKeys.includes(key),
@@ -257,7 +202,6 @@ export function GitHubConnectionPanel({
             {launchInstall.isBusy ? "Preparing install..." : "Install GitHub App"}
           </button>
         </div>
-        {authorPanel}
       </div>
     );
   }
@@ -265,10 +209,6 @@ export function GitHubConnectionPanel({
   return (
     <div className="space-y-6">
       <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
-      <ConfigState
-        missingKeys={github.missingAuthorKeys}
-        title="GitHub author connection disabled"
-      />
       <ConfigState
         missingKeys={github.missingWebhookKeys.filter(
           (key) => !github.missingAppKeys.includes(key),
@@ -309,7 +249,6 @@ export function GitHubConnectionPanel({
           </Link>
         </div>
       </div>
-      {authorPanel}
     </div>
   );
 }

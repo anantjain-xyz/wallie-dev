@@ -20,11 +20,6 @@ import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
-const emptySearchState = {
-  codexStatus: null,
-  githubAuthorStatus: null,
-  githubStatus: null,
-};
 const pipeline = {
   id: "pipeline-1",
   isDefault: true,
@@ -44,11 +39,7 @@ const pipeline = {
   ],
 };
 
-type SettingsDataOverrides = Omit<Partial<SettingsPageData>, "github"> & {
-  github?: Partial<SettingsPageData["github"]>;
-};
-
-function settingsData(overrides: SettingsDataOverrides = {}): SettingsPageData {
+function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageData {
   const agentConfig = {
     agent_model: "gpt-5-codex",
     agent_provider: "codex",
@@ -56,8 +47,6 @@ function settingsData(overrides: SettingsDataOverrides = {}): SettingsPageData {
     max_retries: 3,
     stall_timeout_ms: 300000,
   };
-
-  const { github: githubOverride, ...topLevelOverrides } = overrides;
 
   return {
     agentConfig,
@@ -67,13 +56,11 @@ function settingsData(overrides: SettingsDataOverrides = {}): SettingsPageData {
       role: "owner",
     },
     github: {
-      authorIdentity: githubOverride?.authorIdentity ?? null,
-      installation: githubOverride?.installation ?? null,
-      missingAppKeys: githubOverride?.missingAppKeys ?? [],
-      missingAuthorKeys: githubOverride?.missingAuthorKeys ?? [],
-      missingWebhookKeys: githubOverride?.missingWebhookKeys ?? [],
-      primaryProfile: githubOverride?.primaryProfile ?? null,
-      repositories: githubOverride?.repositories ?? [],
+      installation: null,
+      missingAppKeys: [],
+      missingWebhookKeys: [],
+      primaryProfile: null,
+      repositories: [],
     },
     latestSandboxCapabilityCheck: null,
     linearSecret: null,
@@ -180,7 +167,7 @@ function settingsData(overrides: SettingsDataOverrides = {}): SettingsPageData {
     workspaceInvitations: [],
     workspaceMembers: [],
     workspaceSecrets: [],
-    ...topLevelOverrides,
+    ...overrides,
   };
 }
 
@@ -260,7 +247,10 @@ describe("Settings integration sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -292,7 +282,10 @@ describe("Settings integration sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -305,7 +298,10 @@ describe("Settings integration sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData({ canManage: false }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -399,7 +395,10 @@ describe("Settings integration sections", () => {
           },
           workspaceSecrets: [],
         }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -440,7 +439,10 @@ describe("Settings integration sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -480,7 +482,10 @@ describe("Settings integration sections", () => {
             },
           ],
         }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -541,7 +546,10 @@ describe("Settings integration sections", () => {
             selectedGithubRepositoryId: repository.id,
           },
         }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -602,7 +610,10 @@ describe("Settings integration sections", () => {
             selectedGithubRepositoryId: repository.id,
           },
         }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -665,7 +676,10 @@ describe("Settings integration sections", () => {
             selectedGithubRepositoryId: repository.id,
           },
         }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -744,7 +758,10 @@ describe("Settings integration sections", () => {
             selectedGithubRepositoryId: repository.id,
           },
         }),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 
@@ -756,7 +773,10 @@ describe("Settings integration sections", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
-        searchState: emptySearchState,
+        searchState: {
+          codexStatus: null,
+          githubStatus: null,
+        },
       }),
     );
 

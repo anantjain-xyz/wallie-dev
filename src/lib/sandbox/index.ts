@@ -34,7 +34,6 @@ export async function createSessionSandbox(
     return new FakeSandbox(undefined, {
       baseBranch: input.baseBranch,
       branch: input.branch,
-      commitAuthor: input.commitAuthor,
       passthroughExec: true,
     });
   }

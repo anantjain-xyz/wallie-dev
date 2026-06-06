@@ -3,15 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   getRepositoryOnboardingState: vi.fn(),
-  GitHubAuthorMissingError: class GitHubAuthorMissingError extends Error {
-    readonly code = "github_author_missing";
-    readonly statusCode = 409;
-
-    constructor(message = "Connect your GitHub commit author identity before starting Wallie.") {
-      super(message);
-      this.name = "GitHubAuthorMissingError";
-    }
-  },
   markRepositoryOnboardingReady: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   startRepositoryOnboarding: vi.fn(),
@@ -29,10 +20,6 @@ vi.mock("@/lib/repo-onboarding/server", () => ({
   getRepositoryOnboardingState: mocked.getRepositoryOnboardingState,
   markRepositoryOnboardingReady: mocked.markRepositoryOnboardingReady,
   startRepositoryOnboarding: mocked.startRepositoryOnboarding,
-}));
-
-vi.mock("@/features/github/author-identity", () => ({
-  GitHubAuthorMissingError: mocked.GitHubAuthorMissingError,
 }));
 
 import { GET, PATCH, POST } from "./route";
@@ -109,26 +96,7 @@ describe("repository onboarding route", () => {
     expect(mocked.startRepositoryOnboarding).toHaveBeenCalledWith({
       admin,
       repositoryId: REPOSITORY_ID,
-      requestedByMemberId: "member-1",
       workspaceId: WORKSPACE_ID,
-    });
-  });
-
-  it("returns setup guidance when repository onboarding needs a commit author identity", async () => {
-    grantAccess();
-    mocked.createSupabaseAdminClient.mockReturnValue({});
-    mocked.startRepositoryOnboarding.mockRejectedValue(
-      new mocked.GitHubAuthorMissingError("Connect your GitHub commit author identity first."),
-    );
-
-    const response = await POST(
-      new Request("http://localhost", { method: "POST" }),
-      routeContext(),
-    );
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      error: "Connect your GitHub commit author identity first.",
     });
   });
 

@@ -1,26 +1,6 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mockedAuthor = vi.hoisted(() => {
-  class GitHubAuthorMissingError extends Error {
-    readonly code = "github_author_missing";
-    readonly statusCode = 409;
-
-    constructor(message = "Connect your GitHub commit author identity before starting Wallie.") {
-      super(message);
-      this.name = "GitHubAuthorMissingError";
-    }
-  }
-
-  return {
-    GitHubAuthorMissingError,
-    resolveCommitAuthorForRun: vi.fn().mockResolvedValue({
-      email: "12345+anant@users.noreply.github.com",
-      name: "Anant Jain",
-    }),
-  };
-});
-
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   claimQueuedJobCandidate,
@@ -33,14 +13,8 @@ vi.mock("@/lib/pipeline/processor", () => ({
   processPipelineJob: vi.fn(),
 }));
 
-vi.mock("@/features/github/author-identity", () => ({
-  GitHubAuthorMissingError: mockedAuthor.GitHubAuthorMissingError,
-  resolveCommitAuthorForRun: mockedAuthor.resolveCommitAuthorForRun,
-}));
-
 afterEach(() => {
   vi.useRealTimers();
-  vi.clearAllMocks();
   vi.restoreAllMocks();
 });
 
@@ -260,7 +234,6 @@ function buildSupabaseMocks(opts: {
 }) {
   const sessionRow = {
     current_stage_id: "stage-product",
-    creator_member_id: "mem-creator",
     github_repository_id: null,
     id: "sess-1",
     workspace_id: "ws-1",
@@ -585,37 +558,6 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       statusCode: 422,
     });
 
-    expect(insertedRunRows).toHaveLength(0);
-  });
-
-  it("blocks before queueing when the requester has no GitHub commit author identity", async () => {
-    mockedAuthor.resolveCommitAuthorForRun.mockRejectedValueOnce(
-      new mockedAuthor.GitHubAuthorMissingError(),
-    );
-    const insertedRunRows: Array<Record<string, unknown>> = [];
-    const { admin, supabase } = buildSupabaseMocks({
-      agentConfig: [],
-      insertedRunRows,
-    });
-
-    await expect(
-      enqueueWallieRun({
-        admin,
-        sessionId: "sess-1",
-        requestedByMemberId: "mem-1",
-        supabase,
-        triggerType: "manual_run",
-        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
-      }),
-    ).rejects.toMatchObject({
-      code: "github_author_missing",
-      statusCode: 409,
-    });
-
-    expect(mockedAuthor.resolveCommitAuthorForRun).toHaveBeenCalledWith(admin, {
-      fallbackMemberId: "mem-creator",
-      requestedByMemberId: "mem-1",
-    });
     expect(insertedRunRows).toHaveLength(0);
   });
 });

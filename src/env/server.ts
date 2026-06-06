@@ -24,8 +24,6 @@ const encryptionKeyShapeMessage =
 
 export const serverEnvSchema = z.object({
   GITHUB_APP_ID: optionalEnvStringSchema,
-  GITHUB_APP_CLIENT_ID: optionalEnvStringSchema,
-  GITHUB_APP_CLIENT_SECRET: optionalEnvStringSchema,
   GITHUB_APP_PRIVATE_KEY: optionalEnvStringSchema,
   GITHUB_WEBHOOK_SECRET: optionalEnvStringSchema,
   SUPABASE_SECRET_KEY: requiredEnvStringSchema,
@@ -65,8 +63,6 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
   const clientEnv = parseClientEnv(input);
   const serverEnv = serverEnvSchema.parse({
     GITHUB_APP_ID: input.GITHUB_APP_ID,
-    GITHUB_APP_CLIENT_ID: input.GITHUB_APP_CLIENT_ID,
-    GITHUB_APP_CLIENT_SECRET: input.GITHUB_APP_CLIENT_SECRET,
     GITHUB_APP_PRIVATE_KEY: input.GITHUB_APP_PRIVATE_KEY,
     GITHUB_WEBHOOK_SECRET: input.GITHUB_WEBHOOK_SECRET,
     SUPABASE_SECRET_KEY: input.SUPABASE_SECRET_KEY,
