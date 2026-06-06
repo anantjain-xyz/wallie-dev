@@ -34,7 +34,10 @@ const stageInputSchema = z.object({
 
 const pipelineUpdateSchema = z.object({
   name: z.string().min(1).max(80).default("Default"),
-  operatingRulesMd: z.string().max(20000).default(""),
+  // Optional, not defaulted: an omitted field must preserve the pipeline's
+  // existing operating rules (e.g. a stale client that predates this field),
+  // not silently clear them. An explicit "" still clears intentionally.
+  operatingRulesMd: z.string().max(20000).optional(),
   stages: z.array(stageInputSchema).min(1, "Pipeline must have at least one stage."),
 });
 
@@ -60,6 +63,8 @@ export async function PUT(request: Request, context: RouteContext) {
   const admin = createSupabaseAdminClient();
 
   const { data, error } = await admin.rpc("rewrite_default_pipeline", {
+    // undefined when omitted: dropped from the JSON body, so the RPC falls back
+    // to its NULL default and coalesces to the pipeline's current rules.
     operating_rules_md: parsed.operatingRulesMd,
     pipeline_name: parsed.name,
     stage_payload: parsed.stages,

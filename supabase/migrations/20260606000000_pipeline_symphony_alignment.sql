@@ -71,7 +71,7 @@ as $$
       '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
       '## Instructions' || E'\n\n' ||
       'Implement the change against the approved plan, then publish it and verify it for human review. Read the codebase first and follow existing patterns. Work in small, focused commits.' || E'\n\n' ||
-      '- **Sync first.** Before you start, and again after addressing feedback, sync the branch with {{repo.defaultBranch}} and resolve any conflicts. Never publish on top of a conflicted branch.' || E'\n' ||
+      '- **Sync first.** Before you start, and again after addressing feedback, sync the branch with the repository''s default branch and resolve any conflicts. Never publish on top of a conflicted branch.' || E'\n' ||
       '- **Pick up prior work.** If the branch already has commits from an earlier attempt, reconcile against them — build on what is there and address the feedback specifically rather than redoing committed work.' || E'\n' ||
       '- **Reproduction first.** Confirm the current behavior from the plan''s reproduction signal before changing code.' || E'\n' ||
       '- **Validation is mandatory.** Satisfy every acceptance-criteria and validation item from the plan. Prefer targeted proof that exercises the change; re-run until green before publishing.' || E'\n' ||
@@ -91,7 +91,7 @@ as $$
       '{{#if attempt.feedback}}## Previous Feedback' || E'\n\n' ||
       '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
       '## Instructions' || E'\n\n' ||
-      '- Confirm the PR is approved and all required checks are green before merging. If checks are red or the branch conflicts, sync with {{repo.defaultBranch}} and resolve them. If it cannot be made green, stop and report it for rework rather than force-merging.' || E'\n' ||
+      '- Confirm the PR is approved and all required checks are green before merging. If checks are red or the branch conflicts, sync with the repository''s default branch and resolve them. If it cannot be made green, stop and report it for rework rather than force-merging.' || E'\n' ||
       '- Squash-merge the PR and record the resulting merge SHA.' || E'\n' ||
       '- Capture the rollout: tag or release if applicable, note any post-merge steps, and confirm the change is live.' || E'\n'
     );
@@ -137,7 +137,9 @@ create function public.rewrite_default_pipeline(
   target_workspace_id uuid,
   pipeline_name text,
   stage_payload jsonb,
-  operating_rules_md text default ''
+  -- NULL = caller omitted the field → preserve existing rules (see UPDATE
+  -- below). An explicit '' clears them on purpose.
+  operating_rules_md text default null
 )
 returns jsonb
 language plpgsql
@@ -298,7 +300,10 @@ begin
   update public.pipelines p
   set
     name = coalesce(pipeline_name, 'Default'),
-    operating_rules_md = coalesce(rewrite_default_pipeline.operating_rules_md, '')
+    operating_rules_md = coalesce(
+      rewrite_default_pipeline.operating_rules_md,
+      p.operating_rules_md
+    )
   where p.id = target_pipeline_id;
 
   with input_stages as (

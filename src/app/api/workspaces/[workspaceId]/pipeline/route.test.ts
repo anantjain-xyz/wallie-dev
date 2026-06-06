@@ -109,7 +109,8 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ success: true });
     expect(mocked.rpc).toHaveBeenCalledWith("rewrite_default_pipeline", {
-      operating_rules_md: "",
+      // Omitted from the body → undefined → RPC preserves existing rules.
+      operating_rules_md: undefined,
       pipeline_name: "Default",
       stage_payload: [
         baseStage({ approverMemberIds: [MEMBER_ID] }),
@@ -136,6 +137,21 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
 
     expect(response.status).toBe(200);
     expect(rpcArgs().operating_rules_md).toBe("## Operating rules\n- Be autonomous.");
+  });
+
+  it("omits operating rules from the RPC when the caller does not send them", async () => {
+    grantAccess();
+    setupRpc();
+
+    const response = await putPipeline({
+      name: "Default",
+      stages: [baseStage()],
+    });
+
+    expect(response.status).toBe(200);
+    // undefined (not "") so supabase-js drops it from the JSON body and the RPC
+    // default + coalesce preserves the pipeline's current rules.
+    expect(rpcArgs().operating_rules_md).toBeUndefined();
   });
 
   it("rejects operating rules longer than the allowed limit", async () => {
