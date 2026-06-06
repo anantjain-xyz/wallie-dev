@@ -529,10 +529,12 @@ function buildAdminMock(opts: MockOptions) {
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
+  const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+
   return {
     admin: createProcessorTestAdminClient({
       from: (name: string) => tables[name] ?? {},
-      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+      rpc,
     }),
     insertedArtifacts,
     insertedMessages,
@@ -541,6 +543,7 @@ function buildAdminMock(opts: MockOptions) {
     updatedJobs,
     updatedRuns,
     updatedSessions,
+    rpc,
   };
 }
 
@@ -883,11 +886,13 @@ describe("processPipelineJob (generic stage runner)", () => {
   });
 
   it("aborts before sandbox creation when Vercel Sandbox is not connected", async () => {
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
-      new Error("Connect a Vercel Sandbox account before starting Wallie runs."),
-    );
+    const error = new Error("Connect a Vercel Sandbox account before starting Wallie runs.");
+    error.name = "VercelSandboxConnectionMissingError";
+    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(error);
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
+    const { admin, insertedArtifacts, rpc, updatedJobs, updatedSessions } = buildAdminMock({
+      session,
+    });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
@@ -898,6 +903,11 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "agent_generating" },
       { phase_status: "rejected" },
     ]);
+    expect(rpc).not.toHaveBeenCalledWith("schedule_job_retry", expect.anything());
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "Connect a Vercel Sandbox account before starting Wallie runs.",
+      status: "error",
+    });
   });
 
   it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {

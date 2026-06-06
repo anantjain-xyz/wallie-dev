@@ -1195,6 +1195,42 @@ describe("OnboardingPageClient", () => {
     expect(button).toContain(">Complete setup</button>");
   });
 
+  it("routes the Vercel Sandbox blocker to the Vercel settings section", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            vercelSandboxConnection: {
+              connected: false,
+              lastValidationError: null,
+              projectId: null,
+              projectName: null,
+              status: "missing",
+              teamId: null,
+              updatedAt: null,
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Vercel Sandbox connected");
+    expect(html).toContain('href="/w/northwind/settings#vercel"');
+    expect(html).toContain("Open Vercel");
+  });
+
   it("enables the Verify completion CTA when every blocker passes", () => {
     const repo = repository("repo-a", {
       onboarding: {

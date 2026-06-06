@@ -474,6 +474,8 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Configure Linear");
     expect(html).toContain('id="runtime"');
     expect(html).toContain("Workspace secrets");
+    expect(html).toContain('id="vercel"');
+    expect(html).toContain("Connect Vercel");
     expect(html).toContain('id="verify"');
     expect(html).toContain("Verify setup");
   });

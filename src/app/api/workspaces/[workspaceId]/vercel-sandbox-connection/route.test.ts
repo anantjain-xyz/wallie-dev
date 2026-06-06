@@ -83,23 +83,57 @@ function mockAccess(ok = true) {
   );
 }
 
-function adminMock(options: { activeRun?: boolean } = {}) {
+type SandboxRunRow = {
+  sandbox_id: string | null;
+  sandbox_provider?: string | null;
+  sandbox_vercel_project_id?: string | null;
+  sandbox_vercel_team_id?: string | null;
+  status: string;
+  workspace_id: string;
+};
+
+function adminMock(options: { activeRun?: boolean; sandboxRunRows?: SandboxRunRow[] } = {}) {
   return {
     from: vi.fn((table: string) => {
       if (table === "agent_runs") {
         return {
-          select: () => ({
-            eq: () => ({
-              in: () => ({
-                limit: () => ({
-                  maybeSingle: async () => ({
-                    data: options.activeRun ? { id: "run-1" } : null,
-                    error: null,
-                  }),
-                }),
+          select: () => {
+            const filters = new Map<string, unknown>();
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.set(column, value);
+                return builder;
+              },
+              in: (column: string, value: unknown) => {
+                filters.set(column, value);
+                return builder;
+              },
+              limit: () => builder,
+              maybeSingle: async () => ({
+                data: options.activeRun ? { id: "run-1" } : null,
+                error: null,
               }),
-            }),
-          }),
+              then: (resolve: (value: { data: SandboxRunRow[]; error: null }) => void) => {
+                const sandboxIds = filters.get("sandbox_id");
+                const rows = (options.sandboxRunRows ?? [])
+                  .map((row) => ({
+                    sandbox_provider: "vercel",
+                    sandbox_vercel_project_id: credentials.projectId,
+                    sandbox_vercel_team_id: credentials.teamId,
+                    ...row,
+                  }))
+                  .filter(
+                    (row) =>
+                      row.sandbox_provider === filters.get("sandbox_provider") &&
+                      row.sandbox_vercel_team_id === filters.get("sandbox_vercel_team_id") &&
+                      row.sandbox_vercel_project_id === filters.get("sandbox_vercel_project_id") &&
+                      (Array.isArray(sandboxIds) ? sandboxIds.includes(row.sandbox_id) : true),
+                  );
+                resolve({ data: rows, error: null });
+              },
+            };
+            return builder;
+          },
         };
       }
 
@@ -192,6 +226,17 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     });
   });
 
+  it("blocks connection updates while runs are active", async () => {
+    mockAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ activeRun: true }));
+
+    const response = await PUT(jsonRequest("PUT", credentials), routeContext());
+
+    expect(response.status).toBe(409);
+    expect(mocked.validateVercelSandboxCredentials).not.toHaveBeenCalled();
+    expect(mocked.saveVercelSandboxConnection).not.toHaveBeenCalled();
+  });
+
   it("blocks disconnect while runs are active", async () => {
     mockAccess();
     mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ activeRun: true }));
@@ -204,6 +249,17 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
 
   it("stops project sandboxes before disconnecting", async () => {
     mockAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(
+      adminMock({
+        sandboxRunRows: [
+          {
+            sandbox_id: "sandbox-1",
+            status: "error",
+            workspace_id: workspaceId,
+          },
+        ],
+      }),
+    );
     mocked.listRunningSandboxes.mockResolvedValueOnce([
       { createdAt: Date.now() - 60_000, id: "sandbox-1", status: "running" },
     ]);
@@ -214,6 +270,51 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(response.status).toBe(200);
     expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({ vercelCredentials: credentials });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
+      vercelCredentials: credentials,
+    });
+  });
+
+  it("does not stop unknown or active shared-project sandboxes on disconnect", async () => {
+    mockAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(
+      adminMock({
+        sandboxRunRows: [
+          {
+            sandbox_id: "owned-terminal",
+            status: "error",
+            workspace_id: workspaceId,
+          },
+          {
+            sandbox_id: "owned-but-active-elsewhere",
+            status: "error",
+            workspace_id: workspaceId,
+          },
+          {
+            sandbox_id: "owned-but-active-elsewhere",
+            status: "running",
+            workspace_id: "33333333-3333-4333-8333-333333333333",
+          },
+          {
+            sandbox_id: "other-active",
+            status: "running",
+            workspace_id: "33333333-3333-4333-8333-333333333333",
+          },
+        ],
+      }),
+    );
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { createdAt: Date.now() - 60_000, id: "owned-terminal", status: "running" },
+      { createdAt: Date.now() - 60_000, id: "owned-but-active-elsewhere", status: "running" },
+      { createdAt: Date.now() - 60_000, id: "other-active", status: "running" },
+      { createdAt: Date.now() - 60_000, id: "unknown", status: "running" },
+    ]);
+
+    const response = await DELETE(new Request("http://localhost"), routeContext());
+
+    await expect(response.json()).resolves.toEqual({ connection: null });
+    expect(response.status).toBe(200);
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("owned-terminal", {
       vercelCredentials: credentials,
     });
   });

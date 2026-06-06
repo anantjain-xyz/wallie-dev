@@ -335,7 +335,9 @@ async function runStage(input: {
     await updateSessionStatus(admin, session.id, "rejected");
     const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message, {
-      retry: !(error instanceof MissingReviewableOutputError),
+      retry:
+        !(error instanceof MissingReviewableOutputError) &&
+        !isVercelSandboxConnectionSetupError(error),
     });
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
@@ -377,6 +379,14 @@ function getErrorMessage(error: unknown, fallback: string) {
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;
   throw signal.reason instanceof Error ? signal.reason : new Error("Pipeline job aborted.");
+}
+
+function isVercelSandboxConnectionSetupError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "VercelSandboxConnectionMissingError" ||
+      error.name === "VercelSandboxConnectionInvalidError")
+  );
 }
 
 async function loadActiveSessionJob(

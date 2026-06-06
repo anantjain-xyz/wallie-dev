@@ -1,10 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { Database } from "@/lib/supabase/database.types";
+import type { Database, Tables } from "@/lib/supabase/database.types";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { loadConnectedVercelSandboxConnections } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
+type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "sandbox_id" | "status">;
 
 export interface SandboxReapResult {
   /** Sandbox IDs visible in the provider that we stopped because no active run owns them. */
@@ -24,13 +25,13 @@ const DEFAULT_REAP_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Find Vercel sandboxes that are still active in the provider but whose
- * owning `agent_runs` row has finished (or never existed) and stop them.
+ * owning `agent_runs` row has finished and stop them.
  *
  * The processor's `finally` block handles the happy path; the reaper exists
  * to recover from `process.exit()` mid-stage, when that `finally` never
  * runs. The stall sweep also tries to stop the sandbox when it errors out a
- * stuck run, but the reaper covers cases where the row never made it (e.g.,
- * the worker died between `Sandbox.create` and the agent_runs insert).
+ * stuck run. With BYO Vercel projects, unknown provider sandboxes may belong
+ * to other consumers, so the reaper only stops IDs Wallie previously recorded.
  */
 export async function reapOrphanSandboxes(
   admin: AdminClient,
@@ -64,28 +65,36 @@ export async function reapOrphanSandboxes(
       continue;
     }
 
-    // Cross-reference: which of these sandbox IDs are claimed by an active
-    // agent_run in this same Vercel project? Anything else is an orphan.
+    // Cross-reference: which of these sandbox IDs are known to Wallie in this
+    // Vercel project, and which still have active runs? Unknown IDs may belong
+    // to other consumers in the customer's project, so leave them alone.
     const candidateIds = candidates.map((s) => s.id);
-    const { data: claimedRuns, error } = await admin
+    const { data: knownRuns, error } = await admin
       .from("agent_runs")
-      .select("sandbox_id")
+      .select("sandbox_id, status")
       .eq("sandbox_provider", "vercel")
       .eq("sandbox_vercel_team_id", connection.credentials.teamId)
       .eq("sandbox_vercel_project_id", connection.credentials.projectId)
-      .in("sandbox_id", candidateIds)
-      .in("status", ["queued", "started", "running"]);
+      .in("sandbox_id", candidateIds);
 
     if (error) {
-      console.error("[sandbox-reaper] failed to load claimed runs", { error: error.message });
+      console.error("[sandbox-reaper] failed to load known runs", { error: error.message });
       continue;
     }
 
-    const claimed = new Set(
-      (claimedRuns ?? []).map((r) => r.sandbox_id).filter((id): id is string => id !== null),
+    const known = new Set(
+      ((knownRuns ?? []) as AgentRunSandboxRow[])
+        .map((r) => r.sandbox_id)
+        .filter((id): id is string => id !== null),
+    );
+    const active = new Set(
+      ((knownRuns ?? []) as AgentRunSandboxRow[])
+        .filter((r) => isActiveRunStatus(r.status))
+        .map((r) => r.sandbox_id)
+        .filter((id): id is string => id !== null),
     );
 
-    const orphans = candidates.filter((s) => !claimed.has(s.id));
+    const orphans = candidates.filter((s) => known.has(s.id) && !active.has(s.id));
 
     for (const orphan of orphans) {
       await stopSandboxById(orphan.id, { vercelCredentials: connection.credentials });
@@ -99,4 +108,8 @@ export async function reapOrphanSandboxes(
   }
 
   return result;
+}
+
+function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {
+  return status === "queued" || status === "started" || status === "running";
 }

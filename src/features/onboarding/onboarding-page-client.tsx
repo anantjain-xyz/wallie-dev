@@ -1383,7 +1383,11 @@ function VerifyStep({
                 <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
                   {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </Badge>
-                {!item.passed && item.step !== "verify" ? (
+                {!item.passed && item.id === "vercel-sandbox" ? (
+                  <Link className="ui-button" href={settingsHref(data.workspace.slug, "vercel")}>
+                    Open Vercel
+                  </Link>
+                ) : !item.passed && item.step !== "verify" ? (
                   <button
                     className="ui-button"
                     data-step-link={item.step}

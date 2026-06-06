@@ -22,6 +22,7 @@ interface ClaimedRow {
   sandbox_provider?: string;
   sandbox_vercel_project_id?: string;
   sandbox_vercel_team_id?: string;
+  status?: string;
   workspace_id?: string;
 }
 
@@ -37,36 +38,44 @@ function buildAdminMock(claimed: ClaimedRow[], opts: { fail?: boolean } = {}) {
             filters.set(column, value);
             return chain;
           },
-          in: (col: string, ids: string[]) => {
-            if (col !== "sandbox_id") {
-              return chain;
+          in: (column: string, value: unknown) => {
+            filters.set(column, value);
+            return chain;
+          },
+          then: (
+            resolve: (value: {
+              data: ClaimedRow[] | null;
+              error: { message: string } | null;
+            }) => void,
+          ) => {
+            const sandboxIds = filters.get("sandbox_id");
+            const ids = Array.isArray(sandboxIds) ? sandboxIds : [];
+            queries.push({ filters: Object.fromEntries(filters), ids });
+            if (opts.fail) {
+              resolve({ data: null, error: { message: "db down" } });
+              return;
             }
-            return {
-              in: async () => {
-                queries.push({ filters: Object.fromEntries(filters), ids });
-                if (opts.fail) {
-                  return { data: null, error: { message: "db down" } };
-                }
-                return {
-                  data: claimed
-                    .map((row) => ({
-                      sandbox_provider: "vercel",
-                      sandbox_vercel_project_id: "prj_123",
-                      sandbox_vercel_team_id: "team_123",
-                      workspace_id: "workspace-1",
-                      ...row,
-                    }))
-                    .filter(
-                      (row) =>
-                        ids.includes(row.sandbox_id) &&
-                        [...filters].every(
-                          ([column, value]) => row[column as keyof ClaimedRow] === value,
-                        ),
+            resolve({
+              data: claimed
+                .map((row) => ({
+                  sandbox_provider: "vercel",
+                  sandbox_vercel_project_id: "prj_123",
+                  sandbox_vercel_team_id: "team_123",
+                  status: "running",
+                  workspace_id: "workspace-1",
+                  ...row,
+                }))
+                .filter(
+                  (row) =>
+                    ids.includes(row.sandbox_id) &&
+                    [...filters].every(([column, value]) =>
+                      column === "sandbox_id"
+                        ? Array.isArray(value) && value.includes(row.sandbox_id)
+                        : row[column as keyof ClaimedRow] === value,
                     ),
-                  error: null,
-                };
-              },
-            };
+                ),
+              error: null,
+            });
           },
         };
         return {
@@ -123,7 +132,11 @@ describe("reapOrphanSandboxes", () => {
       { id: "orphan-1", status: "running", createdAt: Date.now() - TEN_MIN_MS },
       { id: "orphan-2", status: "pending", createdAt: Date.now() - TEN_MIN_MS },
     ]);
-    const { admin } = buildAdminMock([{ sandbox_id: "claimed" }]);
+    const { admin } = buildAdminMock([
+      { sandbox_id: "claimed", status: "running" },
+      { sandbox_id: "orphan-1", status: "error" },
+      { sandbox_id: "orphan-2", status: "success" },
+    ]);
     const result = await reapOrphanSandboxes(admin as never);
     expect(result.activeProviderCount).toBe(3);
     expect(result.reapedSandboxIds.sort()).toEqual(["orphan-1", "orphan-2"]);
@@ -147,6 +160,12 @@ describe("reapOrphanSandboxes", () => {
     const { admin } = buildAdminMock([
       {
         sandbox_id: "shared-claimed",
+        status: "running",
+        workspace_id: "workspace-2",
+      },
+      {
+        sandbox_id: "orphan",
+        status: "error",
         workspace_id: "workspace-2",
       },
     ]);
@@ -160,7 +179,7 @@ describe("reapOrphanSandboxes", () => {
     );
   });
 
-  it("requires matching Vercel project metadata before treating a sandbox as claimed", async () => {
+  it("requires matching Vercel project metadata before treating a sandbox as known", async () => {
     mocked.listRunningSandboxes.mockResolvedValueOnce([
       { id: "same-id", status: "running", createdAt: Date.now() - TEN_MIN_MS },
     ]);
@@ -169,16 +188,27 @@ describe("reapOrphanSandboxes", () => {
         sandbox_id: "same-id",
         sandbox_vercel_project_id: "prj_other",
         sandbox_vercel_team_id: "team_123",
+        status: "error",
         workspace_id: "workspace-2",
       },
     ]);
 
     const result = await reapOrphanSandboxes(admin as never);
 
-    expect(result.reapedSandboxIds).toEqual(["same-id"]);
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("same-id", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
-    });
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("does not stop unknown provider sandboxes in the workspace Vercel project", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "unknown", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([]);
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
   it("logs and bails out when the DB query for claimed runs fails", async () => {
@@ -196,7 +226,7 @@ describe("reapOrphanSandboxes", () => {
     mocked.listRunningSandboxes.mockResolvedValueOnce([
       { id: "orphan", status: "running", createdAt: Date.now() - 60_000 },
     ]);
-    const { admin } = buildAdminMock([]);
+    const { admin } = buildAdminMock([{ sandbox_id: "orphan", status: "error" }]);
     const result = await reapOrphanSandboxes(admin as never, { graceMs: 30_000 });
     expect(result.reapedSandboxIds).toEqual(["orphan"]);
   });
