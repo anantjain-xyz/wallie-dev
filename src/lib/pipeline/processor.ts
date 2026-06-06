@@ -912,6 +912,17 @@ async function markRunError(admin: AdminClient, runId: string): Promise<void> {
     .eq("id", runId);
 }
 
+async function markActiveRunsForJobError(admin: AdminClient, jobId: string): Promise<void> {
+  await admin
+    .from("agent_runs")
+    .update({
+      finished_at: new Date().toISOString(),
+      status: "error" as const,
+    })
+    .eq("agent_job_id", jobId)
+    .in("status", ["queued", "started", "running"]);
+}
+
 async function persistEvent(
   admin: AdminClient,
   runId: string,
@@ -1022,6 +1033,7 @@ async function markPipelineJobError(
       status: "error",
     })
     .eq("id", job.id);
+  await markActiveRunsForJobError(admin, job.id);
 }
 
 async function deferPipelineJob(

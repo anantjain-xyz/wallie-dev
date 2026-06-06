@@ -654,6 +654,44 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
   });
 
+  it("marks the queued run errored when runner resolution fails before the run starts", async () => {
+    mocked.getCodexCredentialForSession.mockRejectedValueOnce(
+      new Error("Unsupported state or unable to authenticate data"),
+    );
+    const session = baseSession();
+    const { admin, insertedRuns, updatedJobs, updatedRuns, updatedSessions } = buildAdminMock({
+      session,
+      agentConfig: [],
+    });
+
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({ attempt_count: 3 }),
+    });
+
+    expect(result).toEqual({
+      jobId: "job-1",
+      processed: true,
+      result: "error",
+      runId: null,
+    });
+    expect(insertedRuns).toHaveLength(0);
+    expect(updatedRuns).toEqual([
+      expect.objectContaining({
+        finished_at: expect.any(String),
+        status: "error",
+      }),
+    ]);
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "Unsupported state or unable to authenticate data",
+      status: "error",
+    });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
+  });
+
   it("refreshes run activity when runner events are persisted", async () => {
     mocked.createAgentRunner.mockReturnValue(makeRunner([{ type: "text", text: "Spec body" }]));
     const session = baseSession();
