@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { realpathSync } from "node:fs";
 
+import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
 import { FakeSandbox } from "./fake";
 
 describe("FakeSandbox", () => {
@@ -65,6 +66,22 @@ describe("FakeSandbox", () => {
       const output = await proc.output();
 
       expect(realpathSync(output.stdout.trim())).toBe(realpathSync(sb.repoPath));
+      expect(await proc.exitCode).toBe(0);
+    } finally {
+      await sb.stop();
+    }
+  });
+
+  it("configures passthrough commits as the Wallie GitHub App bot", async () => {
+    const sb = new FakeSandbox(undefined, { passthroughExec: true });
+    try {
+      const proc = await sb.exec("bash", ["-lc", "git config user.name && git config user.email"]);
+      const output = await proc.output();
+
+      expect(output.stdout.trim().split("\n")).toEqual([
+        WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name,
+        WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email,
+      ]);
       expect(await proc.exitCode).toBe(0);
     } finally {
       await sb.stop();
