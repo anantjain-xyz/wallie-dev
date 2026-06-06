@@ -1,16 +1,9 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { extname, join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
+import { extname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const skippedDirectories = new Set([
-  ".git",
-  ".next",
-  ".turbo",
-  ".vercel",
-  "coverage",
-  "node_modules",
-]);
 const skippedExtensions = new Set([
   ".gif",
   ".ico",
@@ -24,35 +17,22 @@ const skippedExtensions = new Set([
   ".zip",
 ]);
 
-function listFiles(directory: string): string[] {
-  const entries = readdirSync(directory);
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    if (skippedDirectories.has(entry)) {
-      continue;
-    }
-
-    const path = join(directory, entry);
-    const stat = statSync(path);
-
-    if (stat.isDirectory()) {
-      files.push(...listFiles(path));
-    } else if (!skippedExtensions.has(extname(entry).toLowerCase())) {
-      files.push(path);
-    }
-  }
-
-  return files;
+function listTrackedTextFiles() {
+  return execFileSync("git", ["ls-files", "-z"], { cwd: process.cwd() })
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean)
+    .filter((path) => statSync(join(process.cwd(), path)).isFile())
+    .filter((path) => !skippedExtensions.has(extname(path).toLowerCase()));
 }
 
 describe("domain purge", () => {
   it("keeps the legacy domain out of repository text", () => {
     const forbiddenPattern = new RegExp(["wallie", "cc"].join("\\."), "i");
-    const matches = listFiles(process.cwd()).flatMap((path) => {
-      const content = readFileSync(path, "utf8");
+    const matches = listTrackedTextFiles().flatMap((path) => {
+      const content = readFileSync(join(process.cwd(), path), "utf8");
 
-      return forbiddenPattern.test(content) ? [relative(process.cwd(), path)] : [];
+      return forbiddenPattern.test(content) ? [path] : [];
     });
 
     expect(matches).toEqual([]);
