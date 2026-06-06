@@ -1,12 +1,17 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { resolveSandboxImplementation } from "@/lib/sandbox";
 import type { Tables } from "@/lib/supabase/database.types";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import { buildWallieSessionData } from "@/features/wallie/data";
-import type { WallieSessionRepository } from "@/features/wallie/types";
+import type {
+  WallieSessionRepository,
+  WallieVercelSandboxConnectionStatus,
+} from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -31,8 +36,15 @@ export async function loadWallieSessionData(input: {
           .eq("workspace_id", input.workspaceId)
           .in("key", [...WALLIE_REQUIRED_SECRET_KEYS])
       : Promise.resolve({ data: [], error: null });
-  const [{ data: runRows, error: runError }, { data: secretRows, error: secretError }] =
-    await Promise.all([runRowsPromise, secretRowsPromise]);
+  const [
+    { data: runRows, error: runError },
+    { data: secretRows, error: secretError },
+    vercelSandboxConnection,
+  ] = await Promise.all([
+    runRowsPromise,
+    secretRowsPromise,
+    loadWallieVercelSandboxConnection(admin, input.workspaceId),
+  ]);
 
   if (runError) {
     throw runError;
@@ -72,6 +84,7 @@ export async function loadWallieSessionData(input: {
     messages: messageRows,
     missingSecretKeys,
     repository: input.repository,
+    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
     runs: (runRows ?? []) as Array<
       Pick<
         Tables<"agent_runs">,
@@ -89,7 +102,35 @@ export async function loadWallieSessionData(input: {
         | "triggered_by_member_id"
       >
     >,
+    vercelSandboxConnection,
   });
+}
+
+async function loadWallieVercelSandboxConnection(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+): Promise<WallieVercelSandboxConnectionStatus> {
+  const connection = await loadVercelSandboxConnectionPreview(admin, workspaceId);
+
+  if (!connection) {
+    return {
+      connected: false,
+      lastValidationError: null,
+      projectId: null,
+      projectName: null,
+      status: "missing",
+      teamId: null,
+    };
+  }
+
+  return {
+    connected: connection.status === "connected",
+    lastValidationError: connection.lastValidationError,
+    projectId: connection.projectId,
+    projectName: connection.projectName,
+    status: connection.status,
+    teamId: connection.teamId,
+  };
 }
 
 const runSelect =

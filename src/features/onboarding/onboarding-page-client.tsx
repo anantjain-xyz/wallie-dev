@@ -483,16 +483,41 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
     : providerCredential.expired
       ? { tone: "danger" as const, value: "Expired" }
       : { tone: "warning" as const, value: "Missing" };
+  const vercelSandbox = health.vercelSandboxConnection.connected
+    ? {
+        detail:
+          health.vercelSandboxConnection.projectName ??
+          health.vercelSandboxConnection.projectId ??
+          "Vercel project connected",
+        tone: "success" as const,
+        value: "Connected",
+      }
+    : health.vercelSandboxConnection.status === "error"
+      ? {
+          detail:
+            health.vercelSandboxConnection.lastValidationError ?? "Connection needs attention",
+          tone: "danger" as const,
+          value: "Error",
+        }
+      : {
+          detail: "Vercel project required",
+          tone: "warning" as const,
+          value: "Missing",
+        };
   const sandbox = health.latestSandboxCapabilityCheck
-    ? health.latestSandboxCapabilityCheck.status === "success"
-      ? { tone: "success" as const, value: "Ready" }
-      : health.latestSandboxCapabilityCheck.status === "running"
-        ? { tone: "accent" as const, value: "Running" }
-        : { tone: "danger" as const, value: "Error" }
+    ? !health.vercelSandboxConnection.connected
+      ? { tone: "warning" as const, value: "Blocked" }
+      : health.latestSandboxCapabilityCheck.status === "success"
+        ? { tone: "success" as const, value: "Ready" }
+        : health.latestSandboxCapabilityCheck.status === "running"
+          ? { tone: "accent" as const, value: "Running" }
+          : { tone: "danger" as const, value: "Error" }
     : { tone: "neutral" as const, value: "No check" };
-  const sandboxDetail = health.latestSandboxCapabilityCheck
-    ? `Checked ${formatRelativeTime(health.latestSandboxCapabilityCheck.checkedAt)}`
-    : "Run a capability check";
+  const sandboxDetail = !health.vercelSandboxConnection.connected
+    ? "Connect Vercel first"
+    : health.latestSandboxCapabilityCheck
+      ? `Checked ${formatRelativeTime(health.latestSandboxCapabilityCheck.checkedAt)}`
+      : "Run a capability check";
 
   return [
     { detail: github.detail, label: "GitHub", tone: github.tone, value: github.value },
@@ -538,6 +563,12 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
       label: "Provider access",
       tone: providerCredentialBadge.tone,
       value: providerCredentialBadge.value,
+    },
+    {
+      detail: vercelSandbox.detail,
+      label: "Vercel",
+      tone: vercelSandbox.tone,
+      value: vercelSandbox.value,
     },
     {
       detail: sandboxDetail,
@@ -1353,7 +1384,11 @@ function VerifyStep({
                 <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
                   {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </Badge>
-                {!item.passed && item.step !== "verify" ? (
+                {!item.passed && item.id === "vercel-sandbox" ? (
+                  <Link className="ui-button" href={settingsHref(data.workspace.slug, "vercel")}>
+                    Open Vercel
+                  </Link>
+                ) : !item.passed && item.step !== "verify" ? (
                   <button
                     className="ui-button"
                     data-step-link={item.step}

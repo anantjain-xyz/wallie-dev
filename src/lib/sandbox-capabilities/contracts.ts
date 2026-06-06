@@ -23,6 +23,9 @@ export type SandboxCapabilityCheckState = {
   errorText: string | null;
   githubRepositoryId: string | null;
   id: string | null;
+  sandboxProvider: "vercel" | "fake" | null;
+  sandboxVercelProjectId: string | null;
+  sandboxVercelTeamId: string | null;
   status: "running" | "success" | "error";
 };
 

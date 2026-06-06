@@ -24,6 +24,10 @@ const stepAnchor: Record<WorkspaceOnboardingStep, string> = {
   verify: "verify",
 };
 
+function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]) {
+  return item.id === "vercel-sandbox" ? "#vercel" : `#${stepAnchor[item.step]}`;
+}
+
 export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySetupSectionProps) {
   const checklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
@@ -57,7 +61,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
                   {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </StatusBadge>
                 {!item.passed && item.step !== "verify" ? (
-                  <a className="ui-button" href={`#${stepAnchor[item.step]}`}>
+                  <a className="ui-button" href={checklistItemHref(item)}>
                     Open
                   </a>
                 ) : null}
@@ -89,6 +93,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             preferredRepositoryId={preferredRepositoryId}
             repositories={data.github.repositories}
             setFlashMessage={setFlashMessage}
+            vercelSandboxConnected={data.setupHealth.vercelSandboxConnection.connected}
             workspaceId={data.workspace.id}
           />
         </div>

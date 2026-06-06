@@ -207,6 +207,15 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         updatedAt: "2026-05-16T18:00:00.000Z",
       },
       latestSandboxCapabilityCheck: null,
+      vercelSandboxConnection: {
+        connected: true,
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
       selectedRepository: {
         configured: false,
         fullName: null,
@@ -228,6 +237,17 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         status: "placeholder",
       },
       ...setupHealthOverride,
+    },
+    vercelSandboxConnection: {
+      lastValidatedAt: "2026-05-16T18:00:00.000Z",
+      lastValidationError: null,
+      projectId: "prj_123",
+      projectName: "wallie-sandboxes",
+      status: "connected",
+      teamId: "team_123",
+      tokenPreview: "vca_...123",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+      workspaceId: "workspace-1",
     },
     workspace: { id: "workspace-1", name: "Northwind", slug: "northwind", ...workspaceOverride },
     workspaceMembers: [],
@@ -352,6 +372,9 @@ describe("OnboardingPageClient", () => {
               errorText: "sandbox failed",
               githubRepositoryId: "repo-a",
               id: "check-1",
+              sandboxProvider: "vercel",
+              sandboxVercelProjectId: "prj_123",
+              sandboxVercelTeamId: "team_123",
               status: "error",
             },
           },
@@ -382,6 +405,9 @@ describe("OnboardingPageClient", () => {
                 errorText: null,
                 githubRepositoryId: "repo-a",
                 id: "check-1",
+                sandboxProvider: "vercel",
+                sandboxVercelProjectId: "prj_123",
+                sandboxVercelTeamId: "team_123",
                 status: "success",
               },
             },
@@ -1236,6 +1262,42 @@ describe("OnboardingPageClient", () => {
     expect(button).toContain(">Complete setup</button>");
   });
 
+  it("routes the Vercel Sandbox blocker to the Vercel settings section", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            vercelSandboxConnection: {
+              connected: false,
+              lastValidationError: null,
+              projectId: null,
+              projectName: null,
+              status: "missing",
+              teamId: null,
+              updatedAt: null,
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Vercel Sandbox connected");
+    expect(html).toContain('href="/w/northwind/settings#vercel"');
+    expect(html).toContain("Open Vercel");
+  });
+
   it("enables the Verify completion CTA when every blocker passes", () => {
     const repo = repository("repo-a", {
       onboarding: {
@@ -1299,6 +1361,9 @@ describe("OnboardingPageClient", () => {
               errorText: null,
               githubRepositoryId: "repo-a",
               id: "check-1",
+              sandboxProvider: "vercel",
+              sandboxVercelProjectId: "prj_123",
+              sandboxVercelTeamId: "team_123",
               status: "success",
             },
           },
@@ -1341,6 +1406,9 @@ describe("OnboardingPageClient", () => {
               errorText: null,
               githubRepositoryId: "repo-a",
               id: "check-1",
+              sandboxProvider: null,
+              sandboxVercelProjectId: null,
+              sandboxVercelTeamId: null,
               status: "running",
             },
           },
@@ -1375,6 +1443,9 @@ describe("OnboardingPageClient", () => {
               errorText: "sandbox failed",
               githubRepositoryId: "repo-a",
               id: "check-1",
+              sandboxProvider: "vercel",
+              sandboxVercelProjectId: "prj_123",
+              sandboxVercelTeamId: "team_123",
               status: "error",
             },
           },
@@ -1464,6 +1535,9 @@ describe("OnboardingPageClient", () => {
       errorText: null,
       githubRepositoryId: "repo-a",
       id: "check-2",
+      sandboxProvider: "vercel",
+      sandboxVercelProjectId: "prj_123",
+      sandboxVercelTeamId: "team_123",
       status: "success",
     });
 

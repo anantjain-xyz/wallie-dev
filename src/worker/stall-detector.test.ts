@@ -4,11 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   listRunningSandboxes: vi.fn().mockResolvedValue([]),
+  loadVercelSandboxConnection: vi.fn(),
 }));
 
 vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
   listRunningSandboxes: mocked.listRunningSandboxes,
+}));
+
+vi.mock("@/lib/vercel-sandbox/server", () => ({
+  loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
 }));
 
 import { sweepStalledRuns } from "./stall-detector";
@@ -23,6 +28,9 @@ interface AgentRunRow {
   created_at: string;
   status: "queued" | "started" | "running" | "success" | "error" | "canceled";
   sandbox_id: string | null;
+  sandbox_provider: string | null;
+  sandbox_vercel_project_id: string | null;
+  sandbox_vercel_team_id: string | null;
 }
 
 interface AgentJobRow {
@@ -260,6 +268,9 @@ function activeRun(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     last_activity_at: new Date(Date.now() - TEN_MIN_MS).toISOString(),
     status: "running",
     sandbox_id: "sandbox-1",
+    sandbox_provider: null,
+    sandbox_vercel_project_id: null,
+    sandbox_vercel_team_id: null,
     ...overrides,
   };
 }
@@ -277,6 +288,8 @@ function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
 beforeEach(() => {
   mocked.stopSandboxById.mockClear();
   mocked.listRunningSandboxes.mockClear();
+  mocked.loadVercelSandboxConnection.mockReset();
+  mocked.loadVercelSandboxConnection.mockResolvedValue(null);
 });
 
 describe("sweepStalledRuns", () => {
@@ -346,6 +359,34 @@ describe("sweepStalledRuns", () => {
         patch: { phase_status: "rejected" },
       },
     ]);
+  });
+
+  it("stops Vercel-backed stalled sandboxes with workspace credentials", async () => {
+    const credentials = { projectId: "prj_123", teamId: "team_123", token: "vca_secret" };
+    mocked.loadVercelSandboxConnection.mockResolvedValueOnce({
+      credentials,
+      preview: { workspaceId: "ws-1" },
+    });
+    const state: MockState = {
+      configs: [],
+      jobs: [job()],
+      runs: [
+        activeRun({
+          sandbox_provider: "vercel",
+          sandbox_vercel_project_id: "prj_123",
+          sandbox_vercel_team_id: "team_123",
+        }),
+      ],
+      rpcCalls: [],
+      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+    };
+    const { admin } = buildAdminMock(state);
+
+    await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
+      vercelCredentials: credentials,
+    });
   });
 
   it("only sweeps stalled runs in the requested workspace", async () => {

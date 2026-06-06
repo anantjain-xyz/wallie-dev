@@ -361,25 +361,25 @@ cp .env.example .env.local
 
 Fill in the required values. Integration variables can be left blank until you complete the GitHub app setup below.
 
-| Variable                               | Required | Description                                                                                                                                        |
-| -------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)                                                                |
-| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                                                                                       |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                                                                                    |
-| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                                                                                          |
-| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption                                                                   |
-| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                                                                                   |
-| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)                                                                     |
-| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                                                                                            |
-| `VERCEL_TOKEN`                         | Sandbox  | Team-scoped Vercel token (<https://vercel.com/account/tokens>). Required unless running on Vercel infra (OIDC) or with `WALLIE_SANDBOX_IMPL=fake`. |
-| `VERCEL_TEAM_ID`                       | Sandbox  | Vercel team that owns the sandbox project. Same condition as `VERCEL_TOKEN`.                                                                       |
-| `VERCEL_PROJECT_ID`                    | Sandbox  | Vercel project the sandboxes are created under. Same condition as `VERCEL_TOKEN`.                                                                  |
-| `WALLIE_SANDBOX_IMPL`                  | No       | Sandbox implementation: `vercel` (default) or `fake` (tests / local without Vercel creds).                                                         |
-| `WALLIE_SANDBOX_BOOTSTRAP_PLAYWRIGHT`  | No       | Set to `0` to skip Playwright bootstrap inside sandboxes.                                                                                          |
+| Variable                               | Required | Description                                                                                                                                                |
+| -------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`                  | Yes      | Public app origin (e.g. `https://wallie-dev.ngrok.app`, or `http://localhost:3000`)                                                                        |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Yes      | From `supabase start` output                                                                                                                               |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Yes      | Supabase anon / publishable key                                                                                                                            |
+| `SUPABASE_SECRET_KEY`                  | Yes      | Supabase service role key                                                                                                                                  |
+| `WALLIE_ENCRYPTION_KEY`                | Yes      | Hex (64+ chars) or base64 (43+ chars) secret used for AES-256 at-rest encryption                                                                           |
+| `GITHUB_APP_ID`                        | GitHub   | GitHub App "General" -> "App ID"                                                                                                                           |
+| `GITHUB_APP_PRIVATE_KEY`               | GitHub   | PEM contents from "Generate a private key" (escape newlines as `\n` if quoted)                                                                             |
+| `GITHUB_WEBHOOK_SECRET`                | GitHub   | The webhook secret you set when creating the GitHub App                                                                                                    |
+| `VERCEL_TOKEN`                         | Dev/Ops  | Optional operator token for non-session helper sandboxes or local testing. Wallie session sandboxes use the workspace Vercel connection saved in Settings. |
+| `VERCEL_TEAM_ID`                       | Dev/Ops  | Optional Vercel team for the operator token. Workspace session sandboxes do not read this env var.                                                         |
+| `VERCEL_PROJECT_ID`                    | Dev/Ops  | Optional Vercel project for the operator token. Workspace session sandboxes do not read this env var.                                                      |
+| `WALLIE_SANDBOX_IMPL`                  | No       | Sandbox implementation: `vercel` (default) or `fake` (tests / local without Vercel creds).                                                                 |
+| `WALLIE_SANDBOX_BOOTSTRAP_PLAYWRIGHT`  | No       | Set to `0` to skip Playwright bootstrap inside sandboxes.                                                                                                  |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
-Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in `workspace_secrets`. Per-user agent credentials are also entered in Settings and stored encrypted separately.
+Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and the workspace Vercel Sandbox connection are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in the database. Per-user agent credentials are also entered in Settings and stored encrypted separately.
 
 ### Configure agent provider
 

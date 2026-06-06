@@ -77,6 +77,12 @@ export interface SandboxHandle {
 export type AgentProvider = "codex" | "claude-code";
 export type SandboxImplementation = "vercel" | "fake";
 
+export type VercelSandboxCredentials = {
+  projectId: string;
+  teamId: string;
+  token: string;
+};
+
 export type SandboxCheckoutMode =
   /** Clone baseBranch and create a new `branch` from it (default). */
   | { kind: "fresh-branch" }
@@ -116,4 +122,14 @@ export interface CreateSessionSandboxInput {
   timeoutMs?: number;
   /** Optional deadline signal used by bounded route handlers. */
   signal?: AbortSignal;
+  /** Required for Vercel-backed session sandboxes. */
+  vercelCredentials?: VercelSandboxCredentials;
+  /**
+   * Called immediately after the provider sandbox is created and before setup
+   * commands run. Use this to persist Wallie ownership for crash cleanup.
+   */
+  onSandboxCreated?: (metadata: {
+    provider: "fake" | "vercel";
+    sandboxId: string;
+  }) => void | Promise<void>;
 }

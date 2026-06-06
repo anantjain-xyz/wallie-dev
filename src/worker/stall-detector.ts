@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { stopSandboxById } from "@/lib/sandbox";
+import { loadVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
+import type { VercelSandboxCredentials } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -14,6 +16,9 @@ type ActiveRunRow = {
   id: string;
   last_activity_at: string | null;
   sandbox_id: string | null;
+  sandbox_provider: string | null;
+  sandbox_vercel_project_id: string | null;
+  sandbox_vercel_team_id: string | null;
   status: "queued" | "started" | "running";
   workspace_id: string;
 };
@@ -68,6 +73,7 @@ export async function sweepStalledRuns(
 
   const now = Date.now();
   const freshWorkerJobIds = await loadFreshWorkerJobIds(admin, now);
+  const vercelCredentialsCache = new Map<string, VercelSandboxCredentials | null>();
 
   for (const run of activeRuns) {
     if (
@@ -122,7 +128,16 @@ export async function sweepStalledRuns(
     // own errors, so a stale or already-stopped sandbox cannot break the
     // sweep batch.
     if (run.sandbox_id) {
-      await stopSandboxById(run.sandbox_id);
+      const vercelCredentials = await resolveRunVercelCredentials(
+        admin,
+        run,
+        vercelCredentialsCache,
+      );
+      if (vercelCredentials) {
+        await stopSandboxById(run.sandbox_id, { vercelCredentials });
+      } else {
+        await stopSandboxById(run.sandbox_id);
+      }
       result.stoppedSandboxIds.push(run.sandbox_id);
     }
 
@@ -183,7 +198,9 @@ async function loadActiveRuns(
     // timestamp so no run can escape stall detection.
     const activeRunQuery = admin
       .from("agent_runs")
-      .select("id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id")
+      .select(
+        "id, workspace_id, agent_job_id, last_activity_at, created_at, status, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+      )
       .in("status", ["queued", "started", "running"]);
     const scopedActiveRunQuery = options.workspaceId
       ? activeRunQuery.eq("workspace_id", options.workspaceId)
@@ -207,6 +224,34 @@ async function loadActiveRuns(
       return runs;
     }
   }
+}
+
+async function resolveRunVercelCredentials(
+  admin: AdminClient,
+  run: ActiveRunRow,
+  cache: Map<string, VercelSandboxCredentials | null>,
+): Promise<VercelSandboxCredentials | null> {
+  if (run.sandbox_provider !== "vercel") {
+    return null;
+  }
+
+  const cacheKey = `${run.workspace_id}:${run.sandbox_vercel_team_id ?? ""}:${
+    run.sandbox_vercel_project_id ?? ""
+  }`;
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey) ?? null;
+  }
+
+  const connection = await loadVercelSandboxConnection(admin, run.workspace_id);
+  const credentials =
+    connection &&
+    connection.credentials.teamId === run.sandbox_vercel_team_id &&
+    connection.credentials.projectId === run.sandbox_vercel_project_id
+      ? connection.credentials
+      : null;
+
+  cache.set(cacheKey, credentials);
+  return credentials;
 }
 
 function formatStallReason(elapsedMs: number, timeoutMs: number): string {
