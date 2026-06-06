@@ -86,7 +86,7 @@ function setupDefaults() {
   mocked.hashWorkspaceInvitationToken.mockReturnValue("hashed-token");
   mocked.workspaceInvitationExpiresAt.mockReturnValue(new Date("2026-06-12T12:00:00.000Z"));
   mocked.buildWorkspaceInvitationAcceptUrl.mockReturnValue(
-    "https://www.wallie.dev/auth/confirm?next=%2Finvite%2Fraw-token",
+    "https://wallie.dev/auth/confirm?next=%2Finvite%2Fraw-token",
   );
   mocked.sendWorkspaceInvitationEmail.mockResolvedValue(undefined);
 }
@@ -165,7 +165,7 @@ describe("POST /api/workspaces/[workspaceId]/invitations", () => {
     );
     expect(mocked.buildWorkspaceInvitationAcceptUrl).toHaveBeenCalledWith("raw-token");
     expect(mocked.sendWorkspaceInvitationEmail).toHaveBeenCalledWith({
-      acceptUrl: "https://www.wallie.dev/auth/confirm?next=%2Finvite%2Fraw-token",
+      acceptUrl: "https://wallie.dev/auth/confirm?next=%2Finvite%2Fraw-token",
       admin: { from: mocked.from, auth: {} },
       email: "new@example.com",
     });

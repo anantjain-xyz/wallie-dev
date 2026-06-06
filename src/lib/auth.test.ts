@@ -15,18 +15,18 @@ describe("auth helpers", () => {
     expect(normalizeNextPath("/w/northwind-labs/issues?sort=updated")).toBe(
       "/w/northwind-labs/issues?sort=updated",
     );
-    expect(normalizeNextPath("https://www.wallie.dev/onboarding/workspace")).toBe(
+    expect(normalizeNextPath("https://wallie.dev/onboarding/workspace")).toBe(
       "/onboarding/workspace",
     );
   });
 
   it("uses the configured app origin for absolute redirect targets", () => {
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.wallie.dev");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://wallie.dev");
 
-    expect(normalizeNextPath("https://app.wallie.dev/onboarding/workspace")).toBe(
+    expect(normalizeNextPath("https://wallie.dev/onboarding/workspace")).toBe(
       "/onboarding/workspace",
     );
-    expect(normalizeNextPath("https://www.wallie.dev/onboarding/workspace")).toBe("/");
+    expect(normalizeNextPath("https://example.com/onboarding/workspace")).toBe("/");
   });
 
   it("falls back on unsafe or invalid redirect targets", () => {

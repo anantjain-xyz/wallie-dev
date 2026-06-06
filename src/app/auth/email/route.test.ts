@@ -28,7 +28,7 @@ function createEmailRequest(input: { email: string; next?: string }) {
 
 describe("POST /auth/email", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://www.wallie.dev");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://wallie.dev");
   });
 
   afterEach(() => {
@@ -55,7 +55,7 @@ describe("POST /auth/email", () => {
     expect(mocked.signInWithOtp).toHaveBeenCalledWith({
       email: "owner@example.com",
       options: {
-        emailRedirectTo: "https://www.wallie.dev/auth/confirm?next=%2Fw%2Facme",
+        emailRedirectTo: "https://wallie.dev/auth/confirm?next=%2Fw%2Facme",
       },
     });
     expect(response.status).toBe(303);

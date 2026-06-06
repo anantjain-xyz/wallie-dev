@@ -1,4 +1,4 @@
-const fallbackAppUrl = "https://www.wallie.dev";
+const fallbackAppUrl = "https://wallie.dev";
 
 type EnvInput = Record<string, string | undefined>;
 
