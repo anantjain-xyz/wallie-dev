@@ -348,6 +348,23 @@ describe("Codex device auth", () => {
     });
   });
 
+  it("returns an actionable error when sandbox startup is rejected with payment required", async () => {
+    const rows: FlowRow[] = [];
+    const admin = buildAdminMock(rows);
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.sandboxCreate.mockRejectedValue(new Error("Status code 402 is not ok"));
+
+    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+
+    expect(snapshot).toMatchObject({
+      status: "error",
+      userCode: null,
+      verificationUri: null,
+    });
+    expect(snapshot.error).toContain("production sandbox provider returned 402 Payment Required");
+    expect(snapshot.error).not.toContain("Status code 402 is not ok");
+  });
+
   it("starts local development auth without a Vercel Sandbox", async () => {
     process.env.CODEX_DEVICE_AUTH_MODE = "local";
     const rows: FlowRow[] = [];
@@ -496,6 +513,40 @@ describe("Codex device auth", () => {
       encrypted_auth_json: `encrypted:${authJson}`,
       status: "authenticated",
     });
+  });
+
+  it("returns an actionable error when OpenAI rejects Codex login with payment required", async () => {
+    const rows: FlowRow[] = [
+      buildFlowRow({
+        instructions: "Open https://auth.openai.com/codex/device and enter code ABCD-EFGH",
+        status: "prompted",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://auth.openai.com/codex/device",
+      }),
+    ];
+    const command = new FakeCommand();
+    command.exitCode = 1;
+    command.outputText = "Status code 402 is not ok\n";
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      sandboxId: "sandbox-1",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await getCodexDeviceAuthFlowSnapshot({
+      flowId: "00000000-0000-0000-0000-000000000123",
+      userId: "user-1",
+    });
+    if (!snapshot) {
+      throw new Error("Expected payment-required flow snapshot.");
+    }
+
+    expect(snapshot).toMatchObject({ status: "error" });
+    expect(snapshot.error).toContain("ChatGPT account with Codex access");
+    expect(snapshot.error).not.toContain("Status code 402 is not ok");
+    expect(sandbox.stop).toHaveBeenCalled();
   });
 
   it("checks a completed command before expiring an overdue flow", async () => {
