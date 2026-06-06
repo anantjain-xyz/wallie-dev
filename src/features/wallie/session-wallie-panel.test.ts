@@ -155,6 +155,9 @@ describe("SessionWalliePanel", () => {
 
     expect(html).toContain("Wallie is working");
     expect(html).toContain("Product spec created.");
+    expect(html.indexOf("Wallie is working")).toBeGreaterThan(
+      html.indexOf("Product spec created."),
+    );
     expect(html).not.toContain("Messages will appear here as the processor");
   });
 
