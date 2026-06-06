@@ -48,9 +48,71 @@ vi.mock("@/lib/sandbox-capabilities/probe", () => ({
   probeSandboxCapabilities: mocked.probeSandboxCapabilities,
 }));
 
-import { completeSandboxCapabilityCheck } from "./server";
+import { completeSandboxCapabilityCheck, startSandboxCapabilityCheck } from "./server";
 
 const credentials = { projectId: "prj_123", teamId: "team_123", token: "vca_secret" };
+
+describe("startSandboxCapabilityCheck", () => {
+  it("creates the running check through the workspace-locked RPC", async () => {
+    const rpc = vi.fn(async () => ({
+      data: {
+        capabilities: {},
+        checked_at: "2026-06-06T18:00:00.000Z",
+        error_text: null,
+        github_repository_id: "repo-1",
+        id: "check-1",
+        sandbox_id: null,
+        sandbox_provider: null,
+        sandbox_vercel_project_id: null,
+        sandbox_vercel_team_id: null,
+        status: "running",
+        workspace_id: "workspace-1",
+      },
+      error: null,
+    }));
+    const admin = {
+      from: vi.fn((table: string) => {
+        if (table !== "github_repositories") {
+          throw new Error(`unexpected table: ${table}`);
+        }
+        const builder = {
+          eq: () => builder,
+          limit: () => builder,
+          maybeSingle: async () => ({
+            data: {
+              default_branch: "main",
+              full_name: "acme/app",
+              github_installation_id: "installation-row-1",
+              id: "repo-1",
+              workspace_id: "workspace-1",
+            },
+            error: null,
+          }),
+          order: () => builder,
+          select: () => builder,
+        };
+        return builder;
+      }),
+      rpc,
+    };
+
+    const started = await startSandboxCapabilityCheck({
+      admin: admin as never,
+      repositoryId: "repo-1",
+      workspaceId: "workspace-1",
+    });
+
+    expect(rpc).toHaveBeenCalledWith("start_sandbox_capability_check", {
+      target_github_repository_id: "repo-1",
+      target_workspace_id: "workspace-1",
+    });
+    expect(started.check).toMatchObject({
+      githubRepositoryId: "repo-1",
+      id: "check-1",
+      status: "running",
+    });
+  });
+});
 
 function adminMock() {
   const updates: unknown[] = [];

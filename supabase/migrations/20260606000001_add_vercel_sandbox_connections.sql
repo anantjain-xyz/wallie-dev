@@ -76,25 +76,167 @@ create index sandbox_capability_checks_vercel_sandbox_idx
   )
   where sandbox_id is not null;
 
-revoke insert, update on public.sandbox_capability_checks from authenticated;
-grant insert (
-  workspace_id,
-  github_repository_id,
-  status,
-  capabilities,
-  error_text,
-  checked_at,
-  created_at,
-  updated_at
-) on public.sandbox_capability_checks to authenticated;
-grant update (
-  github_repository_id,
-  status,
-  capabilities,
-  error_text,
-  checked_at,
-  updated_at
-) on public.sandbox_capability_checks to authenticated;
+create table public.workspace_vercel_sandbox_connection_mutations (
+  workspace_id uuid primary key references public.workspaces(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+revoke insert, update, delete on public.sandbox_capability_checks from authenticated;
+
+create or replace function public.begin_vercel_sandbox_connection_mutation(
+  target_workspace_id uuid
+)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0));
+
+  if exists (
+    select 1
+    from public.workspace_vercel_sandbox_connection_mutations
+    where workspace_id = target_workspace_id
+  ) then
+    return 'locked';
+  end if;
+
+  if exists (
+    select 1
+    from public.agent_runs
+    where workspace_id = target_workspace_id
+      and status in ('queued', 'started', 'running')
+  ) or exists (
+    select 1
+    from public.agent_jobs
+    where workspace_id = target_workspace_id
+      and status in ('queued', 'started', 'running')
+  ) or exists (
+    select 1
+    from public.sandbox_capability_checks
+    where workspace_id = target_workspace_id
+      and status = 'running'
+  ) then
+    return 'active';
+  end if;
+
+  insert into public.workspace_vercel_sandbox_connection_mutations (workspace_id)
+  values (target_workspace_id);
+
+  return 'acquired';
+end;
+$$;
+
+create or replace function public.start_sandbox_capability_check(
+  target_workspace_id uuid,
+  target_github_repository_id uuid
+)
+returns public.sandbox_capability_checks
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  inserted public.sandbox_capability_checks%rowtype;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0));
+
+  if exists (
+    select 1
+    from public.workspace_vercel_sandbox_connection_mutations
+    where workspace_id = target_workspace_id
+  ) then
+    raise exception 'Vercel Sandbox connection update is in progress. Try again shortly.';
+  end if;
+
+  insert into public.sandbox_capability_checks (
+    workspace_id,
+    github_repository_id,
+    status,
+    capabilities
+  )
+  values (
+    target_workspace_id,
+    target_github_repository_id,
+    'running',
+    '{}'::jsonb
+  )
+  returning * into inserted;
+
+  return inserted;
+end;
+$$;
+
+create or replace function public.claim_next_agent_job(
+  default_concurrency_limit int default 2
+)
+returns setof public.agent_jobs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  candidate public.agent_jobs%rowtype;
+  configured_limit int;
+  effective_limit int;
+  running_count int;
+begin
+  for candidate in
+    select *
+    from public.agent_jobs
+    where status = 'queued'
+      and (scheduled_at is null or scheduled_at <= now())
+    order by created_at asc
+    for update skip locked
+  loop
+    perform pg_advisory_xact_lock(hashtextextended(candidate.workspace_id::text, 0));
+
+    if exists (
+      select 1
+      from public.workspace_vercel_sandbox_connection_mutations
+      where workspace_id = candidate.workspace_id
+    ) then
+      continue;
+    end if;
+
+    configured_limit := null;
+
+    select (value_json)::int into configured_limit
+    from public.workspace_agent_config
+    where workspace_id = candidate.workspace_id
+      and key = 'concurrency_limit'
+      and jsonb_typeof(value_json) = 'number';
+
+    effective_limit := coalesce(configured_limit, default_concurrency_limit);
+
+    select count(*) into running_count
+    from public.agent_jobs
+    where workspace_id = candidate.workspace_id
+      and status = 'running';
+
+    if running_count >= effective_limit then
+      continue;
+    end if;
+
+    return query
+    update public.agent_jobs
+    set
+      status = 'running',
+      attempt_count = attempt_count + 1,
+      last_error = null,
+      started_at = coalesce(started_at, now()),
+      scheduled_at = null
+    where id = candidate.id
+      and status = 'queued'
+    returning *;
+
+    return;
+  end loop;
+
+  return;
+end;
+$$;
 
 create or replace function internal.enforce_workspace_vercel_sandbox_connection_refs()
 returns trigger
@@ -123,9 +265,12 @@ for each row
 execute function internal.enforce_workspace_vercel_sandbox_connection_refs();
 
 alter table public.workspace_vercel_sandbox_connections enable row level security;
+alter table public.workspace_vercel_sandbox_connection_mutations enable row level security;
 
 revoke all on public.workspace_vercel_sandbox_connections from anon, authenticated;
+revoke all on public.workspace_vercel_sandbox_connection_mutations from anon, authenticated;
 grant all on public.workspace_vercel_sandbox_connections to service_role;
+grant all on public.workspace_vercel_sandbox_connection_mutations to service_role;
 grant select (
   workspace_id,
   token_preview,
@@ -140,6 +285,19 @@ grant select (
   updated_at
 ) on public.workspace_vercel_sandbox_connections to authenticated;
 
+revoke all on function public.begin_vercel_sandbox_connection_mutation(uuid)
+  from public, anon, authenticated;
+revoke all on function public.start_sandbox_capability_check(uuid, uuid)
+  from public, anon, authenticated;
+revoke all on function public.claim_next_agent_job(integer)
+  from public, anon, authenticated;
+grant execute on function public.begin_vercel_sandbox_connection_mutation(uuid)
+  to service_role;
+grant execute on function public.start_sandbox_capability_check(uuid, uuid)
+  to service_role;
+grant execute on function public.claim_next_agent_job(integer)
+  to service_role;
+
 create policy workspace_vercel_sandbox_connections_select_membership
   on public.workspace_vercel_sandbox_connections
   for select
@@ -148,6 +306,13 @@ create policy workspace_vercel_sandbox_connections_select_membership
 
 create policy workspace_vercel_sandbox_connections_service_only
   on public.workspace_vercel_sandbox_connections
+  for all
+  to authenticated
+  using (false)
+  with check (false);
+
+create policy workspace_vercel_sandbox_connection_mutations_service_only
+  on public.workspace_vercel_sandbox_connection_mutations
   for all
   to authenticated
   using (false)

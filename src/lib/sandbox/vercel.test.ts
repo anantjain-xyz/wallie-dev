@@ -66,6 +66,7 @@ beforeEach(() => {
   mocked.sandboxGet.mockResolvedValue({ stop: vi.fn() });
   mocked.sandboxList.mockResolvedValue({
     json: {
+      pagination: { count: 2, next: null, prev: null },
       sandboxes: [
         { createdAt: 1000, id: "running", status: "running" },
         { createdAt: 2000, id: "stopped", status: "stopped" },
@@ -138,6 +139,45 @@ describe("listRunningVercelSandboxes", () => {
       token: credentials.token,
     });
     expect(sandboxes).toEqual([{ createdAt: 1000, id: "running", status: "running" }]);
+  });
+
+  it("pages through every Vercel sandbox list result", async () => {
+    mocked.sandboxList
+      .mockResolvedValueOnce({
+        json: {
+          pagination: { count: 100, next: 1234, prev: null },
+          sandboxes: [
+            { createdAt: 3000, id: "running-page-1", status: "running" },
+            { createdAt: 2500, id: "stopped-page-1", status: "stopped" },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        json: {
+          pagination: { count: 1, next: null, prev: null },
+          sandboxes: [{ createdAt: 1000, id: "pending-page-2", status: "pending" }],
+        },
+      });
+
+    const sandboxes = await listRunningVercelSandboxes(credentials);
+
+    expect(mocked.sandboxList).toHaveBeenNthCalledWith(1, {
+      limit: 100,
+      projectId: credentials.projectId,
+      teamId: credentials.teamId,
+      token: credentials.token,
+    });
+    expect(mocked.sandboxList).toHaveBeenNthCalledWith(2, {
+      limit: 100,
+      projectId: credentials.projectId,
+      teamId: credentials.teamId,
+      token: credentials.token,
+      until: 1234,
+    });
+    expect(sandboxes).toEqual([
+      { createdAt: 3000, id: "running-page-1", status: "running" },
+      { createdAt: 1000, id: "pending-page-2", status: "pending" },
+    ]);
   });
 
   it("throws list failures in strict cleanup mode", async () => {

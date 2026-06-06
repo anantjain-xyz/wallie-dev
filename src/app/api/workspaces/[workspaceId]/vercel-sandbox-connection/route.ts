@@ -5,10 +5,13 @@ import {
   type VercelSandboxConnectionResponse,
 } from "@/lib/vercel-sandbox/contracts";
 import {
+  acquireVercelSandboxConnectionMutationLock,
   loadVercelSandboxConnection,
   loadVercelSandboxConnectionPreview,
   saveVercelSandboxConnection,
   validateVercelSandboxCredentials,
+  VercelSandboxConnectionActiveWorkError,
+  VercelSandboxConnectionMutationInProgressError,
 } from "@/lib/vercel-sandbox/server";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -29,40 +32,6 @@ type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
   "sandbox_id" | "status" | "workspace_id"
 >;
-
-async function hasActiveWorkspaceWork(input: {
-  admin: ReturnType<typeof createSupabaseAdminClient>;
-  workspaceId: string;
-}) {
-  const [runResult, jobResult, checkResult] = await Promise.all([
-    input.admin
-      .from("agent_runs")
-      .select("id")
-      .eq("workspace_id", input.workspaceId)
-      .in("status", [...activeRunStatuses])
-      .limit(1)
-      .maybeSingle(),
-    input.admin
-      .from("agent_jobs")
-      .select("id")
-      .eq("workspace_id", input.workspaceId)
-      .in("status", [...activeJobStatuses])
-      .limit(1)
-      .maybeSingle(),
-    input.admin
-      .from("sandbox_capability_checks")
-      .select("id")
-      .eq("workspace_id", input.workspaceId)
-      .eq("status", "running")
-      .limit(1)
-      .maybeSingle(),
-  ]);
-
-  if (runResult.error) throw runResult.error;
-  if (jobResult.error) throw jobResult.error;
-  if (checkResult.error) throw checkResult.error;
-  return Boolean(runResult.data || jobResult.data || checkResult.data);
-}
 
 async function stopWorkspaceProjectSandboxes(input: {
   admin: ReturnType<typeof createSupabaseAdminClient>;
@@ -157,6 +126,16 @@ function vercelProjectChanged(
   return existing.teamId !== next.teamId || existing.projectId !== next.projectId;
 }
 
+function connectionMutationConflictResponse(error: unknown) {
+  if (
+    error instanceof VercelSandboxConnectionActiveWorkError ||
+    error instanceof VercelSandboxConnectionMutationInProgressError
+  ) {
+    return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  return null;
+}
+
 async function loadActiveAgentJobIds(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   jobIds: string[],
@@ -207,41 +186,50 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  if (await hasActiveWorkspaceWork({ admin, workspaceId: access.context.workspace.id })) {
-    return NextResponse.json(
-      {
-        error:
-          "Cannot update Vercel while Wallie runs or sandbox checks are queued or running. Wait for them to finish first.",
-      },
-      { status: 409 },
-    );
-  }
-
-  const validation = await validateVercelSandboxCredentials(parsed.data);
-  if (!validation.ok) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
-  }
-
-  const existingConnection = await loadVercelSandboxConnection(admin, access.context.workspace.id);
-  if (existingConnection && vercelProjectChanged(existingConnection.credentials, parsed.data)) {
-    await stopWorkspaceProjectSandboxes({
+  let releaseLock: (() => Promise<void>) | null = null;
+  try {
+    releaseLock = await acquireVercelSandboxConnectionMutationLock(
       admin,
-      credentials: existingConnection.credentials,
+      access.context.workspace.id,
+    );
+
+    const validation = await validateVercelSandboxCredentials(parsed.data);
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    const existingConnection = await loadVercelSandboxConnection(
+      admin,
+      access.context.workspace.id,
+    );
+    if (existingConnection && vercelProjectChanged(existingConnection.credentials, parsed.data)) {
+      await stopWorkspaceProjectSandboxes({
+        admin,
+        credentials: existingConnection.credentials,
+        workspaceId: access.context.workspace.id,
+      });
+    }
+
+    const connection = await saveVercelSandboxConnection({
+      admin,
+      credentials: parsed.data,
+      createdByMemberId: access.context.currentMember.id,
+      projectName: validation.projectName,
       workspaceId: access.context.workspace.id,
     });
+
+    return NextResponse.json({ connection } satisfies VercelSandboxConnectionResponse, {
+      status: 200,
+    });
+  } catch (error) {
+    const conflict = connectionMutationConflictResponse(error);
+    if (conflict) return conflict;
+    throw error;
+  } finally {
+    if (releaseLock) {
+      await releaseLock();
+    }
   }
-
-  const connection = await saveVercelSandboxConnection({
-    admin,
-    credentials: parsed.data,
-    createdByMemberId: access.context.currentMember.id,
-    projectName: validation.projectName,
-    workspaceId: access.context.workspace.id,
-  });
-
-  return NextResponse.json({ connection } satisfies VercelSandboxConnectionResponse, {
-    status: 200,
-  });
 }
 
 export async function DELETE(_request: Request, context: RouteContext) {
@@ -252,33 +240,39 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  if (await hasActiveWorkspaceWork({ admin, workspaceId: access.context.workspace.id })) {
-    return NextResponse.json(
-      {
-        error:
-          "Cannot disconnect Vercel while Wallie runs or sandbox checks are queued or running. Wait for them to finish first.",
-      },
-      { status: 409 },
-    );
-  }
-
-  const connection = await loadVercelSandboxConnection(admin, access.context.workspace.id);
-  if (connection) {
-    await stopWorkspaceProjectSandboxes({
+  let releaseLock: (() => Promise<void>) | null = null;
+  try {
+    releaseLock = await acquireVercelSandboxConnectionMutationLock(
       admin,
-      credentials: connection.credentials,
-      workspaceId: access.context.workspace.id,
+      access.context.workspace.id,
+    );
+
+    const connection = await loadVercelSandboxConnection(admin, access.context.workspace.id);
+    if (connection) {
+      await stopWorkspaceProjectSandboxes({
+        admin,
+        credentials: connection.credentials,
+        workspaceId: access.context.workspace.id,
+      });
+    }
+
+    const { error } = await admin
+      .from("workspace_vercel_sandbox_connections")
+      .delete()
+      .eq("workspace_id", access.context.workspace.id);
+
+    if (error) throw error;
+
+    return NextResponse.json({ connection: null } satisfies VercelSandboxConnectionResponse, {
+      status: 200,
     });
+  } catch (error) {
+    const conflict = connectionMutationConflictResponse(error);
+    if (conflict) return conflict;
+    throw error;
+  } finally {
+    if (releaseLock) {
+      await releaseLock();
+    }
   }
-
-  const { error } = await admin
-    .from("workspace_vercel_sandbox_connections")
-    .delete()
-    .eq("workspace_id", access.context.workspace.id);
-
-  if (error) throw error;
-
-  return NextResponse.json({ connection: null } satisfies VercelSandboxConnectionResponse, {
-    status: 200,
-  });
 }

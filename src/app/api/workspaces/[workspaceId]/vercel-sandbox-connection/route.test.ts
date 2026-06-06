@@ -19,12 +19,19 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
-  loadVercelSandboxConnectionPreview: mocked.loadVercelSandboxConnectionPreview,
-  saveVercelSandboxConnection: mocked.saveVercelSandboxConnection,
-  validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentials,
-}));
+vi.mock("@/lib/vercel-sandbox/server", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/vercel-sandbox/server")>(
+    "@/lib/vercel-sandbox/server",
+  );
+
+  return {
+    ...actual,
+    loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
+    loadVercelSandboxConnectionPreview: mocked.loadVercelSandboxConnectionPreview,
+    saveVercelSandboxConnection: mocked.saveVercelSandboxConnection,
+    validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentials,
+  };
+});
 
 vi.mock("@/lib/sandbox", () => ({
   listRunningSandboxes: mocked.listRunningSandboxes,
@@ -108,12 +115,15 @@ function adminMock(
     activeJob?: boolean;
     activeJobIds?: string[];
     activeRun?: boolean;
+    mutationLockBusy?: boolean;
     sandboxCheckRows?: SandboxCheckRow[];
     sandboxRunRows?: SandboxRunRow[];
   } = {},
 ) {
   const deletedWorkspaceIds: string[] = [];
-  return {
+  const mutationLockWorkspaceIds: string[] = [];
+  const releasedMutationLockWorkspaceIds: string[] = [];
+  const mock = {
     from: vi.fn((table: string) => {
       if (table === "agent_runs") {
         return {
@@ -246,10 +256,37 @@ function adminMock(
         };
       }
 
+      if (table === "workspace_vercel_sandbox_connection_mutations") {
+        return {
+          delete: () => ({
+            eq: async (_column: string, value: string) => {
+              releasedMutationLockWorkspaceIds.push(value);
+              return { error: null };
+            },
+          }),
+        };
+      }
+
       throw new Error(`unexpected table: ${table}`);
     }),
     deletedWorkspaceIds,
+    mutationLockWorkspaceIds,
+    releasedMutationLockWorkspaceIds,
+    rpc: vi.fn(async (fn: string, args: { target_workspace_id: string }) => {
+      if (fn !== "begin_vercel_sandbox_connection_mutation") {
+        throw new Error(`unexpected rpc: ${fn}`);
+      }
+      if (options.mutationLockBusy) {
+        return { data: "locked", error: null };
+      }
+      if (options.activeRun || options.activeJob || options.activeCheck) {
+        return { data: "active", error: null };
+      }
+      mutationLockWorkspaceIds.push(args.target_workspace_id);
+      return { data: "acquired", error: null };
+    }),
   };
+  return mock;
 }
 
 beforeEach(() => {
@@ -314,6 +351,8 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
 
   it("validates and saves a Vercel connection", async () => {
     mockAccess();
+    const admin = adminMock();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
 
     const response = await PUT(jsonRequest("PUT", credentials), routeContext());
 
@@ -326,6 +365,8 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
       projectName: "wallie-sandboxes",
       workspaceId,
     });
+    expect(admin.mutationLockWorkspaceIds).toEqual([workspaceId]);
+    expect(admin.releasedMutationLockWorkspaceIds).toEqual([workspaceId]);
   });
 
   it("cleans old project sandboxes before saving a changed Vercel project", async () => {
@@ -427,6 +468,20 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
 
     const response = await PUT(jsonRequest("PUT", credentials), routeContext());
 
+    expect(response.status).toBe(409);
+    expect(mocked.validateVercelSandboxCredentials).not.toHaveBeenCalled();
+    expect(mocked.saveVercelSandboxConnection).not.toHaveBeenCalled();
+  });
+
+  it("blocks connection updates while another connection change holds the workspace lock", async () => {
+    mockAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ mutationLockBusy: true }));
+
+    const response = await PUT(jsonRequest("PUT", credentials), routeContext());
+
+    await expect(response.json()).resolves.toEqual({
+      error: "Vercel Sandbox connection update is already in progress. Try again shortly.",
+    });
     expect(response.status).toBe(409);
     expect(mocked.validateVercelSandboxCredentials).not.toHaveBeenCalled();
     expect(mocked.saveVercelSandboxConnection).not.toHaveBeenCalled();
@@ -584,5 +639,6 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
       vercelCredentials: credentials,
     });
     expect(admin.deletedWorkspaceIds).toEqual([]);
+    expect(admin.releasedMutationLockWorkspaceIds).toEqual([workspaceId]);
   });
 });

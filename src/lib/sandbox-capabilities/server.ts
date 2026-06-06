@@ -120,19 +120,10 @@ async function insertRunningCheck(input: {
   repositoryId: string;
   workspaceId: string;
 }): Promise<SandboxCapabilityCheckState> {
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
-    .from("sandbox_capability_checks")
-    .insert({
-      capabilities: {},
-      github_repository_id: input.repositoryId,
-      status: "running",
-      workspace_id: input.workspaceId,
-    })
-    .select(
-      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    )
-    .single();
+  const { data, error } = await input.admin.rpc("start_sandbox_capability_check", {
+    target_github_repository_id: input.repositoryId,
+    target_workspace_id: input.workspaceId,
+  });
 
   if (error) throw error;
   return mapCheckRow(data);

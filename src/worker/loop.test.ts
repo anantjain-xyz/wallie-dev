@@ -164,4 +164,19 @@ describe("pollOnce", () => {
     expect(migrationSql).toContain("pg_advisory_xact_lock");
     expect(migrationSql).toContain("hashtextextended(candidate.workspace_id::text, 0)");
   });
+
+  it("keeps queued jobs unclaimed during Vercel connection mutations", () => {
+    const migrationSql = readFileSync(
+      "supabase/migrations/20260606000001_add_vercel_sandbox_connections.sql",
+      "utf8",
+    );
+
+    expect(migrationSql).toContain(
+      "create table public.workspace_vercel_sandbox_connection_mutations",
+    );
+    expect(migrationSql).toContain("create or replace function public.claim_next_agent_job");
+    expect(migrationSql).toContain("pg_advisory_xact_lock");
+    expect(migrationSql).toContain("from public.workspace_vercel_sandbox_connection_mutations");
+    expect(migrationSql).toContain("where workspace_id = candidate.workspace_id");
+  });
 });

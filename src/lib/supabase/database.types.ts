@@ -1632,6 +1632,29 @@ export type Database = {
           },
         ]
       }
+      workspace_vercel_sandbox_connection_mutations: {
+        Row: {
+          created_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_vercel_sandbox_connection_mutations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspaces: {
         Row: {
           avatar_path: string | null
@@ -1692,6 +1715,10 @@ export type Database = {
           credential_version: number
           encrypted_credential: string
         }[]
+      }
+      begin_vercel_sandbox_connection_mutation: {
+        Args: { target_workspace_id: string }
+        Returns: string
       }
       approve_session_stage: {
         Args: {
@@ -1805,6 +1832,27 @@ export type Database = {
       next_session_number: {
         Args: { actor_user_id: string; target_workspace_id: string }
         Returns: number
+      }
+      start_sandbox_capability_check: {
+        Args: {
+          target_github_repository_id: string
+          target_workspace_id: string
+        }
+        Returns: {
+          capabilities: Json
+          checked_at: string
+          created_at: string
+          error_text: string | null
+          github_repository_id: string | null
+          id: string
+          sandbox_id: string | null
+          sandbox_provider: string | null
+          sandbox_vercel_project_id: string | null
+          sandbox_vercel_team_id: string | null
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
       }
       persist_codex_auth_json: {
         Args: {

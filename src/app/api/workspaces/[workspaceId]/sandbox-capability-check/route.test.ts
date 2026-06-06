@@ -113,6 +113,23 @@ describe("POST /api/workspaces/[workspaceId]/sandbox-capability-check", () => {
       workspaceId: WORKSPACE_ID,
     });
   });
+
+  it("returns a conflict while Vercel connection changes are in progress", async () => {
+    grantAccess();
+    mocked.createSupabaseAdminClient.mockReturnValue({});
+    mocked.startSandboxCapabilityCheck.mockRejectedValueOnce(
+      new Error("Vercel Sandbox connection update is in progress. Try again shortly."),
+    );
+
+    const response = await POST(requestWith({ repositoryId: REPOSITORY_ID }), routeContext());
+
+    await expect(response.json()).resolves.toEqual({
+      error: "Vercel Sandbox connection update is in progress. Try again shortly.",
+    });
+    expect(response.status).toBe(409);
+    expect(mocked.after).not.toHaveBeenCalled();
+    expect(mocked.completeSandboxCapabilityCheck).not.toHaveBeenCalled();
+  });
 });
 
 describe("GET /api/workspaces/[workspaceId]/sandbox-capability-check", () => {

@@ -32,6 +32,51 @@ export class VercelSandboxConnectionInvalidError extends Error {
   }
 }
 
+export class VercelSandboxConnectionMutationInProgressError extends Error {
+  constructor() {
+    super("Vercel Sandbox connection update is already in progress. Try again shortly.");
+    this.name = "VercelSandboxConnectionMutationInProgressError";
+  }
+}
+
+export class VercelSandboxConnectionActiveWorkError extends Error {
+  constructor() {
+    super(
+      "Cannot change Vercel while Wallie runs or sandbox checks are queued or running. Wait for them to finish first.",
+    );
+    this.name = "VercelSandboxConnectionActiveWorkError";
+  }
+}
+
+export async function acquireVercelSandboxConnectionMutationLock(
+  admin: AdminClient,
+  workspaceId: string,
+): Promise<() => Promise<void>> {
+  const { data, error } = await admin.rpc("begin_vercel_sandbox_connection_mutation", {
+    target_workspace_id: workspaceId,
+  });
+
+  if (error) throw error;
+  if (data === "locked") {
+    throw new VercelSandboxConnectionMutationInProgressError();
+  }
+  if (data === "active") {
+    throw new VercelSandboxConnectionActiveWorkError();
+  }
+  if (data !== "acquired") {
+    throw new Error("Failed to acquire Vercel Sandbox connection update lock.");
+  }
+
+  return async () => {
+    const { error: releaseError } = await admin
+      .from("workspace_vercel_sandbox_connection_mutations")
+      .delete()
+      .eq("workspace_id", workspaceId);
+
+    if (releaseError) throw releaseError;
+  };
+}
+
 export function mapVercelSandboxConnectionPreview(
   row: Pick<
     ConnectionRow,

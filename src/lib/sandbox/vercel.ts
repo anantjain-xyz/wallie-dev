@@ -281,20 +281,33 @@ export async function listRunningVercelSandboxes(
   }
 
   try {
-    const result = await Sandbox.list({
-      projectId: credentials.projectId,
-      teamId: credentials.teamId,
-      token: credentials.token,
-      limit: 100,
-    });
-    const sandboxes = result.json.sandboxes;
-    return sandboxes
-      .filter((s) => s.status === "pending" || s.status === "running")
-      .map((s) => ({
-        id: s.id,
-        status: s.status as "pending" | "running",
-        createdAt: s.createdAt,
-      }));
+    const activeSandboxes: RunningSandboxSummary[] = [];
+    let until: number | null = null;
+
+    do {
+      const result = await Sandbox.list({
+        projectId: credentials.projectId,
+        teamId: credentials.teamId,
+        token: credentials.token,
+        limit: 100,
+        ...(until === null ? {} : { until }),
+      });
+
+      for (const sandbox of result.json.sandboxes) {
+        if (sandbox.status !== "pending" && sandbox.status !== "running") {
+          continue;
+        }
+        activeSandboxes.push({
+          id: sandbox.id,
+          status: sandbox.status,
+          createdAt: sandbox.createdAt,
+        });
+      }
+
+      until = result.json.pagination.next;
+    } while (until !== null);
+
+    return activeSandboxes;
   } catch (error) {
     if (options.throwOnError) {
       throw error;
