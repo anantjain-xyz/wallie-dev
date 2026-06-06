@@ -90,6 +90,56 @@ describe("GET /auth/confirm", () => {
     expect(response.headers.get("set-cookie")).toContain(`${emailCodeAuthCookieName}=;`);
   });
 
+  it("verifies invitation token hashes", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue({
+      auth: {
+        exchangeCodeForSession: mocked.exchangeCodeForSession,
+        verifyOtp: mocked.verifyOtp,
+      },
+    });
+    mocked.verifyOtp.mockResolvedValue({ error: null });
+    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/auth/confirm?token_hash=invite-hash&type=invite&next=%2Finvite%2Fraw-token",
+      ),
+    );
+
+    expect(mocked.verifyOtp).toHaveBeenCalledWith({
+      token_hash: "invite-hash",
+      type: "invite",
+    });
+    expect(mocked.exchangeCodeForSession).not.toHaveBeenCalled();
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("http://localhost:3000/invite/raw-token");
+  });
+
+  it("maps legacy magiclink token-hash callbacks to email verification", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue({
+      auth: {
+        exchangeCodeForSession: mocked.exchangeCodeForSession,
+        verifyOtp: mocked.verifyOtp,
+      },
+    });
+    mocked.verifyOtp.mockResolvedValue({ error: null });
+    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/auth/confirm?token_hash=magic-hash&type=magiclink&next=%2Fw%2Facme",
+      ),
+    );
+
+    expect(mocked.verifyOtp).toHaveBeenCalledWith({
+      token_hash: "magic-hash",
+      type: "email",
+    });
+    expect(mocked.exchangeCodeForSession).not.toHaveBeenCalled();
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("http://localhost:3000/w/acme");
+  });
+
   it("redirects back to login when the confirmation link is missing auth parameters", async () => {
     const response = await GET(new NextRequest("http://localhost:3000/auth/confirm?next=%2F"));
 

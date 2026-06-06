@@ -1,10 +1,9 @@
 import type { User } from "@supabase/supabase-js";
 
+import { resolveAppOrigin } from "@/lib/app-url";
 import { onboardingWorkspacePath, workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import type { Database } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-
-const redirectOrigin = "https://wallie.cc";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -26,6 +25,7 @@ export function normalizeNextPath(value: string | null | undefined, fallback = "
   }
 
   try {
+    const redirectOrigin = resolveAppOrigin();
     const parsed = new URL(value, redirectOrigin);
 
     if (parsed.origin !== redirectOrigin) {

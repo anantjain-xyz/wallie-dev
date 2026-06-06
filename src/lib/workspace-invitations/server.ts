@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { buildAppUrl } from "@/lib/app-url";
 import type { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { WORKSPACE_INVITATION_EXPIRES_DAYS } from "@/lib/workspace-invitations/contracts";
 
@@ -26,8 +27,11 @@ export function workspaceInvitationExpiresAt(now = new Date()) {
   return new Date(now.getTime() + WORKSPACE_INVITATION_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
 }
 
-export function buildWorkspaceInvitationAcceptUrl(requestUrl: string, token: string) {
-  const confirmUrl = new URL("/auth/confirm", requestUrl);
+export function buildWorkspaceInvitationAcceptUrl(
+  token: string,
+  input?: Record<string, string | undefined>,
+) {
+  const confirmUrl = buildAppUrl("/auth/confirm", input);
   confirmUrl.searchParams.set("next", `/invite/${encodeURIComponent(token)}`);
 
   return confirmUrl.toString();
