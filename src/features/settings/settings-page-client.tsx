@@ -213,10 +213,19 @@ function updateVercelConnectionInData(
   currentData: SettingsPageData,
   connection: SettingsPageData["vercelSandboxConnection"],
 ): SettingsPageData {
+  const vercelProjectChanged =
+    currentData.vercelSandboxConnection?.teamId !== connection?.teamId ||
+    currentData.vercelSandboxConnection?.projectId !== connection?.projectId;
+  const latestSandboxCapabilityCheck = vercelProjectChanged
+    ? null
+    : currentData.latestSandboxCapabilityCheck;
+
   return {
     ...currentData,
+    latestSandboxCapabilityCheck,
     setupHealth: {
       ...currentData.setupHealth,
+      latestSandboxCapabilityCheck,
       vercelSandboxConnection: vercelConnectionHealth(connection),
     },
     vercelSandboxConnection: connection,

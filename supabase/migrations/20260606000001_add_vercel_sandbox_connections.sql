@@ -76,6 +76,26 @@ create index sandbox_capability_checks_vercel_sandbox_idx
   )
   where sandbox_id is not null;
 
+revoke insert, update on public.sandbox_capability_checks from authenticated;
+grant insert (
+  workspace_id,
+  github_repository_id,
+  status,
+  capabilities,
+  error_text,
+  checked_at,
+  created_at,
+  updated_at
+) on public.sandbox_capability_checks to authenticated;
+grant update (
+  github_repository_id,
+  status,
+  capabilities,
+  error_text,
+  checked_at,
+  updated_at
+) on public.sandbox_capability_checks to authenticated;
+
 create or replace function internal.enforce_workspace_vercel_sandbox_connection_refs()
 returns trigger
 language plpgsql

@@ -73,7 +73,15 @@ type OnboardingDataResult =
 
 type SandboxCapabilityCheckRow = Pick<
   Tables<"sandbox_capability_checks">,
-  "capabilities" | "checked_at" | "error_text" | "github_repository_id" | "id" | "status"
+  | "capabilities"
+  | "checked_at"
+  | "error_text"
+  | "github_repository_id"
+  | "id"
+  | "sandbox_provider"
+  | "sandbox_vercel_project_id"
+  | "sandbox_vercel_team_id"
+  | "status"
 >;
 
 type AgentConfigRow = Pick<Tables<"workspace_agent_config">, "key" | "value_json">;
@@ -145,6 +153,12 @@ function mapSandboxCapabilityCheck(
     githubRepositoryId:
       typeof row.github_repository_id === "string" ? row.github_repository_id : null,
     id: typeof row.id === "string" ? row.id : null,
+    sandboxProvider:
+      row.sandbox_provider === "vercel" || row.sandbox_provider === "fake"
+        ? row.sandbox_provider
+        : null,
+    sandboxVercelProjectId: row.sandbox_vercel_project_id,
+    sandboxVercelTeamId: row.sandbox_vercel_team_id,
     status:
       row.status === "success" || row.status === "error" || row.status === "running"
         ? row.status
@@ -223,7 +237,9 @@ async function loadSetupHealth(
   const primaryRepositoryId = repositoryHealth.primaryRepositoryProfile.repositoryId;
   let sandboxQuery = admin
     .from("sandbox_capability_checks")
-    .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+    .select(
+      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    )
     .eq("workspace_id", workspaceId);
 
   if (primaryRepositoryId) {

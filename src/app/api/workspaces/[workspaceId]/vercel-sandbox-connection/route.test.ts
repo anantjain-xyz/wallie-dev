@@ -93,11 +93,22 @@ type SandboxRunRow = {
   workspace_id: string;
 };
 
+type SandboxCheckRow = {
+  sandbox_id: string | null;
+  sandbox_provider?: string | null;
+  sandbox_vercel_project_id?: string | null;
+  sandbox_vercel_team_id?: string | null;
+  status: string;
+  workspace_id: string;
+};
+
 function adminMock(
   options: {
+    activeCheck?: boolean;
     activeJob?: boolean;
     activeJobIds?: string[];
     activeRun?: boolean;
+    sandboxCheckRows?: SandboxCheckRow[];
     sandboxRunRows?: SandboxRunRow[];
   } = {},
 ) {
@@ -175,6 +186,48 @@ function adminMock(
                     : [],
                   error: null,
                 });
+              },
+            };
+            return builder;
+          },
+        };
+      }
+
+      if (table === "sandbox_capability_checks") {
+        return {
+          select: () => {
+            const filters = new Map<string, unknown>();
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.set(column, value);
+                return builder;
+              },
+              in: (column: string, value: unknown) => {
+                filters.set(column, value);
+                return builder;
+              },
+              limit: () => builder,
+              maybeSingle: async () => ({
+                data: options.activeCheck ? { id: "check-1" } : null,
+                error: null,
+              }),
+              then: (resolve: (value: { data: SandboxCheckRow[]; error: null }) => void) => {
+                const sandboxIds = filters.get("sandbox_id");
+                const rows = (options.sandboxCheckRows ?? [])
+                  .map((row) => ({
+                    sandbox_provider: "vercel",
+                    sandbox_vercel_project_id: credentials.projectId,
+                    sandbox_vercel_team_id: credentials.teamId,
+                    ...row,
+                  }))
+                  .filter(
+                    (row) =>
+                      row.sandbox_provider === filters.get("sandbox_provider") &&
+                      row.sandbox_vercel_team_id === filters.get("sandbox_vercel_team_id") &&
+                      row.sandbox_vercel_project_id === filters.get("sandbox_vercel_project_id") &&
+                      (Array.isArray(sandboxIds) ? sandboxIds.includes(row.sandbox_id) : true),
+                  );
+                resolve({ data: rows, error: null });
               },
             };
             return builder;
@@ -275,6 +328,88 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     });
   });
 
+  it("cleans old project sandboxes before saving a changed Vercel project", async () => {
+    mockAccess();
+    const oldCredentials = {
+      projectId: "prj_old",
+      teamId: "team_old",
+      token: "vca_old",
+    };
+    const nextCredentials = {
+      projectId: "prj_next",
+      teamId: "team_next",
+      token: "vca_next",
+    };
+    mocked.loadVercelSandboxConnection.mockResolvedValueOnce({
+      credentials: oldCredentials,
+      preview: {
+        ...preview,
+        projectId: oldCredentials.projectId,
+        teamId: oldCredentials.teamId,
+      },
+    });
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(
+      adminMock({
+        sandboxRunRows: [
+          {
+            sandbox_id: "old-terminal",
+            sandbox_vercel_project_id: oldCredentials.projectId,
+            sandbox_vercel_team_id: oldCredentials.teamId,
+            status: "error",
+            workspace_id: workspaceId,
+          },
+        ],
+      }),
+    );
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { createdAt: Date.now() - 60_000, id: "old-terminal", status: "running" },
+    ]);
+
+    const response = await PUT(jsonRequest("PUT", nextCredentials), routeContext());
+
+    expect(response.status).toBe(200);
+    expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({
+      throwOnError: true,
+      vercelCredentials: oldCredentials,
+    });
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("old-terminal", {
+      throwOnError: true,
+      vercelCredentials: oldCredentials,
+    });
+    expect(mocked.saveVercelSandboxConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ credentials: nextCredentials }),
+    );
+  });
+
+  it("keeps the old connection when changed-project cleanup fails before save", async () => {
+    mockAccess();
+    const oldCredentials = {
+      projectId: "prj_old",
+      teamId: "team_old",
+      token: "vca_old",
+    };
+    const nextCredentials = {
+      projectId: "prj_next",
+      teamId: "team_next",
+      token: "vca_next",
+    };
+    mocked.loadVercelSandboxConnection.mockResolvedValueOnce({
+      credentials: oldCredentials,
+      preview: {
+        ...preview,
+        projectId: oldCredentials.projectId,
+        teamId: oldCredentials.teamId,
+      },
+    });
+    mocked.listRunningSandboxes.mockRejectedValueOnce(new Error("old Vercel list failed"));
+
+    await expect(PUT(jsonRequest("PUT", nextCredentials), routeContext())).rejects.toThrow(
+      "old Vercel list failed",
+    );
+
+    expect(mocked.saveVercelSandboxConnection).not.toHaveBeenCalled();
+  });
+
   it("blocks connection updates while runs are active", async () => {
     mockAccess();
     mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ activeRun: true }));
@@ -286,9 +421,30 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(mocked.saveVercelSandboxConnection).not.toHaveBeenCalled();
   });
 
+  it("blocks connection updates while capability checks are active", async () => {
+    mockAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ activeCheck: true }));
+
+    const response = await PUT(jsonRequest("PUT", credentials), routeContext());
+
+    expect(response.status).toBe(409);
+    expect(mocked.validateVercelSandboxCredentials).not.toHaveBeenCalled();
+    expect(mocked.saveVercelSandboxConnection).not.toHaveBeenCalled();
+  });
+
   it("blocks disconnect while runs are active", async () => {
     mockAccess();
     mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ activeRun: true }));
+
+    const response = await DELETE(new Request("http://localhost"), routeContext());
+
+    expect(response.status).toBe(409);
+    expect(mocked.loadVercelSandboxConnection).not.toHaveBeenCalled();
+  });
+
+  it("blocks disconnect while capability checks are active", async () => {
+    mockAccess();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(adminMock({ activeCheck: true }));
 
     const response = await DELETE(new Request("http://localhost"), routeContext());
 
@@ -373,6 +529,18 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
             workspace_id: workspaceId,
           },
         ],
+        sandboxCheckRows: [
+          {
+            sandbox_id: "capability-terminal",
+            status: "error",
+            workspace_id: workspaceId,
+          },
+          {
+            sandbox_id: "capability-running",
+            status: "running",
+            workspace_id: workspaceId,
+          },
+        ],
         activeJobIds: ["job-post-run"],
       }),
     );
@@ -380,6 +548,8 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
       { createdAt: Date.now() - 60_000, id: "owned-terminal", status: "running" },
       { createdAt: Date.now() - 60_000, id: "owned-but-active-elsewhere", status: "running" },
       { createdAt: Date.now() - 60_000, id: "owned-post-run", status: "running" },
+      { createdAt: Date.now() - 60_000, id: "capability-terminal", status: "running" },
+      { createdAt: Date.now() - 60_000, id: "capability-running", status: "running" },
       { createdAt: Date.now() - 60_000, id: "other-active", status: "running" },
       { createdAt: Date.now() - 60_000, id: "unknown", status: "running" },
     ]);
@@ -388,8 +558,12 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
 
     await expect(response.json()).resolves.toEqual({ connection: null });
     expect(response.status).toBe(200);
-    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(2);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("owned-terminal", {
+      throwOnError: true,
+      vercelCredentials: credentials,
+    });
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-terminal", {
       throwOnError: true,
       vercelCredentials: credentials,
     });

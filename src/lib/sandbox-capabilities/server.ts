@@ -46,6 +46,14 @@ function mapCheckRow(row: Record<string, unknown>): SandboxCapabilityCheckState 
     githubRepositoryId:
       typeof row.github_repository_id === "string" ? row.github_repository_id : null,
     id: typeof row.id === "string" ? row.id : null,
+    sandboxProvider:
+      row.sandbox_provider === "vercel" || row.sandbox_provider === "fake"
+        ? row.sandbox_provider
+        : null,
+    sandboxVercelProjectId:
+      typeof row.sandbox_vercel_project_id === "string" ? row.sandbox_vercel_project_id : null,
+    sandboxVercelTeamId:
+      typeof row.sandbox_vercel_team_id === "string" ? row.sandbox_vercel_team_id : null,
     status:
       row.status === "success" || row.status === "error" || row.status === "running"
         ? row.status
@@ -121,7 +129,9 @@ async function insertRunningCheck(input: {
       status: "running",
       workspace_id: input.workspaceId,
     })
-    .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+    .select(
+      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    )
     .single();
 
   if (error) throw error;
@@ -142,6 +152,9 @@ async function updateCheck(input: {
       errorText: input.errorText,
       githubRepositoryId: null,
       id: null,
+      sandboxProvider: null,
+      sandboxVercelProjectId: null,
+      sandboxVercelTeamId: null,
       status: input.status,
     };
   }
@@ -156,7 +169,9 @@ async function updateCheck(input: {
       status: input.status,
     })
     .eq("id", input.checkId)
-    .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+    .select(
+      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    )
     .single();
 
   if (error) throw error;
@@ -225,7 +240,9 @@ export async function getLatestSandboxCapabilityCheck(input: {
   const loose = asLooseSupabaseClient(input.admin);
   const { data, error } = await loose
     .from("sandbox_capability_checks")
-    .select("id, github_repository_id, status, capabilities, error_text, checked_at")
+    .select(
+      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    )
     .eq("workspace_id", input.workspaceId)
     .eq("github_repository_id", input.repositoryId)
     .order("checked_at", { ascending: false })

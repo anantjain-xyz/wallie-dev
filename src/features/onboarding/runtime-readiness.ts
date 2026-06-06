@@ -195,6 +195,29 @@ export function buildRuntimeReadiness(input: {
   };
 }
 
+function capabilityCheckMatchesVercelConnection(
+  check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
+  connection: OnboardingSetupHealth["vercelSandboxConnection"],
+) {
+  return (
+    connection.connected &&
+    check.sandboxProvider === "vercel" &&
+    check.sandboxVercelTeamId === connection.teamId &&
+    check.sandboxVercelProjectId === connection.projectId
+  );
+}
+
+function capabilityCheckIsPendingSandboxMetadata(
+  check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
+) {
+  return (
+    check.status === "running" &&
+    check.sandboxProvider === null &&
+    check.sandboxVercelTeamId === null &&
+    check.sandboxVercelProjectId === null
+  );
+}
+
 export function buildVerifyChecklist(input: {
   agentConfig: AgentConfigMap;
   health: OnboardingSetupHealth;
@@ -215,8 +238,15 @@ export function buildVerifyChecklist(input: {
   const vercelSandboxConnection = input.health.vercelSandboxConnection;
   const latestCheckMatchesPrimaryRepository =
     Boolean(primaryRepositoryId) && latestCheck?.githubRepositoryId === primaryRepositoryId;
+  const latestCheckMatchesVercelConnection =
+    latestCheckMatchesPrimaryRepository &&
+    latestCheck !== null &&
+    (capabilityCheckMatchesVercelConnection(latestCheck, vercelSandboxConnection) ||
+      capabilityCheckIsPendingSandboxMetadata(latestCheck));
   const latestSelectedRepositoryCheckStatus = latestCheckMatchesPrimaryRepository
-    ? latestCheck?.status
+    ? latestCheckMatchesVercelConnection
+      ? latestCheck?.status
+      : "stale"
     : null;
   const sandboxStatus = !vercelSandboxConnection.connected
     ? ({ label: "Blocked", tone: "warning" } as const)
@@ -226,9 +256,11 @@ export function buildVerifyChecklist(input: {
         ? ({ label: "Running", tone: "accent" } as const)
         : latestSelectedRepositoryCheckStatus === "error"
           ? ({ label: "Failed", tone: "danger" } as const)
-          : primaryRepositoryId
-            ? ({ label: "Not started", tone: "neutral" } as const)
-            : ({ label: "Unavailable", tone: "neutral" } as const);
+          : latestSelectedRepositoryCheckStatus === "stale"
+            ? ({ label: "Stale", tone: "warning" } as const)
+            : primaryRepositoryId
+              ? ({ label: "Not started", tone: "neutral" } as const)
+              : ({ label: "Unavailable", tone: "neutral" } as const);
   const stepSatisfied = (step: WorkspaceOnboardingStep) =>
     completedSteps.has(step) || (canSkipOnboardingStep(step) && skippedSteps.has(step));
   const useSetupHealth = input.mode === "settings";
@@ -352,9 +384,11 @@ export function buildVerifyChecklist(input: {
             ? "Sandbox capability check is still running."
             : latestSelectedRepositoryCheckStatus === "error"
               ? (latestCheck?.errorText ?? "Latest sandbox capability check failed.")
-              : primaryRepositoryId
-                ? "Run a sandbox capability check for the selected repository."
-                : "Save a repository profile before running a sandbox capability check.",
+              : latestSelectedRepositoryCheckStatus === "stale"
+                ? "Run a sandbox capability check for the connected Vercel project."
+                : primaryRepositoryId
+                  ? "Run a sandbox capability check for the selected repository."
+                  : "Save a repository profile before running a sandbox capability check.",
       id: "sandbox",
       label: "Sandbox capability check",
       passed:

@@ -52,6 +52,9 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       errorText: null,
       githubRepositoryId: repositoryId,
       id: "check-1",
+      sandboxProvider: "vercel",
+      sandboxVercelProjectId: "prj_123",
+      sandboxVercelTeamId: "team_123",
       status: "success",
     },
     vercelSandboxConnection: {
@@ -236,6 +239,9 @@ describe("buildVerifyChecklist", () => {
           errorText: null,
           githubRepositoryId: repositoryId,
           id: "check-2",
+          sandboxProvider: null,
+          sandboxVercelProjectId: null,
+          sandboxVercelTeamId: null,
           status: "running",
         },
       }),
@@ -248,6 +254,9 @@ describe("buildVerifyChecklist", () => {
           errorText: "sandbox failed",
           githubRepositoryId: repositoryId,
           id: "check-3",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
           status: "error",
         },
       }),
@@ -324,6 +333,9 @@ describe("buildVerifyChecklist", () => {
           errorText: null,
           githubRepositoryId: "22222222-2222-4222-8222-222222222222",
           id: "check-2",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
           status: "success",
         },
       }),
@@ -334,6 +346,34 @@ describe("buildVerifyChecklist", () => {
     expect(sandboxItem).toMatchObject({
       detail: "Run a sandbox capability check for the selected repository.",
       passed: false,
+    });
+  });
+
+  it("blocks successful sandbox checks from a previous Vercel project", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: repositoryId,
+          id: "check-2",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_old",
+          sandboxVercelTeamId: "team_123",
+          status: "success",
+        },
+      }),
+      onboarding: onboarding(),
+    });
+    const sandboxItem = checklist.find((item) => item.id === "sandbox");
+
+    expect(sandboxItem).toMatchObject({
+      detail: "Run a sandbox capability check for the connected Vercel project.",
+      passed: false,
+      statusLabel: "Stale",
+      statusTone: "warning",
     });
   });
 });

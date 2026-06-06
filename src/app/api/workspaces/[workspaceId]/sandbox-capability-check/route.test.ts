@@ -74,6 +74,9 @@ describe("POST /api/workspaces/[workspaceId]/sandbox-capability-check", () => {
       errorText: null,
       githubRepositoryId: REPOSITORY_ID,
       id: "check-1",
+      sandboxProvider: null,
+      sandboxVercelProjectId: null,
+      sandboxVercelTeamId: null,
       status: "running",
     };
     const repository = {
@@ -126,6 +129,9 @@ describe("GET /api/workspaces/[workspaceId]/sandbox-capability-check", () => {
       errorText: null,
       githubRepositoryId: REPOSITORY_ID,
       id: "check-1",
+      sandboxProvider: "vercel",
+      sandboxVercelProjectId: "prj_123",
+      sandboxVercelTeamId: "team_123",
       status: "success",
     };
     mocked.createSupabaseAdminClient.mockReturnValue(admin);
