@@ -1150,6 +1150,14 @@ function buildApprovalAdmin(rpc: ReturnType<typeof vi.fn>, session = baseSession
 }
 
 describe("handleApproval", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.resolveCommitAuthorForRun.mockResolvedValue({
+      email: "12345+anant@users.noreply.github.com",
+      name: "Anant Jain",
+    });
+  });
+
   it("calls approve_session_stage with the approver id and returns success on a non-empty result", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: [{ id: "sess-1", current_stage_id: "stage-design" }],
@@ -1185,11 +1193,14 @@ describe("handleApproval", () => {
     expect(result.error).toContain("not authorized");
   });
 
-  it("blocks approval before the stage RPC when the approver has no commit author identity", async () => {
-    mocked.resolveCommitAuthorForRun.mockRejectedValueOnce(
+  it("does not require a commit author identity when approval archives the terminal stage", async () => {
+    mocked.resolveCommitAuthorForRun.mockRejectedValue(
       new mocked.GitHubAuthorMissingError("Connect your GitHub commit author identity first."),
     );
-    const rpc = vi.fn();
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ id: "sess-1", archived_at: "2026-05-16T18:00:00.000Z", phase_status: "approved" }],
+      error: null,
+    });
 
     const result = await handleApproval({
       admin: buildApprovalAdmin(rpc),
@@ -1199,11 +1210,9 @@ describe("handleApproval", () => {
       version: 1,
     });
 
-    expect(result).toEqual({
-      error: "Connect your GitHub commit author identity first.",
-      success: false,
-    });
-    expect(rpc).not.toHaveBeenCalled();
+    expect(result).toEqual({ jobId: null, success: true });
+    expect(rpc).toHaveBeenCalled();
+    expect(mocked.resolveCommitAuthorForRun).not.toHaveBeenCalled();
   });
 
   it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
@@ -1486,6 +1495,10 @@ describe("handleRejection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.loadStageById.mockResolvedValue(productStage);
+    mocked.resolveCommitAuthorForRun.mockResolvedValue({
+      email: "12345+anant@users.noreply.github.com",
+      name: "Anant Jain",
+    });
   });
 
   it("returns 'session not found' when the session row is missing", async () => {

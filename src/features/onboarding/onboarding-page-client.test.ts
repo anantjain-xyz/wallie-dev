@@ -276,6 +276,23 @@ function connectedInstallation() {
   };
 }
 
+function connectedAuthorIdentity(): NonNullable<
+  WorkspaceOnboardingData["github"]["authorIdentity"]
+> {
+  return {
+    authorEmail: "12345+anant@users.noreply.github.com",
+    authorEmailSource: "github_noreply",
+    authorEmailVerifiedAt: "2026-05-16T18:00:00.000Z",
+    authorName: "Anant Jain",
+    connectedAt: "2026-05-16T18:00:00.000Z",
+    githubAvatarUrl: "https://avatars.githubusercontent.com/u/12345?v=4",
+    githubLogin: "anant",
+    githubUserId: 12345,
+    updatedAt: "2026-05-16T18:00:00.000Z",
+    userId: "user-1",
+  };
+}
+
 function onboardingWithSelectedRepository(
   setupStatus: WorkspaceGitHubRepository["onboarding"]["status"],
 ) {
@@ -296,6 +313,7 @@ function onboardingWithSelectedRepository(
 
   return onboardingData({
     github: {
+      authorIdentity: connectedAuthorIdentity(),
       installation: connectedInstallation(),
       missingAppKeys: [],
       missingWebhookKeys: [],
@@ -463,6 +481,24 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Install skills");
     expect(html).not.toContain("Mark skills as installed");
     expect(primaryFooterButton(html)).not.toContain("disabled");
+  });
+
+  it("blocks the GitHub step until a commit author identity is connected", () => {
+    const data = onboardingWithSelectedRepository("not_set_up");
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: {
+          ...data,
+          github: {
+            ...data.github,
+            authorIdentity: null,
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain("Connect author");
+    expect(primaryFooterButton(html)).toContain("disabled");
   });
 
   it("blocks the GitHub step when only archived repositories are synced", () => {

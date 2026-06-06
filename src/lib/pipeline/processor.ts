@@ -512,24 +512,6 @@ export async function handleApproval(input: {
   version: number;
 }): Promise<PipelinePhaseActionResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const session = await loadSessionById(admin, input.sessionId);
-
-  if (!session || session.workspace_id !== input.expectedWorkspaceId) {
-    return { error: "Session not found.", success: false };
-  }
-
-  try {
-    await resolveCommitAuthorForRun(admin, {
-      fallbackMemberId: session.creator_member_id,
-      requestedByMemberId: input.approverMemberId,
-    });
-  } catch (error) {
-    if (error instanceof GitHubAuthorMissingError) {
-      return { error: error.message, success: false };
-    }
-
-    throw error;
-  }
 
   // The RPC enforces the approver gate (per-stage approver list, with
   // owner/admin fallback), records the completion, and advances to the next
