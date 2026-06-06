@@ -72,24 +72,31 @@ function adminMock() {
         if (table === "sandbox_capability_checks") {
           return {
             update: (patch: Record<string, unknown>) => ({
-              eq: () => ({
-                select: () => ({
-                  single: async () => {
+              eq: () => {
+                const builder = {
+                  select: () => ({
+                    single: async () => {
+                      updates.push(patch);
+                      return {
+                        data: {
+                          capabilities: {},
+                          checked_at: "2026-06-06T18:00:00.000Z",
+                          error_text: patch.error_text ?? null,
+                          github_repository_id: "repo-1",
+                          id: "check-1",
+                          status: patch.status ?? "success",
+                        },
+                        error: null,
+                      };
+                    },
+                  }),
+                  then: (resolve: (value: { error: null }) => void) => {
                     updates.push(patch);
-                    return {
-                      data: {
-                        capabilities: {},
-                        checked_at: "2026-06-06T18:00:00.000Z",
-                        error_text: patch.error_text ?? null,
-                        github_repository_id: "repo-1",
-                        id: "check-1",
-                        status: patch.status ?? "success",
-                      },
-                      error: null,
-                    };
+                    resolve({ error: null });
                   },
-                }),
-              }),
+                };
+                return builder;
+              },
             }),
           };
         }
@@ -110,10 +117,13 @@ beforeEach(() => {
   });
   mocked.octokitRequest.mockResolvedValue({ data: { token: "gh-token" } });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
-  mocked.createSessionSandbox.mockResolvedValue({
-    id: "sandbox-1",
-    repoPath: "/vercel/sandbox",
-    stop: vi.fn(),
+  mocked.createSessionSandbox.mockImplementation(async (input) => {
+    await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
+    return {
+      id: "sandbox-1",
+      repoPath: "/vercel/sandbox",
+      stop: vi.fn(),
+    };
   });
   mocked.probeSandboxCapabilities.mockResolvedValue({
     git: { detail: "ok", ok: true },
@@ -122,7 +132,7 @@ beforeEach(() => {
 
 describe("completeSandboxCapabilityCheck", () => {
   it("creates the probe sandbox with workspace Vercel credentials", async () => {
-    const { admin } = adminMock();
+    const { admin, updates } = adminMock();
 
     await completeSandboxCapabilityCheck({
       admin: admin as never,
@@ -140,6 +150,14 @@ describe("completeSandboxCapabilityCheck", () => {
 
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ vercelCredentials: credentials }),
+    );
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        sandbox_id: "sandbox-1",
+        sandbox_provider: "vercel",
+        sandbox_vercel_project_id: "prj_123",
+        sandbox_vercel_team_id: "team_123",
+      }),
     );
   });
 

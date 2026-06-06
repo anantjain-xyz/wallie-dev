@@ -38,6 +38,23 @@ alter table public.agent_runs
       )
     );
 
+alter table public.sandbox_capability_checks
+  add column sandbox_id text,
+  add column sandbox_provider text,
+  add column sandbox_vercel_team_id text,
+  add column sandbox_vercel_project_id text,
+  add constraint sandbox_capability_checks_sandbox_provider_check
+    check (sandbox_provider is null or sandbox_provider in ('vercel', 'fake')),
+  add constraint sandbox_capability_checks_vercel_sandbox_metadata_check
+    check (
+      sandbox_provider is distinct from 'vercel'
+      or (
+        sandbox_id is not null
+        and sandbox_vercel_team_id is not null
+        and sandbox_vercel_project_id is not null
+      )
+    );
+
 create index agent_runs_active_vercel_sandbox_idx
   on public.agent_runs (
     workspace_id,
@@ -48,6 +65,16 @@ create index agent_runs_active_vercel_sandbox_idx
   )
   where sandbox_id is not null
     and status in ('queued', 'started', 'running');
+
+create index sandbox_capability_checks_vercel_sandbox_idx
+  on public.sandbox_capability_checks (
+    workspace_id,
+    sandbox_provider,
+    sandbox_vercel_team_id,
+    sandbox_vercel_project_id,
+    sandbox_id
+  )
+  where sandbox_id is not null;
 
 create or replace function internal.enforce_workspace_vercel_sandbox_connection_refs()
 returns trigger

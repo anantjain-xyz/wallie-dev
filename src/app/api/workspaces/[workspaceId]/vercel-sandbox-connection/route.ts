@@ -20,22 +20,36 @@ type RouteContext = {
 };
 
 const activeRunStatuses = ["queued", "started", "running"] as const;
-type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "sandbox_id" | "status" | "workspace_id">;
+const activeJobStatuses = ["queued", "started", "running"] as const;
+type AgentRunSandboxRow = Pick<
+  Tables<"agent_runs">,
+  "agent_job_id" | "sandbox_id" | "status" | "workspace_id"
+>;
 
-async function hasActiveWorkspaceRuns(input: {
+async function hasActiveWorkspaceWork(input: {
   admin: ReturnType<typeof createSupabaseAdminClient>;
   workspaceId: string;
 }) {
-  const { data, error } = await input.admin
-    .from("agent_runs")
-    .select("id")
-    .eq("workspace_id", input.workspaceId)
-    .in("status", [...activeRunStatuses])
-    .limit(1)
-    .maybeSingle();
+  const [runResult, jobResult] = await Promise.all([
+    input.admin
+      .from("agent_runs")
+      .select("id")
+      .eq("workspace_id", input.workspaceId)
+      .in("status", [...activeRunStatuses])
+      .limit(1)
+      .maybeSingle(),
+    input.admin
+      .from("agent_jobs")
+      .select("id")
+      .eq("workspace_id", input.workspaceId)
+      .in("status", [...activeJobStatuses])
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  if (error) throw error;
-  return Boolean(data);
+  if (runResult.error) throw runResult.error;
+  if (jobResult.error) throw jobResult.error;
+  return Boolean(runResult.data || jobResult.data);
 }
 
 async function stopWorkspaceProjectSandboxes(input: {
@@ -43,7 +57,10 @@ async function stopWorkspaceProjectSandboxes(input: {
   credentials: NonNullable<Awaited<ReturnType<typeof loadVercelSandboxConnection>>>["credentials"];
   workspaceId: string;
 }) {
-  const sandboxes = await listRunningSandboxes({ vercelCredentials: input.credentials });
+  const sandboxes = await listRunningSandboxes({
+    throwOnError: true,
+    vercelCredentials: input.credentials,
+  });
   const sandboxIds = sandboxes.map((sandbox) => sandbox.id);
 
   if (sandboxIds.length === 0) {
@@ -52,7 +69,7 @@ async function stopWorkspaceProjectSandboxes(input: {
 
   const { data, error } = await input.admin
     .from("agent_runs")
-    .select("sandbox_id, status, workspace_id")
+    .select("sandbox_id, status, workspace_id, agent_job_id")
     .eq("sandbox_provider", "vercel")
     .eq("sandbox_vercel_team_id", input.credentials.teamId)
     .eq("sandbox_vercel_project_id", input.credentials.projectId)
@@ -61,6 +78,12 @@ async function stopWorkspaceProjectSandboxes(input: {
   if (error) throw error;
 
   const rows = (data ?? []) as AgentRunSandboxRow[];
+  const activeJobIds = await loadActiveAgentJobIds(
+    input.admin,
+    rows
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
   const ownedByWorkspace = new Set(
     rows
       .filter((row) => row.workspace_id === input.workspaceId)
@@ -69,7 +92,11 @@ async function stopWorkspaceProjectSandboxes(input: {
   );
   const activeAnywhere = new Set(
     rows
-      .filter((row) => isActiveRunStatus(row.status))
+      .filter(
+        (row) =>
+          isActiveRunStatus(row.status) ||
+          (row.agent_job_id ? activeJobIds.has(row.agent_job_id) : false),
+      )
       .map((row) => row.sandbox_id)
       .filter((id): id is string => id !== null),
   );
@@ -79,12 +106,33 @@ async function stopWorkspaceProjectSandboxes(input: {
       continue;
     }
 
-    await stopSandboxById(sandbox.id, { vercelCredentials: input.credentials });
+    await stopSandboxById(sandbox.id, {
+      throwOnError: true,
+      vercelCredentials: input.credentials,
+    });
   }
 }
 
 function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {
   return activeRunStatuses.includes(status as (typeof activeRunStatuses)[number]);
+}
+
+async function loadActiveAgentJobIds(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  jobIds: string[],
+) {
+  if (jobIds.length === 0) {
+    return new Set<string>();
+  }
+
+  const { data, error } = await admin
+    .from("agent_jobs")
+    .select("id")
+    .in("id", [...new Set(jobIds)])
+    .in("status", [...activeJobStatuses]);
+
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => row.id));
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -119,7 +167,7 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  if (await hasActiveWorkspaceRuns({ admin, workspaceId: access.context.workspace.id })) {
+  if (await hasActiveWorkspaceWork({ admin, workspaceId: access.context.workspace.id })) {
     return NextResponse.json(
       {
         error:
@@ -155,7 +203,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
-  if (await hasActiveWorkspaceRuns({ admin, workspaceId: access.context.workspace.id })) {
+  if (await hasActiveWorkspaceWork({ admin, workspaceId: access.context.workspace.id })) {
     return NextResponse.json(
       {
         error:

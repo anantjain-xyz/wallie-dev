@@ -163,6 +163,29 @@ async function updateCheck(input: {
   return mapCheckRow(data);
 }
 
+async function updateCheckSandbox(input: {
+  admin: AdminClient;
+  checkId: string | null;
+  projectId: string;
+  sandboxId: string;
+  teamId: string;
+}): Promise<void> {
+  if (!input.checkId) return;
+
+  const loose = asLooseSupabaseClient(input.admin);
+  const { error } = await loose
+    .from("sandbox_capability_checks")
+    .update({
+      sandbox_id: input.sandboxId,
+      sandbox_provider: "vercel",
+      sandbox_vercel_project_id: input.projectId,
+      sandbox_vercel_team_id: input.teamId,
+    })
+    .eq("id", input.checkId);
+
+  if (error) throw error;
+}
+
 export async function runAndRecordSandboxCapabilityCheck(input: {
   admin: AdminClient;
   repositoryId?: string;
@@ -246,6 +269,15 @@ export async function completeSandboxCapabilityCheck(input: {
       sessionId: randomUUID(),
       timeoutMs: 30 * 60_000,
       vercelCredentials: vercelConnection.credentials,
+      onSandboxCreated: async ({ sandboxId }) => {
+        await updateCheckSandbox({
+          admin: input.admin,
+          checkId: input.checkId,
+          projectId: vercelConnection.credentials.projectId,
+          sandboxId,
+          teamId: vercelConnection.credentials.teamId,
+        });
+      },
     });
     console.info("[sandbox-capability-check] sandbox started", {
       agentProvider: provider,

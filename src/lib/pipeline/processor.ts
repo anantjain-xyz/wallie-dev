@@ -216,14 +216,15 @@ async function runStage(input: {
         signal,
         sessionId: session.id,
         vercelCredentials: vercelConnection.credentials,
+        onSandboxCreated: async ({ sandboxId }) => {
+          if (!runId) return;
+          await updateRunSandbox(admin, runId, sandboxId, {
+            provider: "vercel",
+            projectId: vercelConnection.credentials.projectId,
+            teamId: vercelConnection.credentials.teamId,
+          });
+        },
       });
-      if (runId) {
-        await updateRunSandbox(admin, runId, sandbox.id, {
-          provider: "vercel",
-          projectId: vercelConnection.credentials.projectId,
-          teamId: vercelConnection.credentials.teamId,
-        });
-      }
     }
 
     let usage: { inputTokens: number; outputTokens: number } | undefined;

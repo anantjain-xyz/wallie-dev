@@ -567,6 +567,17 @@ function makeRunner(
 describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.createSessionSandbox.mockImplementation(async (input) => {
+      await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
+      return {
+        id: "sandbox-1",
+        repoPath: "/vercel/sandbox",
+        exec: vi.fn(),
+        readFile: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn(),
+      };
+    });
     mocked.loadStageById.mockResolvedValue(productStage);
     mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
       credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },

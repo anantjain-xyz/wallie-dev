@@ -144,6 +144,7 @@ export async function createVercelSessionSandbox(
   const handle = new VercelSandboxHandle(sandbox);
 
   try {
+    await input.onSandboxCreated?.({ provider: "vercel", sandboxId: handle.id });
     await runSetup(handle, input, mode.kind);
   } catch (err) {
     await handle.stop();
@@ -231,8 +232,12 @@ function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvid
 export async function stopVercelSandboxById(
   sandboxId: string,
   credentials?: VercelSandboxCredentials,
+  options: { throwOnError?: boolean } = {},
 ): Promise<void> {
   if (!credentials) {
+    if (options.throwOnError) {
+      throw new Error("Cannot stop sandbox without Vercel credentials.");
+    }
     console.error("[sandbox] cannot stop sandbox without Vercel credentials", { sandboxId });
     return;
   }
@@ -246,6 +251,9 @@ export async function stopVercelSandboxById(
     });
     await sandbox.stop();
   } catch (error) {
+    if (options.throwOnError) {
+      throw error;
+    }
     console.error("[sandbox] failed to stop sandbox", {
       error: error instanceof Error ? error.message : String(error),
       sandboxId,
@@ -260,8 +268,12 @@ export async function stopVercelSandboxById(
  */
 export async function listRunningVercelSandboxes(
   credentials?: VercelSandboxCredentials,
+  options: { throwOnError?: boolean } = {},
 ): Promise<RunningSandboxSummary[]> {
   if (!credentials) {
+    if (options.throwOnError) {
+      throw new Error("Cannot list sandboxes without Vercel credentials.");
+    }
     // Without a workspace connection we cannot list. Caller treats this as
     // "nothing to reap" rather than an error so dev/test environments without
     // Vercel creds do not hard-fail.
@@ -284,6 +296,9 @@ export async function listRunningVercelSandboxes(
         createdAt: s.createdAt,
       }));
   } catch (error) {
+    if (options.throwOnError) {
+      throw error;
+    }
     console.error("[sandbox] failed to list sandboxes", {
       error: error instanceof Error ? error.message : String(error),
     });

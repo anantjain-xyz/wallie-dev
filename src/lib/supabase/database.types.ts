@@ -699,6 +699,10 @@ export type Database = {
           error_text: string | null
           github_repository_id: string | null
           id: string
+          sandbox_id: string | null
+          sandbox_provider: string | null
+          sandbox_vercel_project_id: string | null
+          sandbox_vercel_team_id: string | null
           status: string
           updated_at: string
           workspace_id: string
@@ -710,6 +714,10 @@ export type Database = {
           error_text?: string | null
           github_repository_id?: string | null
           id?: string
+          sandbox_id?: string | null
+          sandbox_provider?: string | null
+          sandbox_vercel_project_id?: string | null
+          sandbox_vercel_team_id?: string | null
           status?: string
           updated_at?: string
           workspace_id: string
@@ -721,6 +729,10 @@ export type Database = {
           error_text?: string | null
           github_repository_id?: string | null
           id?: string
+          sandbox_id?: string | null
+          sandbox_provider?: string | null
+          sandbox_vercel_project_id?: string | null
+          sandbox_vercel_team_id?: string | null
           status?: string
           updated_at?: string
           workspace_id?: string

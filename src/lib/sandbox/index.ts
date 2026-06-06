@@ -37,11 +37,13 @@ export async function createSessionSandbox(
 ): Promise<SandboxHandle> {
   if (resolveImpl(input.implementation) === "fake") {
     const { FakeSandbox } = await import("./fake");
-    return new FakeSandbox(undefined, {
+    const sandbox = new FakeSandbox(undefined, {
       baseBranch: input.baseBranch,
       branch: input.branch,
       passthroughExec: true,
     });
+    await input.onSandboxCreated?.({ provider: "fake", sandboxId: sandbox.id });
+    return sandbox;
   }
   const { createVercelSessionSandbox } = await import("./vercel");
   return createVercelSessionSandbox(input);
@@ -54,7 +56,7 @@ export async function createSessionSandbox(
  */
 export async function stopSandboxById(
   sandboxId: string,
-  options: { vercelCredentials?: VercelSandboxCredentials } = {},
+  options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
 ): Promise<void> {
   if (resolveImpl() === "fake") {
     const { stopFakeSandboxById } = await import("./fake");
@@ -62,7 +64,9 @@ export async function stopSandboxById(
     return;
   }
   const { stopVercelSandboxById } = await import("./vercel");
-  await stopVercelSandboxById(sandboxId, options.vercelCredentials);
+  await stopVercelSandboxById(sandboxId, options.vercelCredentials, {
+    throwOnError: options.throwOnError,
+  });
 }
 
 /**
@@ -71,12 +75,14 @@ export async function stopSandboxById(
  * rows to find orphans.
  */
 export async function listRunningSandboxes(
-  options: { vercelCredentials?: VercelSandboxCredentials } = {},
+  options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
 ): Promise<RunningSandboxSummary[]> {
   if (resolveImpl() === "fake") {
     const { listRunningFakeSandboxes } = await import("./fake");
     return listRunningFakeSandboxes();
   }
   const { listRunningVercelSandboxes } = await import("./vercel");
-  return listRunningVercelSandboxes(options.vercelCredentials);
+  return listRunningVercelSandboxes(options.vercelCredentials, {
+    throwOnError: options.throwOnError,
+  });
 }

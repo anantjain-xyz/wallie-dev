@@ -5,7 +5,8 @@ import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { loadConnectedVercelSandboxConnections } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
-type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "sandbox_id" | "status">;
+type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "agent_job_id" | "sandbox_id" | "status">;
+type CapabilityCheckSandboxRow = Pick<Tables<"sandbox_capability_checks">, "sandbox_id" | "status">;
 
 export interface SandboxReapResult {
   /** Sandbox IDs visible in the provider that we stopped because no active run owns them. */
@@ -66,35 +67,24 @@ export async function reapOrphanSandboxes(
     }
 
     // Cross-reference: which of these sandbox IDs are known to Wallie in this
-    // Vercel project, and which still have active runs? Unknown IDs may belong
-    // to other consumers in the customer's project, so leave them alone.
+    // Vercel project, and which still have active runs/checks/jobs? Unknown
+    // IDs may belong to other consumers in the customer's project, so leave
+    // them alone.
     const candidateIds = candidates.map((s) => s.id);
-    const { data: knownRuns, error } = await admin
-      .from("agent_runs")
-      .select("sandbox_id, status")
-      .eq("sandbox_provider", "vercel")
-      .eq("sandbox_vercel_team_id", connection.credentials.teamId)
-      .eq("sandbox_vercel_project_id", connection.credentials.projectId)
-      .in("sandbox_id", candidateIds);
+    const projectState = await loadKnownProjectSandboxState({
+      admin,
+      candidateIds,
+      projectId: connection.credentials.projectId,
+      teamId: connection.credentials.teamId,
+    });
 
-    if (error) {
-      console.error("[sandbox-reaper] failed to load known runs", { error: error.message });
+    if (!projectState) {
       continue;
     }
 
-    const known = new Set(
-      ((knownRuns ?? []) as AgentRunSandboxRow[])
-        .map((r) => r.sandbox_id)
-        .filter((id): id is string => id !== null),
+    const orphans = candidates.filter(
+      (s) => projectState.known.has(s.id) && !projectState.active.has(s.id),
     );
-    const active = new Set(
-      ((knownRuns ?? []) as AgentRunSandboxRow[])
-        .filter((r) => isActiveRunStatus(r.status))
-        .map((r) => r.sandbox_id)
-        .filter((id): id is string => id !== null),
-    );
-
-    const orphans = candidates.filter((s) => known.has(s.id) && !active.has(s.id));
 
     for (const orphan of orphans) {
       await stopSandboxById(orphan.id, { vercelCredentials: connection.credentials });
@@ -108,6 +98,105 @@ export async function reapOrphanSandboxes(
   }
 
   return result;
+}
+
+async function loadKnownProjectSandboxState(input: {
+  admin: AdminClient;
+  candidateIds: string[];
+  projectId: string;
+  teamId: string;
+}): Promise<{ active: Set<string>; known: Set<string> } | null> {
+  const [runResult, checkResult] = await Promise.all([
+    input.admin
+      .from("agent_runs")
+      .select("sandbox_id, status, agent_job_id")
+      .eq("sandbox_provider", "vercel")
+      .eq("sandbox_vercel_team_id", input.teamId)
+      .eq("sandbox_vercel_project_id", input.projectId)
+      .in("sandbox_id", input.candidateIds),
+    input.admin
+      .from("sandbox_capability_checks")
+      .select("sandbox_id, status")
+      .eq("sandbox_provider", "vercel")
+      .eq("sandbox_vercel_team_id", input.teamId)
+      .eq("sandbox_vercel_project_id", input.projectId)
+      .in("sandbox_id", input.candidateIds),
+  ]);
+
+  if (runResult.error) {
+    console.error("[sandbox-reaper] failed to load known runs", {
+      error: runResult.error.message,
+    });
+    return null;
+  }
+  if (checkResult.error) {
+    console.error("[sandbox-reaper] failed to load known capability checks", {
+      error: checkResult.error.message,
+    });
+    return null;
+  }
+
+  const runRows = (runResult.data ?? []) as AgentRunSandboxRow[];
+  const checkRows = (checkResult.data ?? []) as CapabilityCheckSandboxRow[];
+  const known = new Set<string>();
+  const active = new Set<string>();
+
+  for (const row of runRows) {
+    if (!row.sandbox_id) continue;
+    known.add(row.sandbox_id);
+    if (isActiveRunStatus(row.status)) {
+      active.add(row.sandbox_id);
+    }
+  }
+
+  for (const row of checkRows) {
+    if (!row.sandbox_id) continue;
+    known.add(row.sandbox_id);
+    if (row.status === "running") {
+      active.add(row.sandbox_id);
+    }
+  }
+
+  const activeJobIds = await loadActiveAgentJobIds(
+    input.admin,
+    runRows
+      .map((row) => row.agent_job_id)
+      .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
+  );
+
+  if (!activeJobIds) {
+    return null;
+  }
+
+  for (const row of runRows) {
+    if (row.sandbox_id && row.agent_job_id && activeJobIds.has(row.agent_job_id)) {
+      active.add(row.sandbox_id);
+    }
+  }
+
+  return { active, known };
+}
+
+async function loadActiveAgentJobIds(
+  admin: AdminClient,
+  jobIds: string[],
+): Promise<Set<string> | null> {
+  if (jobIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await admin
+    .from("agent_jobs")
+    .select("id")
+    .in("id", [...new Set(jobIds)])
+    .in("status", ["queued", "started", "running"]);
+
+  if (error) {
+    console.error("[sandbox-reaper] failed to load active jobs", { error: error.message });
+    return null;
+  }
+
+  return new Set((data ?? []).map((row) => row.id));
 }
 
 function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {

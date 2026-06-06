@@ -93,6 +93,17 @@ describe("createVercelSessionSandbox", () => {
       }),
     );
   });
+
+  it("notifies callers as soon as the provider sandbox is created", async () => {
+    const onSandboxCreated = vi.fn();
+
+    await createVercelSessionSandbox(input({ onSandboxCreated }));
+
+    expect(onSandboxCreated).toHaveBeenCalledWith({
+      provider: "vercel",
+      sandboxId: "sandbox-1",
+    });
+  });
 });
 
 describe("stopVercelSandboxById", () => {
@@ -105,6 +116,14 @@ describe("stopVercelSandboxById", () => {
       teamId: credentials.teamId,
       token: credentials.token,
     });
+  });
+
+  it("throws stop failures in strict cleanup mode", async () => {
+    mocked.sandboxGet.mockRejectedValueOnce(new Error("provider down"));
+
+    await expect(
+      stopVercelSandboxById("sandbox-1", credentials, { throwOnError: true }),
+    ).rejects.toThrow("provider down");
   });
 });
 
@@ -119,5 +138,13 @@ describe("listRunningVercelSandboxes", () => {
       token: credentials.token,
     });
     expect(sandboxes).toEqual([{ createdAt: 1000, id: "running", status: "running" }]);
+  });
+
+  it("throws list failures in strict cleanup mode", async () => {
+    mocked.sandboxList.mockRejectedValueOnce(new Error("provider down"));
+
+    await expect(listRunningVercelSandboxes(credentials, { throwOnError: true })).rejects.toThrow(
+      "provider down",
+    );
   });
 });

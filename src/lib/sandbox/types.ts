@@ -124,4 +124,12 @@ export interface CreateSessionSandboxInput {
   signal?: AbortSignal;
   /** Required for Vercel-backed session sandboxes. */
   vercelCredentials?: VercelSandboxCredentials;
+  /**
+   * Called immediately after the provider sandbox is created and before setup
+   * commands run. Use this to persist Wallie ownership for crash cleanup.
+   */
+  onSandboxCreated?: (metadata: {
+    provider: "fake" | "vercel";
+    sandboxId: string;
+  }) => void | Promise<void>;
 }
