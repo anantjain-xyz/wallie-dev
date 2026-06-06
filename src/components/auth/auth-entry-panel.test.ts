@@ -42,6 +42,14 @@ describe("AuthEntryPanel", () => {
     expect(html).not.toContain('name="tokenDigit"');
   });
 
+  it("does not render social auth options", () => {
+    const html = renderPanel();
+
+    expect(html).not.toContain("Continue with Google");
+    expect(html).not.toContain("Continue with GitHub");
+    expect(html).not.toContain("/auth/oauth");
+  });
+
   it("shows six code inputs without exposing the email form after sending email auth", () => {
     const html = renderPanel({
       canUseEmailCode: true,
