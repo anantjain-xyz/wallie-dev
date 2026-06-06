@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
 
-export const WALLIE_SKILL_VERSION = 1;
+import { CURRENT_WALLIE_SKILL_VERSION } from "@/lib/repo-onboarding/contracts";
+
+export const WALLIE_SKILL_VERSION = CURRENT_WALLIE_SKILL_VERSION;
 
 export type DefaultWallieSkill = {
   content: string;
   name: string;
   path: string;
 };
+
+export const WALLIE_AGENTS_INSTRUCTIONS_PATH = "AGENTS.md";
 
 function skill(name: string, description: string, body: string): DefaultWallieSkill {
   return {
@@ -23,6 +27,60 @@ function skill(name: string, description: string, body: string): DefaultWallieSk
     path: `.agents/skills/${name}/SKILL.md`,
   };
 }
+
+const WALLIE_COMMIT_SKILL_V1 = skill(
+  "commit",
+  "Create a well-scoped git commit from the intended changes.",
+  `
+# Commit
+
+Steps:
+- Inspect \`git status\`, \`git diff\`, and \`git diff --staged\`.
+- Stage only intended paths by name.
+- Keep generated artifacts, logs, credentials, and temporary screenshots out of normal commits.
+- Match the repository's commit-message style.
+- Use \`git commit -F <file>\` for multi-line messages.
+- Do not bypass hooks unless a separate screenshot skill explicitly creates a throwaway screenshot commit.
+`,
+);
+
+const WALLIE_SCREENSHOT_SKILL_V1 = skill(
+  "screenshot",
+  "Capture Playwright proof screenshots for user-facing changes.",
+  `
+# Screenshot
+
+Use repo-local Playwright or install it in the working copy when the repo does not provide it.
+
+Preferred flow:
+- Start the app locally using the repo's normal dev or preview command.
+- If Playwright is missing, install it in the sandbox working copy with \`npm install --no-save playwright\` and \`npx playwright install chromium\`.
+- Capture full-page screenshots for every reviewer-relevant state: happy path, loading, error, empty, mobile, and hover when applicable.
+- Store temporary captures under \`.wallie/screenshots/\`.
+- Add screenshots to the PR description using raw GitHub URLs, then remove the temporary screenshot commit from branch history with \`git push --force-with-lease\`.
+
+Do not rely on a Playwright MCP server being present in Wallie cloud runs.
+`,
+);
+
+const WALLIE_AGENTS_INSTRUCTIONS_V1 = [
+  "# Wallie Workflow",
+  "",
+  "This repository is configured for Wallie cloud execution.",
+  "",
+  "- Use repo-local skills under `.agents/skills/<name>/SKILL.md` for repeatable workflow mechanics.",
+  "- The default workflow skills are `workpad`, `pull`, `commit`, `push`, `pr-feedback`, `screenshot`, and `land`.",
+  "- Linear status routing is managed in Wallie settings; do not hard-code status names in repo scripts.",
+  "- Keep changes scoped to the active issue branch and avoid overwriting unrelated user work.",
+  "- For user-facing changes, use the `screenshot` skill and Playwright CLI proof when available.",
+  "",
+].join("\n");
+
+export const UPGRADABLE_WALLIE_LEGACY_FILES = [
+  { content: WALLIE_COMMIT_SKILL_V1.content, path: WALLIE_COMMIT_SKILL_V1.path },
+  { content: WALLIE_SCREENSHOT_SKILL_V1.content, path: WALLIE_SCREENSHOT_SKILL_V1.path },
+  { content: WALLIE_AGENTS_INSTRUCTIONS_V1, path: WALLIE_AGENTS_INSTRUCTIONS_PATH },
+] as const;
 
 export const DEFAULT_WALLIE_SKILLS: DefaultWallieSkill[] = [
   skill(
@@ -72,10 +130,10 @@ Steps:
 Steps:
 - Inspect \`git status\`, \`git diff\`, and \`git diff --staged\`.
 - Stage only intended paths by name.
-- Keep generated artifacts, logs, credentials, and temporary screenshots out of normal commits.
+- Keep generated artifacts, logs, credentials, and screenshots out of normal commits and the final PR diff.
 - Match the repository's commit-message style.
 - Use \`git commit -F <file>\` for multi-line messages.
-- Do not bypass hooks unless a separate screenshot skill explicitly creates a throwaway screenshot commit.
+- Do not bypass hooks unless a separate screenshot skill explicitly creates a temporary screenshot-only commit.
 `,
   ),
   skill(
@@ -123,7 +181,9 @@ Preferred flow:
 - If Playwright is missing, install it in the sandbox working copy with \`npm install --no-save playwright\` and \`npx playwright install chromium\`.
 - Capture full-page screenshots for every reviewer-relevant state: happy path, loading, error, empty, mobile, and hover when applicable.
 - Store temporary captures under \`.wallie/screenshots/\`.
-- Add screenshots to the PR description using raw GitHub URLs, then remove the temporary screenshot commit from branch history with \`git push --force-with-lease\`.
+- Screenshots are proof artifacts only and must never be part of the final PR diff.
+- If the PR description needs stable screenshot links, create a screenshot-only commit and push it only to obtain commit-SHA raw GitHub URLs.
+- Update the PR description to use those commit-SHA raw URLs, then immediately run \`git revert <screenshot-commit-sha>\` and push the revert before final review.
 
 Do not rely on a Playwright MCP server being present in Wallie cloud runs.
 `,
@@ -148,8 +208,6 @@ Steps:
   ),
 ];
 
-export const WALLIE_AGENTS_INSTRUCTIONS_PATH = "AGENTS.md";
-
 export const WALLIE_AGENTS_INSTRUCTIONS = [
   "# Wallie Workflow",
   "",
@@ -160,6 +218,7 @@ export const WALLIE_AGENTS_INSTRUCTIONS = [
   "- Linear status routing is managed in Wallie settings; do not hard-code status names in repo scripts.",
   "- Keep changes scoped to the active issue branch and avoid overwriting unrelated user work.",
   "- For user-facing changes, use the `screenshot` skill and Playwright CLI proof when available.",
+  "- Screenshots are proof artifacts only; never leave them in the final PR diff.",
   "",
 ].join("\n");
 

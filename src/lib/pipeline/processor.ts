@@ -166,6 +166,7 @@ async function runStage(input: {
   let branch: string | null = null;
   const collectedText: string[] = [];
   let artifactInserted = false;
+  let sessionPointerAdvanced = false;
   try {
     const resolvedRunner = await resolveAgentRunner({
       admin,
@@ -261,10 +262,6 @@ async function runStage(input: {
       throw new MissingReviewableOutputError(message);
     }
 
-    if (runId) {
-      await markRunSuccess(admin, runId, usage);
-    }
-
     await insertArtifact(admin, {
       artifactJson: artifactMarkdown,
       sessionId: session.id,
@@ -290,10 +287,16 @@ async function runStage(input: {
         workspaceId: session.workspace_id,
       });
 
-      if (prOutcome.kind !== "success" && prOutcome.kind !== "no_commits") {
-        // PR plumbing is recoverable — the artifact is durable and the reviewer
-        // can approve the artifact directly. Surface the failure for ops without
-        // blocking the stage.
+      // PR plumbing is recoverable — the artifact is durable and the reviewer
+      // can approve the artifact directly — so we never block the stage. But we
+      // always surface the outcome: `no_commits` used to be fully silent, which
+      // is exactly how empty `session_pull_requests` went unnoticed.
+      if (prOutcome.kind === "no_commits") {
+        console.info("Stage produced no pull request (no commits ahead of base)", {
+          sessionId: session.id,
+          stageSlug: stage.slug,
+        });
+      } else if (prOutcome.kind !== "success") {
         console.error("Failed to open session pull request", {
           kind: prOutcome.kind,
           reason: prOutcome.reason,
@@ -311,6 +314,16 @@ async function runStage(input: {
       })
       .eq("id", session.id);
     if (pointerError) throw pointerError;
+    sessionPointerAdvanced = true;
+
+    if (runId) {
+      await persistEvent(admin, runId, session.workspace_id, {
+        type: "completion",
+        taskComplete: true,
+        summary: `${stage.name} run completed`,
+      });
+      await markRunSuccess(admin, runId, usage);
+    }
   } catch (error) {
     if (runId) {
       await markRunError(admin, runId);
@@ -333,7 +346,14 @@ async function runStage(input: {
         .eq("version", newVersion);
     }
 
-    await updateSessionStatus(admin, session.id, "rejected");
+    if (sessionPointerAdvanced) {
+      await updateSessionStatusAfterStageFailure(admin, session.id, {
+        currentArtifactVersion: session.current_artifact_version,
+        phaseStatus: "rejected",
+      });
+    } else {
+      await updateSessionStatus(admin, session.id, "rejected");
+    }
     const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message, {
       retry:
@@ -700,6 +720,24 @@ async function updateSessionStatus(
   if (error) throw error;
 }
 
+async function updateSessionStatusAfterStageFailure(
+  admin: AdminClient,
+  sessionId: string,
+  input: {
+    currentArtifactVersion: number;
+    phaseStatus: SessionRow["phase_status"];
+  },
+): Promise<void> {
+  const { error } = await admin
+    .from("sessions")
+    .update({
+      current_artifact_version: input.currentArtifactVersion,
+      phase_status: input.phaseStatus,
+    })
+    .eq("id", sessionId);
+  if (error) throw error;
+}
+
 async function insertArtifact(
   admin: AdminClient,
   input: {
@@ -986,12 +1024,15 @@ async function persistEvent(
       break;
   }
 
-  await admin.from("agent_run_messages").insert({
+  const { error } = await admin.from("agent_run_messages").insert({
     agent_run_id: runId,
     kind,
     message_md: messageMd,
     workspace_id: workspaceId,
   });
+  if (error) {
+    throw error;
+  }
 
   await touchRunActivity(admin, runId);
 }

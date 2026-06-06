@@ -499,16 +499,6 @@ export function SessionWalliePanel({
 
                 {isExpanded ? (
                   <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
-                    {runIsBusy ? <RunProgressRow /> : null}
-                    {run.messages.length === 0 && !runIsBusy ? (
-                      <div
-                        aria-live="polite"
-                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
-                        role="status"
-                      >
-                        No persisted messages were recorded for this run.
-                      </div>
-                    ) : null}
                     {run.messages.length > 0
                       ? run.messages.map((message) => (
                           <div
@@ -528,6 +518,16 @@ export function SessionWalliePanel({
                           </div>
                         ))
                       : null}
+                    {run.messages.length === 0 && !runIsBusy ? (
+                      <div
+                        aria-live="polite"
+                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
+                        role="status"
+                      >
+                        No persisted messages were recorded for this run.
+                      </div>
+                    ) : null}
+                    {runIsBusy ? <RunProgressRow /> : null}
                   </div>
                 ) : null}
               </article>

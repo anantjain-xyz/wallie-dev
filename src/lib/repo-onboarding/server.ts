@@ -372,9 +372,9 @@ async function createSetupPullRequest(input: {
     {
       base: input.baseBranch,
       body: [
-        "Wallie setup adds repo-local workflow skills so cloud agents can run the same mechanics every time.",
+        "Wallie setup adds or updates repo-local workflow skills so cloud agents can run the same mechanics every time.",
         "",
-        "This PR only adds missing Wallie-owned setup files. Existing skill files are never overwritten.",
+        "This PR only writes missing files or exact Wallie-owned legacy defaults. User-edited skill files are never overwritten.",
       ].join("\n"),
       head: branchName,
       owner: input.owner,

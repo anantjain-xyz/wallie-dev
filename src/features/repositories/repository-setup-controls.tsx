@@ -5,6 +5,7 @@ import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { StatusBadge } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
+import { CURRENT_WALLIE_SKILL_VERSION } from "@/lib/repo-onboarding/contracts";
 import type {
   RepositoryOnboardingResponse,
   RepositoryOnboardingState,
@@ -123,6 +124,13 @@ export function repositorySetupCanAdvance(status: RepositoryOnboardingStatus | "
   return status === "pr_open" || status === "ready";
 }
 
+export function hasCurrentWallieSkills(onboarding: RepositoryOnboardingState): boolean {
+  return (
+    onboarding.status === "ready" &&
+    onboarding.installedSkillVersion === CURRENT_WALLIE_SKILL_VERSION
+  );
+}
+
 export function RepositorySetupStatusBadge({ status }: { status: RepositoryOnboardingStatus }) {
   return (
     <StatusBadge tone={repositoryOnboardingBadgeTone(status)}>
@@ -206,9 +214,19 @@ export function RepositorySetupControls({
     successText: "Repository marked ready for Wallie.",
   });
 
-  const showInstallSkillsAction = repository.onboarding.status !== "ready";
+  const setupSkillsAreCurrent = hasCurrentWallieSkills(repository.onboarding);
+  const showInstallSkillsAction =
+    repository.onboarding.status !== "ready" || !setupSkillsAreCurrent;
   const showManualSetupAction = showManualSetupComplete && repository.onboarding.status !== "ready";
   const setupActionBusy = startOnboarding.isBusy || markOnboardingReady.isBusy;
+  const setupActionText =
+    repository.onboarding.status === "ready"
+      ? startOnboarding.isBusy
+        ? "Updating..."
+        : "Update skills"
+      : startOnboarding.isBusy
+        ? "Installing..."
+        : "Install skills";
 
   return (
     <>
@@ -229,7 +247,7 @@ export function RepositorySetupControls({
           onClick={() => void startOnboarding.run(repository.id)}
           type="button"
         >
-          {startOnboarding.isBusy ? "Installing..." : "Install skills"}
+          {setupActionText}
         </button>
       ) : null}
       {showManualSetupAction ? (

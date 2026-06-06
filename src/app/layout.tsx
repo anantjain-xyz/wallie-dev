@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Newsreader } from "next/font/google";
 
+import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
 import "./globals.css";
 
@@ -35,7 +36,7 @@ const themeBootstrapScript = `
 `;
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://wallie.cc"),
+  metadataBase: resolveAppUrl(),
   title: {
     default: siteConfig.name,
     template: `%s | ${siteConfig.name}`,

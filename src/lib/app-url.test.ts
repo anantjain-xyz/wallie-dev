@@ -1,0 +1,22 @@
+import { describe, expect, it } from "vitest";
+
+import { buildAppUrl, resolveAppOrigin, resolveAppUrl } from "@/lib/app-url";
+
+describe("app URL helpers", () => {
+  it("resolves the configured app origin without path, search, or hash", () => {
+    const input = {
+      NEXT_PUBLIC_APP_URL: "https://wallie.dev/some/path?query=1#section",
+    };
+
+    expect(resolveAppUrl(input).toString()).toBe("https://wallie.dev/");
+    expect(resolveAppOrigin(input)).toBe("https://wallie.dev");
+  });
+
+  it("builds app URLs from the configured origin", () => {
+    expect(
+      buildAppUrl("/auth/confirm?next=%2F", {
+        NEXT_PUBLIC_APP_URL: "https://wallie.dev",
+      }).toString(),
+    ).toBe("https://wallie.dev/auth/confirm?next=%2F");
+  });
+});

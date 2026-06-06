@@ -46,6 +46,7 @@ import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
   mergeRepositoryOnboardingState,
+  hasCurrentWallieSkills,
   RepositoryMetadataPills,
   RepositorySetupControls,
   RepositorySetupMessages,
@@ -1514,7 +1515,9 @@ function RepositoryAnalysisStep({
         const showProfileEditor = selected && Boolean(profileDraft);
         const rowProfileBusy = selected && (profileAnalyzing || profileSaving);
         const showSetupControls =
-          Boolean(repository.onboarding.setupPrUrl) || repository.onboarding.status !== "ready";
+          Boolean(repository.onboarding.setupPrUrl) ||
+          repository.onboarding.status !== "ready" ||
+          !hasCurrentWallieSkills(repository.onboarding);
         const showProfileAction =
           repository.onboarding.status === "ready" && !showProfileEditor && !rowProfileBusy;
         const showActionRow = showSetupControls || showProfileAction;

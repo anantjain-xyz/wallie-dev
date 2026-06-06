@@ -1,5 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
+import {
+  createVercelSessionSandbox,
+  listRunningVercelSandboxes,
+  stopVercelSandboxById,
+} from "./vercel";
+import type { CreateSessionSandboxInput, VercelSandboxCredentials } from "./types";
+
+type SandboxCommandInput = {
+  args: string[];
+  cmd: string;
+};
+
 const mocked = vi.hoisted(() => ({
   sandboxCreate: vi.fn(),
   sandboxGet: vi.fn(),
@@ -13,13 +26,6 @@ vi.mock("@vercel/sandbox", () => ({
     list: mocked.sandboxList,
   },
 }));
-
-import {
-  createVercelSessionSandbox,
-  listRunningVercelSandboxes,
-  stopVercelSandboxById,
-} from "./vercel";
-import type { CreateSessionSandboxInput, VercelSandboxCredentials } from "./types";
 
 const credentials: VercelSandboxCredentials = {
   projectId: "prj_123",
@@ -104,6 +110,39 @@ describe("createVercelSessionSandbox", () => {
       provider: "vercel",
       sandboxId: "sandbox-1",
     });
+  });
+
+  it("configures git commits as the Wallie GitHub App bot", async () => {
+    const runCommand = vi.fn(async (request: SandboxCommandInput) => {
+      void request;
+      return command();
+    });
+    mocked.sandboxCreate.mockResolvedValue(sandbox({ runCommand }));
+
+    await createVercelSessionSandbox(
+      input({
+        branch: "wallie/session-1-product",
+        installationToken: "ghs_test",
+        repoFullName: "acme/app",
+        sessionId: "session-1",
+      }),
+    );
+
+    expect(runCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [
+          "-lc",
+          expect.stringContaining(
+            `git -C '/vercel/sandbox' config user.email '${WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email}'`,
+          ),
+        ],
+        cmd: "bash",
+      }),
+    );
+    const setupScript = runCommand.mock.calls[0]?.[0].args[1];
+    expect(setupScript).toContain(
+      `git -C '/vercel/sandbox' config user.name '${WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name}'`,
+    );
   });
 });
 
