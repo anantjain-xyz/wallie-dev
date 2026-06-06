@@ -1,6 +1,6 @@
 -- Clarify screenshot commit hygiene in the seeded Wallie prompts and shared
--- operating rules. Existing customized operating rules and stage prompts are
--- intentionally left untouched.
+-- operating rules. Existing customized operating rules and stage prompts stay
+-- untouched; exact prior default build-stage prompts are upgraded below.
 
 create or replace function internal.default_pipeline_stages()
 returns table (
@@ -111,3 +111,35 @@ update public.pipelines as pipeline
 set operating_rules_md = internal.default_pipeline_operating_rules()
 from previous_default
 where pipeline.operating_rules_md = previous_default.value;
+
+with previous_default_build_prompt(value) as (
+  values (
+    'Implement: {{session.title}}' || E'\n\n' ||
+    '## User Request' || E'\n\n' ||
+    '{{session.prompt}}' || E'\n\n' ||
+    '{{#if artifact.previousStages.plan}}## Approved Plan' || E'\n\n' ||
+    '{{artifact.previousStages.plan}}' || E'\n{{/if}}' || E'\n\n' ||
+    '{{#if attempt.feedback}}## Previous Feedback (Attempt {{attempt.number}})' || E'\n\n' ||
+    '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
+    '## Instructions' || E'\n\n' ||
+    'Implement the change against the approved plan, then publish it and verify it for human review. Read the codebase first and follow existing patterns. Work in small, focused commits.' || E'\n\n' ||
+    '- **Sync first.** Before you start, and again after addressing feedback, sync the branch with the repository''s default branch and resolve any conflicts. Never publish on top of a conflicted branch.' || E'\n' ||
+    '- **Pick up prior work.** If the branch already has commits from an earlier attempt, reconcile against them — build on what is there and address the feedback specifically rather than redoing committed work.' || E'\n' ||
+    '- **Reproduction first.** Confirm the current behavior from the plan''s reproduction signal before changing code.' || E'\n' ||
+    '- **Validation is mandatory.** Satisfy every acceptance-criteria and validation item from the plan. Prefer targeted proof that exercises the change; re-run until green before publishing.' || E'\n' ||
+    '- **User-facing changes.** Capture full-page screenshots of every state worth reviewing (happy path, loading, error, empty, mobile, hover) and embed them in the PR description at stable URLs. Do not leave a throwaway screenshot commit in branch history.' || E'\n' ||
+    '- **Open the pull request.** Summarize the diff shape, the commits, and the validation evidence produced.' || E'\n' ||
+    '- **Sweep PR feedback.** Gather every actionable item from top-level PR comments, inline review comments, and review states. Resolve each — a code change or an explicit, justified pushback. Loop until none remain and no required checks are failing (pending human-gated checks are fine; do not wait on them).' || E'\n' ||
+    '- **Verify against the plan.** Confirm every acceptance-criteria and validation item is met and CI is green on the latest commit; call out any gap. Close with a short verification summary so the human approver can sign off.' || E'\n'
+  )
+),
+new_default_build_prompt(value) as (
+  select prompt_template_md
+  from internal.default_pipeline_stages()
+  where slug = 'build'
+)
+update public.pipeline_stages as stage
+set prompt_template_md = new_default_build_prompt.value
+from previous_default_build_prompt, new_default_build_prompt
+where stage.slug = 'build'
+  and stage.prompt_template_md = previous_default_build_prompt.value;
