@@ -78,7 +78,9 @@ create index sandbox_capability_checks_vercel_sandbox_idx
 
 create table public.workspace_vercel_sandbox_connection_mutations (
   workspace_id uuid primary key references public.workspaces(id) on delete cascade,
-  created_at timestamptz not null default now()
+  lock_id uuid not null default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '15 minutes'
 );
 
 revoke insert, update, delete on public.sandbox_capability_checks from authenticated;
@@ -91,13 +93,19 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  acquired_lock_id uuid := gen_random_uuid();
 begin
   perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0));
+
+  delete from public.workspace_vercel_sandbox_connection_mutations
+  where expires_at <= now();
 
   if exists (
     select 1
     from public.workspace_vercel_sandbox_connection_mutations
     where workspace_id = target_workspace_id
+      and expires_at > now()
   ) then
     return 'locked';
   end if;
@@ -117,14 +125,19 @@ begin
     from public.sandbox_capability_checks
     where workspace_id = target_workspace_id
       and status = 'running'
+      and checked_at > now() - interval '1 hour'
   ) then
     return 'active';
   end if;
 
-  insert into public.workspace_vercel_sandbox_connection_mutations (workspace_id)
-  values (target_workspace_id);
+  insert into public.workspace_vercel_sandbox_connection_mutations (
+    workspace_id,
+    lock_id,
+    expires_at
+  )
+  values (target_workspace_id, acquired_lock_id, now() + interval '15 minutes');
 
-  return 'acquired';
+  return acquired_lock_id::text;
 end;
 $$;
 
@@ -142,10 +155,14 @@ declare
 begin
   perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0));
 
+  delete from public.workspace_vercel_sandbox_connection_mutations
+  where expires_at <= now();
+
   if exists (
     select 1
     from public.workspace_vercel_sandbox_connection_mutations
     where workspace_id = target_workspace_id
+      and expires_at > now()
   ) then
     raise exception 'Vercel Sandbox connection update is in progress. Try again shortly.';
   end if;
@@ -182,6 +199,9 @@ declare
   effective_limit int;
   running_count int;
 begin
+  delete from public.workspace_vercel_sandbox_connection_mutations
+  where expires_at <= now();
+
   for candidate in
     select *
     from public.agent_jobs
@@ -196,6 +216,7 @@ begin
       select 1
       from public.workspace_vercel_sandbox_connection_mutations
       where workspace_id = candidate.workspace_id
+        and expires_at > now()
     ) then
       continue;
     end if;

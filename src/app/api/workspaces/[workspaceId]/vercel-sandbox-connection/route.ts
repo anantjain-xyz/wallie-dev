@@ -24,13 +24,14 @@ type RouteContext = {
 
 const activeRunStatuses = ["queued", "started", "running"] as const;
 const activeJobStatuses = ["queued", "started", "running"] as const;
+const activeCapabilityCheckMaxAgeMs = 60 * 60 * 1000;
 type AgentRunSandboxRow = Pick<
   Tables<"agent_runs">,
   "agent_job_id" | "sandbox_id" | "status" | "workspace_id"
 >;
 type CapabilityCheckSandboxRow = Pick<
   Tables<"sandbox_capability_checks">,
-  "sandbox_id" | "status" | "workspace_id"
+  "checked_at" | "sandbox_id" | "status" | "workspace_id"
 >;
 
 async function stopWorkspaceProjectSandboxes(input: {
@@ -58,7 +59,7 @@ async function stopWorkspaceProjectSandboxes(input: {
       .in("sandbox_id", sandboxIds),
     input.admin
       .from("sandbox_capability_checks")
-      .select("sandbox_id, status, workspace_id")
+      .select("sandbox_id, status, workspace_id, checked_at")
       .eq("sandbox_provider", "vercel")
       .eq("sandbox_vercel_team_id", input.credentials.teamId)
       .eq("sandbox_vercel_project_id", input.credentials.projectId)
@@ -94,7 +95,7 @@ async function stopWorkspaceProjectSandboxes(input: {
     }
   }
   for (const row of checkRows) {
-    if (row.sandbox_id && isActiveCapabilityCheckStatus(row.status)) {
+    if (row.sandbox_id && isActiveCapabilityCheck(row)) {
       activeAnywhere.add(row.sandbox_id);
     }
   }
@@ -115,8 +116,11 @@ function isActiveRunStatus(status: Tables<"agent_runs">["status"]) {
   return activeRunStatuses.includes(status as (typeof activeRunStatuses)[number]);
 }
 
-function isActiveCapabilityCheckStatus(status: Tables<"sandbox_capability_checks">["status"]) {
-  return status === "running";
+function isActiveCapabilityCheck(row: CapabilityCheckSandboxRow, now = Date.now()) {
+  if (row.status !== "running") return false;
+  const checkedAt = Date.parse(row.checked_at);
+  if (Number.isNaN(checkedAt)) return true;
+  return now - checkedAt <= activeCapabilityCheckMaxAgeMs;
 }
 
 function vercelProjectChanged(

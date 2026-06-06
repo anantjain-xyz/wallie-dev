@@ -1635,14 +1635,20 @@ export type Database = {
       workspace_vercel_sandbox_connection_mutations: {
         Row: {
           created_at: string
+          expires_at: string
+          lock_id: string
           workspace_id: string
         }
         Insert: {
           created_at?: string
+          expires_at?: string
+          lock_id?: string
           workspace_id: string
         }
         Update: {
           created_at?: string
+          expires_at?: string
+          lock_id?: string
           workspace_id?: string
         }
         Relationships: [

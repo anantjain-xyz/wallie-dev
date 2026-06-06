@@ -19,7 +19,9 @@ export type {
 } from "./types";
 export { FakeSandbox } from "./fake";
 
-function resolveImpl(override?: CreateSessionSandboxInput["implementation"]): "vercel" | "fake" {
+export function resolveSandboxImplementation(
+  override?: CreateSessionSandboxInput["implementation"],
+): "vercel" | "fake" {
   const impl = override ?? process.env.WALLIE_SANDBOX_IMPL ?? "vercel";
   if (impl !== "vercel" && impl !== "fake") {
     throw new Error(`Unknown WALLIE_SANDBOX_IMPL: ${impl}. Expected "vercel" or "fake".`);
@@ -35,7 +37,7 @@ function resolveImpl(override?: CreateSessionSandboxInput["implementation"]): "v
 export async function createSessionSandbox(
   input: CreateSessionSandboxInput,
 ): Promise<SandboxHandle> {
-  if (resolveImpl(input.implementation) === "fake") {
+  if (resolveSandboxImplementation(input.implementation) === "fake") {
     const { FakeSandbox } = await import("./fake");
     const sandbox = new FakeSandbox(undefined, {
       baseBranch: input.baseBranch,
@@ -58,7 +60,7 @@ export async function stopSandboxById(
   sandboxId: string,
   options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
 ): Promise<void> {
-  if (resolveImpl() === "fake") {
+  if (resolveSandboxImplementation() === "fake") {
     const { stopFakeSandboxById } = await import("./fake");
     await stopFakeSandboxById(sandboxId);
     return;
@@ -77,7 +79,7 @@ export async function stopSandboxById(
 export async function listRunningSandboxes(
   options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
 ): Promise<RunningSandboxSummary[]> {
-  if (resolveImpl() === "fake") {
+  if (resolveSandboxImplementation() === "fake") {
     const { listRunningFakeSandboxes } = await import("./fake");
     return listRunningFakeSandboxes();
   }

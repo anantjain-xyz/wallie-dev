@@ -31,6 +31,7 @@ const mocked = vi.hoisted(() => ({
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
   loadWorkspaceAgentConfig: vi.fn(),
   loadRequiredVercelSandboxConnection: vi.fn(),
+  resolveSandboxImplementation: vi.fn(() => "vercel"),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
   openSessionPullRequest: vi.fn().mockResolvedValue({
     kind: "success",
@@ -71,6 +72,7 @@ vi.mock("@/lib/agent-runner", () => ({
 
 vi.mock("@/lib/sandbox", () => ({
   createSessionSandbox: mocked.createSessionSandbox,
+  resolveSandboxImplementation: mocked.resolveSandboxImplementation,
 }));
 
 vi.mock("@/lib/vercel-sandbox/server", () => ({
@@ -576,6 +578,7 @@ function makeRunner(
 describe("processPipelineJob (generic stage runner)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocked.resolveSandboxImplementation.mockReturnValue("vercel");
     mocked.createSessionSandbox.mockImplementation(async (input) => {
       await input.onSandboxCreated?.({ provider: "vercel", sandboxId: "sandbox-1" });
       return {
@@ -1050,6 +1053,40 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(updatedJobs.at(-1)).toMatchObject({
       last_error: "Connect a Vercel Sandbox account before starting Wallie runs.",
       status: "error",
+    });
+  });
+
+  it("does not require a Vercel connection when fake sandbox execution is selected", async () => {
+    mocked.resolveSandboxImplementation.mockReturnValueOnce("fake");
+    mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
+      await input.onSandboxCreated?.({ provider: "fake", sandboxId: "fake-sandbox-1" });
+      return {
+        id: "fake-sandbox-1",
+        repoPath: "/tmp/wallie-fake-sandbox",
+        exec: vi.fn(),
+        readFile: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        writeFile: vi.fn(),
+      };
+    });
+    const session = baseSession();
+    const { admin, updatedRuns } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("success");
+    expect(mocked.loadRequiredVercelSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        implementation: "fake",
+        vercelCredentials: undefined,
+      }),
+    );
+    expect(updatedRuns).toContainEqual({
+      sandbox_id: "fake-sandbox-1",
+      sandbox_provider: "fake",
+      sandbox_vercel_project_id: null,
+      sandbox_vercel_team_id: null,
     });
   });
 

@@ -174,6 +174,16 @@ describe("pollOnce", () => {
     expect(migrationSql).toContain(
       "create table public.workspace_vercel_sandbox_connection_mutations",
     );
+    expect(migrationSql).toContain(
+      "expires_at timestamptz not null default now() + interval '15 minutes'",
+    );
+    expect(migrationSql).toContain("lock_id uuid not null default gen_random_uuid()");
+    expect(migrationSql).toContain("return acquired_lock_id::text");
+    expect(migrationSql).toContain(
+      "delete from public.workspace_vercel_sandbox_connection_mutations",
+    );
+    expect(migrationSql).toContain("and expires_at > now()");
+    expect(migrationSql).toContain("and checked_at > now() - interval '1 hour'");
     expect(migrationSql).toContain("create or replace function public.claim_next_agent_job");
     expect(migrationSql).toContain("pg_advisory_xact_lock");
     expect(migrationSql).toContain("from public.workspace_vercel_sandbox_connection_mutations");

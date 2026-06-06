@@ -22,7 +22,7 @@ import {
   CodexNotConnectedError,
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
-import { createSessionSandbox } from "@/lib/sandbox";
+import { createSessionSandbox, resolveSandboxImplementation } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
@@ -202,23 +202,32 @@ async function runStage(input: {
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
       const installationToken = await mintInstallationToken(github.installationId);
-      const vercelConnection = await loadRequiredVercelSandboxConnection(
-        admin,
-        session.workspace_id,
-      );
+      const sandboxImplementation = resolveSandboxImplementation();
+      const vercelConnection =
+        sandboxImplementation === "vercel"
+          ? await loadRequiredVercelSandboxConnection(admin, session.workspace_id)
+          : null;
       branch = buildStageBranchName(session.id, stage.slug);
       throwIfAborted(signal);
       sandbox = await createSessionSandbox({
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
         branch,
+        implementation: sandboxImplementation,
         installationToken,
         repoFullName: github.repo.full_name,
         signal,
         sessionId: session.id,
-        vercelCredentials: vercelConnection.credentials,
-        onSandboxCreated: async ({ sandboxId }) => {
+        vercelCredentials: vercelConnection?.credentials,
+        onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
           if (!runId) return;
+          if (sandboxProvider === "fake") {
+            await updateRunSandbox(admin, runId, sandboxId, { provider: "fake" });
+            return;
+          }
+          if (!vercelConnection) {
+            throw new Error("Workspace Vercel Sandbox credentials are required.");
+          }
           await updateRunSandbox(admin, runId, sandboxId, {
             provider: "vercel",
             projectId: vercelConnection.credentials.projectId,
@@ -931,19 +940,32 @@ async function updateRunSandbox(
   admin: AdminClient,
   runId: string,
   sandboxId: string,
-  metadata: {
-    projectId: string;
-    provider: "vercel";
-    teamId: string;
-  },
+  metadata:
+    | {
+        provider: "fake";
+      }
+    | {
+        projectId: string;
+        provider: "vercel";
+        teamId: string;
+      },
 ): Promise<void> {
+  const vercelMetadata =
+    metadata.provider === "vercel"
+      ? {
+          sandbox_vercel_project_id: metadata.projectId,
+          sandbox_vercel_team_id: metadata.teamId,
+        }
+      : {
+          sandbox_vercel_project_id: null,
+          sandbox_vercel_team_id: null,
+        };
   const { error } = await admin
     .from("agent_runs")
     .update({
       sandbox_id: sandboxId,
       sandbox_provider: metadata.provider,
-      sandbox_vercel_project_id: metadata.projectId,
-      sandbox_vercel_team_id: metadata.teamId,
+      ...vercelMetadata,
     })
     .eq("id", runId);
   if (error) {

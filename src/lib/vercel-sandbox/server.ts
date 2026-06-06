@@ -63,7 +63,7 @@ export async function acquireVercelSandboxConnectionMutationLock(
   if (data === "active") {
     throw new VercelSandboxConnectionActiveWorkError();
   }
-  if (data !== "acquired") {
+  if (typeof data !== "string" || data.length === 0) {
     throw new Error("Failed to acquire Vercel Sandbox connection update lock.");
   }
 
@@ -71,7 +71,8 @@ export async function acquireVercelSandboxConnectionMutationLock(
     const { error: releaseError } = await admin
       .from("workspace_vercel_sandbox_connection_mutations")
       .delete()
-      .eq("workspace_id", workspaceId);
+      .eq("workspace_id", workspaceId)
+      .eq("lock_id", data);
 
     if (releaseError) throw releaseError;
   };

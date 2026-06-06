@@ -101,6 +101,7 @@ type SandboxRunRow = {
 };
 
 type SandboxCheckRow = {
+  checked_at?: string;
   sandbox_id: string | null;
   sandbox_provider?: string | null;
   sandbox_vercel_project_id?: string | null;
@@ -225,6 +226,7 @@ function adminMock(
                 const sandboxIds = filters.get("sandbox_id");
                 const rows = (options.sandboxCheckRows ?? [])
                   .map((row) => ({
+                    checked_at: new Date().toISOString(),
                     sandbox_provider: "vercel",
                     sandbox_vercel_project_id: credentials.projectId,
                     sandbox_vercel_team_id: credentials.teamId,
@@ -258,12 +260,20 @@ function adminMock(
 
       if (table === "workspace_vercel_sandbox_connection_mutations") {
         return {
-          delete: () => ({
-            eq: async (_column: string, value: string) => {
-              releasedMutationLockWorkspaceIds.push(value);
-              return { error: null };
-            },
-          }),
+          delete: () => {
+            const filters = new Map<string, unknown>();
+            const builder = {
+              eq: (column: string, value: string) => {
+                filters.set(column, value);
+                if (column === "lock_id") {
+                  releasedMutationLockWorkspaceIds.push(String(filters.get("workspace_id")));
+                  return Promise.resolve({ error: null });
+                }
+                return builder;
+              },
+            };
+            return builder;
+          },
         };
       }
 
@@ -283,7 +293,7 @@ function adminMock(
         return { data: "active", error: null };
       }
       mutationLockWorkspaceIds.push(args.target_workspace_id);
-      return { data: "acquired", error: null };
+      return { data: "33333333-3333-4333-8333-333333333333", error: null };
     }),
   };
   return mock;
@@ -595,6 +605,12 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
             status: "running",
             workspace_id: workspaceId,
           },
+          {
+            checked_at: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+            sandbox_id: "capability-stale",
+            status: "running",
+            workspace_id: workspaceId,
+          },
         ],
         activeJobIds: ["job-post-run"],
       }),
@@ -605,6 +621,7 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
       { createdAt: Date.now() - 60_000, id: "owned-post-run", status: "running" },
       { createdAt: Date.now() - 60_000, id: "capability-terminal", status: "running" },
       { createdAt: Date.now() - 60_000, id: "capability-running", status: "running" },
+      { createdAt: Date.now() - 60_000, id: "capability-stale", status: "running" },
       { createdAt: Date.now() - 60_000, id: "other-active", status: "running" },
       { createdAt: Date.now() - 60_000, id: "unknown", status: "running" },
     ]);
@@ -613,12 +630,16 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
 
     await expect(response.json()).resolves.toEqual({ connection: null });
     expect(response.status).toBe(200);
-    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(2);
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(3);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("owned-terminal", {
       throwOnError: true,
       vercelCredentials: credentials,
     });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-terminal", {
+      throwOnError: true,
+      vercelCredentials: credentials,
+    });
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-stale", {
       throwOnError: true,
       vercelCredentials: credentials,
     });
