@@ -807,6 +807,67 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Mark skills as installed");
   });
 
+  it("offers skill updates for ready repositories with stale installed skills", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          github: {
+            installation: connectedInstallation(),
+            missingAppKeys: [],
+            missingWebhookKeys: [],
+            primaryProfile: null,
+            repositories: [
+              repository("repo-a", {
+                onboarding: {
+                  conflictReport: [],
+                  githubRepositoryId: "repo-a",
+                  installedSkillHash: "hash-1",
+                  installedSkillVersion: 1,
+                  lastError: null,
+                  setupBranchName: null,
+                  setupPrNumber: null,
+                  setupPrUrl: null,
+                  status: "ready",
+                  updatedAt: "2026-05-16T18:00:00.000Z",
+                },
+              }),
+            ],
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "repository",
+            dismissedAt: null,
+            id: "onboarding-1",
+            selectedGithubRepositoryId: "repo-a",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: true,
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("Update skills");
+    expect(html).toContain(">Analyze repository</button>");
+    expect(html).not.toContain("Mark skills as installed");
+  });
+
   it("allows repository analysis progression when legacy state has an is_primary profile but no selected repo id", () => {
     const primary = profile("repo-a");
     const html = renderToStaticMarkup(

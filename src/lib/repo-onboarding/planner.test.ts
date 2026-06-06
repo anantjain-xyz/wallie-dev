@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildRepositoryOnboardingPlan } from "@/lib/repo-onboarding/planner";
 import {
   DEFAULT_WALLIE_SKILLS,
+  UPGRADABLE_WALLIE_LEGACY_FILES,
   WALLIE_AGENTS_INSTRUCTIONS,
   WALLIE_AGENTS_INSTRUCTIONS_PATH,
   WALLIE_SKILL_VERSION,
@@ -55,6 +56,36 @@ describe("repository onboarding planner", () => {
     expect(plan.conflicts).toEqual([]);
     expect(plan.filesToCreate).toEqual([]);
     expect(plan.missingSkillCount).toBe(0);
+  });
+
+  it("upgrades exact legacy Wallie-owned files without treating them as user edits", () => {
+    const changedSkillNames = new Set(["commit", "screenshot"]);
+    const changedSkills = DEFAULT_WALLIE_SKILLS.filter((skill) =>
+      changedSkillNames.has(skill.name),
+    );
+    const currentByPath = new Map([
+      ...changedSkills.map((skill) => [skill.path, skill.content] as const),
+      [WALLIE_AGENTS_INSTRUCTIONS_PATH, WALLIE_AGENTS_INSTRUCTIONS] as const,
+    ]);
+    const plan = buildRepositoryOnboardingPlan({
+      existingFiles: UPGRADABLE_WALLIE_LEGACY_FILES.map((file) => ({
+        content: file.content,
+        exists: true,
+        path: file.path,
+      })),
+      skillVersion: WALLIE_SKILL_VERSION,
+      skills: changedSkills,
+    });
+
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.filesToCreate.map((file) => file.path).sort()).toEqual(
+      [...currentByPath.keys()].sort(),
+    );
+    expect(plan.filesToCreate).toEqual(
+      expect.arrayContaining(
+        [...currentByPath].map(([path, content]) => expect.objectContaining({ content, path })),
+      ),
+    );
   });
 
   it("surfaces AGENTS.md read failures as onboarding conflicts", () => {
