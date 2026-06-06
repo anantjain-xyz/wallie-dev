@@ -12,6 +12,8 @@ Preferred flow:
 - If Playwright is missing, install it in the sandbox working copy with `npm install --no-save playwright` and `npx playwright install chromium`.
 - Capture full-page screenshots for every reviewer-relevant state: happy path, loading, error, empty, mobile, and hover when applicable.
 - Store temporary captures under `.wallie/screenshots/`.
-- Add screenshots to the PR description using raw GitHub URLs, then remove the temporary screenshot commit from branch history with `git push --force-with-lease`.
+- Screenshots are proof artifacts only and must never be part of the final PR diff.
+- If the PR description needs stable screenshot links, create a screenshot-only commit and push it only to obtain commit-SHA raw GitHub URLs.
+- Update the PR description to use those commit-SHA raw URLs, then immediately run `git revert <screenshot-commit-sha>` and push the revert before final review.
 
 Do not rely on a Playwright MCP server being present in Wallie cloud runs.
