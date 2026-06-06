@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { buildAppUrl } from "@/lib/app-url";
 import { normalizeNextPath } from "@/lib/auth";
 import {
   emailCodeAuthCookieName,
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const confirmUrl = new URL("/auth/confirm", request.url);
+  const confirmUrl = buildAppUrl("/auth/confirm");
 
   confirmUrl.searchParams.set("next", next);
 

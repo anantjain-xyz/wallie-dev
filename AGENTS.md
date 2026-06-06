@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repo is the implementation target for the Wallie cloud rebuild at `wallie.cc`.
+This repo is the implementation target for the Wallie cloud rebuild at `wallie.dev`.
 
 The old repo at `/Users/anant/src/wallie` is reference-only.
 

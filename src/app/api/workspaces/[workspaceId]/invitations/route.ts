@@ -170,7 +170,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     await sendWorkspaceInvitationEmail({
-      acceptUrl: buildWorkspaceInvitationAcceptUrl(request.url, token),
+      acceptUrl: buildWorkspaceInvitationAcceptUrl(token),
       admin,
       email,
     });
