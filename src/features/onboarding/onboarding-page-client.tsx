@@ -1118,7 +1118,9 @@ function RuntimeStep({
             onCodexStatusChange={handleCodexStatusChange}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
+            vercelSandboxConnection={data.vercelSandboxConnection}
             variant="embedded"
+            workspaceId={data.workspace.id}
           />
         </div>
       </div>

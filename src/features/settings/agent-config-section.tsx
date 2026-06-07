@@ -26,6 +26,7 @@ import {
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
+import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type AgentConfigSectionProps = {
   anchorId?: string;
@@ -39,6 +40,7 @@ type AgentConfigSectionProps = {
   setFlashMessage: (message: FlashMessage) => void;
   tagline?: ReactNode;
   title?: string;
+  vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId: string;
 };
 
@@ -159,6 +161,7 @@ export function AgentConfigSection({
   setFlashMessage,
   tagline = "Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution.",
   title = "Coding agent",
+  vercelSandboxConnection,
   workspaceId,
 }: AgentConfigSectionProps) {
   const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialAgentConfig);
@@ -312,6 +315,8 @@ export function AgentConfigSection({
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             provider={selectedAgentProvider}
+            vercelSandboxConnection={vercelSandboxConnection}
+            workspaceId={workspaceId}
           />
 
           <div className="space-y-6">
@@ -359,6 +364,8 @@ export function AgentConfigSection({
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             provider={selectedAgentProvider}
+            vercelSandboxConnection={vercelSandboxConnection}
+            workspaceId={workspaceId}
           />
           {extraContent}
         </div>

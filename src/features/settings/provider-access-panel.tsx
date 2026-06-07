@@ -9,6 +9,7 @@ import {
   type CodexConnectionStatus,
 } from "@/features/settings/codex-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
+import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type ProviderAccessPanelProps = {
   connectFlash?: string | null;
@@ -17,6 +18,8 @@ type ProviderAccessPanelProps = {
   provider: AgentProvider;
   returnTo?: string;
   variant?: "card" | "embedded";
+  vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
+  workspaceId?: string;
 };
 
 export function ProviderAccessPanel({
@@ -26,6 +29,8 @@ export function ProviderAccessPanel({
   provider,
   returnTo,
   variant = "card",
+  vercelSandboxConnection,
+  workspaceId,
 }: ProviderAccessPanelProps) {
   const className =
     variant === "card"
@@ -46,6 +51,8 @@ export function ProviderAccessPanel({
             connectFlash={connectFlash}
             onStatusChange={onCodexStatusChange}
             returnTo={returnTo}
+            vercelSandboxConnection={vercelSandboxConnection}
+            workspaceId={workspaceId}
           />
         </div>
       );

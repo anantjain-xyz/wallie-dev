@@ -3,13 +3,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
+  createSupabaseAdminClient: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
+  loadRequiredVercelSandboxConnection: vi.fn(),
+  requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedSettingsPath: vi.fn(),
   startCodexDeviceAuthFlow: vi.fn(),
+  VercelSandboxConnectionInvalidError: class VercelSandboxConnectionInvalidError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "VercelSandboxConnectionInvalidError";
+    }
+  },
+  VercelSandboxConnectionMissingError: class VercelSandboxConnectionMissingError extends Error {
+    constructor() {
+      super("Connect a Vercel Sandbox account before starting Wallie runs.");
+      this.name = "VercelSandboxConnectionMissingError";
+    }
+  },
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
+}));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: mocked.createSupabaseAdminClient,
 }));
 
 vi.mock("@/lib/supabase/auth", () => ({
@@ -28,12 +47,42 @@ vi.mock("@/lib/codex/device-auth", () => ({
   startCodexDeviceAuthFlow: mocked.startCodexDeviceAuthFlow,
 }));
 
+vi.mock("@/lib/workspaces/access", () => ({
+  requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/vercel-sandbox/server", () => ({
+  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
+  VercelSandboxConnectionInvalidError: mocked.VercelSandboxConnectionInvalidError,
+  VercelSandboxConnectionMissingError: mocked.VercelSandboxConnectionMissingError,
+}));
+
 import { GET } from "@/app/auth/codex/route";
 
 describe("GET /auth/codex", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.createSupabaseAdminClient.mockReturnValue({});
     mocked.createSupabaseServerClient.mockResolvedValue({});
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
+    mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
+      credentials: {
+        projectId: "prj_123",
+        teamId: "team_123",
+        token: "vca_secret",
+      },
+      preview: {
+        projectId: "prj_123",
+        status: "connected",
+        teamId: "team_123",
+      },
+    });
+    mocked.requireWorkspaceAccessById.mockResolvedValue({
+      context: {
+        workspace: { id: "workspace-123" },
+      },
+      ok: true,
+    });
     mocked.resolveAuthenticatedSettingsPath.mockResolvedValue("/settings/integrations");
     mocked.startCodexDeviceAuthFlow.mockResolvedValue({
       error: null,
@@ -47,9 +96,7 @@ describe("GET /auth/codex", () => {
   });
 
   afterEach(() => {
-    mocked.createSupabaseServerClient.mockReset();
-    mocked.getSupabaseUserOrNull.mockReset();
-    mocked.resolveAuthenticatedSettingsPath.mockReset();
+    vi.clearAllMocks();
   });
 
   it("redirects direct authenticated navigation back to settings with a device-flow flash", async () => {
@@ -65,9 +112,12 @@ describe("GET /auth/codex", () => {
 
   it("starts a device-code flow for authenticated JSON requests", async () => {
     const response = await GET(
-      new NextRequest("http://localhost:3000/auth/codex?next=/w/acme/onboarding?step=runtime", {
-        headers: { accept: "application/json" },
-      }),
+      new NextRequest(
+        "http://localhost:3000/auth/codex?next=/w/acme/onboarding?step=runtime&workspaceId=workspace-123",
+        {
+          headers: { accept: "application/json" },
+        },
+      ),
     );
 
     expect(response.status).toBe(202);
@@ -76,7 +126,69 @@ describe("GET /auth/codex", () => {
       status: "prompted",
       userCode: "ABCD-EFGH",
     });
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith("workspace-123");
+    expect(mocked.loadRequiredVercelSandboxConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      "workspace-123",
+    );
     expect(mocked.startCodexDeviceAuthFlow).toHaveBeenCalledWith({ userId: "user-123" });
+  });
+
+  it("blocks device-code flow when the workspace Vercel connection is missing", async () => {
+    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
+      new mocked.VercelSandboxConnectionMissingError(),
+    );
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/auth/codex?workspaceId=workspace-123", {
+        headers: { accept: "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Connect a Vercel Sandbox account before starting Wallie runs.",
+    });
+    expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
+  });
+
+  it("blocks device-code flow when the workspace Vercel connection is invalid", async () => {
+    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
+      new mocked.VercelSandboxConnectionInvalidError(
+        "Saved Vercel Sandbox connection is not valid. Reconnect it in workspace settings.",
+      ),
+    );
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/auth/codex?workspaceId=workspace-123", {
+        headers: { accept: "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Saved Vercel Sandbox connection is not valid. Reconnect it in workspace settings.",
+    });
+    expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
+  });
+
+  it("returns workspace access failures before starting a device-code flow", async () => {
+    mocked.requireWorkspaceAccessById.mockResolvedValueOnce({
+      error: "Workspace not found.",
+      ok: false,
+      status: 404,
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/auth/codex?workspaceId=workspace-404", {
+        headers: { accept: "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Workspace not found." });
+    expect(mocked.loadRequiredVercelSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
 
   it("sends unauthenticated users through login", async () => {
