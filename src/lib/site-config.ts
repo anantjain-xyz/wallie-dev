@@ -1,10 +1,6 @@
 export const siteConfig = {
   name: "Wallie",
-  description: "Cloud-native rebuild scaffold for wallie.dev on Next.js App Router and Supabase.",
+  description: "Cloud-native Wallie scaffold for wallie.dev on Next.js App Router and Supabase.",
   sampleWorkspaceSlug: "northwind-labs",
-  principles: [
-    "Keep the old wallie repo read-only and treat this repo as the only write target.",
-    "Build directly for Supabase Auth, Postgres, Realtime, and Storage on Vercel.",
-    "Avoid reviving ElectricSQL, PGlite, proxy servers, or offline-first sync layers.",
-  ],
+  principles: ["Build directly for Supabase Auth, Postgres, Realtime, and Storage on Vercel."],
 } as const;

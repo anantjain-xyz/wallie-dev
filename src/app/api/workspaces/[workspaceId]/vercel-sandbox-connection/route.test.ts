@@ -379,7 +379,7 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(admin.releasedMutationLockWorkspaceIds).toEqual([workspaceId]);
   });
 
-  it("cleans old project sandboxes before saving a changed Vercel project", async () => {
+  it("cleans previous Vercel project sandboxes before saving a changed Vercel project", async () => {
     mockAccess();
     const oldCredentials = {
       projectId: "prj_old",
