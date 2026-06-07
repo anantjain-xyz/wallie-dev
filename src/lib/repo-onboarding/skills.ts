@@ -180,7 +180,18 @@ Gather feedback from:
 - Top-level PR comments from bots and humans.
 - Inline review comments or threads from bots and humans.
 - Review states such as changes requested.
-- Failing check annotations when available.
+- Check statuses, then failed check-run annotations when a check did not post a PR comment.
+
+For failed check annotations:
+\`\`\`sh
+pr=$(gh pr view --json number -q .number)
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
+gh pr checks "$pr" --json name,state,bucket,link
+gh api --paginate "repos/\${repo}/commits/\${sha}/check-runs" \
+  --jq '.check_runs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | [.id, .name, .conclusion, .details_url] | @tsv'
+gh api --paginate "repos/\${repo}/check-runs/<check_run_id>/annotations"
+\`\`\`
 
 Resolution rules:
 - Treat actionable bot or human feedback as blocking until fixed or explicitly answered with rationale.

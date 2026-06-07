@@ -23,6 +23,7 @@ describe("review stage feedback loop migration", () => {
     expect(migration).toContain("where stage.slug = 'review'");
     expect(migration).toContain("legacy_full_review_prompt");
     expect(migration).toContain("legacy_demo_review_prompt");
+    expect(migration).toContain("chr(8212)");
     expect(migration).toContain("review_loop_addendum");
     expect(migration).toContain("stage.prompt_template_md ||");
   });

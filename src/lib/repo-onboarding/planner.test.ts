@@ -133,7 +133,8 @@ describe("repository onboarding planner", () => {
 
     expect(content).toContain("Top-level PR comments from bots and humans");
     expect(content).toContain("Inline review comments or threads from bots and humans");
-    expect(content).toContain("Failing check annotations");
+    expect(content).toContain("failed check-run annotations");
+    expect(content).toContain("check-runs/<check_run_id>/annotations");
     expect(content).toContain("repeat the sweep");
   });
 });

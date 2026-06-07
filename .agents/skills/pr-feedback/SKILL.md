@@ -29,9 +29,13 @@ Reviewer feedback can come from bots or humans. Gather every channel:
    ```sh
    gh api --paginate "repos/${repo}/pulls/${pr}/reviews"
    ```
-4. **Failed-check annotations and bot findings**:
+4. **Check statuses, then failed check-run annotations when a check did not post a PR comment**:
    ```sh
-   gh pr checks
+   sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
+   gh pr checks "$pr" --json name,state,bucket,link
+   gh api --paginate "repos/${repo}/commits/${sha}/check-runs" \
+     --jq '.check_runs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | [.id, .name, .conclusion, .details_url] | @tsv'
+   gh api --paginate "repos/${repo}/check-runs/<check_run_id>/annotations"
    ```
 
 `--paginate` is mandatory: GitHub REST list endpoints page at 30 by default, so a busy PR can silently hide later comments and trick the sweep into declaring "no actionable feedback" when there is.

@@ -18,10 +18,10 @@ with legacy_full_review_prompt(value) as (
     '{{attempt.feedback}}' || E'\n{{/if}}' || E'\n\n' ||
     '## Instructions' || E'\n\n' ||
     'Produce a structured review. Do not introduce new feature work.' || E'\n\n' ||
-    '- **Verify against the plan** - confirm every acceptance-criteria and validation item is met; call out any gap.' || E'\n' ||
-    '- **PR feedback sweep** - gather every actionable item from top-level PR comments, inline review comments, and review states. Each must be resolved (addressed or justified pushback); list any that remain open.' || E'\n' ||
-    '- **Checks & evidence** - confirm CI is green on the latest commit, that user-facing changes include the required screenshots, and that validation test data has been cleaned up.' || E'\n' ||
-    '- **Findings** - report risks, correctness concerns, and a clear recommendation. The change should not advance until findings are resolved and a human approves.' || E'\n'
+    '- **Verify against the plan** ' || chr(8212) || ' confirm every acceptance-criteria and validation item is met; call out any gap.' || E'\n' ||
+    '- **PR feedback sweep** ' || chr(8212) || ' gather every actionable item from top-level PR comments, inline review comments, and review states. Each must be resolved (addressed or justified pushback); list any that remain open.' || E'\n' ||
+    '- **Checks & evidence** ' || chr(8212) || ' confirm CI is green on the latest commit, that user-facing changes include the required screenshots, and that validation test data has been cleaned up.' || E'\n' ||
+    '- **Findings** ' || chr(8212) || ' report risks, correctness concerns, and a clear recommendation. The change should not advance until findings are resolved and a human approves.' || E'\n'
   )
 ),
 legacy_demo_review_prompt(value) as (
