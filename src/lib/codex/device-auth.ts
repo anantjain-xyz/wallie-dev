@@ -27,7 +27,7 @@ const LOCAL_SANDBOX_PREFIX = "local:";
 const CHATGPT_CODEX_PAYMENT_REQUIRED_MESSAGE =
   "OpenAI rejected the ChatGPT Codex sign-in with 402 Payment Required. Use a ChatGPT account with Codex access, or connect a Codex access token or OpenAI API key instead.";
 const SANDBOX_PAYMENT_REQUIRED_MESSAGE =
-  "Wallie could not start the Codex sign-in sandbox because the production sandbox provider returned 402 Payment Required. Check Vercel Sandbox billing and credentials, or connect Codex with a Codex access token or OpenAI API key for now.";
+  "Wallie could not use the Codex sign-in sandbox because the production sandbox provider returned 402 Payment Required. Check Vercel Sandbox billing and credentials, or connect Codex with a Codex access token or OpenAI API key for now.";
 const USER_CODE_PATTERN = "[A-Z0-9]{4,}(?:[- ][A-Z0-9]{4,})*";
 const USER_CODE_STOP_WORDS = new Set([
   "ABOVE",
@@ -938,7 +938,7 @@ function startAuthErrorMessage(error: unknown): string {
 
 function pollAuthErrorMessage(error: unknown): string {
   const message = errorMessage(error, "Failed to read Codex sign-in status.");
-  if (isPaymentRequiredError(message)) return CHATGPT_CODEX_PAYMENT_REQUIRED_MESSAGE;
+  if (isPaymentRequiredError(message)) return SANDBOX_PAYMENT_REQUIRED_MESSAGE;
   return message;
 }
 

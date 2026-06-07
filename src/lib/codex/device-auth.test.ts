@@ -549,6 +549,37 @@ describe("Codex device auth", () => {
     expect(sandbox.stop).toHaveBeenCalled();
   });
 
+  it("keeps sandbox polling payment failures distinct from OpenAI login failures", async () => {
+    const rows: FlowRow[] = [
+      buildFlowRow({
+        instructions: "Open https://auth.openai.com/codex/device and enter code ABCD-EFGH",
+        status: "prompted",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://auth.openai.com/codex/device",
+      }),
+    ];
+    const sandbox = {
+      getCommand: vi.fn().mockRejectedValue(new Error("Status code 402 is not ok")),
+      sandboxId: "sandbox-1",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await getCodexDeviceAuthFlowSnapshot({
+      flowId: "00000000-0000-0000-0000-000000000123",
+      userId: "user-1",
+    });
+    if (!snapshot) {
+      throw new Error("Expected sandbox payment-required flow snapshot.");
+    }
+
+    expect(snapshot).toMatchObject({ status: "error" });
+    expect(snapshot.error).toContain("production sandbox provider returned 402 Payment Required");
+    expect(snapshot.error).not.toContain("ChatGPT account with Codex access");
+    expect(sandbox.stop).toHaveBeenCalled();
+  });
+
   it("checks a completed command before expiring an overdue flow", async () => {
     const rows: FlowRow[] = [
       buildFlowRow({
