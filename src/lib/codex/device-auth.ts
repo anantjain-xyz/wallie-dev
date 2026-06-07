@@ -766,9 +766,7 @@ function shouldUseLocalAuthSandbox(): boolean {
 
 function resolveVercelCredentials(
   credentials?: VercelSandboxCredentials,
-):
-  | { token: string; teamId: string; projectId: string }
-  | Record<string, never> {
+): { token: string; teamId: string; projectId: string } | Record<string, never> {
   if (credentials) return credentials;
   const token = process.env.VERCEL_TOKEN;
   const teamId = process.env.VERCEL_TEAM_ID;
