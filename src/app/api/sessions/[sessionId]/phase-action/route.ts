@@ -39,7 +39,7 @@ export async function POST(request: Request, { params }: Params) {
   // member, this returns null and we 404.
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id, phase_status, current_stage_id")
+    .select("id, workspace_id, phase_status, current_stage_id, archived_at")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -48,6 +48,12 @@ export async function POST(request: Request, { params }: Params) {
   }
   if (!sessionRow) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  }
+
+  // An archived session is frozen: approving/rejecting must not advance or
+  // re-run it. Block before any RPC mutation.
+  if (sessionRow.archived_at) {
+    return NextResponse.json({ error: "Session is archived." }, { status: 409 });
   }
 
   if (sessionRow.phase_status !== "awaiting_review") {

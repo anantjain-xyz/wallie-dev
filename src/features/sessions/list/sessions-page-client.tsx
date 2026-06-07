@@ -7,7 +7,11 @@ import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/shared/spinner";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
-import { updateSessionTitleFromClient } from "@/features/sessions/client";
+import {
+  archiveSessionFromClient,
+  unarchiveSessionFromClient,
+  updateSessionTitleFromClient,
+} from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import type { SessionListPageData } from "@/features/sessions/list/data";
@@ -16,7 +20,7 @@ import {
   type SessionListQueryState,
   type SessionSummary,
 } from "@/features/sessions/types";
-import { CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
+import { ArchiveIcon, CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -205,8 +209,40 @@ function SessionRow({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [, startRefreshTransition] = useTransition();
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const previousSessionTitleRef = useRef(session.title);
+
+  const isArchived = Boolean(session.archivedAt);
+  const archiveActionLabel = isArchived ? "Unarchive" : "Archive";
+
+  async function toggleArchive() {
+    if (archivePending) return;
+    setArchivePending(true);
+    setArchiveError(null);
+
+    try {
+      if (isArchived) {
+        await unarchiveSessionFromClient({ sessionId: session.id });
+      } else {
+        await archiveSessionFromClient({ sessionId: session.id });
+      }
+      setArchiveConfirming(false);
+      startRefreshTransition(() => {
+        router.refresh();
+      });
+    } catch (errorValue) {
+      setArchiveError(
+        errorValue instanceof Error
+          ? errorValue.message
+          : `Failed to ${archiveActionLabel.toLowerCase()} session.`,
+      );
+    } finally {
+      setArchivePending(false);
+    }
+  }
 
   useEffect(() => {
     if (previousSessionTitleRef.current === session.title) return;
@@ -364,6 +400,50 @@ function SessionRow({
             >
               <PencilIcon className="h-3.5 w-3.5" />
             </button>
+            {archiveConfirming ? (
+              <div className="pointer-events-auto relative z-30 flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  className="ui-icon-button h-7 w-7 text-danger"
+                  aria-label={`Confirm ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
+                  title={`Confirm ${archiveActionLabel.toLowerCase()}`}
+                  disabled={archivePending}
+                  onClick={() => void toggleArchive()}
+                >
+                  {archivePending ? (
+                    <Spinner className="h-3.5 w-3.5" label={`${archiveActionLabel} session`} />
+                  ) : (
+                    <CheckIcon className="h-3.5 w-3.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="ui-icon-button h-7 w-7"
+                  aria-label={`Cancel ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
+                  title="Cancel"
+                  disabled={archivePending}
+                  onClick={() => {
+                    setArchiveConfirming(false);
+                    setArchiveError(null);
+                  }}
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="ui-icon-button pointer-events-auto relative z-30 h-7 w-7 shrink-0"
+                aria-label={`${archiveActionLabel} session #${session.number}`}
+                title={archiveActionLabel}
+                onClick={() => {
+                  setArchiveConfirming(true);
+                  setArchiveError(null);
+                }}
+              >
+                <ArchiveIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
@@ -382,6 +462,11 @@ function SessionRow({
         {error ? (
           <p className="pointer-events-auto text-[11px] leading-4 text-danger" role="alert">
             {error}
+          </p>
+        ) : null}
+        {archiveError ? (
+          <p className="pointer-events-auto text-[11px] leading-4 text-danger" role="alert">
+            {archiveError}
           </p>
         ) : null}
       </div>
