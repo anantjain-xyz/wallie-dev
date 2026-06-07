@@ -5,10 +5,14 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState, useTransition } f
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
-import { ArchiveIcon } from "@/components/shared/icons";
-import { archiveSessionFromClient, unarchiveSessionFromClient } from "@/features/sessions/client";
+import {
+  archiveSessionFromClient,
+  unarchiveSessionFromClient,
+  updateSessionTitleFromClient,
+} from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
@@ -286,6 +290,13 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     }
   }
 
+  function handleTitleSaved(nextTitle: string) {
+    setSession((currentSession) => ({ ...currentSession, title: nextTitle }));
+    startTransition(() => {
+      router.refresh();
+    });
+  }
+
   async function handleStopRun() {
     setActionError(null);
     setStopPending(true);
@@ -437,7 +448,15 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             ← Sessions
           </Link>
         }
-        title={session.title}
+        titleAsChild
+        title={
+          <EditableSessionTitle
+            onTitleSaved={handleTitleSaved}
+            sessionId={session.id}
+            sessionNumber={session.number}
+            title={session.title}
+          />
+        }
         actions={headerActions}
       />
 
@@ -676,6 +695,154 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         </section>
       </div>
     </PageContainer>
+  );
+}
+
+function EditableSessionTitle({
+  onTitleSaved,
+  sessionId,
+  sessionNumber,
+  title,
+}: {
+  onTitleSaved: (title: string) => void;
+  sessionId: string;
+  sessionNumber: number;
+  title: string;
+}) {
+  const [draftTitle, setDraftTitle] = useState(title);
+  const [error, setError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    editInputRef.current?.focus();
+    editInputRef.current?.select();
+  }, [isEditing]);
+
+  function startEditing() {
+    setDraftTitle(title);
+    setError(null);
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    setDraftTitle(title);
+    setError(null);
+    setIsEditing(false);
+  }
+
+  async function saveTitle() {
+    if (isSaving) return;
+
+    const normalizedTitle = draftTitle.trim();
+
+    if (!normalizedTitle) {
+      setError("Title is required.");
+      return;
+    }
+
+    if (normalizedTitle === title) {
+      setError(null);
+      setIsEditing(false);
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const result = await updateSessionTitleFromClient({
+        sessionId,
+        title: normalizedTitle,
+      });
+      setIsEditing(false);
+      onTitleSaved(result.title);
+    } catch (errorValue) {
+      setError(
+        errorValue instanceof Error ? errorValue.message : "Failed to update session title.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (isEditing) {
+    return (
+      <div className="flex flex-col gap-2">
+        {/* Keep a stable heading name for assistive tech while the visible title is an input. */}
+        <h1 className="sr-only">{title}</h1>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            ref={editInputRef}
+            aria-label={`Session #${sessionNumber} title`}
+            className="ui-input h-11 min-w-0 flex-1 px-3 py-1.5 text-[20px] font-semibold sm:text-[22px]"
+            disabled={isSaving}
+            value={draftTitle}
+            onChange={(event) => {
+              setDraftTitle(event.target.value);
+              if (error) setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void saveTitle();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                cancelEditing();
+              }
+            }}
+          />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="ui-icon-button h-9 w-9 text-accent"
+              aria-label={`Save title for session #${sessionNumber}`}
+              title="Save title"
+              disabled={isSaving}
+              onClick={() => void saveTitle()}
+            >
+              {isSaving ? (
+                <Spinner className="h-4 w-4" label="Saving title" />
+              ) : (
+                <CheckIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="ui-icon-button h-9 w-9"
+              aria-label={`Cancel title edit for session #${sessionNumber}`}
+              title="Cancel title edit"
+              disabled={isSaving}
+              onClick={cancelEditing}
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        {error ? (
+          <p className="text-[12px] leading-4 text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>{title}</h1>
+      <button
+        type="button"
+        className="ui-icon-button h-8 w-8 shrink-0"
+        aria-label={`Edit title for session #${sessionNumber}`}
+        title="Edit title"
+        onClick={startEditing}
+      >
+        <PencilIcon className="h-4 w-4" />
+      </button>
+    </div>
   );
 }
 
