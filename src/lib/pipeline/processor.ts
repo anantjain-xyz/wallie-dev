@@ -1124,6 +1124,10 @@ function sanitizeRunFailureDiagnostic(message: string): string {
       `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}`,
     )
     .replace(
+      /(["'])([^"']*(?:ACCESS_KEY|API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[^"']*)\1\s*:\s*(["'])(?:\\.|(?!\3)[\s\S])*?\3/gi,
+      `$1$2$1: $3${REDACTED_RUN_DIAGNOSTIC_VALUE}$3`,
+    )
+    .replace(
       /\b([A-Z0-9_]*(?:ACCESS_KEY|API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Z0-9_]*\s*[:=]\s*)(["'])([\s\S]*?)\2/gi,
       `$1$2${REDACTED_RUN_DIAGNOSTIC_VALUE}$2`,
     )

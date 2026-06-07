@@ -1177,6 +1177,30 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedMessages[0]!.message_md).not.toContain("first second third");
   });
 
+  it("redacts quoted JSON secret fields before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox config rejected: {"token":"plain-secret-12345","password":"hunter2","safe":"visible"}',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          '**Error:** sandbox config rejected: {"token": "[redacted]","password": "[redacted]","safe":"visible"}',
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-secret-12345");
+    expect(insertedMessages[0]!.message_md).not.toContain("hunter2");
+    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+  });
+
   it("aborts the stage when persisting the sandbox id fails", async () => {
     const session = baseSession();
     const { admin, insertedArtifacts, insertedMessages, updatedRuns, updatedSessions } =
