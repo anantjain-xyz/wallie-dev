@@ -276,9 +276,7 @@ function buildAdminMock(opts: MockOptions) {
         // The pointer write and updateSessionStatus await the chain directly;
         // an empty data array models a lost CAS (the session was parked while
         // the run was generating).
-        then: (
-          resolve: (value: { data: { id: string | undefined }[]; error: null }) => void,
-        ) => {
+        then: (resolve: (value: { data: { id: string | undefined }[]; error: null }) => void) => {
           resolve({
             data: opts.pointerCasMiss ? [] : [{ id: opts.session?.id }],
             error: null,
@@ -370,8 +368,7 @@ function buildAdminMock(opts: MockOptions) {
         ) => {
           // A canceled run won't match the active-status guard; model that as
           // an empty result so updateRunSandbox reports "not attached".
-          const sandboxUpdateMissed =
-            "sandbox_id" in patch && opts.runSandboxUpdateMissed === true;
+          const sandboxUpdateMissed = "sandbox_id" in patch && opts.runSandboxUpdateMissed === true;
           resolve({
             data: sandboxUpdateMissed ? [] : [{ id: "run-1", workspace_id: "ws-1" }],
             error:
