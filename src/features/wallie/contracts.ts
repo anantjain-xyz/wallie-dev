@@ -19,6 +19,14 @@ export const retryAgentRunParamsSchema = z.object({
   runId: runIdSchema,
 });
 
+export const cancelAgentRunSchema = z.object({
+  workspaceId: workspaceIdSchema,
+});
+
+export const cancelAgentRunParamsSchema = z.object({
+  runId: runIdSchema,
+});
+
 export type AgentRunActionResponse = {
   code?: "active_run";
   created: boolean;
@@ -30,4 +38,9 @@ export type AgentRunActionErrorResponse = {
   code: WallieActionErrorCode;
   error: string;
   missingSecretKeys?: string[];
+};
+
+export type AgentRunCancelResponse = {
+  canceled: boolean;
+  run: WallieRun;
 };

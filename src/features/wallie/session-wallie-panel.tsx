@@ -9,6 +9,7 @@ import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
   AgentRunActionResponse,
+  AgentRunCancelResponse,
 } from "@/features/wallie/contracts";
 import {
   mapAgentRunMessageRow,
@@ -372,6 +373,49 @@ export function SessionWalliePanel({
     }
   }
 
+  async function handleCancelRun(runId: string) {
+    setPendingActionId(runId);
+    setFlashMessage(null);
+
+    try {
+      const response = await fetch(`/api/agent-runs/${runId}/cancel`, {
+        body: JSON.stringify({ workspaceId: session.workspaceId }),
+        headers: {
+          "content-type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | AgentRunCancelResponse
+        | { error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(
+          (payload as { error?: string } | null)?.error ?? "Wallie could not cancel that run.",
+        );
+      }
+
+      const cancelPayload = payload as AgentRunCancelResponse;
+      const run = hydrateRequestedByMember(cancelPayload.run, memberIndex);
+
+      setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
+      setFlashMessage({
+        kind: "info",
+        text: cancelPayload.canceled
+          ? "Wallie canceled the run and stopped the worker from retrying."
+          : "That run had already finished.",
+      });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Wallie could not cancel that run.",
+      });
+    } finally {
+      setPendingActionId(null);
+    }
+  }
+
   return (
     <div className="space-y-5">
       {flashMessage ? (
@@ -485,6 +529,17 @@ export function SessionWalliePanel({
                         : ""}
                     </p>
                   </button>
+
+                  {run.canCancel ? (
+                    <button
+                      className="ui-button-danger"
+                      disabled={pendingActionId !== null}
+                      onClick={() => void handleCancelRun(run.id)}
+                      type="button"
+                    >
+                      {pendingActionId === run.id ? "Canceling…" : "Cancel"}
+                    </button>
+                  ) : null}
 
                   {run.canRetry ? (
                     <button

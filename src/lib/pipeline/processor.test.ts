@@ -33,6 +33,7 @@ const mocked = vi.hoisted(() => ({
   loadWorkspaceAgentConfig: vi.fn(),
   loadRequiredVercelSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
+  stopSandboxById: vi.fn().mockResolvedValue(undefined),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
   openSessionPullRequest: vi.fn().mockResolvedValue({
     kind: "success",
@@ -74,6 +75,7 @@ vi.mock("@/lib/agent-runner", () => ({
 vi.mock("@/lib/sandbox", () => ({
   createSessionSandbox: mocked.createSessionSandbox,
   resolveSandboxImplementation: mocked.resolveSandboxImplementation,
+  stopSandboxById: mocked.stopSandboxById,
 }));
 
 vi.mock("@/lib/vercel-sandbox/server", () => ({
@@ -185,9 +187,11 @@ interface MockOptions {
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
+  pointerCasMiss?: boolean;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
   runSandboxUpdateError?: { message: string } | null;
+  runSandboxUpdateMissed?: boolean;
   githubInstallation?: { id: string; installation_id: number } | null;
   githubRepositories?: Array<{
     default_branch: string | null;
@@ -234,6 +238,7 @@ function buildAdminMock(opts: MockOptions) {
   const updatedJobs: Array<Record<string, unknown>> = [];
   const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
+  const deletedArtifacts: Array<Record<string, unknown>> = [];
 
   const lookup: Record<string, unknown> = {};
   for (const row of opts.agentConfig ?? []) {
@@ -257,30 +262,29 @@ function buildAdminMock(opts: MockOptions) {
       };
       return builder;
     },
-    update: (patch: Record<string, unknown>) => ({
-      eq: () => {
-        updatedSessions.push(patch);
-        return {
-          in: () => ({
-            select: () => ({
-              maybeSingle: async () => ({
-                data: opts.claimSucceeds === false ? null : { id: opts.session?.id },
-                error: null,
-              }),
-            }),
-          }),
-          eq: () => ({
-            eq: () => ({
-              eq: () => ({
-                select: () => ({
-                  maybeSingle: async () => ({ data: { id: opts.session?.id }, error: null }),
-                }),
-              }),
-            }),
-          }),
-        };
-      },
-    }),
+    update: (patch: Record<string, unknown>) => {
+      updatedSessions.push(patch);
+      const chain = {
+        eq: () => chain,
+        in: () => chain,
+        select: () => chain,
+        // The CAS claim ends in `.maybeSingle()`.
+        maybeSingle: async () => ({
+          data: opts.claimSucceeds === false ? null : { id: opts.session?.id },
+          error: null,
+        }),
+        // The pointer write and updateSessionStatus await the chain directly;
+        // an empty data array models a lost CAS (the session was parked while
+        // the run was generating).
+        then: (resolve: (value: { data: { id: string | undefined }[]; error: null }) => void) => {
+          resolve({
+            data: opts.pointerCasMiss ? [] : [{ id: opts.session?.id }],
+            error: null,
+          });
+        },
+      };
+      return chain;
+    },
   } as const;
 
   const artifactsTable = {
@@ -288,13 +292,20 @@ function buildAdminMock(opts: MockOptions) {
       insertedArtifacts.push(row);
       return { error: opts.artifactInsertError ?? null };
     },
-    delete: () => ({
-      eq: () => ({
-        eq: () => ({
-          eq: async () => ({ error: null }),
-        }),
-      }),
-    }),
+    delete: () => {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq: (col: string, val: unknown) => {
+          filters[col] = val;
+          return chain;
+        },
+        then: (resolve: (value: { error: null }) => void) => {
+          deletedArtifacts.push(filters);
+          resolve({ error: null });
+        },
+      };
+      return chain;
+    },
   } as const;
 
   const insertedFeedback: Array<Record<string, unknown>> = [];
@@ -347,11 +358,19 @@ function buildAdminMock(opts: MockOptions) {
       const chain = {
         eq: () => chain,
         in: () => chain,
-        select: () => ({
-          maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
-        }),
-        then: (resolve: (value: { error: { message: string } | null }) => void) => {
+        select: () => chain,
+        maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
+        then: (
+          resolve: (value: {
+            data: { id: string; workspace_id: string }[];
+            error: { message: string } | null;
+          }) => void,
+        ) => {
+          // A canceled run won't match the active-status guard; model that as
+          // an empty result so updateRunSandbox reports "not attached".
+          const sandboxUpdateMissed = "sandbox_id" in patch && opts.runSandboxUpdateMissed === true;
           resolve({
+            data: sandboxUpdateMissed ? [] : [{ id: "run-1", workspace_id: "ws-1" }],
             error:
               "sandbox_id" in patch && opts.runSandboxUpdateError
                 ? opts.runSandboxUpdateError
@@ -383,12 +402,17 @@ function buildAdminMock(opts: MockOptions) {
         eq: async () => ({ error: null }),
       }),
     }),
-    update: (patch: Record<string, unknown>) => ({
-      eq: async () => {
-        updatedJobs.push(patch);
-        return { error: null };
-      },
-    }),
+    update: (patch: Record<string, unknown>) => {
+      const chain = {
+        eq: () => chain,
+        neq: () => chain,
+        then: (resolve: (value: { error: { message: string } | null }) => void) => {
+          updatedJobs.push(patch);
+          resolve({ error: null });
+        },
+      };
+      return chain;
+    },
     insert: () => ({
       select: () => ({ single: async () => ({ data: { id: "job-enqueued" }, error: null }) }),
     }),
@@ -565,6 +589,7 @@ function buildAdminMock(opts: MockOptions) {
     updatedJobs,
     updatedRuns,
     updatedSessions,
+    deletedArtifacts,
     rpc,
   };
 }
@@ -655,6 +680,42 @@ describe("processPipelineJob (generic stage runner)", () => {
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
+  });
+
+  it("deletes the orphaned artifact when cancellation wins the pointer CAS", async () => {
+    const session = baseSession();
+    const { admin, insertedArtifacts, deletedArtifacts } = buildAdminMock({
+      session,
+      agentConfig: [],
+      pointerCasMiss: true,
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    // The artifact was inserted before the guarded pointer update, then dropped
+    // once the CAS reported the session had been parked (canceled) mid-run.
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(deletedArtifacts).toEqual([
+      { session_id: session.id, stage_slug: "product", version: 1 },
+    ]);
+    expect(result.result).toBe("idle");
+  });
+
+  it("stops a sandbox that lands after its run was canceled", async () => {
+    const session = baseSession();
+    const { admin } = buildAdminMock({
+      session,
+      agentConfig: [],
+      runSandboxUpdateMissed: true,
+    });
+
+    await processPipelineJob({ admin, job: baseJob() });
+
+    // updateRunSandbox matched zero rows (run already canceled), so the
+    // freshly-created sandbox must be stopped instead of left running detached.
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
   });
 
   it("fails the stage when the runner only emits completion bookkeeping", async () => {

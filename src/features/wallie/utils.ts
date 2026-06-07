@@ -36,6 +36,10 @@ export function canRetryWallieRun(status: Enums<"agent_run_status">, hasActiveRu
   return (status === "error" || status === "canceled") && !hasActiveRun;
 }
 
+export function canCancelWallieRun(status: Enums<"agent_run_status">) {
+  return isWallieRunActiveStatus(status);
+}
+
 export function buildWallieBlockingReasons(input: {
   hasActiveRun: boolean;
   missingSecretKeys: string[];

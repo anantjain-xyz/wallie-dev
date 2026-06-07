@@ -90,6 +90,11 @@ function buildAdmin(fixture: Fixture) {
       order() {
         return builder;
       },
+      select() {
+        // PostgREST returns the affected rows when `.select()` is chained onto
+        // a mutation (e.g. the cancel path's `update(...).eq().in().select()`).
+        return builder;
+      },
       limit(n: number) {
         limit = n;
         return builder;
@@ -504,11 +509,17 @@ describe("reconcileLinearState", () => {
       expect(jobCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
     }
 
-    const runCancel = calls.find(
-      (c) => c.table === "agent_runs" && c.op === "update" && c.update?.status === "canceled",
-    );
-    expect(runCancel?.filters["in.agent_job_id"]).toEqual(["jobReview"]);
-    expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
+    for (const sessionId of ["sGenerating", "sReview", "sRejected"]) {
+      const runCancel = calls.find(
+        (c) =>
+          c.table === "agent_runs" &&
+          c.op === "update" &&
+          c.update?.status === "canceled" &&
+          c.filters["eq.session_id"] === sessionId,
+      );
+      expect(runCancel).toBeDefined();
+      expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
+    }
 
     for (const sessionId of ["sApproved"]) {
       const sessionRejection = calls.find(
