@@ -1,20 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
+import { updateSessionTitleFromClient } from "@/features/sessions/client";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
   type SessionFilterKey,
   type SessionListQueryState,
   type SessionSummary,
 } from "@/features/sessions/types";
-import { SearchIcon } from "@/components/shared/icons";
+import { CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +54,14 @@ const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
   { key: "has-pr", label: "Has PR" },
   { key: "archived", label: "Archived" },
 ];
+
+export type SessionTitleEditKeyIntent = "cancel" | "save";
+
+export function getSessionTitleEditKeyIntent(key: string): SessionTitleEditKeyIntent | null {
+  if (key === "Enter") return "save";
+  if (key === "Escape") return "cancel";
+  return null;
+}
 
 export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   const router = useRouter();
@@ -195,7 +204,97 @@ function SessionRow({
   session: SessionSummary;
   workspaceSlug: string;
 }) {
+  const router = useRouter();
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [title, setTitle] = useState(session.title);
+  const [draftTitle, setDraftTitle] = useState(session.title);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTitle(session.title);
+    if (!isEditing) {
+      setDraftTitle(session.title);
+    }
+  }, [isEditing, session.title]);
+
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  function beginEditing() {
+    setDraftTitle(title);
+    setError(null);
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    if (isSaving) return;
+    setDraftTitle(title);
+    setError(null);
+    setIsEditing(false);
+  }
+
+  async function saveTitle() {
+    if (isSaving) return;
+
+    const nextTitle = draftTitle.trim();
+    if (!nextTitle) {
+      setError("Title is required.");
+      return;
+    }
+
+    if (nextTitle === title) {
+      setDraftTitle(title);
+      setError(null);
+      setIsEditing(false);
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const result = await updateSessionTitleFromClient({
+        sessionId: session.id,
+        title: nextTitle,
+      });
+      setTitle(result.title);
+      setDraftTitle(result.title);
+      setIsEditing(false);
+      router.refresh();
+    } catch (caught) {
+      setDraftTitle(title);
+      setError(caught instanceof Error ? caught.message : "Failed to update session title.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleTitleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void saveTitle();
+  }
+
+  function handleTitleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    const intent = getSessionTitleEditKeyIntent(event.key);
+    if (!intent) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (intent === "save") {
+      void saveTitle();
+      return;
+    }
+
+    cancelEditing();
+  }
 
   return (
     <li className="relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-surface-strong sm:px-5 md:flex-row md:items-center">
@@ -204,17 +303,75 @@ function SessionRow({
         className="absolute inset-0 z-10 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         <span className="sr-only">
-          Open session #{session.number}: {session.title}
+          Open session #{session.number}: {title}
         </span>
       </Link>
 
       <div className="pointer-events-none relative z-20 flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-start gap-2 md:items-center">
-          <span className="font-mono text-[11px] text-muted">#{session.number}</span>
-          <span className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate">
-            {session.title}
-          </span>
-        </div>
+        {isEditing ? (
+          <form
+            onSubmit={handleTitleSubmit}
+            className="pointer-events-auto relative z-30 flex min-w-0 flex-col gap-1"
+          >
+            <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2">
+              <span className="font-mono text-[11px] text-muted">#{session.number}</span>
+              <input
+                ref={inputRef}
+                value={draftTitle}
+                onChange={(event) => {
+                  setDraftTitle(event.target.value);
+                  if (error) setError(null);
+                }}
+                onKeyDown={handleTitleKeyDown}
+                disabled={isSaving}
+                className="ui-input h-8 min-w-0 px-2 py-1 text-[14px] font-medium"
+                aria-label={`Title for session #${session.number}`}
+              />
+              <button
+                type="submit"
+                className="ui-icon-button h-8 w-8"
+                disabled={isSaving}
+                aria-label={`Save title for session #${session.number}`}
+              >
+                <CheckIcon className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="ui-icon-button h-8 w-8"
+                onClick={cancelEditing}
+                disabled={isSaving}
+                aria-label={`Cancel title edit for session #${session.number}`}
+              >
+                <XIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {isSaving ? (
+              <p role="status" className="pl-[38px] text-[11px] text-muted">
+                Saving...
+              </p>
+            ) : null}
+            {error ? (
+              <p role="alert" className="pl-[38px] text-[11px] text-danger">
+                {error}
+              </p>
+            ) : null}
+          </form>
+        ) : (
+          <div className="flex min-w-0 items-start gap-2 md:items-center">
+            <span className="font-mono text-[11px] text-muted">#{session.number}</span>
+            <span className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate">
+              {title}
+            </span>
+            <button
+              type="button"
+              className="ui-icon-button pointer-events-auto relative z-30 h-6 w-6 shrink-0"
+              onClick={beginEditing}
+              aria-label={`Edit title for session #${session.number}`}
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>

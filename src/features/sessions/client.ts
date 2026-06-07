@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createSessionPayloadSchema } from "@/features/sessions/create";
+import { updateSessionTitlePayloadSchema } from "@/features/sessions/update-title";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type CreateSessionInput = {
@@ -13,6 +14,17 @@ export type CreateSessionInput = {
 
 export type CreateSessionResult = {
   number: number;
+};
+
+export type UpdateSessionTitleInput = {
+  sessionId: string;
+  title: string;
+};
+
+export type UpdateSessionTitleResult = {
+  id: string;
+  title: string;
+  updatedAt: string;
 };
 
 export async function createSessionFromClient(
@@ -51,4 +63,49 @@ export async function createSessionFromClient(
   }
 
   return { number: responsePayload.number };
+}
+
+export async function updateSessionTitleFromClient(
+  input: UpdateSessionTitleInput,
+): Promise<UpdateSessionTitleResult> {
+  const parsedPayload = updateSessionTitlePayloadSchema.safeParse({
+    title: input.title,
+  });
+
+  if (!parsedPayload.success) {
+    const firstIssue = parsedPayload.error.issues[0];
+    throw new Error(firstIssue?.message ?? "Session title is invalid.");
+  }
+
+  const payload = parsedPayload.data;
+
+  const response = await fetch(`/api/sessions/${input.sessionId}`, {
+    body: JSON.stringify(payload),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  const responsePayload = (await response.json().catch(() => null)) as {
+    error?: string;
+    id?: string;
+    title?: string;
+    updatedAt?: string;
+  } | null;
+
+  if (!response.ok) {
+    throw new Error(responsePayload?.error ?? "Failed to update session title.");
+  }
+
+  if (
+    typeof responsePayload?.id !== "string" ||
+    typeof responsePayload.title !== "string" ||
+    typeof responsePayload.updatedAt !== "string"
+  ) {
+    throw new Error("Session title response was malformed.");
+  }
+
+  return {
+    id: responsePayload.id,
+    title: responsePayload.title,
+    updatedAt: responsePayload.updatedAt,
+  };
 }
