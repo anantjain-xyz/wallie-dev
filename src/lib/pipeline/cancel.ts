@@ -111,20 +111,6 @@ export async function cancelSessionWork(
     stoppedSandboxIds: [],
   };
 
-  // Snapshot the active runs (with their sandbox refs) before we flip them, so
-  // we still know which sandboxes to stop after the status update.
-  const { data: activeRuns, error: activeRunsError } = await admin
-    .from("agent_runs")
-    .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    )
-    .eq("session_id", input.sessionId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES);
-
-  if (activeRunsError) {
-    throw activeRunsError;
-  }
-
   const { data: canceledJobs, error: jobsError } = await admin
     .from("agent_jobs")
     .update({
@@ -141,6 +127,10 @@ export async function cancelSessionWork(
   }
   result.canceledJobIds = (canceledJobs ?? []).map((job) => job.id);
 
+  // Returning the updated rows gives us each run's sandbox ref as it stood at
+  // the moment it was canceled — including a sandbox id persisted in the race
+  // window just before this flip. A sandbox attached *after* the flip is caught
+  // instead by the active-status guard in updateRunSandbox, which stops it.
   const { data: canceledRuns, error: runsError } = await admin
     .from("agent_runs")
     .update({
@@ -149,21 +139,18 @@ export async function cancelSessionWork(
     })
     .eq("session_id", input.sessionId)
     .in("status", ACTIVE_AGENT_RUN_STATUSES)
-    .select("id, workspace_id");
+    .select(
+      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    );
 
   if (runsError) {
     throw runsError;
   }
   result.canceledRunIds = (canceledRuns ?? []).map((run) => run.id);
 
-  // Stop sandboxes and record a cancel message on each run we actually flipped.
-  const canceledRunIdSet = new Set(result.canceledRunIds);
+  // Stop sandboxes and record a cancel message on each run we flipped.
   const credentialsCache = new Map<string, VercelSandboxCredentials | null>();
-  for (const run of activeRuns ?? []) {
-    if (!canceledRunIdSet.has(run.id)) {
-      continue;
-    }
-
+  for (const run of canceledRuns ?? []) {
     if (run.sandbox_id) {
       try {
         await stopRunSandbox(admin, run, credentialsCache);

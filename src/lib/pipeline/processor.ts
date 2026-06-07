@@ -22,7 +22,11 @@ import {
   CodexNotConnectedError,
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
-import { createSessionSandbox, resolveSandboxImplementation } from "@/lib/sandbox";
+import {
+  createSessionSandbox,
+  resolveSandboxImplementation,
+  stopSandboxById,
+} from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
@@ -239,17 +243,28 @@ async function runStage(input: {
         onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
           if (!runId) return;
           if (sandboxProvider === "fake") {
-            await updateRunSandbox(admin, runId, sandboxId, { provider: "fake" });
+            const attached = await updateRunSandbox(admin, runId, sandboxId, { provider: "fake" });
+            if (!attached) {
+              await stopSandboxById(sandboxId);
+            }
             return;
           }
           if (!vercelConnection) {
             throw new Error("Workspace Vercel Sandbox credentials are required.");
           }
-          await updateRunSandbox(admin, runId, sandboxId, {
+          const attached = await updateRunSandbox(admin, runId, sandboxId, {
             provider: "vercel",
             projectId: vercelConnection.credentials.projectId,
             teamId: vercelConnection.credentials.teamId,
           });
+          if (!attached) {
+            // The run was canceled before its sandbox id landed; stop the
+            // sandbox we just created so it doesn't keep executing detached
+            // from the now-canceled run.
+            await stopSandboxById(sandboxId, {
+              vercelCredentials: vercelConnection.credentials,
+            });
+          }
         },
       });
     }
@@ -336,17 +351,35 @@ async function runStage(input: {
       }
     }
 
-    const { error: pointerError } = await admin
+    const { data: pointerRows, error: pointerError } = await admin
       .from("sessions")
       .update({
         current_artifact_version: newVersion,
         phase_status: "awaiting_review",
       })
       .eq("id", session.id)
-      // If the session was canceled (parked in `rejected`) while this run was
-      // generating, don't un-park it or surface the now-orphaned artifact.
-      .eq("phase_status", "agent_generating");
+      // Only advance a session that is still generating. If it was parked
+      // (canceled or stalled) while this run produced its artifact, this CAS
+      // affects zero rows and we must not un-park it or surface the draft.
+      .eq("phase_status", "agent_generating")
+      .select("id");
     if (pointerError) throw pointerError;
+
+    if (!pointerRows || pointerRows.length === 0) {
+      // Cancellation won the race. Drop the just-inserted artifact so a later
+      // rerun can reuse this version — the unique (session_id, stage_slug,
+      // version) constraint would otherwise reject the next draft — and finish
+      // without marking success (the run and job are already canceled).
+      if (artifactInserted) {
+        await admin
+          .from("session_artifacts")
+          .delete()
+          .eq("session_id", session.id)
+          .eq("stage_slug", stage.slug)
+          .eq("version", newVersion);
+      }
+      return { jobId: job.id, processed: true, result: "idle", runId };
+    }
     sessionPointerAdvanced = true;
 
     if (runId) {
@@ -991,7 +1024,7 @@ async function updateRunSandbox(
         provider: "vercel";
         teamId: string;
       },
-): Promise<void> {
+): Promise<boolean> {
   const vercelMetadata =
     metadata.provider === "vercel"
       ? {
@@ -1002,17 +1035,23 @@ async function updateRunSandbox(
           sandbox_vercel_project_id: null,
           sandbox_vercel_team_id: null,
         };
-  const { error } = await admin
+  const { data, error } = await admin
     .from("agent_runs")
     .update({
       sandbox_id: sandboxId,
       sandbox_provider: metadata.provider,
       ...vercelMetadata,
     })
-    .eq("id", runId);
+    .eq("id", runId)
+    // Only attach the sandbox to a run that is still active. If the run was
+    // canceled in the race before its sandbox id landed, this affects zero
+    // rows and the caller stops the orphaned sandbox.
+    .in("status", ["queued", "started", "running"])
+    .select("id");
   if (error) {
     throw error;
   }
+  return (data?.length ?? 0) > 0;
 }
 
 async function markRunSuccess(

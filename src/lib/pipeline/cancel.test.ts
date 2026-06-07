@@ -62,23 +62,16 @@ function buildAdmin(fixture: Fixture) {
     function resolveQuery(): Promise<{ data: unknown; error: null }> {
       calls.push({ filters, op, patch, table });
 
-      if (op === "select" && table === "agent_runs") {
-        return Promise.resolve({ data: fixture.activeRuns ?? [], error: null });
-      }
       if (op === "update" && table === "agent_jobs") {
         return Promise.resolve({
           data: (fixture.activeJobs ?? []).map((job) => ({ id: job.id })),
           error: null,
         });
       }
+      // The runs cancel uses `.select(...)` to return the updated rows with
+      // their sandbox refs — the source of truth for which sandboxes to stop.
       if (op === "update" && table === "agent_runs") {
-        return Promise.resolve({
-          data: (fixture.activeRuns ?? []).map((run) => ({
-            id: run.id,
-            workspace_id: run.workspace_id,
-          })),
-          error: null,
-        });
+        return Promise.resolve({ data: fixture.activeRuns ?? [], error: null });
       }
       // insert (messages) and sessions update both resolve to a plain success.
       return Promise.resolve({ data: [], error: null });
