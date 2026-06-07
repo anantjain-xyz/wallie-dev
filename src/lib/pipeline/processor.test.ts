@@ -332,6 +332,16 @@ function buildAdminMock(opts: MockOptions) {
         select: () => ({ single: async () => ({ data: { id: "run-1" }, error: null }) }),
       };
     },
+    select: () => {
+      const chain = {
+        eq: () => chain,
+        in: () => chain,
+        limit: () => chain,
+        maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
+        order: () => chain,
+      };
+      return chain;
+    },
     update: (patch: Record<string, unknown>) => {
       updatedRuns.push(patch);
       const chain = {
@@ -714,10 +724,11 @@ describe("processPipelineJob (generic stage runner)", () => {
       new Error("Unsupported state or unable to authenticate data"),
     );
     const session = baseSession();
-    const { admin, insertedRuns, updatedJobs, updatedRuns, updatedSessions } = buildAdminMock({
-      session,
-      agentConfig: [],
-    });
+    const { admin, insertedMessages, insertedRuns, updatedJobs, updatedRuns, updatedSessions } =
+      buildAdminMock({
+        session,
+        agentConfig: [],
+      });
 
     const result = await processPipelineJob({
       admin,
@@ -728,10 +739,20 @@ describe("processPipelineJob (generic stage runner)", () => {
       jobId: "job-1",
       processed: true,
       result: "error",
-      runId: null,
+      runId: "run-1",
     });
     expect(insertedRuns).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** Unsupported state or unable to authenticate data",
+      }),
+    ]);
     expect(updatedRuns).toEqual([
+      expect.objectContaining({
+        finished_at: expect.any(String),
+        status: "error",
+      }),
       expect.objectContaining({
         finished_at: expect.any(String),
         status: "error",
@@ -1177,6 +1198,32 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedMessages[0]!.message_md).not.toContain("first second third");
   });
 
+  it("redacts escaped quoted secret assignments before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox failed while loading env\nAPI_KEY="abc\\"def-secret"\nRetry after reconnecting.',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: [
+          "**Error:** sandbox failed while loading env",
+          'API_KEY="[redacted]"',
+          "Retry after reconnecting.",
+        ].join("\n"),
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("abc");
+    expect(insertedMessages[0]!.message_md).not.toContain("def-secret");
+  });
+
   it("redacts quoted JSON secret fields before persisting sandbox failures", async () => {
     mocked.createSessionSandbox.mockRejectedValueOnce(
       new Error(
@@ -1223,6 +1270,31 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedMessages[0]!.message_md).not.toContain("plain-api-key");
     expect(insertedMessages[0]!.message_md).not.toContain("plain-private-key");
     expect(insertedMessages[0]!.message_md).not.toContain("plain-client-secret");
+    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+  });
+
+  it("redacts object-valued JSON secret fields before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox config rejected: {"token":{"value":"plain-secret-12345"},"privateKey":["line1","line2"],"safe":"visible"}',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          '**Error:** sandbox config rejected: {"token": "[redacted]","privateKey": "[redacted]","safe":"visible"}',
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-secret-12345");
+    expect(insertedMessages[0]!.message_md).not.toContain("line1");
+    expect(insertedMessages[0]!.message_md).not.toContain("line2");
     expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
   });
 
