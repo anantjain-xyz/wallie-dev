@@ -39,13 +39,13 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     description: "Add Linear credentials and routing for status updates.",
     id: "linear",
     shortTitle: "Linear",
-    title: "Configure Linear",
+    title: "Connect Linear",
   },
   {
     description: "Check coding-agent and sandbox runtime readiness.",
     id: "runtime",
-    shortTitle: "Runtime",
-    title: "Verify runtime",
+    shortTitle: "Provider",
+    title: "Connect Agent Provider",
   },
   {
     description: "Confirm the setup health signals before starting work.",

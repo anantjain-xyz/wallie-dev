@@ -675,6 +675,38 @@ describe("OnboardingPageClient", () => {
     expect(readOnlyButton).not.toContain("cursor-not-allowed");
   });
 
+  it("renders Linear and agent provider setup with Connect labels", () => {
+    const linearHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline"],
+            currentStep: "linear",
+          },
+        }),
+      }),
+    );
+    const runtimeHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+        }),
+      }),
+    );
+
+    expect(desktopRailButton(linearHtml, "Connect Linear")).toContain('aria-current="step"');
+    expect(linearHtml).toContain(">Connect Linear</h2>");
+    expect(desktopRailButton(runtimeHtml, "Connect Agent Provider")).toContain(
+      'aria-current="step"',
+    );
+    expect(runtimeHtml).toContain(">Connect Agent Provider</h2>");
+    expect(runtimeHtml).toContain('<span class="truncate">Provider</span>');
+    expect(runtimeHtml).not.toContain('<span class="truncate">Runtime</span>');
+  });
+
   it("shows setup actions in Analyze repositories for every synced repository", () => {
     const primary = profile("repo-a");
     const html = renderToStaticMarkup(

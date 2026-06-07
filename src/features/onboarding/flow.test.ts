@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ONBOARDING_STEPS,
   buildOnboardingAdvancePatch,
   buildOnboardingContinuePatch,
   buildOnboardingExitPatch,
@@ -34,6 +35,17 @@ function onboardingState(
 }
 
 describe("onboarding flow helpers", () => {
+  it("uses Connect terminology for Linear and agent provider setup labels", () => {
+    expect(
+      ONBOARDING_STEPS.filter((step) => step.id === "linear" || step.id === "runtime").map(
+        ({ id, shortTitle, title }) => [id, title, shortTitle],
+      ),
+    ).toEqual([
+      ["linear", "Connect Linear", "Linear"],
+      ["runtime", "Connect Agent Provider", "Provider"],
+    ]);
+  });
+
   it("maps completed, skipped, active, and available rail states from server state", () => {
     const items = getOnboardingStepRailItems(
       onboardingState({
