@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
+import { ChatGptSubscriptionControls } from "@/features/settings/codex-connection-panel";
 import type { SettingsPageData } from "@/features/settings/data";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
@@ -248,6 +249,7 @@ describe("Settings integration sections", () => {
           stall_timeout_ms: 300000,
         },
         setFlashMessage: vi.fn(),
+        vercelSandboxConnection: settingsData().vercelSandboxConnection,
         workspaceId,
       }),
     );
@@ -261,6 +263,24 @@ describe("Settings integration sections", () => {
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).not.toContain("<select");
     expect(html).not.toContain("Connect yours below");
+  });
+
+  it("blocks ChatGPT subscription sign-in until Vercel Sandbox is connected", () => {
+    const html = renderToStaticMarkup(
+      createElement(ChatGptSubscriptionControls, {
+        blocked: true,
+        deviceFlow: null,
+        isBusy: false,
+        onCancel: vi.fn(),
+        onStart: vi.fn(),
+        vercelConnectionHref: "/w/acme/settings#vercel",
+      }),
+    );
+
+    expect(html).toContain("Connect");
+    expect(html).toContain("Vercel Sandbox");
+    expect(html).toContain('href="/w/acme/settings#vercel"');
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in with ChatGPT<\/button>/);
   });
 
   it("renders Settings anchors in onboarding order with usage at the bottom", () => {

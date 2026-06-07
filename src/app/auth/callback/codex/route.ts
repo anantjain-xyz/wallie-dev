@@ -12,6 +12,13 @@ import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { resolveAuthenticatedSettingsPath } from "@/lib/auth";
 import { loginPath } from "@/lib/routes";
+import type { VercelSandboxCredentials } from "@/lib/vercel-sandbox/contracts";
+import {
+  loadRequiredVercelSandboxConnection,
+  VercelSandboxConnectionInvalidError,
+  VercelSandboxConnectionMissingError,
+} from "@/lib/vercel-sandbox/server";
+import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 export const runtime = "nodejs";
 
@@ -36,7 +43,19 @@ export async function GET(request: NextRequest) {
     return respondError(supabase, request, acceptsJson, "state_missing", 400);
   }
 
-  const snapshot = await getCodexDeviceAuthFlowSnapshot({ flowId, userId: user.id });
+  const vercelCredentials = await loadRequestVercelCredentials(request);
+  if ("response" in vercelCredentials) {
+    return vercelCredentials.response;
+  }
+  const authSandboxInput = vercelCredentials.credentials
+    ? { vercelCredentials: vercelCredentials.credentials }
+    : {};
+
+  const snapshot = await getCodexDeviceAuthFlowSnapshot({
+    flowId,
+    userId: user.id,
+    ...authSandboxInput,
+  });
   if (!snapshot) {
     return respondError(supabase, request, acceptsJson, "state_invalid", 404);
   }
@@ -82,7 +101,11 @@ export async function GET(request: NextRequest) {
     return respondError(supabase, request, acceptsJson, "persist_failed", 500, error.message);
   }
 
-  await deleteCodexDeviceAuthFlow({ flowId, userId: user.id });
+  await deleteCodexDeviceAuthFlow({
+    flowId,
+    userId: user.id,
+    ...authSandboxInput,
+  });
 
   if (acceptsJson) {
     return NextResponse.json({
@@ -109,12 +132,63 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Missing flowId." }, { status: 400 });
   }
 
-  const canceled = await cancelCodexDeviceAuthFlow({ flowId, userId: user.id });
+  const vercelCredentials = await loadRequestVercelCredentials(request);
+  if ("response" in vercelCredentials) {
+    return vercelCredentials.response;
+  }
+  const authSandboxInput = vercelCredentials.credentials
+    ? { vercelCredentials: vercelCredentials.credentials }
+    : {};
+
+  const canceled = await cancelCodexDeviceAuthFlow({
+    flowId,
+    userId: user.id,
+    ...authSandboxInput,
+  });
   return NextResponse.json({ canceled });
 }
 
 function wantsJson(request: NextRequest): boolean {
   return request.headers.get("accept")?.includes("application/json") ?? false;
+}
+
+async function loadRequestVercelCredentials(request: NextRequest): Promise<
+  | {
+      credentials?: VercelSandboxCredentials;
+    }
+  | {
+      response: NextResponse;
+    }
+> {
+  const workspaceId = request.nextUrl.searchParams.get("workspaceId");
+  if (!workspaceId) {
+    return {};
+  }
+
+  const access = await requireWorkspaceAccessById(workspaceId);
+  if (!access.ok) {
+    return {
+      response: NextResponse.json({ error: access.error }, { status: access.status }),
+    };
+  }
+
+  try {
+    const connection = await loadRequiredVercelSandboxConnection(
+      createSupabaseAdminClient(),
+      access.context.workspace.id,
+    );
+    return { credentials: connection.credentials };
+  } catch (error) {
+    if (
+      error instanceof VercelSandboxConnectionMissingError ||
+      error instanceof VercelSandboxConnectionInvalidError
+    ) {
+      return {
+        response: NextResponse.json({ error: error.message }, { status: 400 }),
+      };
+    }
+    throw error;
+  }
 }
 
 function respondError(
