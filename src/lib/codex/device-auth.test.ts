@@ -267,6 +267,12 @@ describe("Codex device auth", () => {
         token: "vca_workspace",
       }),
     );
+    expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      projectId: "prj_workspace",
+      sandboxId: "sandbox-1",
+      teamId: "team_workspace",
+      token: "vca_workspace",
+    });
     expect(sandbox.runCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         cmd: "bash",
@@ -366,7 +372,10 @@ describe("Codex device auth", () => {
     mocked.createSupabaseAdminClient.mockReturnValue(admin);
     mocked.sandboxCreate.mockRejectedValue(new Error("Status code 402 is not ok"));
 
-    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+    const snapshot = await startCodexDeviceAuthFlow({
+      userId: "user-1",
+      vercelCredentials,
+    });
 
     expect(snapshot).toMatchObject({
       status: "error",
@@ -715,7 +724,10 @@ describe("Codex device auth", () => {
     mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
     mocked.sandboxGet.mockResolvedValue(sandbox);
 
-    const snapshot = await startCodexDeviceAuthFlow({ userId: "user-1" });
+    const snapshot = await startCodexDeviceAuthFlow({
+      userId: "user-1",
+      vercelCredentials,
+    });
 
     expect(snapshot).toMatchObject({
       flowId: "00000000-0000-0000-0000-000000000123",
@@ -727,6 +739,9 @@ describe("Codex device auth", () => {
       status: "authenticated",
     });
     expect(mocked.sandboxCreate).not.toHaveBeenCalled();
+    expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      sandboxId: "sandbox-1",
+    });
   });
 
   it("expires unconsumed authenticated flows after their TTL", async () => {

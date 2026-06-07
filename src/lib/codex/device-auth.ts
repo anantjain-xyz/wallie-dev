@@ -128,8 +128,8 @@ export async function startCodexDeviceAuthFlow(input: {
   vercelCredentials?: VercelSandboxCredentials;
 }): Promise<CodexDeviceAuthSnapshot> {
   const admin = createSupabaseAdminClient();
-  await expireStaleUserFlows(admin, input.userId, input.vercelCredentials);
-  const completedFlow = await cancelActiveUserFlows(admin, input.userId, input.vercelCredentials);
+  await expireStaleUserFlows(admin, input.userId);
+  const completedFlow = await cancelActiveUserFlows(admin, input.userId);
   if (completedFlow) return completedFlow;
 
   const flowId = randomUUID();
@@ -163,6 +163,7 @@ export async function startCodexDeviceAuthFlow(input: {
 
     return (
       (await refreshFlowFromSandbox(admin, data, {
+        vercelCredentials: input.vercelCredentials,
         waitMs: PROMPT_WAIT_MS,
       })) ?? snapshotFromRow(data)
     );
@@ -390,11 +391,7 @@ async function getFlowRow(
   return data;
 }
 
-async function expireStaleUserFlows(
-  admin: AdminClient,
-  userId: string,
-  vercelCredentials?: VercelSandboxCredentials,
-): Promise<void> {
+async function expireStaleUserFlows(admin: AdminClient, userId: string): Promise<void> {
   const { data, error } = await admin
     .from("codex_device_auth_flows")
     .select(FLOW_SELECT)
@@ -405,7 +402,6 @@ async function expireStaleUserFlows(
 
   for (const row of data ?? []) {
     await refreshFlowFromSandbox(admin, row, {
-      vercelCredentials,
       waitMs: COMMAND_STATUS_WAIT_MS,
     });
   }
@@ -414,7 +410,6 @@ async function expireStaleUserFlows(
 async function cancelActiveUserFlows(
   admin: AdminClient,
   userId: string,
-  vercelCredentials?: VercelSandboxCredentials,
 ): Promise<CodexDeviceAuthSnapshot | null> {
   const { data, error } = await admin
     .from("codex_device_auth_flows")
@@ -425,7 +420,6 @@ async function cancelActiveUserFlows(
 
   for (const row of data ?? []) {
     const refreshed = await refreshFlowFromSandbox(admin, row, {
-      vercelCredentials,
       waitMs: COMMAND_STATUS_WAIT_MS,
     });
     if (refreshed.status === "authenticated") {
@@ -449,7 +443,7 @@ async function cancelActiveUserFlows(
       error: null,
       status: "canceled",
     });
-    await stopSandboxQuietly(cancellableRow.sandbox_id, vercelCredentials);
+    await stopSandboxQuietly(cancellableRow.sandbox_id);
   }
 
   return null;
