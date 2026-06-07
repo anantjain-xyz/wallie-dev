@@ -1,4 +1,9 @@
-import type { CreateSessionSandboxInput, RunningSandboxSummary, SandboxHandle } from "./types";
+import type {
+  CreateSessionSandboxInput,
+  RunningSandboxSummary,
+  SandboxHandle,
+  VercelSandboxCredentials,
+} from "./types";
 
 export type {
   AgentProvider,
@@ -10,10 +15,13 @@ export type {
   SandboxHandle,
   SandboxImplementation,
   SandboxLogEntry,
+  VercelSandboxCredentials,
 } from "./types";
 export { FakeSandbox } from "./fake";
 
-function resolveImpl(override?: CreateSessionSandboxInput["implementation"]): "vercel" | "fake" {
+export function resolveSandboxImplementation(
+  override?: CreateSessionSandboxInput["implementation"],
+): "vercel" | "fake" {
   const impl = override ?? process.env.WALLIE_SANDBOX_IMPL ?? "vercel";
   if (impl !== "vercel" && impl !== "fake") {
     throw new Error(`Unknown WALLIE_SANDBOX_IMPL: ${impl}. Expected "vercel" or "fake".`);
@@ -29,13 +37,15 @@ function resolveImpl(override?: CreateSessionSandboxInput["implementation"]): "v
 export async function createSessionSandbox(
   input: CreateSessionSandboxInput,
 ): Promise<SandboxHandle> {
-  if (resolveImpl(input.implementation) === "fake") {
+  if (resolveSandboxImplementation(input.implementation) === "fake") {
     const { FakeSandbox } = await import("./fake");
-    return new FakeSandbox(undefined, {
+    const sandbox = new FakeSandbox(undefined, {
       baseBranch: input.baseBranch,
       branch: input.branch,
       passthroughExec: true,
     });
+    await input.onSandboxCreated?.({ provider: "fake", sandboxId: sandbox.id });
+    return sandbox;
   }
   const { createVercelSessionSandbox } = await import("./vercel");
   return createVercelSessionSandbox(input);
@@ -46,14 +56,19 @@ export async function createSessionSandbox(
  * terminate orphans. Idempotent and best-effort: errors are logged, not
  * thrown, so a single bad ID does not break a batch sweep.
  */
-export async function stopSandboxById(sandboxId: string): Promise<void> {
-  if (resolveImpl() === "fake") {
+export async function stopSandboxById(
+  sandboxId: string,
+  options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
+): Promise<void> {
+  if (resolveSandboxImplementation() === "fake") {
     const { stopFakeSandboxById } = await import("./fake");
     await stopFakeSandboxById(sandboxId);
     return;
   }
   const { stopVercelSandboxById } = await import("./vercel");
-  await stopVercelSandboxById(sandboxId);
+  await stopVercelSandboxById(sandboxId, options.vercelCredentials, {
+    throwOnError: options.throwOnError,
+  });
 }
 
 /**
@@ -61,11 +76,15 @@ export async function stopSandboxById(sandboxId: string): Promise<void> {
  * `running`). The reaper cross-references these against active `agent_runs`
  * rows to find orphans.
  */
-export async function listRunningSandboxes(): Promise<RunningSandboxSummary[]> {
-  if (resolveImpl() === "fake") {
+export async function listRunningSandboxes(
+  options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
+): Promise<RunningSandboxSummary[]> {
+  if (resolveSandboxImplementation() === "fake") {
     const { listRunningFakeSandboxes } = await import("./fake");
     return listRunningFakeSandboxes();
   }
   const { listRunningVercelSandboxes } = await import("./vercel");
-  return listRunningVercelSandboxes();
+  return listRunningVercelSandboxes(options.vercelCredentials, {
+    throwOnError: options.throwOnError,
+  });
 }

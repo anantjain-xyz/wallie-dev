@@ -9,7 +9,9 @@ export type WallieBlockingCode =
   | "active_run"
   | "missing_secret"
   | "repository_archived"
-  | "repository_unavailable";
+  | "repository_unavailable"
+  | "vercel_sandbox_connection_invalid"
+  | "vercel_sandbox_connection_missing";
 
 export type WallieActionErrorCode =
   | WallieBlockingCode
@@ -21,6 +23,15 @@ export type WallieActionErrorCode =
 export type WallieBlockingReason = {
   code: WallieBlockingCode;
   message: string;
+};
+
+export type WallieVercelSandboxConnectionStatus = {
+  connected: boolean;
+  lastValidationError: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  status: "connected" | "error" | "missing";
+  teamId: string | null;
 };
 
 export type WallieSessionRepository = {
@@ -66,6 +77,8 @@ export type WallieSessionData = {
   missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;
+  requiresVercelSandbox: boolean;
   requiredSecretKeys: string[];
   runs: WallieRun[];
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
 };

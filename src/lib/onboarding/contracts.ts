@@ -97,6 +97,15 @@ export type OnboardingSetupHealth = {
     updatedAt: string | null;
   };
   latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+  vercelSandboxConnection: {
+    connected: boolean;
+    lastValidationError: string | null;
+    projectId: string | null;
+    projectName: string | null;
+    status: "connected" | "error" | "missing";
+    teamId: string | null;
+    updatedAt: string | null;
+  };
   selectedRepository: {
     configured: boolean;
     fullName: string | null;

@@ -126,6 +126,15 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
         updatedAt: null,
       },
       latestSandboxCapabilityCheck: null,
+      vercelSandboxConnection: {
+        connected: true,
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+      },
       linearKey: {
         configured: false,
         status: "missing",
@@ -156,6 +165,17 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
       workspaceSecrets: {
         configuredKeys: [],
       },
+    },
+    vercelSandboxConnection: {
+      lastValidatedAt: "2026-05-16T18:00:00.000Z",
+      lastValidationError: null,
+      projectId: "prj_123",
+      projectName: "wallie-sandboxes",
+      status: "connected",
+      teamId: "team_123",
+      tokenPreview: "vca_...123",
+      updatedAt: "2026-05-16T18:00:00.000Z",
+      workspaceId,
     },
     workspace: {
       avatarPath: null,
@@ -363,6 +383,9 @@ describe("Settings integration sections", () => {
               errorText: null,
               githubRepositoryId: "11111111-1111-4111-8111-111111111111",
               id: "check-1",
+              sandboxProvider: "vercel",
+              sandboxVercelProjectId: "prj_123",
+              sandboxVercelTeamId: "team_123",
               status: "success",
             },
             linearKey: {
@@ -454,6 +477,8 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Configure Linear");
     expect(html).toContain('id="runtime"');
     expect(html).toContain("Workspace secrets");
+    expect(html).toContain('id="vercel"');
+    expect(html).toContain("Connect Vercel");
     expect(html).toContain('id="verify"');
     expect(html).toContain("Verify setup");
   });
@@ -882,6 +907,9 @@ describe("Settings integration sections", () => {
         errorText: null,
         githubRepositoryId: "11111111-1111-4111-8111-111111111111",
         id: "check-1",
+        sandboxProvider: null,
+        sandboxVercelProjectId: null,
+        sandboxVercelTeamId: null,
         status: "running",
       },
       "Capability check polling failed.",
@@ -949,6 +977,7 @@ describe("Settings integration sections", () => {
           },
         ],
         setFlashMessage: vi.fn(),
+        vercelSandboxConnected: true,
         workspaceId,
       }),
     );

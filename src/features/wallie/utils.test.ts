@@ -5,6 +5,16 @@ import {
   canRetryWallieRun,
   inferWallieRunMode,
 } from "@/features/wallie/utils";
+import type { WallieVercelSandboxConnectionStatus } from "@/features/wallie/types";
+
+const connectedVercel: WallieVercelSandboxConnectionStatus = {
+  connected: true,
+  lastValidationError: null,
+  projectId: "prj_123",
+  projectName: "wallie-sandboxes",
+  status: "connected",
+  teamId: "team_123",
+};
 
 describe("inferWallieRunMode", () => {
   it("returns code when a repository is linked", () => {
@@ -35,6 +45,7 @@ describe("buildWallieBlockingReasons", () => {
       missingSecretKeys: ["LINEAR_API_KEY"],
       mode: "project",
       repository: null,
+      vercelSandboxConnection: connectedVercel,
     });
     expect(reasons).toHaveLength(1);
     expect(reasons[0]!.code).toBe("missing_secret");
@@ -46,6 +57,7 @@ describe("buildWallieBlockingReasons", () => {
       missingSecretKeys: [],
       mode: "code",
       repository: null,
+      vercelSandboxConnection: connectedVercel,
     });
     expect(reasons).toHaveLength(1);
     expect(reasons[0]!.code).toBe("repository_unavailable");
@@ -57,7 +69,68 @@ describe("buildWallieBlockingReasons", () => {
       missingSecretKeys: [],
       mode: "project",
       repository: null,
+      vercelSandboxConnection: connectedVercel,
     });
     expect(reasons).toHaveLength(0);
+  });
+
+  it("blocks when Vercel Sandbox is missing", () => {
+    const reasons = buildWallieBlockingReasons({
+      hasActiveRun: false,
+      missingSecretKeys: [],
+      mode: "project",
+      repository: null,
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: null,
+        projectId: null,
+        projectName: null,
+        status: "missing",
+        teamId: null,
+      },
+    });
+
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]!.code).toBe("vercel_sandbox_connection_missing");
+  });
+
+  it("does not block missing Vercel Sandbox when the selected sandbox does not require Vercel", () => {
+    const reasons = buildWallieBlockingReasons({
+      hasActiveRun: false,
+      missingSecretKeys: [],
+      mode: "project",
+      repository: null,
+      requiresVercelSandbox: false,
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: null,
+        projectId: null,
+        projectName: null,
+        status: "missing",
+        teamId: null,
+      },
+    });
+
+    expect(reasons).toHaveLength(0);
+  });
+
+  it("blocks when Vercel Sandbox is invalid", () => {
+    const reasons = buildWallieBlockingReasons({
+      hasActiveRun: false,
+      missingSecretKeys: [],
+      mode: "project",
+      repository: null,
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: "Vercel rejected the token.",
+        projectId: "prj_123",
+        projectName: null,
+        status: "error",
+        teamId: "team_123",
+      },
+    });
+
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]!.code).toBe("vercel_sandbox_connection_invalid");
   });
 });

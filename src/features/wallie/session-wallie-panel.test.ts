@@ -64,8 +64,17 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
       isArchived: false,
       isPrivate: true,
     },
+    requiresVercelSandbox: true,
     requiredSecretKeys: [],
     runs: [run()],
+    vercelSandboxConnection: {
+      connected: true,
+      lastValidationError: null,
+      projectId: "prj_123",
+      projectName: "wallie-sandboxes",
+      status: "connected",
+      teamId: "team_123",
+    },
     ...overrides,
   };
 }
@@ -104,6 +113,30 @@ describe("SessionWalliePanel", () => {
     );
 
     expect(html).toContain("Retry Run");
+  });
+
+  it("does not show the Vercel setup blocker when fake sandboxes are selected", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({
+          requiresVercelSandbox: false,
+          vercelSandboxConnection: {
+            connected: false,
+            lastValidationError: null,
+            projectId: null,
+            projectName: null,
+            status: "missing",
+            teamId: null,
+          },
+        }),
+        memberIndex: new Map([[baseMember.id, baseMember]]),
+        session: { id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect(html).not.toContain("Connect a Vercel Sandbox account");
   });
 
   it("shows visible progress when an active run has no messages yet", () => {

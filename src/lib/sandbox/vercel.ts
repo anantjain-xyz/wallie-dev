@@ -8,6 +8,7 @@ import type {
   SandboxExecOptions,
   SandboxHandle,
   SandboxLogEntry,
+  VercelSandboxCredentials,
 } from "./types";
 
 const REPO_PATH = "/vercel/sandbox";
@@ -34,8 +35,8 @@ const PLAYWRIGHT_SYSTEM_PACKAGES = [
 /**
  * Vercel Sandbox-backed implementation of `SandboxHandle`.
  *
- * Requires `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` in env
- * (unless running on Vercel infra, in which case OIDC is used).
+ * Requires caller-supplied workspace Vercel credentials. Wallie session
+ * sandboxes are billed to the workspace's connected Vercel project.
  */
 class VercelSandboxHandle implements SandboxHandle {
   readonly repoPath = REPO_PATH;
@@ -114,10 +115,13 @@ export async function createVercelSessionSandbox(
 
   const revision = mode.kind === "checkout-pr" ? mode.prBranch : input.baseBranch;
 
-  const credentials = resolveVercelCredentials();
+  const credentials = input.vercelCredentials;
+  if (!credentials) {
+    throw new Error("Workspace Vercel Sandbox credentials are required.");
+  }
 
   const sandbox = await Sandbox.create({
-    ...credentials,
+    projectId: credentials.projectId,
     source: {
       type: "git",
       url: `https://github.com/${input.repoFullName}.git`,
@@ -127,7 +131,9 @@ export async function createVercelSessionSandbox(
       depth: 1,
     },
     runtime: "node22",
+    teamId: credentials.teamId,
     timeout: timeoutMs,
+    token: credentials.token,
     resources: { vcpus: 2 },
     env: {
       CI: "1",
@@ -139,6 +145,7 @@ export async function createVercelSessionSandbox(
   const handle = new VercelSandboxHandle(sandbox);
 
   try {
+    await input.onSandboxCreated?.({ provider: "vercel", sandboxId: handle.id });
     await runSetup(handle, input, mode.kind);
   } catch (err) {
     await handle.stop();
@@ -215,17 +222,6 @@ function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvid
   }
 }
 
-function resolveVercelCredentials():
-  | { token: string; teamId: string; projectId: string }
-  | Record<string, never> {
-  const token = process.env.VERCEL_TOKEN;
-  const teamId = process.env.VERCEL_TEAM_ID;
-  const projectId = process.env.VERCEL_PROJECT_ID;
-  if (token && teamId && projectId) return { token, teamId, projectId };
-  // Fall back to OIDC (expected when running on Vercel infra).
-  return {};
-}
-
 /**
  * Best-effort stop of a sandbox by ID. Used by the stall sweep and the
  * sandbox reaper to terminate orphans whose owning run is no longer active.
@@ -234,14 +230,31 @@ function resolveVercelCredentials():
  * stale, or the network may be flaky. Stop is supposed to be idempotent;
  * losing one cleanup is far better than crashing the sweep timer.
  */
-export async function stopVercelSandboxById(sandboxId: string): Promise<void> {
+export async function stopVercelSandboxById(
+  sandboxId: string,
+  credentials?: VercelSandboxCredentials,
+  options: { throwOnError?: boolean } = {},
+): Promise<void> {
+  if (!credentials) {
+    if (options.throwOnError) {
+      throw new Error("Cannot stop sandbox without Vercel credentials.");
+    }
+    console.error("[sandbox] cannot stop sandbox without Vercel credentials", { sandboxId });
+    return;
+  }
+
   try {
     const sandbox = await Sandbox.get({
-      ...resolveVercelCredentials(),
+      projectId: credentials.projectId,
       sandboxId,
+      teamId: credentials.teamId,
+      token: credentials.token,
     });
     await sandbox.stop();
   } catch (error) {
+    if (options.throwOnError) {
+      throw error;
+    }
     console.error("[sandbox] failed to stop sandbox", {
       error: error instanceof Error ? error.message : String(error),
       sandboxId,
@@ -254,30 +267,52 @@ export async function stopVercelSandboxById(sandboxId: string): Promise<void> {
  * orphans. Returns only sandboxes in active states (`pending` or `running`)
  * — terminal states do not need cleanup.
  */
-export async function listRunningVercelSandboxes(): Promise<RunningSandboxSummary[]> {
-  const projectId = process.env.VERCEL_PROJECT_ID;
-  if (!projectId) {
-    // Without a project ID we cannot list. Caller treats this as "nothing to
-    // reap" rather than an error so the worker doesn't hard-fail on dev/test
-    // environments without Vercel creds.
+export async function listRunningVercelSandboxes(
+  credentials?: VercelSandboxCredentials,
+  options: { throwOnError?: boolean } = {},
+): Promise<RunningSandboxSummary[]> {
+  if (!credentials) {
+    if (options.throwOnError) {
+      throw new Error("Cannot list sandboxes without Vercel credentials.");
+    }
+    // Without a workspace connection we cannot list. Caller treats this as
+    // "nothing to reap" rather than an error so dev/test environments without
+    // Vercel creds do not hard-fail.
     return [];
   }
 
   try {
-    const result = await Sandbox.list({
-      ...resolveVercelCredentials(),
-      projectId,
-      limit: 100,
-    });
-    const sandboxes = result.json.sandboxes;
-    return sandboxes
-      .filter((s) => s.status === "pending" || s.status === "running")
-      .map((s) => ({
-        id: s.id,
-        status: s.status as "pending" | "running",
-        createdAt: s.createdAt,
-      }));
+    const activeSandboxes: RunningSandboxSummary[] = [];
+    let until: number | null = null;
+
+    do {
+      const result = await Sandbox.list({
+        projectId: credentials.projectId,
+        teamId: credentials.teamId,
+        token: credentials.token,
+        limit: 100,
+        ...(until === null ? {} : { until }),
+      });
+
+      for (const sandbox of result.json.sandboxes) {
+        if (sandbox.status !== "pending" && sandbox.status !== "running") {
+          continue;
+        }
+        activeSandboxes.push({
+          id: sandbox.id,
+          status: sandbox.status,
+          createdAt: sandbox.createdAt,
+        });
+      }
+
+      until = result.json.pagination.next;
+    } while (until !== null);
+
+    return activeSandboxes;
   } catch (error) {
+    if (options.throwOnError) {
+      throw error;
+    }
     console.error("[sandbox] failed to list sandboxes", {
       error: error instanceof Error ? error.message : String(error),
     });

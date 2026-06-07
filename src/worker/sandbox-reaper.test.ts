@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   listRunningSandboxes: vi.fn(),
+  loadConnectedVercelSandboxConnections: vi.fn(),
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -10,33 +11,128 @@ vi.mock("@/lib/sandbox", () => ({
   listRunningSandboxes: mocked.listRunningSandboxes,
 }));
 
+vi.mock("@/lib/vercel-sandbox/server", () => ({
+  loadConnectedVercelSandboxConnections: mocked.loadConnectedVercelSandboxConnections,
+}));
+
 import { reapOrphanSandboxes } from "./sandbox-reaper";
 
 interface ClaimedRow {
+  agent_job_id?: string | null;
+  checked_at?: string;
   sandbox_id: string;
+  sandbox_provider?: string;
+  sandbox_vercel_project_id?: string;
+  sandbox_vercel_team_id?: string;
+  status?: string;
+  workspace_id?: string;
 }
 
-function buildAdminMock(claimed: ClaimedRow[], opts: { fail?: boolean } = {}) {
-  const queries: Array<{ ids: string[] }> = [];
+function buildAdminMock(
+  claimed: ClaimedRow[],
+  opts: {
+    activeJobIds?: string[];
+    checks?: ClaimedRow[];
+    fail?: boolean;
+    failChecks?: boolean;
+  } = {},
+) {
+  const queries: Array<{ filters: Record<string, unknown>; ids: string[] }> = [];
+  const activeJobIds = new Set(opts.activeJobIds ?? []);
+  const selectProjectRows = (rows: ClaimedRow[], filters: Map<string, unknown>) => {
+    const sandboxIds = filters.get("sandbox_id");
+    const ids = Array.isArray(sandboxIds) ? sandboxIds : [];
+
+    return rows
+      .map((row) => ({
+        sandbox_provider: "vercel",
+        sandbox_vercel_project_id: "prj_123",
+        sandbox_vercel_team_id: "team_123",
+        checked_at: new Date().toISOString(),
+        status: "running",
+        workspace_id: "workspace-1",
+        ...row,
+      }))
+      .filter(
+        (row) =>
+          ids.includes(row.sandbox_id) &&
+          [...filters].every(([column, value]) =>
+            column === "sandbox_id"
+              ? Array.isArray(value) && value.includes(row.sandbox_id)
+              : row[column as keyof ClaimedRow] === value,
+          ),
+      );
+  };
+
   return {
     admin: {
       from: (name: string) => {
-        if (name !== "agent_runs") throw new Error(`unexpected table: ${name}`);
+        if (name === "agent_jobs") {
+          const filters = new Map<string, unknown>();
+          const chain = {
+            in: (column: string, value: unknown) => {
+              filters.set(column, value);
+              return chain;
+            },
+            then: (
+              resolve: (value: {
+                data: Array<{ id: string }>;
+                error: { message: string } | null;
+              }) => void,
+            ) => {
+              const jobIds = filters.get("id");
+              resolve({
+                data: Array.isArray(jobIds)
+                  ? jobIds
+                      .filter((jobId): jobId is string => activeJobIds.has(String(jobId)))
+                      .map((id) => ({ id }))
+                  : [],
+                error: null,
+              });
+            },
+          };
+          return {
+            select: () => chain,
+          };
+        }
+
+        if (name !== "agent_runs" && name !== "sandbox_capability_checks") {
+          throw new Error(`unexpected table: ${name}`);
+        }
+        const filters = new Map<string, unknown>();
+        const chain = {
+          eq: (column: string, value: unknown) => {
+            filters.set(column, value);
+            return chain;
+          },
+          in: (column: string, value: unknown) => {
+            filters.set(column, value);
+            return chain;
+          },
+          then: (
+            resolve: (value: {
+              data: ClaimedRow[] | null;
+              error: { message: string } | null;
+            }) => void,
+          ) => {
+            const sandboxIds = filters.get("sandbox_id");
+            const ids = Array.isArray(sandboxIds) ? sandboxIds : [];
+            queries.push({ filters: Object.fromEntries(filters), ids });
+            if (opts.fail || (name === "sandbox_capability_checks" && opts.failChecks)) {
+              resolve({ data: null, error: { message: "db down" } });
+              return;
+            }
+            resolve({
+              data: selectProjectRows(
+                name === "agent_runs" ? claimed : (opts.checks ?? []),
+                filters,
+              ),
+              error: null,
+            });
+          },
+        };
         return {
-          select: () => ({
-            in: (_col: string, ids: string[]) => ({
-              in: async () => {
-                queries.push({ ids });
-                if (opts.fail) {
-                  return { data: null, error: { message: "db down" } };
-                }
-                return {
-                  data: claimed.filter((r) => ids.includes(r.sandbox_id)),
-                  error: null,
-                };
-              },
-            }),
-          }),
+          select: () => chain,
         };
       },
     },
@@ -47,6 +143,12 @@ function buildAdminMock(claimed: ClaimedRow[], opts: { fail?: boolean } = {}) {
 beforeEach(() => {
   mocked.stopSandboxById.mockClear();
   mocked.listRunningSandboxes.mockReset();
+  mocked.loadConnectedVercelSandboxConnections.mockResolvedValue([
+    {
+      credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      preview: { workspaceId: "workspace-1" },
+    },
+  ]);
 });
 
 const TEN_MIN_MS = 10 * 60 * 1000;
@@ -60,6 +162,9 @@ describe("reapOrphanSandboxes", () => {
     expect(result.activeProviderCount).toBe(0);
     expect(result.reapedSandboxIds).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+    expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
   });
 
   it("ignores sandboxes inside the grace window", async () => {
@@ -80,13 +185,150 @@ describe("reapOrphanSandboxes", () => {
       { id: "orphan-1", status: "running", createdAt: Date.now() - TEN_MIN_MS },
       { id: "orphan-2", status: "pending", createdAt: Date.now() - TEN_MIN_MS },
     ]);
-    const { admin } = buildAdminMock([{ sandbox_id: "claimed" }]);
+    const { admin } = buildAdminMock([
+      { sandbox_id: "claimed", status: "running" },
+      { sandbox_id: "orphan-1", status: "error" },
+      { sandbox_id: "orphan-2", status: "success" },
+    ]);
     const result = await reapOrphanSandboxes(admin as never);
     expect(result.activeProviderCount).toBe(3);
     expect(result.reapedSandboxIds.sort()).toEqual(["orphan-1", "orphan-2"]);
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("orphan-1");
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("orphan-2");
-    expect(mocked.stopSandboxById).not.toHaveBeenCalledWith("claimed");
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("orphan-1", {
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("orphan-2", {
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
+    expect(mocked.stopSandboxById).not.toHaveBeenCalledWith(
+      "claimed",
+      expect.objectContaining({ vercelCredentials: expect.anything() }),
+    );
+  });
+
+  it("leaves a sandbox claimed by another workspace in the same Vercel project", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "shared-claimed", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+      { id: "orphan", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([
+      {
+        sandbox_id: "shared-claimed",
+        status: "running",
+        workspace_id: "workspace-2",
+      },
+      {
+        sandbox_id: "orphan",
+        status: "error",
+        workspace_id: "workspace-2",
+      },
+    ]);
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual(["orphan"]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalledWith(
+      "shared-claimed",
+      expect.objectContaining({ vercelCredentials: expect.anything() }),
+    );
+  });
+
+  it("reaps terminal sandbox capability checks recorded in the Vercel project", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "capability-orphan", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([], {
+      checks: [{ sandbox_id: "capability-orphan", status: "error" }],
+    });
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual(["capability-orphan"]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-orphan", {
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
+  });
+
+  it("reaps stale running sandbox capability checks after the stale cutoff", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "stale-capability-check", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([], {
+      checks: [
+        {
+          checked_at: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+          sandbox_id: "stale-capability-check",
+          status: "running",
+        },
+      ],
+    });
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual(["stale-capability-check"]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("stale-capability-check", {
+      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+    });
+  });
+
+  it("keeps fresh running sandbox capability checks active", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "fresh-capability-check", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([], {
+      checks: [{ sandbox_id: "fresh-capability-check", status: "running" }],
+    });
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("does not reap a sandbox whose agent job is still active after run completion", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "post-run", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock(
+      [{ agent_job_id: "job-post-run", sandbox_id: "post-run", status: "success" }],
+      { activeJobIds: ["job-post-run"] },
+    );
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("requires matching Vercel project metadata before treating a sandbox as known", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "same-id", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([
+      {
+        sandbox_id: "same-id",
+        sandbox_vercel_project_id: "prj_other",
+        sandbox_vercel_team_id: "team_123",
+        status: "error",
+        workspace_id: "workspace-2",
+      },
+    ]);
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("does not stop unknown provider sandboxes in the workspace Vercel project", async () => {
+    mocked.listRunningSandboxes.mockResolvedValueOnce([
+      { id: "unknown", status: "running", createdAt: Date.now() - TEN_MIN_MS },
+    ]);
+    const { admin } = buildAdminMock([]);
+
+    const result = await reapOrphanSandboxes(admin as never);
+
+    expect(result.reapedSandboxIds).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
   it("logs and bails out when the DB query for claimed runs fails", async () => {
@@ -104,7 +346,7 @@ describe("reapOrphanSandboxes", () => {
     mocked.listRunningSandboxes.mockResolvedValueOnce([
       { id: "orphan", status: "running", createdAt: Date.now() - 60_000 },
     ]);
-    const { admin } = buildAdminMock([]);
+    const { admin } = buildAdminMock([{ sandbox_id: "orphan", status: "error" }]);
     const result = await reapOrphanSandboxes(admin as never, { graceMs: 30_000 });
     expect(result.reapedSandboxIds).toEqual(["orphan"]);
   });

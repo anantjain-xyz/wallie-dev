@@ -16,6 +16,10 @@ import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { type SettingsAnchor, SettingsAnchorNav } from "@/features/settings/settings-anchor-nav";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
+import {
+  VercelSandboxConnectionSection,
+  vercelConnectionHealth,
+} from "@/features/settings/vercel-sandbox-connection-section";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
@@ -28,6 +32,7 @@ const ANCHORS: SettingsAnchor[] = [
   { id: "members", label: "Members" },
   { id: "github", label: "Connect GitHub" },
   { id: "repository", label: "Analyze repositories" },
+  { id: "vercel", label: "Connect Vercel" },
   { id: "pipeline", label: "Review pipeline" },
   { id: "linear", label: "Configure Linear" },
   { id: "runtime", label: "Verify runtime" },
@@ -204,6 +209,29 @@ function applySecretsToData(
   };
 }
 
+function updateVercelConnectionInData(
+  currentData: SettingsPageData,
+  connection: SettingsPageData["vercelSandboxConnection"],
+): SettingsPageData {
+  const vercelProjectChanged =
+    currentData.vercelSandboxConnection?.teamId !== connection?.teamId ||
+    currentData.vercelSandboxConnection?.projectId !== connection?.projectId;
+  const latestSandboxCapabilityCheck = vercelProjectChanged
+    ? null
+    : currentData.latestSandboxCapabilityCheck;
+
+  return {
+    ...currentData,
+    latestSandboxCapabilityCheck,
+    setupHealth: {
+      ...currentData.setupHealth,
+      latestSandboxCapabilityCheck,
+      vercelSandboxConnection: vercelConnectionHealth(connection),
+    },
+    vercelSandboxConnection: connection,
+  };
+}
+
 export function SettingsPageClient({ initialData, searchState }: SettingsPageClientProps) {
   const [data, setData] = useState(initialData);
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
@@ -267,6 +295,16 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               data={pageData}
               setData={setData}
               setFlashMessage={setFlashMessage}
+            />
+
+            <VercelSandboxConnectionSection
+              canManage={isManager}
+              connection={pageData.vercelSandboxConnection}
+              onConnectionChange={(connection) =>
+                setData((currentData) => updateVercelConnectionInData(currentData, connection))
+              }
+              setFlashMessage={setFlashMessage}
+              workspaceId={pageData.workspace.id}
             />
 
             <Section

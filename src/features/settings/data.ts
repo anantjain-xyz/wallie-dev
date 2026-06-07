@@ -51,6 +51,7 @@ export type SettingsPageData = {
   linearSecret: WorkspaceOnboardingData["linearSecret"];
   onboarding: WorkspaceOnboardingData["onboarding"];
   setupHealth: WorkspaceOnboardingData["setupHealth"];
+  vercelSandboxConnection: WorkspaceOnboardingData["vercelSandboxConnection"];
   workspace: {
     avatarPath: string | null;
     avatarUrl: string | null;
@@ -172,6 +173,7 @@ export async function loadSettingsPageData(workspaceSlug: string) {
     linearSecret: onboardingData.linearSecret,
     onboarding: onboardingData.onboarding,
     setupHealth: onboardingData.setupHealth,
+    vercelSandboxConnection: onboardingData.vercelSandboxConnection,
     workspace: {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),

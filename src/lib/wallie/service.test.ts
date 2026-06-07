@@ -1,5 +1,5 @@
 import type { PostgrestError } from "@supabase/supabase-js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Tables } from "@/lib/supabase/database.types";
 import {
@@ -9,9 +9,39 @@ import {
 } from "@/lib/wallie/service";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 
+const mocks = vi.hoisted(() => ({
+  loadVercelSandboxConnectionPreview: vi.fn(),
+  resolveSandboxImplementation: vi.fn(() => "vercel"),
+}));
+
 vi.mock("@/lib/pipeline/processor", () => ({
   processPipelineJob: vi.fn(),
 }));
+
+vi.mock("@/lib/vercel-sandbox/server", () => ({
+  loadVercelSandboxConnectionPreview: mocks.loadVercelSandboxConnectionPreview,
+}));
+
+vi.mock("@/lib/sandbox", () => ({
+  resolveSandboxImplementation: mocks.resolveSandboxImplementation,
+}));
+
+beforeEach(() => {
+  mocks.loadVercelSandboxConnectionPreview.mockReset();
+  mocks.resolveSandboxImplementation.mockReset();
+  mocks.resolveSandboxImplementation.mockReturnValue("vercel");
+  mocks.loadVercelSandboxConnectionPreview.mockResolvedValue({
+    lastValidatedAt: baseTimestamp,
+    lastValidationError: null,
+    projectId: "prj_123",
+    projectName: "wallie-sandboxes",
+    status: "connected",
+    teamId: "team_123",
+    tokenPreview: "verc...1234",
+    updatedAt: baseTimestamp,
+    workspaceId: "ws-1",
+  });
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -169,6 +199,9 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     output_tokens: null,
     run_type: "project",
     sandbox_id: null,
+    sandbox_provider: null,
+    sandbox_vercel_project_id: null,
+    sandbox_vercel_team_id: null,
     session_id: "sess-1",
     started_at: null,
     stage_id: null,
@@ -559,6 +592,52 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     expect(insertedRunRows).toHaveLength(0);
+  });
+
+  it("blocks queued runs when the workspace Vercel Sandbox connection is missing", async () => {
+    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+    });
+
+    await expect(
+      enqueueWallieRun({
+        admin,
+        sessionId: "sess-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        triggerType: "manual_run",
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "vercel_sandbox_connection_missing",
+      statusCode: 422,
+    });
+
+    expect(insertedRunRows).toHaveLength(0);
+  });
+
+  it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
+    mocks.resolveSandboxImplementation.mockReturnValueOnce("fake");
+    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+    });
+
+    await enqueueWallieRun({
+      admin,
+      sessionId: "sess-1",
+      requestedByMemberId: "mem-1",
+      supabase,
+      triggerType: "manual_run",
+      workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+    });
+
+    expect(insertedRunRows).toHaveLength(1);
   });
 });
 

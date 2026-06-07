@@ -1,0 +1,1 @@
+export const STALE_SANDBOX_CAPABILITY_CHECK_MS = 60 * 60 * 1000;
