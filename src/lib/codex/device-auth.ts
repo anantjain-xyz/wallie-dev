@@ -24,6 +24,10 @@ const VERCEL_CODEX_HOME = "/vercel/sandbox/.codex";
 const VERCEL_SANDBOX_CWD = "/vercel/sandbox";
 const CODEX_AUTH_FILE = `${VERCEL_CODEX_HOME}/auth.json`;
 const LOCAL_SANDBOX_PREFIX = "local:";
+const CHATGPT_CODEX_PAYMENT_REQUIRED_MESSAGE =
+  "OpenAI rejected the ChatGPT Codex sign-in with 402 Payment Required. Use a ChatGPT account with Codex access, or connect a Codex access token or OpenAI API key instead.";
+const SANDBOX_PAYMENT_REQUIRED_MESSAGE =
+  "Wallie could not use the Codex sign-in sandbox because the production sandbox provider returned 402 Payment Required. Check Vercel Sandbox billing and credentials, or connect Codex with a Codex access token or OpenAI API key for now.";
 const USER_CODE_PATTERN = "[A-Z0-9]{4,}(?:[- ][A-Z0-9]{4,})*";
 const USER_CODE_STOP_WORDS = new Set([
   "ABOVE",
@@ -166,7 +170,7 @@ export async function startCodexDeviceAuthFlow(input: {
     }
 
     return {
-      error: errorMessage(error, "Failed to start Codex sign-in."),
+      error: startAuthErrorMessage(error),
       expiresAt,
       flowId,
       instructions: null,
@@ -309,9 +313,7 @@ async function refreshFlowFromSandbox(
     if (refreshedCommand.exitCode !== 0) {
       const updated = await markFlowTerminal(admin, row, {
         encrypted_auth_json: null,
-        error:
-          redactAuthOutput(finalOutput).trim() ||
-          `Codex login exited with code ${refreshedCommand.exitCode}.`,
+        error: commandFailureMessage(finalOutput, refreshedCommand.exitCode),
         output_tail: finalOutput,
         status: "error",
       });
@@ -355,7 +357,7 @@ async function refreshFlowFromSandbox(
 
     const updated = await markFlowTerminal(admin, row, {
       encrypted_auth_json: null,
-      error: errorMessage(error, "Failed to read Codex sign-in status."),
+      error: pollAuthErrorMessage(error),
       status: "error",
     });
     await stopSandboxQuietly(row.sandbox_id);
@@ -926,6 +928,28 @@ function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string" && error.trim().length > 0) return error;
   return fallback;
+}
+
+function startAuthErrorMessage(error: unknown): string {
+  const message = errorMessage(error, "Failed to start Codex sign-in.");
+  if (isPaymentRequiredError(message)) return SANDBOX_PAYMENT_REQUIRED_MESSAGE;
+  return message;
+}
+
+function pollAuthErrorMessage(error: unknown): string {
+  const message = errorMessage(error, "Failed to read Codex sign-in status.");
+  if (isPaymentRequiredError(message)) return SANDBOX_PAYMENT_REQUIRED_MESSAGE;
+  return message;
+}
+
+function commandFailureMessage(output: string, exitCode: number): string {
+  const redactedOutput = redactAuthOutput(output).trim();
+  if (isPaymentRequiredError(redactedOutput)) return CHATGPT_CODEX_PAYMENT_REQUIRED_MESSAGE;
+  return redactedOutput || `Codex login exited with code ${exitCode}.`;
+}
+
+function isPaymentRequiredError(message: string): boolean {
+  return /\b402\b/.test(message) && /(?:payment\s+required|status\s+code|not\s+ok)/i.test(message);
 }
 
 function shellQuote(s: string): string {
