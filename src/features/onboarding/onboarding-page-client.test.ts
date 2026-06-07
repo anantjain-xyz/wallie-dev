@@ -7,6 +7,7 @@ import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
+import { CURRENT_WALLIE_SKILL_VERSION } from "@/lib/repo-onboarding/contracts";
 
 const router = vi.hoisted(() => ({
   push: vi.fn(),
@@ -784,7 +785,7 @@ describe("OnboardingPageClient", () => {
                   conflictReport: [],
                   githubRepositoryId: "repo-a",
                   installedSkillHash: "hash-1",
-                  installedSkillVersion: 2,
+                  installedSkillVersion: CURRENT_WALLIE_SKILL_VERSION,
                   lastError: null,
                   setupBranchName: null,
                   setupPrNumber: null,

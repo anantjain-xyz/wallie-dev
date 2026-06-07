@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CURRENT_WALLIE_SKILL_VERSION = 2;
+export const CURRENT_WALLIE_SKILL_VERSION = 3;
 
 export const REPOSITORY_ONBOARDING_STATUSES = [
   "not_set_up",

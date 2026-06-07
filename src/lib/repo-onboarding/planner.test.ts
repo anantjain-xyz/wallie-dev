@@ -59,7 +59,7 @@ describe("repository onboarding planner", () => {
   });
 
   it("upgrades exact legacy Wallie-owned files without treating them as user edits", () => {
-    const changedSkillNames = new Set(["commit", "screenshot"]);
+    const changedSkillNames = new Set(["commit", "pr-feedback", "screenshot"]);
     const changedSkills = DEFAULT_WALLIE_SKILLS.filter((skill) =>
       changedSkillNames.has(skill.name),
     );
@@ -124,5 +124,16 @@ describe("repository onboarding planner", () => {
     expect(content).toContain("git revert <screenshot-commit-sha>");
     expect(content).not.toContain("git push --force-with-lease");
     expect(WALLIE_AGENTS_INSTRUCTIONS).toContain("never leave them in the final PR diff");
+  });
+
+  it("documents PR feedback sweeps as bot and human review loops", () => {
+    const prFeedbackSkill = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "pr-feedback");
+    expect(prFeedbackSkill).toBeDefined();
+    const content = prFeedbackSkill!.content;
+
+    expect(content).toContain("Top-level PR comments from bots and humans");
+    expect(content).toContain("Inline review comments or threads from bots and humans");
+    expect(content).toContain("Failing check annotations");
+    expect(content).toContain("repeat the sweep");
   });
 });

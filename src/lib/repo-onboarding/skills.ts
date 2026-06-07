@@ -63,6 +63,24 @@ Do not rely on a Playwright MCP server being present in Wallie cloud runs.
 `,
 );
 
+const WALLIE_PR_FEEDBACK_SKILL_V2 = skill(
+  "pr-feedback",
+  "Sweep GitHub PR feedback and resolve every actionable item.",
+  `
+# PR Feedback
+
+Gather feedback from:
+- Top-level PR comments.
+- Inline review comments.
+- Review states such as changes requested.
+
+Resolution rules:
+- Treat actionable feedback as blocking until fixed or explicitly answered with rationale.
+- Reply on the same thread after addressing a comment.
+- Rerun validation and push before moving the issue back to review.
+`,
+);
+
 const WALLIE_AGENTS_INSTRUCTIONS_V1 = [
   "# Wallie Workflow",
   "",
@@ -78,6 +96,7 @@ const WALLIE_AGENTS_INSTRUCTIONS_V1 = [
 
 export const UPGRADABLE_WALLIE_LEGACY_FILES = [
   { content: WALLIE_COMMIT_SKILL_V1.content, path: WALLIE_COMMIT_SKILL_V1.path },
+  { content: WALLIE_PR_FEEDBACK_SKILL_V2.content, path: WALLIE_PR_FEEDBACK_SKILL_V2.path },
   { content: WALLIE_SCREENSHOT_SKILL_V1.content, path: WALLIE_SCREENSHOT_SKILL_V1.path },
   { content: WALLIE_AGENTS_INSTRUCTIONS_V1, path: WALLIE_AGENTS_INSTRUCTIONS_PATH },
 ] as const;
@@ -158,14 +177,15 @@ Steps:
 # PR Feedback
 
 Gather feedback from:
-- Top-level PR comments.
-- Inline review comments.
+- Top-level PR comments from bots and humans.
+- Inline review comments or threads from bots and humans.
 - Review states such as changes requested.
+- Failing check annotations when available.
 
 Resolution rules:
-- Treat actionable feedback as blocking until fixed or explicitly answered with rationale.
+- Treat actionable bot or human feedback as blocking until fixed or explicitly answered with rationale.
 - Reply on the same thread after addressing a comment.
-- Rerun validation and push before moving the issue back to review.
+- Rerun validation, push, and repeat the sweep before moving the issue back to review.
 `,
   ),
   skill(

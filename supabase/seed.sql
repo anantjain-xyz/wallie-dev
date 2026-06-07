@@ -198,8 +198,8 @@ BEGIN
   )
   VALUES (
     default_pipeline_id, ws_id, 3, 'review', 'Review',
-    'Sweep PR feedback and verify the change against the plan before human sign-off.',
-    E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nProduce a structured review. Confirm every acceptance-criteria and validation item is met, sweep all actionable PR feedback to resolution, confirm CI is green on the latest commit, and report findings with a clear recommendation. Do not introduce new feature work.'
+    'Run a review-and-fix loop: verify the change, address PR feedback from bots and humans, and prepare it for human sign-off.',
+    E'Review the implementation for: {{session.title}}\n\n## Instructions\n\nRun this as a review-and-fix loop for the existing implementation. Do not expand scope or introduce unrelated feature work. Code changes are allowed when they directly resolve review findings, PR feedback, failing checks, or plan gaps.\n\n- **Verify against the plan.** Confirm every acceptance-criteria and validation item is met; call out and fix any gap that is in scope.\n- **PR feedback sweep.** Gather every existing actionable item from bot and human feedback, including top-level PR comments, inline review comments or threads, review states such as changes requested, and failing check annotations. Resolve each with a code change or an explicit, justified response on the same thread or comment where appropriate.\n- **Loop until clear.** Rerun validation, push fixes, re-check CI and PR feedback, and repeat until no actionable feedback remains and no required checks are failing. Pending human-gated checks are fine; do not wait on them.\n- **Checks & evidence.** Confirm CI is green on the latest commit, user-facing changes include the required screenshots, and validation test data has been cleaned up.\n- **Findings.** Report risks, correctness concerns, what feedback was addressed, and a clear recommendation. The change should not advance until findings are resolved and a human approves.'
   );
 
   SELECT id INTO stage_plan_id   FROM public.pipeline_stages WHERE pipeline_id = default_pipeline_id AND slug = 'plan';
