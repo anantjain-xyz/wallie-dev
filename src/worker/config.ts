@@ -13,9 +13,17 @@ export type WorkerConfig = {
   defaultStallTimeoutMs: number;
   /** Default per-workspace concurrency limit if not configured. */
   defaultConcurrencyLimit: number;
+  /**
+   * Maximum number of jobs this single worker process runs at once. Bounds
+   * total simultaneous sandboxes/memory and acts as the global concurrency
+   * dial; composes with (and is independent of) the per-workspace limit.
+   */
+  maxConcurrentJobs: number;
   /** Unique identifier for this worker instance. */
   workerId: string;
 };
+
+const DEFAULT_MAX_CONCURRENT_JOBS = 10;
 
 /** Build worker config with baked-in defaults and a generated worker id. */
 export function parseWorkerConfig(): WorkerConfig {
@@ -27,6 +35,18 @@ export function parseWorkerConfig(): WorkerConfig {
     sandboxReapIntervalMs: 60_000,
     defaultStallTimeoutMs: 900_000, // 15 minutes
     defaultConcurrencyLimit: 2,
+    maxConcurrentJobs: parsePositiveInt(
+      process.env.WORKER_MAX_CONCURRENT_JOBS,
+      DEFAULT_MAX_CONCURRENT_JOBS,
+    ),
     workerId: `worker-${process.pid}-${Date.now()}`,
   };
+}
+
+/** Parse a positive integer env value, falling back on missing/invalid input. */
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
 }

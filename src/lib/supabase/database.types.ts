@@ -1160,7 +1160,7 @@ export type Database = {
       }
       worker_heartbeats: {
         Row: {
-          active_job_id: string | null
+          active_job_ids: string[]
           id: string
           last_heartbeat_at: string
           metadata: Json
@@ -1168,7 +1168,7 @@ export type Database = {
           worker_id: string
         }
         Insert: {
-          active_job_id?: string | null
+          active_job_ids?: string[]
           id?: string
           last_heartbeat_at?: string
           metadata?: Json
@@ -1176,22 +1176,14 @@ export type Database = {
           worker_id: string
         }
         Update: {
-          active_job_id?: string | null
+          active_job_ids?: string[]
           id?: string
           last_heartbeat_at?: string
           metadata?: Json
           started_at?: string
           worker_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "worker_heartbeats_active_job_id_fkey"
-            columns: ["active_job_id"]
-            isOneToOne: false
-            referencedRelation: "agent_jobs"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       workspace_agent_config: {
         Row: {

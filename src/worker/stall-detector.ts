@@ -281,7 +281,7 @@ async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise
   const cutoff = new Date(nowMs - FRESH_WORKER_HEARTBEAT_MS).toISOString();
   const { data, error } = await admin
     .from("worker_heartbeats")
-    .select("active_job_id")
+    .select("active_job_ids")
     .gte("last_heartbeat_at", cutoff);
 
   if (error) {
@@ -291,7 +291,7 @@ async function loadFreshWorkerJobIds(admin: AdminClient, nowMs: number): Promise
 
   return new Set(
     (data ?? [])
-      .map((row) => row.active_job_id)
+      .flatMap((row) => row.active_job_ids ?? [])
       .filter((jobId): jobId is string => typeof jobId === "string" && jobId.length > 0),
   );
 }
