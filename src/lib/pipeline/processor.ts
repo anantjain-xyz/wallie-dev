@@ -50,6 +50,19 @@ class MissingReviewableOutputError extends Error {
 
 const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
 const REDACTED_RUN_DIAGNOSTIC_VALUE = "[redacted]";
+const RUN_FAILURE_SECRET_KEY_SOURCE = String.raw`(?:access[_-]?key|access[_-]?token|api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)`;
+const RUN_FAILURE_JSON_SECRET_FIELD_PATTERN = new RegExp(
+  String.raw`(["'])([^"']*(?:${RUN_FAILURE_SECRET_KEY_SOURCE})[^"']*)\1\s*:\s*(["'])(?:\\.|(?!\3)[\s\S])*?\3`,
+  "gi",
+);
+const RUN_FAILURE_QUOTED_SECRET_ASSIGNMENT_PATTERN = new RegExp(
+  String.raw`\b([A-Z0-9_-]*(?:${RUN_FAILURE_SECRET_KEY_SOURCE})[A-Z0-9_-]*\s*[:=]\s*)(["'])([\s\S]*?)\2`,
+  "gi",
+);
+const RUN_FAILURE_UNQUOTED_SECRET_ASSIGNMENT_PATTERN = new RegExp(
+  String.raw`\b([A-Z0-9_-]*(?:${RUN_FAILURE_SECRET_KEY_SOURCE})[A-Z0-9_-]*\s*[:=]\s*)(?!["'])[^\r\n;,]+`,
+  "gi",
+);
 
 export type PipelinePhaseActionResult = {
   error?: string;
@@ -1120,25 +1133,16 @@ function sanitizeRunFailureDiagnostic(message: string): string {
       `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}@`,
     )
     .replace(
-      /([?&](?:access_token|api[_-]?key|auth|code|credential|key|password|secret|token)=)[^&\s]+/gi,
+      /([?&](?:access[_-]?token|api[_-]?key|auth|code|credential|key|password|secret|token)=)[^&\s]+/gi,
       `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}`,
     )
-    .replace(
-      /(["'])([^"']*(?:ACCESS_KEY|API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[^"']*)\1\s*:\s*(["'])(?:\\.|(?!\3)[\s\S])*?\3/gi,
-      `$1$2$1: $3${REDACTED_RUN_DIAGNOSTIC_VALUE}$3`,
-    )
-    .replace(
-      /\b([A-Z0-9_]*(?:ACCESS_KEY|API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Z0-9_]*\s*[:=]\s*)(["'])([\s\S]*?)\2/gi,
-      `$1$2${REDACTED_RUN_DIAGNOSTIC_VALUE}$2`,
-    )
+    .replace(RUN_FAILURE_JSON_SECRET_FIELD_PATTERN, `$1$2$1: $3${REDACTED_RUN_DIAGNOSTIC_VALUE}$3`)
+    .replace(RUN_FAILURE_QUOTED_SECRET_ASSIGNMENT_PATTERN, `$1$2${REDACTED_RUN_DIAGNOSTIC_VALUE}$2`)
     .replace(
       /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/g,
       REDACTED_RUN_DIAGNOSTIC_VALUE,
     )
-    .replace(
-      /\b([A-Z0-9_]*(?:ACCESS_KEY|API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Z0-9_]*\s*[:=]\s*)(?!["'])[^\r\n;,]+/gi,
-      `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}`,
-    )
+    .replace(RUN_FAILURE_UNQUOTED_SECRET_ASSIGNMENT_PATTERN, `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}`)
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{10,}/gi, `$1 ${REDACTED_RUN_DIAGNOSTIC_VALUE}`)
     .replace(
       /\b(?:eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|sb_[A-Za-z0-9_-]{16,}|vca_[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/g,

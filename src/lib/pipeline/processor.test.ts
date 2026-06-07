@@ -1201,6 +1201,31 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
   });
 
+  it("redacts camelCase JSON secret fields before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox config rejected: {"apiKey":"plain-api-key","privateKey":"plain-private-key","clientSecret":"plain-client-secret","safe":"visible"}',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          '**Error:** sandbox config rejected: {"apiKey": "[redacted]","privateKey": "[redacted]","clientSecret": "[redacted]","safe":"visible"}',
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-api-key");
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-private-key");
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-client-secret");
+    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+  });
+
   it("aborts the stage when persisting the sandbox id fails", async () => {
     const session = baseSession();
     const { admin, insertedArtifacts, insertedMessages, updatedRuns, updatedSessions } =
