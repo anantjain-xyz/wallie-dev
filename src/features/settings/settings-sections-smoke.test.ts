@@ -230,7 +230,7 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    expect(html).toContain("Configure Linear");
+    expect(html).toContain("Connect Linear");
     expect(html).toContain("Linear API key");
     expect(html).toContain("Linear routing");
     expect(html).toContain("••••1234");
@@ -300,8 +300,8 @@ describe("Settings integration sections", () => {
       "Connect GitHub",
       "Analyze repositories",
       "Review pipeline",
-      "Configure Linear",
-      "Verify runtime",
+      "Connect Linear",
+      "Connect Agent",
       "Verify setup",
       "Usage",
       "Rate limits",
@@ -494,7 +494,7 @@ describe("Settings integration sections", () => {
     expect(html).toContain('id="repository"');
     expect(html).toContain("Analyze repositories");
     expect(html).toContain('id="linear"');
-    expect(html).toContain("Configure Linear");
+    expect(html).toContain("Connect Linear");
     expect(html).toContain('id="runtime"');
     expect(html).toContain("Workspace secrets");
     expect(html).toContain('id="vercel"');
@@ -814,7 +814,7 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain(">Primary<");
   });
 
-  it("renders provider access inside Verify runtime instead of a standalone Codex section", () => {
+  it("renders provider access inside Connect Agent instead of a standalone Codex section", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
@@ -826,7 +826,7 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain('id="runtime"');
-    expect(html).toContain("Verify runtime");
+    expect(html).toContain("Connect Agent");
     expect(html).toContain("Provider access");
     expect(html).toContain("Checking connection");
     expect(html).not.toContain('id="codex"');
