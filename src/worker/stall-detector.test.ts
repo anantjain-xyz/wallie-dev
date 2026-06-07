@@ -47,7 +47,7 @@ interface AgentConfigRow {
 }
 
 interface WorkerHeartbeatRow {
-  active_job_id: string | null;
+  active_job_ids: string[];
   last_heartbeat_at: string;
 }
 
@@ -428,7 +428,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun()],
       jobs: [job()],
       configs: [],
-      heartbeats: [{ active_job_id: "job-1", last_heartbeat_at: new Date().toISOString() }],
+      heartbeats: [{ active_job_ids: ["job-1"], last_heartbeat_at: new Date().toISOString() }],
       sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
       rpcCalls: [],
     };
@@ -439,6 +439,29 @@ describe("sweepStalledRuns", () => {
     expect(result.stoppedSandboxIds).toEqual([]);
     expect(runUpdates).toEqual([]);
     expect(sessionUpdates).toEqual([]);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("protects every concurrently in-flight job listed in a fresh heartbeat", async () => {
+    const state: MockState = {
+      runs: [
+        activeRun({ id: "run-1", agent_job_id: "job-1" }),
+        activeRun({ id: "run-2", agent_job_id: "job-2", sandbox_id: "sandbox-2" }),
+      ],
+      jobs: [job({ id: "job-1" }), job({ id: "job-2" })],
+      configs: [],
+      // A single worker reports multiple in-flight jobs.
+      heartbeats: [
+        { active_job_ids: ["job-1", "job-2"], last_heartbeat_at: new Date().toISOString() },
+      ],
+      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      rpcCalls: [],
+    };
+    const { admin, runUpdates } = buildAdminMock(state);
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual([]);
+    expect(runUpdates).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 

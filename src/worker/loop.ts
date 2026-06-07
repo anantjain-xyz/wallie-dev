@@ -4,89 +4,28 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 
 import type { WorkerConfig } from "./config";
-import { sendHeartbeat } from "./heartbeat";
 
 type AdminClient = SupabaseClient<Database>;
 type AgentJobRow = Tables<"agent_jobs">;
 
-export interface PollResult {
-  jobId: string | null;
-  outcome: "idle" | "error" | "success";
-}
-
-export interface PollRuntime {
-  setActiveJobId?: (jobId: string | null) => void;
-}
-
-type ClaimNextResult =
+export type ClaimNextResult =
   | { job: AgentJobRow; outcome: "claimed" }
   | { outcome: "error" }
   | { outcome: "idle" };
 
 /**
- * Execute one poll cycle: find a queued job, check concurrency, claim it,
- * and process it.
- */
-export async function pollOnce(
-  admin: AdminClient,
-  config: WorkerConfig,
-  runtime: PollRuntime = {},
-): Promise<PollResult> {
-  const claimResult = await claimNextJobAtomic(admin, config.defaultConcurrencyLimit);
-  if (claimResult.outcome === "error") {
-    return { jobId: null, outcome: "error" };
-  }
-
-  if (claimResult.outcome === "idle") {
-    return { jobId: null, outcome: "idle" };
-  }
-
-  const claimed = claimResult.job;
-
-  runtime.setActiveJobId?.(claimed.id);
-
-  try {
-    // Report heartbeat with active job. Keep this inside the cleanup block:
-    // the job is already claimed, so even an initial heartbeat failure must
-    // clear active ownership before the next interval tick.
-    await sendHeartbeat(admin, config.workerId, claimed.id);
-
-    // Touch last_activity_at on any linked agent_runs so the stall detector
-    // has a fresh baseline even if the processor crashes immediately.
-    await admin
-      .from("agent_runs")
-      .update({ last_activity_at: new Date().toISOString() })
-      .eq("agent_job_id", claimed.id)
-      .in("status", ["queued", "started", "running"]);
-
-    // Process the job.
-    try {
-      await processClaimedJob(admin, claimed);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Worker job processing failed";
-      console.error("[worker] job processing error", { error: message, jobId: claimed.id });
-      await markJobError(admin, claimed, message);
-    }
-  } finally {
-    // Clear active job from heartbeat.
-    runtime.setActiveJobId?.(null);
-    await sendHeartbeat(admin, config.workerId, null);
-  }
-
-  return { jobId: claimed.id, outcome: "success" };
-}
-
-/**
  * Atomic concurrency-aware claim via Postgres RPC. The function selects and
  * claims the oldest ready job whose workspace still has capacity in one
  * transaction, so one saturated workspace cannot hide ready work for another.
+ * Returns at most one job per call; the scheduler calls it repeatedly to fill
+ * its remaining capacity.
  */
-async function claimNextJobAtomic(
+export async function claimNextJob(
   admin: AdminClient,
-  defaultConcurrencyLimit: number,
+  config: WorkerConfig,
 ): Promise<ClaimNextResult> {
   const { data, error } = await admin.rpc("claim_next_agent_job", {
-    default_concurrency_limit: defaultConcurrencyLimit,
+    default_concurrency_limit: config.defaultConcurrencyLimit,
   });
 
   if (error) {
@@ -102,8 +41,29 @@ async function claimNextJobAtomic(
   return { job: row as AgentJobRow, outcome: "claimed" };
 }
 
-async function processClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {
-  await processPipelineJob({ admin, job });
+/**
+ * Process a single already-claimed job to completion. Touches the linked runs'
+ * activity so the stall detector has a fresh baseline even if the processor
+ * crashes immediately, then runs the pipeline. Never rejects: a processing
+ * failure is recorded via markJobError so one job cannot abort its siblings or
+ * the scheduler loop.
+ */
+export async function runClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {
+  // Touch last_activity_at on any linked agent_runs so the stall detector has
+  // a fresh baseline even if the processor crashes immediately.
+  await admin
+    .from("agent_runs")
+    .update({ last_activity_at: new Date().toISOString() })
+    .eq("agent_job_id", job.id)
+    .in("status", ["queued", "started", "running"]);
+
+  try {
+    await processPipelineJob({ admin, job });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Worker job processing failed";
+    console.error("[worker] job processing error", { error: message, jobId: job.id });
+    await markJobError(admin, job, message);
+  }
 }
 
 async function markJobError(

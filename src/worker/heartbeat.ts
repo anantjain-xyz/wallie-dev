@@ -14,7 +14,7 @@ export async function registerWorker(admin: AdminClient, workerId: string): Prom
       worker_id: workerId,
       started_at: new Date().toISOString(),
       last_heartbeat_at: new Date().toISOString(),
-      active_job_id: null,
+      active_job_ids: [],
       metadata: {},
     },
     { onConflict: "worker_id" },
@@ -24,19 +24,20 @@ export async function registerWorker(admin: AdminClient, workerId: string): Prom
 }
 
 /**
- * Update the worker's heartbeat timestamp and optionally report the
- * currently active job.
+ * Update the worker's heartbeat timestamp and report the jobs it is currently
+ * processing. The worker runs multiple jobs concurrently, so this is the full
+ * in-flight set — the stall detector uses it to skip runs a live worker holds.
  */
 export async function sendHeartbeat(
   admin: AdminClient,
   workerId: string,
-  activeJobId: string | null,
+  activeJobIds: string[],
 ): Promise<void> {
   const { error } = await admin
     .from("worker_heartbeats")
     .update({
       last_heartbeat_at: new Date().toISOString(),
-      active_job_id: activeJobId,
+      active_job_ids: activeJobIds,
     })
     .eq("worker_id", workerId);
 
