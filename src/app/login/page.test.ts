@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   cookies: vi.fn(),
@@ -20,14 +20,6 @@ vi.mock("next/headers", () => ({
   cookies: mocked.cookies,
 }));
 
-vi.mock("@/components/auth/auth-entry-panel", () => ({
-  AuthEntryPanel: () => null,
-}));
-
-vi.mock("@/components/auth/splash-shell", () => ({
-  SplashShell: ({ children }: { children: ReactNode }) => children,
-}));
-
 vi.mock("@/lib/auth", () => ({
   ensureProfileForUser: mocked.ensureProfileForUser,
   normalizeNextPath: (value: string | null | undefined) => value || "/",
@@ -44,6 +36,8 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import LoginPage from "@/app/login/page";
 
+const originalVercelEnv = process.env.VERCEL_ENV;
+
 function setupAuthenticatedUser() {
   mocked.cookies.mockResolvedValue({ get: vi.fn(() => undefined) });
   mocked.createSupabaseServerClient.mockResolvedValue({});
@@ -56,6 +50,28 @@ function setupAuthenticatedUser() {
 }
 
 describe("/login page", () => {
+  beforeEach(() => {
+    process.env.VERCEL_ENV = "production";
+    mocked.cookies.mockResolvedValue({ get: vi.fn(() => undefined) });
+    mocked.createSupabaseServerClient.mockResolvedValue({});
+    mocked.getSupabaseUserOrNull.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    if (originalVercelEnv === undefined) {
+      delete process.env.VERCEL_ENV;
+    } else {
+      process.env.VERCEL_ENV = originalVercelEnv;
+    }
+
+    mocked.cookies.mockReset();
+    mocked.createSupabaseServerClient.mockReset();
+    mocked.ensureProfileForUser.mockReset();
+    mocked.getSupabaseUserOrNull.mockReset();
+    mocked.redirect.mockClear();
+    mocked.resolveAuthenticatedHomePath.mockReset();
+  });
+
   it("honors invite next paths for already-authenticated users", async () => {
     setupAuthenticatedUser();
 
@@ -76,5 +92,37 @@ describe("/login page", () => {
         searchParams: Promise.resolve({}),
       }),
     ).rejects.toThrow("redirect:/w/acme");
+  });
+
+  it("renders the email magic-link form by default", async () => {
+    const html = renderToStaticMarkup(
+      await LoginPage({
+        searchParams: Promise.resolve({}),
+      }),
+    );
+
+    expect(html).toContain("Send magic link");
+    expect(html).toContain('name="email"');
+    expect(html).toContain("you@company.com");
+  });
+
+  it("renders auth feedback and the OTP form after requesting a code", async () => {
+    mocked.cookies.mockResolvedValue({
+      get: vi.fn(() => ({ value: "owner@example.com" })),
+    });
+
+    const html = renderToStaticMarkup(
+      await LoginPage({
+        searchParams: Promise.resolve({
+          next: "/w/acme",
+          status: "check_email",
+        }),
+      }),
+    );
+
+    expect(html).toContain("Check your inbox for a secure sign-in link");
+    expect(html).toContain("Enter 6-digit code emailed to you");
+    expect(html).toContain("Continue with code");
+    expect(html).toContain('href="/login?next=%2Fw%2Facme"');
   });
 });

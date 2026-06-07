@@ -1,6 +1,7 @@
 export const siteConfig = {
   name: "Wallie",
-  description: "Cloud-native Wallie scaffold for wallie.dev on Next.js App Router and Supabase.",
+  description:
+    "Wallie runs gated, sandboxed coding-agent workflows across product, design, engineering, review, and land stages.",
   sampleWorkspaceSlug: "northwind-labs",
   principles: ["Build directly for Supabase Auth, Postgres, Realtime, and Storage on Vercel."],
 } as const;

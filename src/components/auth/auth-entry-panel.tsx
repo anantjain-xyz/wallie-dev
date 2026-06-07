@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { EmailMagicLinkForm } from "@/components/auth/email-magic-link-form";
 import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
 import { isLocalDev } from "@/env/deploy";
 import { loginPath } from "@/lib/routes";
@@ -70,29 +71,7 @@ export function AuthEntryPanel({
           </div>
         ) : null}
 
-        {!showEmailCodeForm ? (
-          <form action="/auth/email" method="post" className="space-y-3">
-            <input type="hidden" name="next" value={next} />
-
-            <label className="block">
-              <span className="sr-only">Email</span>
-              <input
-                type="email"
-                name="email"
-                required
-                autoComplete="email"
-                inputMode="email"
-                placeholder="you@company.com"
-                spellCheck={false}
-                className="ui-input"
-              />
-            </label>
-
-            <button type="submit" className="ui-button-primary w-full">
-              Send magic link
-            </button>
-          </form>
-        ) : null}
+        {!showEmailCodeForm ? <EmailMagicLinkForm next={next} /> : null}
 
         {showEmailCodeForm ? (
           <div>
