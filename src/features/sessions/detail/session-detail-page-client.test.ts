@@ -1,0 +1,113 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+
+import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
+import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+
+const mocked = vi.hoisted(() => ({
+  refresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    refresh: mocked.refresh,
+  }),
+}));
+
+vi.mock("@/lib/supabase/browser", () => ({
+  createSupabaseBrowserClient: () => ({}),
+}));
+
+vi.mock("@/features/wallie/session-wallie-panel", () => ({
+  SessionWalliePanel: () => null,
+}));
+
+function makeSessionDetailData(): SessionDetailPageData {
+  return {
+    currentMember: null,
+    members: [],
+    memberIndex: new Map(),
+    session: {
+      archivedAt: null,
+      artifacts: [],
+      createdAt: "2026-06-07T10:00:00.000Z",
+      currentArtifactVersion: 1,
+      currentStageId: "stage-1",
+      currentStageName: "Product",
+      currentStageSlug: "product",
+      id: "11111111-1111-4111-8111-111111111111",
+      linearIssueId: null,
+      linearIssueUrl: null,
+      number: 7,
+      phaseCompletions: [],
+      phaseStatus: "awaiting_review",
+      pipeline: {
+        id: "pipeline-1",
+        isDefault: true,
+        name: "Default",
+        operatingRulesMd: "",
+        stages: [
+          {
+            approverMemberIds: [],
+            description: "Define the product",
+            id: "stage-1",
+            name: "Product",
+            pipelineId: "pipeline-1",
+            position: 0,
+            promptTemplateMd: "",
+            slug: "product",
+          },
+        ],
+      },
+      pipelineId: "pipeline-1",
+      promptMd: "Build the title editor",
+      pullRequestCount: 0,
+      pullRequests: [],
+      rejectionCount: 0,
+      title: "Editable Session",
+      updatedAt: "2026-06-07T11:00:00.000Z",
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+    },
+    sessionCreator: null,
+    sessionGithubRepositoryId: null,
+    wallie: {
+      blockingReasons: [],
+      canEnqueue: false,
+      missingSecretKeys: [],
+      mode: "code",
+      repository: null,
+      requiredSecretKeys: [],
+      requiresVercelSandbox: false,
+      runs: [],
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: null,
+        projectId: null,
+        projectName: null,
+        status: "missing",
+        teamId: null,
+      },
+    },
+    workspace: {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Acme",
+      slug: "acme",
+    },
+  };
+}
+
+describe("SessionDetailPageClient", () => {
+  it("renders an accessible title edit affordance alongside the session title", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        initialData: makeSessionDetailData(),
+      }),
+    );
+
+    expect(html).toContain("Editable Session");
+    expect(html).toContain('aria-label="Edit title for session #7"');
+    expect(html).toContain('title="Edit title"');
+    expect(html).not.toContain('aria-label="Session #7 title"');
+  });
+});
