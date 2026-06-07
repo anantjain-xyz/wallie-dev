@@ -699,11 +699,9 @@ describe("OnboardingPageClient", () => {
 
     expect(desktopRailButton(linearHtml, "Connect Linear")).toContain('aria-current="step"');
     expect(linearHtml).toContain(">Connect Linear</h2>");
-    expect(desktopRailButton(runtimeHtml, "Connect Agent Provider")).toContain(
-      'aria-current="step"',
-    );
-    expect(runtimeHtml).toContain(">Connect Agent Provider</h2>");
-    expect(runtimeHtml).toContain('<span class="truncate">Provider</span>');
+    expect(desktopRailButton(runtimeHtml, "Connect Agent")).toContain('aria-current="step"');
+    expect(runtimeHtml).toContain(">Connect Agent</h2>");
+    expect(runtimeHtml).toContain('<span class="truncate">Agent</span>');
     expect(runtimeHtml).not.toContain('<span class="truncate">Runtime</span>');
   });
 

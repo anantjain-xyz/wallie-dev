@@ -35,7 +35,7 @@ const ANCHORS: SettingsAnchor[] = [
   { id: "vercel", label: "Connect Vercel" },
   { id: "pipeline", label: "Review pipeline" },
   { id: "linear", label: "Connect Linear" },
-  { id: "runtime", label: "Connect Agent Provider" },
+  { id: "runtime", label: "Connect Agent" },
   { id: "verify", label: "Verify setup" },
   { dividerBefore: true, id: "usage", label: "Usage" },
   { id: "rate-limits", label: "Rate limits" },
@@ -368,7 +368,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               }
               setFlashMessage={setFlashMessage}
               tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
-              title="Connect Agent Provider"
+              title="Connect Agent"
               workspaceId={pageData.workspace.id}
             />
 

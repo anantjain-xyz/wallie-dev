@@ -281,7 +281,7 @@ describe("Settings integration sections", () => {
       "Analyze repositories",
       "Review pipeline",
       "Connect Linear",
-      "Connect Agent Provider",
+      "Connect Agent",
       "Verify setup",
       "Usage",
       "Rate limits",
@@ -794,7 +794,7 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain(">Primary<");
   });
 
-  it("renders provider access inside Connect Agent Provider instead of a standalone Codex section", () => {
+  it("renders provider access inside Connect Agent instead of a standalone Codex section", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
@@ -806,7 +806,7 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain('id="runtime"');
-    expect(html).toContain("Connect Agent Provider");
+    expect(html).toContain("Connect Agent");
     expect(html).toContain("Provider access");
     expect(html).toContain("Checking connection");
     expect(html).not.toContain('id="codex"');

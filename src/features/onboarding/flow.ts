@@ -44,8 +44,8 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
   {
     description: "Check coding-agent and sandbox runtime readiness.",
     id: "runtime",
-    shortTitle: "Provider",
-    title: "Connect Agent Provider",
+    shortTitle: "Agent",
+    title: "Connect Agent",
   },
   {
     description: "Confirm the setup health signals before starting work.",

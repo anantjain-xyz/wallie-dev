@@ -42,7 +42,7 @@ describe("onboarding flow helpers", () => {
       ),
     ).toEqual([
       ["linear", "Connect Linear", "Linear"],
-      ["runtime", "Connect Agent Provider", "Provider"],
+      ["runtime", "Connect Agent", "Agent"],
     ]);
   });
 
