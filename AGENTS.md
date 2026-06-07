@@ -2,24 +2,7 @@
 
 ## Purpose
 
-This repo is the implementation target for the Wallie cloud rebuild at `wallie.dev`.
-
-The old repo at `/Users/anant/src/wallie` is reference-only.
-
-## Reference Repo Rules
-
-- You may read `/Users/anant/src/wallie` to recover product behavior, schema intent, and integration details.
-- Do not modify `/Users/anant/src/wallie`.
-- Do not port dead architecture from the old repo.
-
-Specifically do not reintroduce:
-
-- ElectricSQL
-- PGlite
-- proxy/write server topology
-- local-first sync metadata
-- client-exposed storage credentials
-- board/offline support unless explicitly requested later
+This repo is the implementation target for Wallie at `wallie.dev`.
 
 ## Architecture Direction
 

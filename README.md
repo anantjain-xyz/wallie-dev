@@ -51,7 +51,7 @@ wallie-dev/
 |-- supabase/
 |   `-- migrations/    -> Baseline schema + forward migrations
 |-- middleware.ts      -> Auth gate (Supabase session refresh)
-`-- AGENTS.md          -> Arch rules (no ElectricSQL, no PGlite...)
+`-- AGENTS.md          -> Repository guidelines
 ```
 
 ### Domain Model
