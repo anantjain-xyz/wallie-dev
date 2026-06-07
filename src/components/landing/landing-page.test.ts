@@ -22,6 +22,28 @@ describe("LandingPage", () => {
     expect(html).toContain("Bring your favorite agent and sandbox");
   });
 
+  it("renders GitHub links in the header and footer", () => {
+    const html = renderToStaticMarkup(createElement(LandingPage));
+
+    expect(html).toContain('href="https://github.com/anantjain-xyz/wallie-dev"');
+    expect(html).toContain("GitHub");
+  });
+
+  it("offers a Get started link to /login for narrow viewports", () => {
+    const html = renderToStaticMarkup(createElement(LandingPage));
+
+    expect(html).toContain('href="/login"');
+    expect(html).toContain("Get started");
+  });
+
+  it("renders the footer with author attribution", () => {
+    const html = renderToStaticMarkup(createElement(LandingPage));
+
+    expect(html).toContain("Built by");
+    expect(html).toContain('href="https://anantjain.xyz"');
+    expect(html).toContain("Anant Jain");
+  });
+
   it("smoke-renders the code-native product mockups", () => {
     const html = renderToStaticMarkup(
       createElement(
