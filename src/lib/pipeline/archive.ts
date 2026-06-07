@@ -48,19 +48,23 @@ export async function archiveSession(
     throw error;
   }
 
-  // No row matched ⇒ the session was already archived; a prior archive owns the
-  // cancellation. Read the current state so the caller still gets the id +
-  // archived_at to echo back.
-  if (!data) {
-    return readSessionArchiveState(admin, input.sessionId);
-  }
-
-  // Marker is set; now stop in-flight work.
+  // Always run cancellation, even when the session was already archived (no row
+  // matched). cancelSessionWork is idempotent — it only touches still-active
+  // jobs/runs — so re-running it lets a retry finish cleanup when a prior
+  // archive's cancellation failed after the marker was already committed.
+  // Otherwise the `!data` path would short-circuit and a worker could keep
+  // writing to a session the UI shows as archived.
   await cancelSessionWork(admin, {
     parkPhaseStatus: true,
     reason: input.reason,
     sessionId: input.sessionId,
   });
+
+  // No row matched ⇒ the session was already archived. Read the current state
+  // so the caller still gets the id + archived_at to echo back.
+  if (!data) {
+    return readSessionArchiveState(admin, input.sessionId);
+  }
 
   return { archivedAt: data.archived_at, id: data.id };
 }

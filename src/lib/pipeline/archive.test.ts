@@ -120,8 +120,14 @@ describe("archiveSession", () => {
 
     expect(result).toEqual({ archivedAt: "2026-06-01T00:00:00.000Z", id: "s1" });
     expect(calls.some((c) => c.op === "select")).toBe(true);
-    // A prior archive already canceled the work; this no-op must not re-cancel.
-    expect(cancelMocks.cancelSessionWork).not.toHaveBeenCalled();
+    // cancelSessionWork is idempotent and runs even on the already-archived
+    // path, so a retry can finish cleanup if a prior archive's cancel failed
+    // after the marker landed.
+    expect(cancelMocks.cancelSessionWork).toHaveBeenCalledWith(admin, {
+      parkPhaseStatus: true,
+      reason: "Session archived by a workspace member.",
+      sessionId: "s1",
+    });
   });
 });
 

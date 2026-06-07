@@ -18,6 +18,7 @@ export type WallieActionErrorCode =
   | "run_lookup_timeout"
   | "session_not_found"
   | "session_archived"
+  | "session_not_runnable"
   | "run_not_found"
   | "run_not_retryable";
 

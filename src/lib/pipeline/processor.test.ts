@@ -1097,13 +1097,16 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("returns success without running the agent when the CAS claim fails (terminal state)", async () => {
     const session = baseSession({ phase_status: "approved" });
-    const { admin } = buildAdminMock({
+    const { admin, updatedRuns } = buildAdminMock({
       session,
       claimSucceeds: false,
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
     expect(result.result).toBe("success");
+    // Any run queued up-front for this unclaimable job is canceled so it does
+    // not dangle as a permanently-active run.
+    expect(updatedRuns).toContainEqual(expect.objectContaining({ status: "canceled" }));
   });
 
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {

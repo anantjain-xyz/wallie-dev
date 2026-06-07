@@ -35,6 +35,7 @@ type SessionForRun = Pick<
   | "current_stage_id"
   | "id"
   | "number"
+  | "phase_status"
   | "prompt_md"
   | "title"
   | "workspace_id"
@@ -44,7 +45,7 @@ type AgentRunRow = Tables<"agent_runs">;
 type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
 
 const sessionSelect =
-  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at";
+  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
@@ -516,6 +517,18 @@ async function validateQueuedRunRequest(input: {
     throw new WallieActionError({
       code: "session_archived",
       message: "This session is archived. Unarchive it to run Wallie.",
+      statusCode: 409,
+    });
+  }
+
+  // A completed session sits in `approved` (terminal-stage approval leaves it
+  // there). The processor only claims agent_generating/awaiting_review/rejected,
+  // so enqueueing here would strand a queued run the worker never finishes.
+  // Reject up front — this also covers a completed session that was unarchived.
+  if (session.phase_status === "approved") {
+    throw new WallieActionError({
+      code: "session_not_runnable",
+      message: "This session is complete. There is nothing left to run.",
       statusCode: 409,
     });
   }
