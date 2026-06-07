@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createSessionPayloadSchema } from "@/features/sessions/create";
+import { updateSessionTitleClientInputSchema } from "@/features/sessions/update-title";
 import type { Database } from "@/lib/supabase/database.types";
 
 export type CreateSessionInput = {
@@ -13,6 +14,17 @@ export type CreateSessionInput = {
 
 export type CreateSessionResult = {
   number: number;
+};
+
+export type UpdateSessionTitleInput = {
+  sessionId: string;
+  title: string;
+};
+
+export type UpdateSessionTitleResult = {
+  id: string;
+  title: string;
+  updatedAt: string;
 };
 
 export async function createSessionFromClient(
@@ -51,4 +63,43 @@ export async function createSessionFromClient(
   }
 
   return { number: responsePayload.number };
+}
+
+export async function updateSessionTitleFromClient(
+  input: UpdateSessionTitleInput,
+): Promise<UpdateSessionTitleResult> {
+  const parsed = updateSessionTitleClientInputSchema.parse({
+    sessionId: input.sessionId,
+    title: input.title,
+  });
+
+  const response = await fetch(`/api/sessions/${parsed.sessionId}`, {
+    body: JSON.stringify({ title: parsed.title }),
+    headers: { "content-type": "application/json" },
+    method: "PATCH",
+  });
+  const responsePayload = (await response.json().catch(() => null)) as {
+    error?: string;
+    id?: string;
+    title?: string;
+    updatedAt?: string;
+  } | null;
+
+  if (!response.ok) {
+    throw new Error(responsePayload?.error ?? "Failed to update session title.");
+  }
+
+  if (
+    typeof responsePayload?.id !== "string" ||
+    typeof responsePayload.title !== "string" ||
+    typeof responsePayload.updatedAt !== "string"
+  ) {
+    throw new Error("Session title response was invalid.");
+  }
+
+  return {
+    id: responsePayload.id,
+    title: responsePayload.title,
+    updatedAt: responsePayload.updatedAt,
+  };
 }

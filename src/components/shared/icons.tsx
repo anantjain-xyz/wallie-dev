@@ -239,6 +239,27 @@ export function XIcon({ className, ...props }: IconProps) {
   );
 }
 
+export function PencilIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className={iconClassName(className)}
+      fill="none"
+      {...props}
+    >
+      <path
+        d="M9.75 3.25 12.75 6.25 6.5 12.5l-3.25.75.75-3.25 5.75-6.75Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="m8.75 4.5 2.75 2.75" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  );
+}
+
 export function InboxIcon({ className, ...props }: IconProps) {
   return (
     <svg
