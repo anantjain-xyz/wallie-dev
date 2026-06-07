@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createSessionFromClient } from "./client";
+import { createSessionFromClient, updateSessionTitleFromClient } from "./client";
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
+const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
 function mockFetch(response: { body: Record<string, unknown>; ok: boolean; status?: number }) {
   const fetchMock = vi.fn(async () => ({
@@ -81,5 +82,80 @@ describe("createSessionFromClient", () => {
         workspaceId: WORKSPACE_ID,
       }),
     ).rejects.toThrow("Session response did not include a session number.");
+  });
+});
+
+describe("updateSessionTitleFromClient", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects an empty title before calling the API", async () => {
+    const fetchMock = mockFetch({
+      body: { id: SESSION_ID, title: "Updated title", updatedAt: "2026-06-07T12:00:00.000Z" },
+      ok: true,
+    });
+
+    await expect(
+      updateSessionTitleFromClient({
+        sessionId: SESSION_ID,
+        title: "   ",
+      }),
+    ).rejects.toThrow("Title is required.");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("patches the normalized title and returns the updated title", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        id: SESSION_ID,
+        title: "Updated title",
+        updatedAt: "2026-06-07T12:00:00.000Z",
+      },
+      ok: true,
+    });
+
+    const result = await updateSessionTitleFromClient({
+      sessionId: SESSION_ID,
+      title: "  Updated title  ",
+    });
+
+    expect(result).toEqual({
+      id: SESSION_ID,
+      title: "Updated title",
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/${SESSION_ID}`, {
+      body: JSON.stringify({ title: "Updated title" }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    });
+  });
+
+  it("surfaces update API errors", async () => {
+    mockFetch({
+      body: { error: "Session not found" },
+      ok: false,
+      status: 404,
+    });
+
+    await expect(
+      updateSessionTitleFromClient({
+        sessionId: SESSION_ID,
+        title: "Updated title",
+      }),
+    ).rejects.toThrow("Session not found");
+  });
+
+  it("rejects malformed update success responses", async () => {
+    mockFetch({ body: { success: true }, ok: true });
+
+    await expect(
+      updateSessionTitleFromClient({
+        sessionId: SESSION_ID,
+        title: "Updated title",
+      }),
+    ).rejects.toThrow("Session title response was invalid.");
   });
 });

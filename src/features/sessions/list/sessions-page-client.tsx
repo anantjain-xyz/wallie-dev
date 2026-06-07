@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { Spinner } from "@/components/shared/spinner";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
+import { updateSessionTitleFromClient } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import type { SessionListPageData } from "@/features/sessions/list/data";
@@ -14,7 +16,7 @@ import {
   type SessionListQueryState,
   type SessionSummary,
 } from "@/features/sessions/types";
-import { SearchIcon } from "@/components/shared/icons";
+import { CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -195,26 +197,175 @@ function SessionRow({
   session: SessionSummary;
   workspaceSlug: string;
 }) {
+  const router = useRouter();
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
+  const [displayTitle, setDisplayTitle] = useState(session.title);
+  const [draftTitle, setDraftTitle] = useState(session.title);
+  const [error, setError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [, startRefreshTransition] = useTransition();
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+  const previousSessionTitleRef = useRef(session.title);
+
+  useEffect(() => {
+    if (previousSessionTitleRef.current === session.title) return;
+    previousSessionTitleRef.current = session.title;
+    setDisplayTitle(session.title);
+    if (!isEditing) {
+      setDraftTitle(session.title);
+    }
+  }, [isEditing, session.title]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    editInputRef.current?.focus();
+    editInputRef.current?.select();
+  }, [isEditing]);
+
+  function startEditing() {
+    setDraftTitle(displayTitle);
+    setError(null);
+    setIsEditing(true);
+  }
+
+  function cancelEditing() {
+    setDraftTitle(displayTitle);
+    setError(null);
+    setIsEditing(false);
+  }
+
+  function getErrorMessage(errorValue: unknown) {
+    return errorValue instanceof Error ? errorValue.message : "Failed to update session title.";
+  }
+
+  async function saveTitle() {
+    if (isSaving) {
+      return;
+    }
+
+    const normalizedTitle = draftTitle.trim();
+
+    if (!normalizedTitle) {
+      setError("Title is required.");
+      return;
+    }
+
+    if (normalizedTitle === displayTitle) {
+      setDraftTitle(displayTitle);
+      setError(null);
+      setIsEditing(false);
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const result = await updateSessionTitleFromClient({
+        sessionId: session.id,
+        title: normalizedTitle,
+      });
+      setDisplayTitle(result.title);
+      setDraftTitle(result.title);
+      setIsEditing(false);
+      startRefreshTransition(() => {
+        router.refresh();
+      });
+    } catch (errorValue) {
+      setDraftTitle(displayTitle);
+      setIsEditing(false);
+      setError(getErrorMessage(errorValue));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void saveTitle();
+  }
 
   return (
-    <li className="relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-surface-strong sm:px-5 md:flex-row md:items-center">
+    <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-surface-strong sm:px-5 md:flex-row md:items-center">
       <Link
         href={detailHref}
         className="absolute inset-0 z-10 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         <span className="sr-only">
-          Open session #{session.number}: {session.title}
+          Open session #{session.number}: {displayTitle}
         </span>
       </Link>
 
       <div className="pointer-events-none relative z-20 flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-start gap-2 md:items-center">
-          <span className="font-mono text-[11px] text-muted">#{session.number}</span>
-          <span className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate">
-            {session.title}
-          </span>
-        </div>
+        {isEditing ? (
+          <form className="pointer-events-auto relative z-30" onSubmit={handleEditSubmit}>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <span className="font-mono text-[11px] text-muted">#{session.number}</span>
+              <input
+                ref={editInputRef}
+                aria-label={`Session #${session.number} title`}
+                className="ui-input h-8 min-w-0 flex-1 px-2 py-1 text-[14px] font-medium"
+                disabled={isSaving}
+                value={draftTitle}
+                onChange={(event) => {
+                  setDraftTitle(event.target.value);
+                  if (error) setError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelEditing();
+                  }
+                }}
+              />
+              <div className="flex items-center gap-1">
+                <button
+                  type="submit"
+                  className="ui-icon-button h-8 w-8 text-accent"
+                  aria-label={`Save title for session #${session.number}`}
+                  title="Save title"
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <Spinner className="h-3.5 w-3.5" label="Saving title" />
+                  ) : (
+                    <CheckIcon className="h-3.5 w-3.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="ui-icon-button h-8 w-8"
+                  aria-label={`Cancel title edit for session #${session.number}`}
+                  title="Cancel title edit"
+                  disabled={isSaving}
+                  onClick={cancelEditing}
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <div className="flex min-w-0 items-start gap-2 md:items-center">
+            <span className="font-mono text-[11px] text-muted">#{session.number}</span>
+            <span
+              className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate"
+              title={displayTitle}
+            >
+              {displayTitle}
+            </span>
+            <button
+              type="button"
+              className="ui-icon-button pointer-events-auto relative z-30 h-7 w-7 shrink-0"
+              aria-label={`Edit title for session #${session.number}`}
+              title="Edit title"
+              onClick={startEditing}
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>
@@ -228,6 +379,11 @@ function SessionRow({
             </>
           ) : null}
         </div>
+        {error ? (
+          <p className="pointer-events-auto text-[11px] leading-4 text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       <div className="pointer-events-none relative z-20 shrink-0">
