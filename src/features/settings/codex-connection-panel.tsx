@@ -4,6 +4,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
 import { formatSentenceCaseLabel } from "@/lib/labels";
+import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 export interface CodexConnectionStatus {
   accountEmail?: string | null;
@@ -34,6 +35,9 @@ interface CodexConnectionPanelProps {
   connectFlash?: string | null;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: CodexConnectionStatus) => void;
+  vercelConnectionHref?: string;
+  vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
+  workspaceId?: string;
 }
 
 const CREDENTIAL_TYPES: CodexCredentialType[] = [
@@ -42,10 +46,95 @@ const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "platform_api_key",
 ];
 
+export function ChatGptSubscriptionControls({
+  blocked,
+  deviceFlow,
+  isBusy,
+  onCancel,
+  onStart,
+  vercelConnectionHref = "#vercel",
+}: {
+  blocked: boolean;
+  deviceFlow: CodexDeviceFlow | null;
+  isBusy: boolean;
+  onCancel: () => void;
+  onStart: () => void;
+  vercelConnectionHref?: string;
+}) {
+  return (
+    <div className="space-y-3">
+      {blocked ? (
+        <p className="text-[12px] leading-5 text-warning">
+          Connect{" "}
+          <a className="underline underline-offset-2" href={vercelConnectionHref}>
+            Vercel Sandbox
+          </a>{" "}
+          before using a ChatGPT subscription.
+        </p>
+      ) : null}
+      <button
+        className="ui-button-primary"
+        disabled={
+          blocked ||
+          isBusy ||
+          deviceFlow?.status === "starting" ||
+          deviceFlow?.status === "prompted"
+        }
+        onClick={onStart}
+        type="button"
+      >
+        {isBusy ? "Starting..." : "Sign in with ChatGPT"}
+      </button>
+
+      {deviceFlow ? (
+        <div className="space-y-2 rounded-[6px] border border-border bg-surface p-3">
+          <p className="text-[12px] font-medium text-foreground">
+            {deviceFlow.status === "starting"
+              ? "Waiting for sign-in code..."
+              : deviceFlow.status === "prompted"
+                ? deviceFlow.userCode
+                  ? "Enter this code in ChatGPT"
+                  : "Waiting for sign-in code..."
+                : formatSentenceCaseLabel(deviceFlow.status)}
+          </p>
+          {deviceFlow.userCode ? (
+            <p className="font-mono text-[22px] font-semibold tracking-normal text-foreground">
+              {deviceFlow.userCode}
+            </p>
+          ) : null}
+          {deviceFlow.verificationUri ? (
+            <a
+              className="text-[12px] text-link underline underline-offset-2"
+              href={deviceFlow.verificationUri}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Open ChatGPT sign-in
+            </a>
+          ) : null}
+          <div>
+            <button
+              className="text-[12px] font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={isBusy}
+              onClick={onCancel}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function CodexConnectionPanel({
   connectFlash,
   onStatusChange,
   returnTo,
+  vercelConnectionHref = "#vercel",
+  vercelSandboxConnection,
+  workspaceId,
 }: CodexConnectionPanelProps) {
   const [status, setStatus] = useState<CodexConnectionStatus | null>(null);
   const [credentialType, setCredentialType] = useState<CodexCredentialType>("chatgpt_auth_json");
@@ -85,10 +174,21 @@ export function CodexConnectionPanel({
     void refresh();
   }, [refresh]);
 
+  const deviceFlowCallbackUrl = useCallback(
+    (flowId: string) => {
+      const params = new URLSearchParams({ flowId });
+      if (workspaceId) {
+        params.set("workspaceId", workspaceId);
+      }
+      return `/auth/callback/codex?${params.toString()}`;
+    },
+    [workspaceId],
+  );
+
   const pollDeviceFlow = useCallback(
     async (flowId: string) => {
       try {
-        const response = await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(flowId)}`, {
+        const response = await fetch(deviceFlowCallbackUrl(flowId), {
           cache: "no-store",
           headers: { Accept: "application/json" },
         });
@@ -111,7 +211,7 @@ export function CodexConnectionPanel({
         setError(err instanceof Error ? err.message : "Failed to check Codex sign-in.");
       }
     },
-    [refresh],
+    [deviceFlowCallbackUrl, refresh],
   );
 
   useEffect(() => {
@@ -136,7 +236,11 @@ export function CodexConnectionPanel({
         (typeof window !== "undefined"
           ? `${window.location.pathname}${window.location.search}`
           : "");
-      const response = await fetch(`/auth/codex?next=${encodeURIComponent(next)}`, {
+      const params = new URLSearchParams({ next });
+      if (workspaceId) {
+        params.set("workspaceId", workspaceId);
+      }
+      const response = await fetch(`/auth/codex?${params.toString()}`, {
         cache: "no-store",
         headers: { Accept: "application/json" },
       });
@@ -166,7 +270,7 @@ export function CodexConnectionPanel({
     setIsBusy(true);
     setError(null);
     try {
-      await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(deviceFlow.flowId)}`, {
+      await fetch(deviceFlowCallbackUrl(deviceFlow.flowId), {
         method: "DELETE",
       });
       setDeviceFlow(null);
@@ -178,15 +282,18 @@ export function CodexConnectionPanel({
     }
   };
 
-  const cancelDeviceFlowQuietly = useCallback(async (flowId: string) => {
-    try {
-      await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(flowId)}`, {
-        method: "DELETE",
-      });
-    } catch {
-      // Leaving ChatGPT mode should stop local polling even if backend cleanup fails.
-    }
-  }, []);
+  const cancelDeviceFlowQuietly = useCallback(
+    async (flowId: string) => {
+      try {
+        await fetch(deviceFlowCallbackUrl(flowId), {
+          method: "DELETE",
+        });
+      } catch {
+        // Leaving ChatGPT mode should stop local polling even if backend cleanup fails.
+      }
+    },
+    [deviceFlowCallbackUrl],
+  );
 
   const handleCredentialTypeChange = (type: CodexCredentialType) => {
     if (type !== "chatgpt_auth_json" && deviceFlow) {
@@ -261,6 +368,8 @@ export function CodexConnectionPanel({
     ? codexCredentialTypeLabel(status.credentialType)
     : null;
   const saveDisabled = isBusy || credential.trim().length === 0;
+  const chatGptBlocked =
+    !workspaceId || !vercelSandboxConnection || vercelSandboxConnection.status !== "connected";
 
   const connectionTone: "connected" | "expired" | "reconnect" | null = status
     ? status.reconnectRequired
@@ -326,57 +435,14 @@ export function CodexConnectionPanel({
           </div>
 
           {credentialType === "chatgpt_auth_json" ? (
-            <div className="space-y-3">
-              <button
-                className="ui-button-primary"
-                disabled={
-                  isBusy || deviceFlow?.status === "starting" || deviceFlow?.status === "prompted"
-                }
-                onClick={handleStartChatGptSignIn}
-                type="button"
-              >
-                {isBusy ? "Starting..." : "Sign in with ChatGPT"}
-              </button>
-
-              {deviceFlow ? (
-                <div className="space-y-2 rounded-[6px] border border-border bg-surface p-3">
-                  <p className="text-[12px] font-medium text-foreground">
-                    {deviceFlow.status === "starting"
-                      ? "Waiting for sign-in code..."
-                      : deviceFlow.status === "prompted"
-                        ? deviceFlow.userCode
-                          ? "Enter this code in ChatGPT"
-                          : "Waiting for sign-in code..."
-                        : formatSentenceCaseLabel(deviceFlow.status)}
-                  </p>
-                  {deviceFlow.userCode ? (
-                    <p className="font-mono text-[22px] font-semibold tracking-normal text-foreground">
-                      {deviceFlow.userCode}
-                    </p>
-                  ) : null}
-                  {deviceFlow.verificationUri ? (
-                    <a
-                      className="text-[12px] text-link underline underline-offset-2"
-                      href={deviceFlow.verificationUri}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      Open ChatGPT sign-in
-                    </a>
-                  ) : null}
-                  <div>
-                    <button
-                      className="text-[12px] font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={isBusy}
-                      onClick={handleCancelChatGptSignIn}
-                      type="button"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <ChatGptSubscriptionControls
+              blocked={chatGptBlocked}
+              deviceFlow={deviceFlow}
+              isBusy={isBusy}
+              onCancel={handleCancelChatGptSignIn}
+              onStart={handleStartChatGptSignIn}
+              vercelConnectionHref={vercelConnectionHref}
+            />
           ) : (
             <form className="space-y-3" onSubmit={handleSave}>
               <label className="block space-y-1.5">

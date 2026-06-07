@@ -369,6 +369,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               setFlashMessage={setFlashMessage}
               tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
               title="Connect Agent"
+              vercelSandboxConnection={pageData.vercelSandboxConnection}
               workspaceId={pageData.workspace.id}
             />
 

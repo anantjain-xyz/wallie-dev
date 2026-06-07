@@ -2,9 +2,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { parseWorkerConfig } from "./config";
 import { deregisterWorker, registerWorker, sendHeartbeat } from "./heartbeat";
-import { pollOnce } from "./loop";
 import { reconcileLinearState } from "./reconciler";
 import { reapOrphanSandboxes } from "./sandbox-reaper";
+import { createScheduler } from "./scheduler";
 import { sweepStalledRuns } from "./stall-detector";
 
 async function main() {
@@ -15,6 +15,7 @@ async function main() {
     defaultConcurrencyLimit: config.defaultConcurrencyLimit,
     defaultStallTimeoutMs: config.defaultStallTimeoutMs,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
+    maxConcurrentJobs: config.maxConcurrentJobs,
     pollIntervalMs: config.pollIntervalMs,
     reconcileIntervalMs: config.reconcileIntervalMs,
     sandboxReapIntervalMs: config.sandboxReapIntervalMs,
@@ -26,9 +27,15 @@ async function main() {
   await registerWorker(admin, config.workerId);
 
   let shuttingDown = false;
-  let activeJobId: string | null = null;
 
-  // Graceful shutdown handler.
+  // Bounded-concurrency scheduler: claims and runs up to maxConcurrentJobs at
+  // once. It owns the in-flight set; the heartbeat timer reads it.
+  const scheduler = createScheduler(admin, config, {
+    isShuttingDown: () => shuttingDown,
+  });
+
+  // Graceful shutdown handler. We exit immediately and let the stall sweep
+  // reclaim any in-flight jobs (their heartbeat goes stale on exit).
   async function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -42,7 +49,9 @@ async function main() {
 
   // --- Heartbeat interval ---
   const heartbeatTimer = setInterval(() => {
-    runTimerTask("heartbeat", () => sendHeartbeat(admin, config.workerId, activeJobId));
+    runTimerTask("heartbeat", () =>
+      sendHeartbeat(admin, config.workerId, scheduler.getActiveJobIds()),
+    );
   }, config.heartbeatIntervalMs);
 
   // --- Stall detection interval ---
@@ -90,41 +99,15 @@ async function main() {
     });
   }, config.sandboxReapIntervalMs);
 
-  // --- Main polling loop ---
-  console.log("[worker] entering poll loop");
-  while (!shuttingDown) {
-    try {
-      const result = await pollOnce(admin, config, {
-        setActiveJobId: (jobId) => {
-          activeJobId = jobId;
-        },
-      });
-
-      if (result.outcome === "idle") {
-        // Nothing to do — sleep for the full poll interval.
-        await delay(config.pollIntervalMs);
-      } else if (result.outcome === "error") {
-        // Back off slightly on errors to avoid tight retry loops.
-        await delay(config.pollIntervalMs * 2);
-      }
-      // On "success", loop immediately to check for more work.
-    } catch (error) {
-      console.error("[worker] poll loop error", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      await delay(config.pollIntervalMs * 2);
-    }
-  }
+  // --- Main scheduling loop ---
+  console.log("[worker] entering scheduler loop");
+  await scheduler.run();
 
   // Cleanup (unreachable in normal flow — shutdown handler exits).
   clearInterval(heartbeatTimer);
   clearInterval(stallTimer);
   clearInterval(reconcileTimer);
   clearInterval(sandboxReapTimer);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function runTimerTask(label: string, task: () => Promise<void>): void {
