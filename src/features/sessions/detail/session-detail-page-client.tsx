@@ -7,6 +7,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Spinner } from "@/components/shared/spinner";
+import { ArchiveIcon } from "@/components/shared/icons";
+import { archiveSessionFromClient, unarchiveSessionFromClient } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
@@ -92,6 +94,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [stopPending, setStopPending] = useState(false);
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
@@ -118,9 +123,10 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const latestArtifact = activeArtifacts[0] ?? null;
   const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
   const isDraftingSelectedStage =
-    selectedStageIsCurrent && session.phaseStatus === "agent_generating";
+    selectedStageIsCurrent && session.phaseStatus === "agent_generating" && !session.archivedAt;
 
-  const canActOnCurrent = selectedStageIsCurrent && session.phaseStatus === "awaiting_review";
+  const canActOnCurrent =
+    selectedStageIsCurrent && session.phaseStatus === "awaiting_review" && !session.archivedAt;
   const phaseActionBusy = phaseActionPending !== null || isPending;
 
   useEffect(() => {
@@ -304,6 +310,122 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     }
   }
 
+  async function handleArchive() {
+    setArchiveError(null);
+    setArchivePending(true);
+
+    try {
+      const result = await archiveSessionFromClient({ sessionId: session.id });
+      setArchiveConfirming(false);
+      // Flip the header immediately; router.refresh() + realtime reconcile the
+      // parked phase_status.
+      setSession((current) => ({ ...current, archivedAt: result.archivedAt }));
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : "Failed to archive session.");
+    } finally {
+      setArchivePending(false);
+    }
+  }
+
+  async function handleUnarchive() {
+    setArchiveError(null);
+    setArchivePending(true);
+
+    try {
+      const result = await unarchiveSessionFromClient({ sessionId: session.id });
+      setSession((current) => ({ ...current, archivedAt: result.archivedAt }));
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : "Failed to unarchive session.");
+    } finally {
+      setArchivePending(false);
+    }
+  }
+
+  const headerActions = session.archivedAt ? (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-2">
+        <StatusChip tone="planned">Archived</StatusChip>
+        <button
+          type="button"
+          className="ui-button gap-1.5"
+          disabled={archivePending}
+          onClick={() => void handleUnarchive()}
+        >
+          {archivePending ? (
+            <>
+              <Spinner />
+              <span>Unarchiving…</span>
+            </>
+          ) : (
+            "Unarchive"
+          )}
+        </button>
+      </div>
+      {archiveError ? (
+        <span className="text-[11px] text-danger" role="alert">
+          {archiveError}
+        </span>
+      ) : null}
+    </div>
+  ) : (
+    <div className="flex flex-col items-end gap-1">
+      {archiveConfirming ? (
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-muted">Archive this session?</span>
+          <button
+            type="button"
+            className="ui-button-danger gap-1.5"
+            disabled={archivePending}
+            onClick={() => void handleArchive()}
+          >
+            {archivePending ? (
+              <>
+                <Spinner />
+                <span>Archiving…</span>
+              </>
+            ) : (
+              "Confirm"
+            )}
+          </button>
+          <button
+            type="button"
+            className="ui-button"
+            disabled={archivePending}
+            onClick={() => {
+              setArchiveConfirming(false);
+              setArchiveError(null);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="ui-button gap-1.5"
+          onClick={() => {
+            setArchiveConfirming(true);
+            setArchiveError(null);
+          }}
+        >
+          <ArchiveIcon className="h-3.5 w-3.5" />
+          <span>Archive</span>
+        </button>
+      )}
+      {archiveError ? (
+        <span className="text-[11px] text-danger" role="alert">
+          {archiveError}
+        </span>
+      ) : null}
+    </div>
+  );
+
   return (
     <PageContainer>
       <PageHeader
@@ -316,7 +438,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           </Link>
         }
         title={session.title}
-        actions={session.archivedAt ? <StatusChip tone="planned">Archived</StatusChip> : null}
+        actions={headerActions}
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px] text-muted">
