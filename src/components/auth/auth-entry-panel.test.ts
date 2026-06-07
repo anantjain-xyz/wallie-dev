@@ -61,6 +61,12 @@ describe("AuthEntryPanel", () => {
     expect(html).toContain("Request another code");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
+    expect(countMatches(html, 'aria-label="Digit ')).toBe(6);
+    expect(countMatches(html, 'inputMode="numeric"')).toBe(6);
+    expect(countMatches(html, 'pattern="[0-9]*"')).toBe(6);
+    expect(countMatches(html, 'maxLength="1"')).toBe(6);
+    expect(html).toContain('autoComplete="one-time-code"');
+    expect(countMatches(html, 'autoComplete="off"')).toBe(5);
     expect(html).not.toContain("Send magic link");
     expect(html).not.toContain('name="email"');
     expect(html).not.toContain('type="email"');

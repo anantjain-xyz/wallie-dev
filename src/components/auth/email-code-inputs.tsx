@@ -3,6 +3,50 @@
 import { useRef } from "react";
 
 const CODE_LENGTH = 6;
+const COMPLETE_CODE_PATTERN = /^[\s-]*\d(?:[\s-]*\d){5}[\s-]*$/;
+
+export type EmailCodeDigitUpdate = {
+  clearExistingDigits: boolean;
+  digits: string;
+  startIndex: number;
+};
+
+export function getEmailCodeDigitUpdate(
+  startIndex: number,
+  value: string,
+): EmailCodeDigitUpdate | null {
+  const normalizedCompleteCode = normalizeCompleteEmailCode(value);
+
+  if (normalizedCompleteCode) {
+    return {
+      clearExistingDigits: true,
+      digits: normalizedCompleteCode,
+      startIndex: 0,
+    };
+  }
+
+  const digits = value.replace(/\D/g, "").slice(0, CODE_LENGTH - startIndex);
+
+  if (!digits) {
+    return null;
+  }
+
+  return {
+    clearExistingDigits: false,
+    digits,
+    startIndex,
+  };
+}
+
+export function normalizeCompleteEmailCode(value: string) {
+  const digits = value.replace(/\D/g, "");
+
+  if (digits.length !== CODE_LENGTH || !COMPLETE_CODE_PATTERN.test(value)) {
+    return null;
+  }
+
+  return digits;
+}
 
 export function EmailCodeInputs() {
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -38,21 +82,29 @@ export function EmailCodeInputs() {
   }
 
   function setDigits(startIndex: number, value: string) {
-    const digits = value.replace(/\D/g, "").slice(0, CODE_LENGTH - startIndex);
+    const update = getEmailCodeDigitUpdate(startIndex, value);
 
-    if (!digits) {
+    if (!update) {
       return;
     }
 
-    digits.split("").forEach((digit, offset) => {
-      const input = inputRefs.current[startIndex + offset];
+    if (update.clearExistingDigits) {
+      inputRefs.current.forEach((input) => {
+        if (input) {
+          input.value = "";
+        }
+      });
+    }
+
+    update.digits.split("").forEach((digit, offset) => {
+      const input = inputRefs.current[update.startIndex + offset];
 
       if (input) {
         input.value = digit;
       }
     });
 
-    focusInput(Math.min(startIndex + digits.length, CODE_LENGTH - 1));
+    focusInput(Math.min(update.startIndex + update.digits.length, CODE_LENGTH - 1));
     maybeSubmitCompletedCode();
   }
 
