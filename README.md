@@ -501,10 +501,9 @@ Sessions are deduplicated on `(workspace_id, linear_issue_id)` -- one session pe
 
 ### Security
 
-- LLM inputs are sanitized via `sanitizeUntrusted()` to prevent prompt injection
-- User content is wrapped in XML tags with explicit data boundary markers
 - Integration credentials are encrypted at rest with AES-256
 - GitHub webhooks are signature-verified
+- A `sanitizeUntrusted()` helper lives in `src/lib/pipeline/prompt-safety.ts` for prompt-injection defense; note it is **not yet wired into the prompt path** (`processPipelineJob()` renders the session prompt as-is), so apply it yourself when extending prompts with untrusted input
 
 ### Realtime
 

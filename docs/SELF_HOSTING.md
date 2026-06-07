@@ -40,7 +40,7 @@ Wallie has two long-lived processes plus managed backing services:
 
    `supabase db push` runs the baseline migration plus all forward migrations against your hosted database. Do **not** load `supabase/seed.sql` — that's local development demo data.
 
-3. **Auth:** in **Authentication → URL Configuration**, set the **Site URL** and **Redirect URLs** to your production origin (e.g. `https://wallie.example.com`, plus `https://wallie.example.com/auth/callback`). Enable email sign-in. If you want the branded emails, copy the templates from `supabase/templates/auth/` into **Authentication → Email Templates**.
+3. **Auth:** in **Authentication → URL Configuration**, set the **Site URL** to your production origin (e.g. `https://wallie.example.com`) and add the email/magic-link/invite callback to **Redirect URLs**. The app's email sign-in and workspace invites redirect to `/auth/confirm`, so allow-list the exact `https://wallie.example.com/auth/confirm` (or a wildcard like `https://wallie.example.com/**`) — Supabase ignores `redirectTo` URLs that aren't allow-listed, which would silently break login and invite acceptance. Enable email sign-in. If you want the branded emails, copy the templates from `supabase/templates/auth/` into **Authentication → Email Templates**.
 4. From **Project Settings → API**, collect:
    - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
    - Publishable / anon key → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
@@ -82,11 +82,12 @@ The worker runs `pnpm worker` continuously and needs the **same environment vari
 
 1. Create a new Railway service from the same repo.
 2. Add the same env vars as the web app.
-3. Because the worker is **not** on Vercel, give it Sandbox credentials so it can create sandboxes:
+3. If you want the worker to create non-session/operator sandboxes off Vercel, give it operator credentials:
    - `VERCEL_TOKEN` — a team-scoped token from <https://vercel.com/account/tokens>
    - `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`
-   - (Or use the per-workspace Vercel connection saved in Settings.)
 4. Deploy. The worker registers a heartbeat and starts draining `agent_jobs`.
+
+> **Session sandboxes need the per-workspace connection, not these env vars.** When the worker runs a session it loads the workspace's saved Vercel Sandbox connection (`workspace_vercel_sandbox_connections`) and fails fast with `vercel_sandbox_connection_missing` if it isn't set. The `VERCEL_*` env vars above only cover operator/helper sandboxes. Each workspace must connect its Vercel account in **Settings** (see [step 6](#6-per-workspace-setup-in-the-app-not-env-vars)) before sessions can run.
 
 **Any other always-on host (Fly, Render, a VM, Docker):** run the same repo with `pnpm install && pnpm worker` and the same environment. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `agent_generating` and never progress.
 
@@ -96,9 +97,13 @@ This mirrors the [README → Create a GitHub App](../README.md#5-create-a-github
 
 - **Homepage URL:** your origin (e.g. `https://wallie.example.com`)
 - **Callback URL:** `https://wallie.example.com/api/github/callback` (keep OAuth-during-install **off**)
+- **Setup URL (post installation):** `https://wallie.example.com/api/github/callback` — **required.** With OAuth-during-install off, GitHub sends the user here after install, with the `installation_id` and signed `state`, so Wallie can record the installation. Without it, an install can finish on GitHub and leave the workspace disconnected.
 - **Webhook URL:** `https://wallie.example.com/api/github/webhooks`
 - **Webhook secret:** a strong random string → also set as `GITHUB_WEBHOOK_SECRET`
-- **Repository permissions:** Pull requests → **Read-only** (add more only as later phases need them)
+- **Repository permissions:**
+  - **Contents** → **Read and write** — repo onboarding creates branches, trees, and commits (`src/lib/repo-onboarding/server.ts`).
+  - **Pull requests** → **Read and write** — onboarding opens a setup PR and session completion opens PRs (`src/lib/pipeline/pull-request.ts`); webhook ingestion also reads PR state.
+  - **Metadata** → **Read-only** (mandatory, set automatically).
 - **Subscribe to events:** `Pull request`
 - **Where can this app be installed?** "Any account" if you want others to install it; "Only this account" for a private deployment.
 

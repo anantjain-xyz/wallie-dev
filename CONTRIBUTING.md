@@ -28,7 +28,7 @@ pnpm worker                  # in another
 
 ## Before you open a PR
 
-Run the full check suite locally — CI runs the same checks and the lint step allows **zero warnings**:
+Run the full check suite locally — this is the pre-PR gate. CI runs `format:check`, `lint` (with **zero warnings**), and `test`, but **not** `typecheck`, so running `pnpm check` locally is what catches TypeScript errors before review:
 
 ```bash
 pnpm check   # format:check + lint + typecheck + test

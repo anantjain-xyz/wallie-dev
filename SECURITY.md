@@ -42,5 +42,5 @@ Wallie executes agent-authored code inside sandboxes and stores integration cred
 - **Never commit `.env.local`** or any real credentials. Everything matching `.env*` (except `.env.example`) is gitignored — keep it that way. `*.pem` private keys are gitignored too.
 - **Use the service-role key (`SUPABASE_SECRET_KEY`) only server-side.** Never expose it to the browser; client code uses the publishable/anon key.
 - **GitHub webhooks are signature-verified** against `GITHUB_WEBHOOK_SECRET` — set a strong value and keep it in sync with your GitHub App.
-- **Untrusted input** (e.g. Linear issue text) is sanitized before it reaches a model prompt; keep that boundary intact when extending prompts.
+- **Treat workspace-supplied content as untrusted** (e.g. Linear issue text, the session prompt) when it flows into a model prompt. A `sanitizeUntrusted()` helper exists in `src/lib/pipeline/prompt-safety.ts`, but it is **not currently wired into the prompt path** — `processPipelineJob()` renders the session prompt as-is. If you extend prompts with untrusted input, apply that helper (or equivalent data-boundary markers) yourself; don't assume the boundary is already enforced.
 - Keep dependencies and your Supabase project up to date.
