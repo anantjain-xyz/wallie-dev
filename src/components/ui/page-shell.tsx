@@ -15,6 +15,9 @@ export function PageContainer({ children, className }: PageContainerProps) {
   );
 }
 
+export const PAGE_HEADER_TITLE_CLASS =
+  "break-words text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]";
+
 type PageHeaderProps = {
   actions?: ReactNode;
   description?: ReactNode;
@@ -25,6 +28,13 @@ type PageHeaderProps = {
    */
   eyebrowAsPlain?: boolean;
   title: ReactNode;
+  /**
+   * When true, render `title` as-is instead of wrapping it in the default `<h1>`.
+   * Use when the title needs adjacent controls (e.g. inline editing) that must
+   * stay outside the heading so the heading's accessible name is only its text.
+   * The caller is responsible for rendering its own heading.
+   */
+  titleAsChild?: boolean;
 };
 
 export function PageHeader({
@@ -33,6 +43,7 @@ export function PageHeader({
   eyebrow,
   eyebrowAsPlain = false,
   title,
+  titleAsChild = false,
 }: PageHeaderProps) {
   return (
     <header className="mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sm:mb-10">
@@ -48,9 +59,7 @@ export function PageHeader({
             {eyebrow}
           </div>
         ) : null}
-        <h1 className="break-words text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
-          {title}
-        </h1>
+        {titleAsChild ? title : <h1 className={PAGE_HEADER_TITLE_CLASS}>{title}</h1>}
         {description ? (
           <p className="max-w-2xl text-[14px] leading-6 text-muted">{description}</p>
         ) : null}

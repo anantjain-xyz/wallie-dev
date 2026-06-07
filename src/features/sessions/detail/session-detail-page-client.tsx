@@ -5,7 +5,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState, useTransition } f
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
 import {
@@ -448,6 +448,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             ← Sessions
           </Link>
         }
+        titleAsChild
         title={
           <EditableSessionTitle
             onTitleSaved={handleTitleSaved}
@@ -769,8 +770,10 @@ function EditableSessionTitle({
 
   if (isEditing) {
     return (
-      <span className="flex flex-col gap-2">
-        <span className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-2">
+        {/* Keep a stable heading name for assistive tech while the visible title is an input. */}
+        <h1 className="sr-only">{title}</h1>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <input
             ref={editInputRef}
             aria-label={`Session #${sessionNumber} title`}
@@ -791,7 +794,7 @@ function EditableSessionTitle({
               }
             }}
           />
-          <span className="flex items-center gap-1">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               className="ui-icon-button h-9 w-9 text-accent"
@@ -816,20 +819,20 @@ function EditableSessionTitle({
             >
               <XIcon className="h-4 w-4" />
             </button>
-          </span>
-        </span>
+          </div>
+        </div>
         {error ? (
-          <span className="block text-[12px] font-normal leading-4 text-danger" role="alert">
+          <p className="text-[12px] leading-4 text-danger" role="alert">
             {error}
-          </span>
+          </p>
         ) : null}
-      </span>
+      </div>
     );
   }
 
   return (
-    <span className="flex items-center gap-2">
-      <span className="min-w-0 break-words">{title}</span>
+    <div className="flex items-center gap-2">
+      <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>{title}</h1>
       <button
         type="button"
         className="ui-icon-button h-8 w-8 shrink-0"
@@ -839,7 +842,7 @@ function EditableSessionTitle({
       >
         <PencilIcon className="h-4 w-4" />
       </button>
-    </span>
+    </div>
   );
 }
 

@@ -110,4 +110,18 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain('title="Edit title"');
     expect(html).not.toContain('aria-label="Session #7 title"');
   });
+
+  it("keeps the edit control outside the heading so the heading name is only the title", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        initialData: makeSessionDetailData(),
+      }),
+    );
+
+    const headingMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/);
+
+    expect(headingMatch).not.toBeNull();
+    // The heading must contain only the title text — no nested buttons/controls.
+    expect(headingMatch?.[1]).toBe("Editable Session");
+  });
 });
