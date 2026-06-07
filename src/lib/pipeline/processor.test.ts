@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
+import { CodexAuthLeaseBusyError } from "@/lib/codex/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
@@ -330,6 +331,16 @@ function buildAdminMock(opts: MockOptions) {
       return {
         select: () => ({ single: async () => ({ data: { id: "run-1" }, error: null }) }),
       };
+    },
+    select: () => {
+      const chain = {
+        eq: () => chain,
+        in: () => chain,
+        limit: () => chain,
+        maybeSingle: async () => ({ data: { id: "run-1" }, error: null }),
+        order: () => chain,
+      };
+      return chain;
     },
     update: (patch: Record<string, unknown>) => {
       updatedRuns.push(patch);
@@ -713,10 +724,11 @@ describe("processPipelineJob (generic stage runner)", () => {
       new Error("Unsupported state or unable to authenticate data"),
     );
     const session = baseSession();
-    const { admin, insertedRuns, updatedJobs, updatedRuns, updatedSessions } = buildAdminMock({
-      session,
-      agentConfig: [],
-    });
+    const { admin, insertedMessages, insertedRuns, updatedJobs, updatedRuns, updatedSessions } =
+      buildAdminMock({
+        session,
+        agentConfig: [],
+      });
 
     const result = await processPipelineJob({
       admin,
@@ -727,10 +739,20 @@ describe("processPipelineJob (generic stage runner)", () => {
       jobId: "job-1",
       processed: true,
       result: "error",
-      runId: null,
+      runId: "run-1",
     });
     expect(insertedRuns).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** Unsupported state or unable to authenticate data",
+      }),
+    ]);
     expect(updatedRuns).toEqual([
+      expect.objectContaining({
+        finished_at: expect.any(String),
+        status: "error",
+      }),
       expect.objectContaining({
         finished_at: expect.any(String),
         status: "error",
@@ -946,6 +968,10 @@ describe("processPipelineJob (generic stage runner)", () => {
         kind: "completion",
         message_md: "Done",
       }),
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** artifact insert failed",
+      }),
     ]);
     expect(insertedMessages).not.toContainEqual(
       expect.objectContaining({
@@ -990,6 +1016,10 @@ describe("processPipelineJob (generic stage runner)", () => {
         kind: "completion",
         message_md: "Done",
       }),
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** completion insert failed",
+      }),
     ]);
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedJobs.at(-1)).toMatchObject({
@@ -1016,12 +1046,19 @@ describe("processPipelineJob (generic stage runner)", () => {
 
   it("errors when a sandbox-required runner has no GitHub installation for the workspace", async () => {
     const session = baseSession();
-    const { admin, updatedSessions } = buildAdminMock({
+    const { admin, insertedMessages, updatedSessions } = buildAdminMock({
       session,
       githubInstallation: null,
     });
     const result = await processPipelineJob({ admin, job: baseJob() });
     expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          "**Error:** No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
+      }),
+    ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
@@ -1036,14 +1073,21 @@ describe("processPipelineJob (generic stage runner)", () => {
     error.name = "VercelSandboxConnectionMissingError";
     mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(error);
     const session = baseSession();
-    const { admin, insertedArtifacts, rpc, updatedJobs, updatedSessions } = buildAdminMock({
-      session,
-    });
+    const { admin, insertedArtifacts, insertedMessages, rpc, updatedJobs, updatedSessions } =
+      buildAdminMock({
+        session,
+      });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** Connect a Vercel Sandbox account before starting Wallie runs.",
+      }),
+    ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
@@ -1091,14 +1135,27 @@ describe("processPipelineJob (generic stage runner)", () => {
   });
 
   it("aborts the stage and flips status to rejected when sandbox provisioning fails", async () => {
-    mocked.createSessionSandbox.mockRejectedValueOnce(new Error("vercel sandbox unavailable"));
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        "vercel sandbox unavailable: https://wallie:secret-token@example.com/run?token=vca_12345678901234567890",
+      ),
+    );
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
+    const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
+      session,
+    });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          "**Error:** vercel sandbox unavailable: https://[redacted]@example.com/run?token=[redacted]",
+      }),
+    ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
@@ -1106,18 +1163,160 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
+  it("redacts multiline secret diagnostics before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        [
+          "sandbox failed while loading env",
+          'PRIVATE_KEY="-----BEGIN PRIVATE KEY-----',
+          "abc def ghi",
+          '-----END PRIVATE KEY-----"',
+          "ACCESS_TOKEN=first second third",
+          "Retry after reconnecting.",
+        ].join("\n"),
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: [
+          "**Error:** sandbox failed while loading env",
+          'PRIVATE_KEY="[redacted]"',
+          "ACCESS_TOKEN=[redacted]",
+          "Retry after reconnecting.",
+        ].join("\n"),
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("BEGIN PRIVATE KEY");
+    expect(insertedMessages[0]!.message_md).not.toContain("abc def ghi");
+    expect(insertedMessages[0]!.message_md).not.toContain("first second third");
+  });
+
+  it("redacts escaped quoted secret assignments before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox failed while loading env\nAPI_KEY="abc\\"def-secret"\nRetry after reconnecting.',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: [
+          "**Error:** sandbox failed while loading env",
+          'API_KEY="[redacted]"',
+          "Retry after reconnecting.",
+        ].join("\n"),
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("abc");
+    expect(insertedMessages[0]!.message_md).not.toContain("def-secret");
+  });
+
+  it("redacts quoted JSON secret fields before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox config rejected: {"token":"plain-secret-12345","password":"hunter2","safe":"visible"}',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          '**Error:** sandbox config rejected: {"token": "[redacted]","password": "[redacted]","safe":"visible"}',
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-secret-12345");
+    expect(insertedMessages[0]!.message_md).not.toContain("hunter2");
+    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+  });
+
+  it("redacts camelCase JSON secret fields before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox config rejected: {"apiKey":"plain-api-key","privateKey":"plain-private-key","clientSecret":"plain-client-secret","safe":"visible"}',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          '**Error:** sandbox config rejected: {"apiKey": "[redacted]","privateKey": "[redacted]","clientSecret": "[redacted]","safe":"visible"}',
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-api-key");
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-private-key");
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-client-secret");
+    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+  });
+
+  it("redacts object-valued JSON secret fields before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        'sandbox config rejected: {"token":{"value":"plain-secret-12345"},"privateKey":["line1","line2"],"safe":"visible"}',
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md:
+          '**Error:** sandbox config rejected: {"token": "[redacted]","privateKey": "[redacted]","safe":"visible"}',
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("plain-secret-12345");
+    expect(insertedMessages[0]!.message_md).not.toContain("line1");
+    expect(insertedMessages[0]!.message_md).not.toContain("line2");
+    expect(insertedMessages[0]!.message_md).toContain('"safe":"visible"');
+  });
+
   it("aborts the stage when persisting the sandbox id fails", async () => {
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedRuns, updatedSessions } = buildAdminMock({
-      session,
-      runSandboxUpdateError: { message: "sandbox id write failed" },
-    });
+    const { admin, insertedArtifacts, insertedMessages, updatedRuns, updatedSessions } =
+      buildAdminMock({
+        session,
+        runSandboxUpdateError: { message: "sandbox id write failed" },
+      });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
     expect(result.runId).toBe("run-1");
     expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** sandbox id write failed",
+      }),
+    ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedRuns[1]).toEqual({
       sandbox_id: "sandbox-1",
@@ -1132,6 +1331,70 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
+  it("records a visible error and defers when Codex ChatGPT auth lease is busy", async () => {
+    mocked.createAgentRunner.mockReturnValue({
+      provider: "codex",
+      requiresSandbox: true,
+      async *start() {
+        throw new CodexAuthLeaseBusyError();
+      },
+    });
+    const session = baseSession();
+    const { admin, insertedMessages, rpc, updatedJobs, updatedRuns, updatedSessions } =
+      buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result).toEqual({
+      jobId: "job-1",
+      processed: true,
+      result: "idle",
+      runId: "run-1",
+    });
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** Codex ChatGPT auth is already in use by another run.",
+      }),
+    ]);
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
+    expect(updatedSessions.at(-1)).toEqual({ phase_status: "agent_generating" });
+    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
+      base_delay_ms: 15000,
+      max_backoff_ms: 120000,
+      target_job_id: "job-1",
+    });
+    expect(updatedJobs.at(-1)).toEqual({
+      last_error: "Codex ChatGPT auth is already in use by another run.",
+    });
+  });
+
+  it("swallows diagnostic insert failures and preserves sandbox failure handling", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(new Error("vercel sandbox unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const session = baseSession();
+    const { admin, insertedArtifacts, insertedMessages, updatedJobs, updatedSessions } =
+      buildAdminMock({
+        session,
+        messageInsertError: { message: "diagnostic insert failed" },
+      });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toHaveLength(0);
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "vercel sandbox unavailable",
+      status: "error",
+    });
+    expect(updatedSessions).toEqual([
+      { phase_status: "agent_generating" },
+      { phase_status: "rejected" },
+    ]);
+    consoleError.mockRestore();
+  });
+
   it("treats an agent error event as a stage failure and deletes the orphan artifact", async () => {
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
@@ -1140,12 +1403,24 @@ describe("processPipelineJob (generic stage runner)", () => {
       ]),
     );
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
+    const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
+      session,
+    });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("error");
     expect(insertedArtifacts).toHaveLength(0);
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "text",
+        message_md: "partial output",
+      }),
+      expect.objectContaining({
+        kind: "error",
+        message_md: "**Error:** rate limited",
+      }),
+    ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "agent_generating" },
