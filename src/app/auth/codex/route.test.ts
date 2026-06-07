@@ -23,6 +23,12 @@ const mocked = vi.hoisted(() => ({
   },
 }));
 
+const vercelCredentials = {
+  projectId: "prj_123",
+  teamId: "team_123",
+  token: "vca_secret",
+};
+
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
 }));
@@ -66,11 +72,7 @@ describe("GET /auth/codex", () => {
     mocked.createSupabaseServerClient.mockResolvedValue({});
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
     mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-      credentials: {
-        projectId: "prj_123",
-        teamId: "team_123",
-        token: "vca_secret",
-      },
+      credentials: vercelCredentials,
       preview: {
         projectId: "prj_123",
         status: "connected",
@@ -131,7 +133,10 @@ describe("GET /auth/codex", () => {
       expect.anything(),
       "workspace-123",
     );
-    expect(mocked.startCodexDeviceAuthFlow).toHaveBeenCalledWith({ userId: "user-123" });
+    expect(mocked.startCodexDeviceAuthFlow).toHaveBeenCalledWith({
+      userId: "user-123",
+      vercelCredentials,
+    });
   });
 
   it("blocks device-code flow when the workspace Vercel connection is missing", async () => {

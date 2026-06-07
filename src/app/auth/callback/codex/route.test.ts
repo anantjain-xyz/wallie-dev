@@ -10,8 +10,16 @@ const mocked = vi.hoisted(() => ({
   encryptSecretValue: vi.fn((value: string) => `encrypted:${value}`),
   getCodexDeviceAuthFlowSnapshot: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
+  loadRequiredVercelSandboxConnection: vi.fn(),
+  requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedSettingsPath: vi.fn(),
 }));
+
+const vercelCredentials = {
+  projectId: "prj_123",
+  teamId: "team_123",
+  token: "vca_secret",
+};
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
@@ -44,13 +52,38 @@ vi.mock("@/lib/codex/device-auth", () => ({
   getCodexDeviceAuthFlowSnapshot: mocked.getCodexDeviceAuthFlowSnapshot,
 }));
 
+vi.mock("@/lib/workspaces/access", () => ({
+  requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/vercel-sandbox/server", () => ({
+  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
+  VercelSandboxConnectionInvalidError: class VercelSandboxConnectionInvalidError extends Error {},
+  VercelSandboxConnectionMissingError: class VercelSandboxConnectionMissingError extends Error {},
+}));
+
 import { DELETE, GET } from "./route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocked.createSupabaseAdminClient.mockReturnValue({});
   mocked.createSupabaseServerClient.mockResolvedValue({});
   mocked.deleteCodexDeviceAuthFlow.mockResolvedValue(true);
   mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
+  mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
+    credentials: vercelCredentials,
+    preview: {
+      projectId: "prj_123",
+      status: "connected",
+      teamId: "team_123",
+    },
+  });
+  mocked.requireWorkspaceAccessById.mockResolvedValue({
+    context: {
+      workspace: { id: "workspace-123" },
+    },
+    ok: true,
+  });
   mocked.resolveAuthenticatedSettingsPath.mockResolvedValue("/settings/integrations");
 });
 
@@ -79,6 +112,39 @@ describe("GET /auth/callback/codex", () => {
       userCode: "ABCD-EFGH",
     });
     expect(mocked.consumeAuthenticatedCodexDeviceAuthFlow).not.toHaveBeenCalled();
+  });
+
+  it("polls device auth with workspace Vercel credentials when workspaceId is provided", async () => {
+    mocked.getCodexDeviceAuthFlowSnapshot.mockResolvedValue({
+      error: null,
+      expiresAt: "2026-05-19T00:10:00.000Z",
+      flowId: "flow-1",
+      instructions: null,
+      status: "prompted",
+      userCode: "ABCD-EFGH",
+      verificationUri: "https://chatgpt.com/activate",
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/auth/callback/codex?flowId=flow-1&workspaceId=workspace-123",
+        {
+          headers: { accept: "application/json" },
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith("workspace-123");
+    expect(mocked.loadRequiredVercelSandboxConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      "workspace-123",
+    );
+    expect(mocked.getCodexDeviceAuthFlowSnapshot).toHaveBeenCalledWith({
+      flowId: "flow-1",
+      userId: "user-123",
+      vercelCredentials,
+    });
   });
 
   it("persists authenticated ChatGPT auth JSON and does not return the secret", async () => {
@@ -201,6 +267,23 @@ describe("DELETE /auth/callback/codex", () => {
     expect(mocked.cancelCodexDeviceAuthFlow).toHaveBeenCalledWith({
       flowId: "flow-1",
       userId: "user-123",
+    });
+  });
+
+  it("cancels device auth with workspace Vercel credentials when workspaceId is provided", async () => {
+    mocked.cancelCodexDeviceAuthFlow.mockResolvedValue(true);
+
+    const response = await DELETE(
+      new NextRequest(
+        "http://localhost/auth/callback/codex?flowId=flow-1&workspaceId=workspace-123",
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocked.cancelCodexDeviceAuthFlow).toHaveBeenCalledWith({
+      flowId: "flow-1",
+      userId: "user-123",
+      vercelCredentials,
     });
   });
 });

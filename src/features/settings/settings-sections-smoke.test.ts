@@ -273,12 +273,13 @@ describe("Settings integration sections", () => {
         isBusy: false,
         onCancel: vi.fn(),
         onStart: vi.fn(),
+        vercelConnectionHref: "/w/acme/settings#vercel",
       }),
     );
 
     expect(html).toContain("Connect");
     expect(html).toContain("Vercel Sandbox");
-    expect(html).toContain('href="#vercel"');
+    expect(html).toContain('href="/w/acme/settings#vercel"');
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in with ChatGPT<\/button>/);
   });
 

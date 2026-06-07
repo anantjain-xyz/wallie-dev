@@ -35,6 +35,7 @@ interface CodexConnectionPanelProps {
   connectFlash?: string | null;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: CodexConnectionStatus) => void;
+  vercelConnectionHref?: string;
   vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId?: string;
 }
@@ -51,19 +52,21 @@ export function ChatGptSubscriptionControls({
   isBusy,
   onCancel,
   onStart,
+  vercelConnectionHref = "#vercel",
 }: {
   blocked: boolean;
   deviceFlow: CodexDeviceFlow | null;
   isBusy: boolean;
   onCancel: () => void;
   onStart: () => void;
+  vercelConnectionHref?: string;
 }) {
   return (
     <div className="space-y-3">
       {blocked ? (
         <p className="text-[12px] leading-5 text-warning">
           Connect{" "}
-          <a className="underline underline-offset-2" href="#vercel">
+          <a className="underline underline-offset-2" href={vercelConnectionHref}>
             Vercel Sandbox
           </a>{" "}
           before using a ChatGPT subscription.
@@ -129,6 +132,7 @@ export function CodexConnectionPanel({
   connectFlash,
   onStatusChange,
   returnTo,
+  vercelConnectionHref = "#vercel",
   vercelSandboxConnection,
   workspaceId,
 }: CodexConnectionPanelProps) {
@@ -170,10 +174,21 @@ export function CodexConnectionPanel({
     void refresh();
   }, [refresh]);
 
+  const deviceFlowCallbackUrl = useCallback(
+    (flowId: string) => {
+      const params = new URLSearchParams({ flowId });
+      if (workspaceId) {
+        params.set("workspaceId", workspaceId);
+      }
+      return `/auth/callback/codex?${params.toString()}`;
+    },
+    [workspaceId],
+  );
+
   const pollDeviceFlow = useCallback(
     async (flowId: string) => {
       try {
-        const response = await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(flowId)}`, {
+        const response = await fetch(deviceFlowCallbackUrl(flowId), {
           cache: "no-store",
           headers: { Accept: "application/json" },
         });
@@ -196,7 +211,7 @@ export function CodexConnectionPanel({
         setError(err instanceof Error ? err.message : "Failed to check Codex sign-in.");
       }
     },
-    [refresh],
+    [deviceFlowCallbackUrl, refresh],
   );
 
   useEffect(() => {
@@ -255,7 +270,7 @@ export function CodexConnectionPanel({
     setIsBusy(true);
     setError(null);
     try {
-      await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(deviceFlow.flowId)}`, {
+      await fetch(deviceFlowCallbackUrl(deviceFlow.flowId), {
         method: "DELETE",
       });
       setDeviceFlow(null);
@@ -267,15 +282,18 @@ export function CodexConnectionPanel({
     }
   };
 
-  const cancelDeviceFlowQuietly = useCallback(async (flowId: string) => {
-    try {
-      await fetch(`/auth/callback/codex?flowId=${encodeURIComponent(flowId)}`, {
-        method: "DELETE",
-      });
-    } catch {
-      // Leaving ChatGPT mode should stop local polling even if backend cleanup fails.
-    }
-  }, []);
+  const cancelDeviceFlowQuietly = useCallback(
+    async (flowId: string) => {
+      try {
+        await fetch(deviceFlowCallbackUrl(flowId), {
+          method: "DELETE",
+        });
+      } catch {
+        // Leaving ChatGPT mode should stop local polling even if backend cleanup fails.
+      }
+    },
+    [deviceFlowCallbackUrl],
+  );
 
   const handleCredentialTypeChange = (type: CodexCredentialType) => {
     if (type !== "chatgpt_auth_json" && deviceFlow) {
@@ -423,6 +441,7 @@ export function CodexConnectionPanel({
               isBusy={isBusy}
               onCancel={handleCancelChatGptSignIn}
               onStart={handleStartChatGptSignIn}
+              vercelConnectionHref={vercelConnectionHref}
             />
           ) : (
             <form className="space-y-3" onSubmit={handleSave}>

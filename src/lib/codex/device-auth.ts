@@ -14,6 +14,7 @@ import type { CodexAuthJsonMetadata } from "@/lib/codex/contracts";
 import { encryptSecretValue, decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/database.types";
+import type { VercelSandboxCredentials } from "@/lib/vercel-sandbox/contracts";
 
 const FLOW_TTL_MS = 10 * 60_000;
 const PROMPT_WAIT_MS = 2_500;
@@ -124,10 +125,11 @@ const localSandboxes = new Map<string, LocalAuthSandbox>();
 
 export async function startCodexDeviceAuthFlow(input: {
   userId: string;
+  vercelCredentials?: VercelSandboxCredentials;
 }): Promise<CodexDeviceAuthSnapshot> {
   const admin = createSupabaseAdminClient();
-  await expireStaleUserFlows(admin, input.userId);
-  const completedFlow = await cancelActiveUserFlows(admin, input.userId);
+  await expireStaleUserFlows(admin, input.userId, input.vercelCredentials);
+  const completedFlow = await cancelActiveUserFlows(admin, input.userId, input.vercelCredentials);
   if (completedFlow) return completedFlow;
 
   const flowId = randomUUID();
@@ -135,7 +137,7 @@ export async function startCodexDeviceAuthFlow(input: {
   let sandbox: AuthSandbox | null = null;
 
   try {
-    const session = await createAuthSandbox();
+    const session = await createAuthSandbox(input.vercelCredentials);
     sandbox = session.sandbox;
     const command = await sandbox.runCommand({
       args: ["-lc", codexDeviceLoginCommand(session)],
@@ -166,7 +168,7 @@ export async function startCodexDeviceAuthFlow(input: {
     );
   } catch (error) {
     if (sandbox) {
-      await stopSandboxQuietly(sandbox.sandboxId);
+      await stopSandboxQuietly(sandbox.sandboxId, input.vercelCredentials);
     }
 
     return {
@@ -184,11 +186,15 @@ export async function startCodexDeviceAuthFlow(input: {
 export async function getCodexDeviceAuthFlowSnapshot(input: {
   flowId: string;
   userId: string;
+  vercelCredentials?: VercelSandboxCredentials;
 }): Promise<CodexDeviceAuthSnapshot | null> {
   const admin = createSupabaseAdminClient();
   const row = await getFlowRow(admin, input);
   if (!row) return null;
-  return refreshFlowFromSandbox(admin, row, { waitMs: POLL_WAIT_MS });
+  return refreshFlowFromSandbox(admin, row, {
+    vercelCredentials: input.vercelCredentials,
+    waitMs: POLL_WAIT_MS,
+  });
 }
 
 export async function consumeAuthenticatedCodexDeviceAuthFlow(input: {
@@ -222,6 +228,7 @@ export async function consumeAuthenticatedCodexDeviceAuthFlow(input: {
 export async function deleteCodexDeviceAuthFlow(input: {
   flowId: string;
   userId: string;
+  vercelCredentials?: VercelSandboxCredentials;
 }): Promise<boolean> {
   const admin = createSupabaseAdminClient();
   const row = await getFlowRow(admin, input);
@@ -234,20 +241,24 @@ export async function deleteCodexDeviceAuthFlow(input: {
     .eq("user_id", input.userId);
   if (error) throw error;
 
-  await stopSandboxQuietly(row.sandbox_id);
+  await stopSandboxQuietly(row.sandbox_id, input.vercelCredentials);
   return true;
 }
 
 export async function cancelCodexDeviceAuthFlow(input: {
   flowId: string;
   userId: string;
+  vercelCredentials?: VercelSandboxCredentials;
 }): Promise<boolean> {
   const admin = createSupabaseAdminClient();
   const row = await getFlowRow(admin, input);
   if (!row) return false;
 
   if (CANCELABLE_FLOW_STATUSES.includes(row.status as CodexDeviceAuthStatus)) {
-    const refreshed = await refreshFlowFromSandbox(admin, row, { waitMs: POLL_WAIT_MS });
+    const refreshed = await refreshFlowFromSandbox(admin, row, {
+      vercelCredentials: input.vercelCredentials,
+      waitMs: POLL_WAIT_MS,
+    });
     if (refreshed.status !== "starting" && refreshed.status !== "prompted") {
       return true;
     }
@@ -267,18 +278,18 @@ export async function cancelCodexDeviceAuthFlow(input: {
     error: null,
     status: "canceled",
   });
-  await stopSandboxQuietly(cancellableRow.sandbox_id);
+  await stopSandboxQuietly(cancellableRow.sandbox_id, input.vercelCredentials);
   return true;
 }
 
 async function refreshFlowFromSandbox(
   admin: AdminClient,
   row: FlowRow,
-  input: { waitMs: number },
+  input: { vercelCredentials?: VercelSandboxCredentials; waitMs: number },
 ): Promise<CodexDeviceAuthSnapshot> {
   const isExpired = new Date(row.expires_at).getTime() <= Date.now();
   if (row.status === "authenticated") {
-    return isExpired ? expireFlow(admin, row) : snapshotFromRow(row);
+    return isExpired ? expireFlow(admin, row, input.vercelCredentials) : snapshotFromRow(row);
   }
 
   if (row.status === "canceled" || row.status === "error" || row.status === "expired") {
@@ -286,7 +297,7 @@ async function refreshFlowFromSandbox(
   }
 
   try {
-    const sandbox = await getAuthSandbox(row.sandbox_id);
+    const sandbox = await getAuthSandbox(row.sandbox_id, input.vercelCredentials);
     const command = await sandbox.getCommand(row.command_id);
     const output = limitOutput(
       `${row.output_tail ?? ""}${await readCommandOutput(command, input.waitMs)}`,
@@ -296,7 +307,7 @@ async function refreshFlowFromSandbox(
     const refreshedCommand = await waitForCommandExit(command);
     if (refreshedCommand.exitCode === null) {
       if (isExpired) {
-        return expireFlow(admin, row);
+        return expireFlow(admin, row, input.vercelCredentials);
       }
 
       const updated = await updateFlow(admin, row, {
@@ -317,7 +328,7 @@ async function refreshFlowFromSandbox(
         output_tail: finalOutput,
         status: "error",
       });
-      await stopSandboxQuietly(row.sandbox_id);
+      await stopSandboxQuietly(row.sandbox_id, input.vercelCredentials);
       return snapshotFromRow(updated ?? row);
     }
 
@@ -329,7 +340,7 @@ async function refreshFlowFromSandbox(
         output_tail: finalOutput,
         status: "error",
       });
-      await stopSandboxQuietly(row.sandbox_id);
+      await stopSandboxQuietly(row.sandbox_id, input.vercelCredentials);
       return snapshotFromRow(updated ?? row);
     }
 
@@ -348,11 +359,11 @@ async function refreshFlowFromSandbox(
       user_code: prompt.userCode ?? row.user_code,
       verification_uri: prompt.verificationUri ?? row.verification_uri,
     });
-    await stopSandboxQuietly(row.sandbox_id);
+    await stopSandboxQuietly(row.sandbox_id, input.vercelCredentials);
     return snapshotFromRow(updated ?? row);
   } catch (error) {
     if (isExpired) {
-      return expireFlow(admin, row);
+      return expireFlow(admin, row, input.vercelCredentials);
     }
 
     const updated = await markFlowTerminal(admin, row, {
@@ -360,7 +371,7 @@ async function refreshFlowFromSandbox(
       error: pollAuthErrorMessage(error),
       status: "error",
     });
-    await stopSandboxQuietly(row.sandbox_id);
+    await stopSandboxQuietly(row.sandbox_id, input.vercelCredentials);
     return snapshotFromRow(updated ?? row);
   }
 }
@@ -379,7 +390,11 @@ async function getFlowRow(
   return data;
 }
 
-async function expireStaleUserFlows(admin: AdminClient, userId: string): Promise<void> {
+async function expireStaleUserFlows(
+  admin: AdminClient,
+  userId: string,
+  vercelCredentials?: VercelSandboxCredentials,
+): Promise<void> {
   const { data, error } = await admin
     .from("codex_device_auth_flows")
     .select(FLOW_SELECT)
@@ -389,13 +404,17 @@ async function expireStaleUserFlows(admin: AdminClient, userId: string): Promise
   if (error) throw error;
 
   for (const row of data ?? []) {
-    await refreshFlowFromSandbox(admin, row, { waitMs: COMMAND_STATUS_WAIT_MS });
+    await refreshFlowFromSandbox(admin, row, {
+      vercelCredentials,
+      waitMs: COMMAND_STATUS_WAIT_MS,
+    });
   }
 }
 
 async function cancelActiveUserFlows(
   admin: AdminClient,
   userId: string,
+  vercelCredentials?: VercelSandboxCredentials,
 ): Promise<CodexDeviceAuthSnapshot | null> {
   const { data, error } = await admin
     .from("codex_device_auth_flows")
@@ -406,6 +425,7 @@ async function cancelActiveUserFlows(
 
   for (const row of data ?? []) {
     const refreshed = await refreshFlowFromSandbox(admin, row, {
+      vercelCredentials,
       waitMs: COMMAND_STATUS_WAIT_MS,
     });
     if (refreshed.status === "authenticated") {
@@ -429,19 +449,23 @@ async function cancelActiveUserFlows(
       error: null,
       status: "canceled",
     });
-    await stopSandboxQuietly(cancellableRow.sandbox_id);
+    await stopSandboxQuietly(cancellableRow.sandbox_id, vercelCredentials);
   }
 
   return null;
 }
 
-async function expireFlow(admin: AdminClient, row: FlowRow): Promise<CodexDeviceAuthSnapshot> {
+async function expireFlow(
+  admin: AdminClient,
+  row: FlowRow,
+  vercelCredentials?: VercelSandboxCredentials,
+): Promise<CodexDeviceAuthSnapshot> {
   const updated = await markFlowTerminal(admin, row, {
     encrypted_auth_json: null,
     error: null,
     status: "expired",
   });
-  await stopSandboxQuietly(row.sandbox_id);
+  await stopSandboxQuietly(row.sandbox_id, vercelCredentials);
   return snapshotFromRow(updated ?? { ...row, encrypted_auth_json: null, status: "expired" });
 }
 
@@ -484,7 +508,9 @@ function snapshotFromRow(row: FlowRow): CodexDeviceAuthSnapshot {
   };
 }
 
-async function createAuthSandbox(): Promise<AuthSandboxSession> {
+async function createAuthSandbox(
+  vercelCredentials?: VercelSandboxCredentials,
+): Promise<AuthSandboxSession> {
   if (shouldUseLocalAuthSandbox()) {
     const cwd = await mkdtemp(join(tmpdir(), "wallie-codex-auth-"));
     const sandbox = new LocalAuthSandbox(`${LOCAL_SANDBOX_PREFIX}${randomUUID()}`, cwd);
@@ -498,7 +524,7 @@ async function createAuthSandbox(): Promise<AuthSandboxSession> {
   }
 
   const sandbox = await Sandbox.create({
-    ...resolveVercelCredentials(),
+    ...resolveVercelCredentials(vercelCredentials),
     env: { CI: "1", CODEX_HOME: VERCEL_CODEX_HOME },
     resources: { vcpus: 1 },
     runtime: "node22",
@@ -513,7 +539,10 @@ async function createAuthSandbox(): Promise<AuthSandboxSession> {
   };
 }
 
-async function getAuthSandbox(sandboxId: string): Promise<AuthSandbox> {
+async function getAuthSandbox(
+  sandboxId: string,
+  vercelCredentials?: VercelSandboxCredentials,
+): Promise<AuthSandbox> {
   if (sandboxId.startsWith(LOCAL_SANDBOX_PREFIX)) {
     const sandbox = localSandboxes.get(sandboxId);
     if (!sandbox) {
@@ -523,14 +552,17 @@ async function getAuthSandbox(sandboxId: string): Promise<AuthSandbox> {
   }
 
   return Sandbox.get({
-    ...resolveVercelCredentials(),
+    ...resolveVercelCredentials(vercelCredentials),
     sandboxId,
   }) as unknown as AuthSandbox;
 }
 
-async function stopSandboxQuietly(sandboxId: string): Promise<void> {
+async function stopSandboxQuietly(
+  sandboxId: string,
+  vercelCredentials?: VercelSandboxCredentials,
+): Promise<void> {
   try {
-    const sandbox = await getAuthSandbox(sandboxId);
+    const sandbox = await getAuthSandbox(sandboxId, vercelCredentials);
     await sandbox.stop();
   } catch {
     // The auth sandbox is short-lived and may already have stopped.
@@ -732,9 +764,12 @@ function shouldUseLocalAuthSandbox(): boolean {
   return process.env.NODE_ENV === "development";
 }
 
-function resolveVercelCredentials():
+function resolveVercelCredentials(
+  credentials?: VercelSandboxCredentials,
+):
   | { token: string; teamId: string; projectId: string }
   | Record<string, never> {
+  if (credentials) return credentials;
   const token = process.env.VERCEL_TOKEN;
   const teamId = process.env.VERCEL_TEAM_ID;
   const projectId = process.env.VERCEL_PROJECT_ID;

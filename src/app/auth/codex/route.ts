@@ -46,8 +46,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
+  let vercelConnection: Awaited<ReturnType<typeof loadRequiredVercelSandboxConnection>>;
   try {
-    await loadRequiredVercelSandboxConnection(
+    vercelConnection = await loadRequiredVercelSandboxConnection(
       createSupabaseAdminClient(),
       access.context.workspace.id,
     );
@@ -62,7 +63,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const flow = await startCodexDeviceAuthFlow({ userId: user.id });
+    const flow = await startCodexDeviceAuthFlow({
+      userId: user.id,
+      vercelCredentials: vercelConnection.credentials,
+    });
     return NextResponse.json(flow, { status: flow.status === "error" ? 500 : 202 });
   } catch (error) {
     return NextResponse.json(

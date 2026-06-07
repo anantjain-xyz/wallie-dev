@@ -18,6 +18,7 @@ type ProviderAccessPanelProps = {
   provider: AgentProvider;
   returnTo?: string;
   variant?: "card" | "embedded";
+  vercelConnectionHref?: string;
   vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId?: string;
 };
@@ -29,6 +30,7 @@ export function ProviderAccessPanel({
   provider,
   returnTo,
   variant = "card",
+  vercelConnectionHref,
   vercelSandboxConnection,
   workspaceId,
 }: ProviderAccessPanelProps) {
@@ -51,6 +53,7 @@ export function ProviderAccessPanel({
             connectFlash={connectFlash}
             onStatusChange={onCodexStatusChange}
             returnTo={returnTo}
+            vercelConnectionHref={vercelConnectionHref}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
           />
