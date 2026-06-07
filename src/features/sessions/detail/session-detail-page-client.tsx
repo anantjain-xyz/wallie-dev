@@ -664,6 +664,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             <SessionWalliePanel
               initialData={initialData.wallie}
               session={{
+                archivedAt: session.archivedAt,
                 id: session.id,
                 workspaceId: session.workspaceId,
               }}

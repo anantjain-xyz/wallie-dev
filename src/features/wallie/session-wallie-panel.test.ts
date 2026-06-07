@@ -86,7 +86,7 @@ describe("SessionWalliePanel", () => {
       createElement(SessionWalliePanel, {
         initialData: data(),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
@@ -107,13 +107,33 @@ describe("SessionWalliePanel", () => {
       createElement(SessionWalliePanel, {
         initialData: data({ runs: [run({ canRetry: true, status: "error" })] }),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
     );
 
     expect(html).toContain("Retry Run");
+  });
+
+  it("disables retry and explains why when the session is archived", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({ runs: [run({ canRetry: true, status: "error" })] }),
+        memberIndex: new Map([[baseMember.id, baseMember]]),
+        session: {
+          archivedAt: "2026-06-07T12:00:00.000Z",
+          id: "sess-1",
+          workspaceId: "ws-1",
+        },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect(html).toContain("This session is archived. Unarchive it to run Wallie again.");
+    // The Retry Run button still renders but must be disabled.
+    expect(html).toMatch(/<button[^>]*\bdisabled\b[^>]*>\s*Retry Run\s*<\/button>/);
   });
 
   it("does not show the Vercel setup blocker when fake sandboxes are selected", () => {
@@ -131,7 +151,7 @@ describe("SessionWalliePanel", () => {
           },
         }),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
@@ -155,7 +175,7 @@ describe("SessionWalliePanel", () => {
           ],
         }),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
@@ -181,7 +201,7 @@ describe("SessionWalliePanel", () => {
           ],
         }),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
@@ -202,7 +222,7 @@ describe("SessionWalliePanel", () => {
           runs: [run({ messages: [], status: "success" })],
         }),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
@@ -232,7 +252,7 @@ describe("SessionWalliePanel", () => {
           ],
         }),
         memberIndex: new Map([[baseMember.id, baseMember]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),
@@ -260,7 +280,7 @@ describe("SessionWalliePanel", () => {
           ],
         }),
         memberIndex: new Map([[memberWithoutName.id, memberWithoutName]]),
-        session: { id: "sess-1", workspaceId: "ws-1" },
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
       }),

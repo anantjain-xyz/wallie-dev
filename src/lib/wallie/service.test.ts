@@ -246,6 +246,7 @@ function buildSupabaseMocks(opts: {
   agentConfig: AgentConfigRow[];
   activeJobRow?: AgentJobRow | null;
   activeRunForSession?: AgentRunRow | null;
+  archivedAt?: string | null;
   insertedJobRow?: AgentJobRow;
   insertedRunRows: Array<Record<string, unknown>>;
   jobInsertError?: PostgrestError | null;
@@ -266,6 +267,7 @@ function buildSupabaseMocks(opts: {
   ) => Promise<AgentRunRow | null> | AgentRunRow | null;
 }) {
   const sessionRow = {
+    archived_at: opts.archivedAt ?? null,
     current_stage_id: "stage-product",
     github_repository_id: null,
     id: "sess-1",
@@ -521,6 +523,28 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect(inserted.stage_id).toBe("stage-product");
     expect(inserted.stage_name).toBe("Product");
     expect(inserted.stage_slug).toBe("product");
+  });
+
+  it("refuses to enqueue a run for an archived session", async () => {
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      archivedAt: "2026-06-07T12:00:00.000Z",
+      insertedRunRows,
+    });
+
+    await expect(
+      enqueueWallieRun({
+        admin,
+        sessionId: "sess-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        triggerType: "manual_run",
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({ code: "session_archived" });
+
+    expect(insertedRunRows).toHaveLength(0);
   });
 
   it("falls back to the runner default when the workspace has not configured a model", async () => {

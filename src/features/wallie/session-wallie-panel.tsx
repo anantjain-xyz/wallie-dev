@@ -30,6 +30,7 @@ type FlashMessage = {
 };
 
 export type WalliePanelSession = {
+  archivedAt: string | null;
   id: string;
   workspaceId: string;
 };
@@ -312,6 +313,11 @@ export function SessionWalliePanel({
     vercelSandboxConnection: initialData.vercelSandboxConnection,
   }).filter((reason) => reason.code !== "active_run");
 
+  // An archived session accepts no new work. The backend rejects retries/runs
+  // for archived sessions; mirror that here so the Retry button is disabled
+  // rather than failing on click.
+  const isArchived = Boolean(session.archivedAt);
+
   async function queueRun(endpoint: string, body: Record<string, string>) {
     const response = await fetch(endpoint, {
       body: JSON.stringify(body),
@@ -452,6 +458,16 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
+      {isArchived ? (
+        <div
+          aria-live="polite"
+          className="rounded-[6px] border border-border bg-surface-muted p-5 text-sm leading-7 text-muted"
+          role="status"
+        >
+          This session is archived. Unarchive it to run Wallie again.
+        </div>
+      ) : null}
+
       {blockingReasons.length > 0 ? (
         <div className="rounded-[6px] border border-warning/20 bg-warning-soft p-5 text-sm leading-7 text-warning">
           <p className="font-semibold">Wallie is not ready to run.</p>
@@ -544,7 +560,9 @@ export function SessionWalliePanel({
                   {run.canRetry ? (
                     <button
                       className="ui-button"
-                      disabled={pendingActionId !== null || blockingReasons.length > 0}
+                      disabled={
+                        pendingActionId !== null || blockingReasons.length > 0 || isArchived
+                      }
                       onClick={() => void handleRetryRun(run.id)}
                       type="button"
                     >

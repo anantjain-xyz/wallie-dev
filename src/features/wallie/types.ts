@@ -17,6 +17,7 @@ export type WallieActionErrorCode =
   | WallieBlockingCode
   | "run_lookup_timeout"
   | "session_not_found"
+  | "session_archived"
   | "run_not_found"
   | "run_not_retryable";
 
