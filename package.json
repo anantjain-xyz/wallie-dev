@@ -1,7 +1,26 @@
 {
   "name": "wallie-dev",
   "version": "0.2.1",
-  "private": true,
+  "private": false,
+  "license": "MIT",
+  "description": "AI-powered product development automation. Turn Linear issues into structured specs and ship them through a configurable, human-reviewed multi-stage agent pipeline.",
+  "homepage": "https://wallie.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anantjain-xyz/wallie-dev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anantjain-xyz/wallie-dev/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "developer-tools",
+    "nextjs",
+    "supabase",
+    "automation",
+    "linear",
+    "github"
+  ],
   "packageManager": "pnpm@10.15.0",
   "engines": {
     "node": ">=22.13.0"

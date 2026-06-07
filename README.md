@@ -1,6 +1,13 @@
 # Wallie
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Try it free at wallie.dev](https://img.shields.io/badge/Try%20it%20free-wallie.dev-6b46ff.svg)](https://wallie.dev)
+
 AI-powered product development automation. Wallie turns Linear issues into structured product specs, coordinates multi-phase development pipelines, and integrates with GitHub to keep your team in the loop.
+
+> **Just want to use it?** [**wallie.dev**](https://wallie.dev) is a free, fully-hosted instance — sign up and start in minutes, no setup required. It's actively maintained, so you can use it for real work.
+>
+> **Want to run your own?** Wallie is open source (MIT). Follow the [Self-Hosting guide](docs/SELF_HOSTING.md) to deploy your own instance, or the [Local Setup](#local-setup-end-to-end) section below to hack on it.
 
 ## How It Works
 
@@ -305,6 +312,8 @@ supabase/
 
 ## Local Setup (End-to-End)
 
+> This section gets Wallie running **locally for development** (local Supabase + a tunnel). To deploy a real, internet-facing instance, see the [Self-Hosting guide](docs/SELF_HOSTING.md).
+
 ### Prerequisites
 
 - Node.js >= 22.13
@@ -320,7 +329,7 @@ supabase/
 ### 1. Clone and install
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/anantjain-xyz/wallie-dev.git
 cd wallie-dev
 pnpm install
 ```
@@ -492,10 +501,9 @@ Sessions are deduplicated on `(workspace_id, linear_issue_id)` -- one session pe
 
 ### Security
 
-- LLM inputs are sanitized via `sanitizeUntrusted()` to prevent prompt injection
-- User content is wrapped in XML tags with explicit data boundary markers
 - Integration credentials are encrypted at rest with AES-256
 - GitHub webhooks are signature-verified
+- A `sanitizeUntrusted()` helper lives in `src/lib/pipeline/prompt-safety.ts` for prompt-injection defense; note it is **not yet wired into the prompt path** (`processPipelineJob()` renders the session prompt as-is), so apply it yourself when extending prompts with untrusted input
 
 ### Realtime
 
@@ -513,6 +521,10 @@ Webhook endpoint: `/api/github/webhooks`
 
 Linear issues provide the source context for product spec generation. The API key is stored as an encrypted workspace secret and verified via `/api/linear/test-connection`.
 
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up, the checks to run before opening a PR, and conventions. By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, follow [SECURITY.md](SECURITY.md).
+
 ## License
 
-Private.
+[MIT](LICENSE) © Anant Jain and Wallie contributors.
