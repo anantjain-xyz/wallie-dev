@@ -211,6 +211,36 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Wallie is working.");
   });
 
+  it("shows persisted error messages for failed runs instead of the empty-message state", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({
+          runs: [
+            run({
+              canRetry: true,
+              messages: [
+                {
+                  createdAt: "2026-05-20T20:05:00.000Z",
+                  id: "msg-error",
+                  kind: "error",
+                  messageMd: "**Error:** Vercel Sandbox credentials are required.",
+                },
+              ],
+              status: "error",
+            }),
+          ],
+        }),
+        memberIndex: new Map([[baseMember.id, baseMember]]),
+        session: { id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect(html).toContain("Vercel Sandbox credentials are required.");
+    expect(html).not.toContain("No persisted messages were recorded for this run.");
+  });
+
   it("falls back to a human-readable requester label when member names are blank", () => {
     const memberWithoutName = {
       ...baseMember,

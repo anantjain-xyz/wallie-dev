@@ -48,6 +48,9 @@ class MissingReviewableOutputError extends Error {
   }
 }
 
+const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
+const REDACTED_RUN_DIAGNOSTIC_VALUE = "[redacted]";
+
 export type PipelinePhaseActionResult = {
   error?: string;
   jobId?: string | null;
@@ -166,6 +169,7 @@ async function runStage(input: {
   let branch: string | null = null;
   const collectedText: string[] = [];
   let artifactInserted = false;
+  let runFailureMessageRecorded = false;
   let sessionPointerAdvanced = false;
   try {
     const resolvedRunner = await resolveAgentRunner({
@@ -190,15 +194,18 @@ async function runStage(input: {
     if (resolvedRunner.runner.requiresSandbox) {
       github = await loadGitHubContext(admin, session.workspace_id, session.id);
       if (!github) {
+        const message =
+          "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.";
         if (runId) {
+          await persistRunFailureDiagnostic(admin, {
+            error: message,
+            runId,
+            workspaceId: session.workspace_id,
+          });
           await markRunError(admin, runId);
         }
         await updateSessionStatus(admin, session.id, "rejected");
-        await markPipelineJobError(
-          admin,
-          job,
-          "No GitHub installation or repository found for workspace. Connect a GitHub repository in workspace settings.",
-        );
+        await markPipelineJobError(admin, job, message);
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
       const installationToken = await mintInstallationToken(github.installationId);
@@ -251,6 +258,9 @@ async function runStage(input: {
       if (runId) {
         await persistEvent(admin, runId, session.workspace_id, event);
       }
+      if (event.type === "error") {
+        runFailureMessageRecorded = true;
+      }
       if (event.type === "text") {
         collectedText.push(event.text);
       } else if (event.type === "completion") {
@@ -266,6 +276,7 @@ async function runStage(input: {
 
       if (runId) {
         await persistEvent(admin, runId, session.workspace_id, { type: "error", message });
+        runFailureMessageRecorded = true;
       }
 
       throw new MissingReviewableOutputError(message);
@@ -336,6 +347,14 @@ async function runStage(input: {
   } catch (error) {
     if (runId) {
       await markRunError(admin, runId);
+      if (!runFailureMessageRecorded) {
+        await persistRunFailureDiagnostic(admin, {
+          error,
+          runId,
+          workspaceId: session.workspace_id,
+        });
+        runFailureMessageRecorded = true;
+      }
     }
 
     if (isCodexAuthLeaseBusyError(error)) {
@@ -1057,6 +1076,68 @@ async function persistEvent(
   }
 
   await touchRunActivity(admin, runId);
+}
+
+async function persistRunFailureDiagnostic(
+  admin: AdminClient,
+  input: { error: unknown; runId: string; workspaceId: string },
+): Promise<void> {
+  const message = sanitizeRunFailureDiagnostic(
+    typeof input.error === "string"
+      ? input.error
+      : getErrorMessage(input.error, "Stage generation failed"),
+  );
+
+  try {
+    const { error } = await admin.from("agent_run_messages").insert({
+      agent_run_id: input.runId,
+      kind: "error",
+      message_md: `**Error:** ${message}`,
+      workspace_id: input.workspaceId,
+    });
+
+    if (error) {
+      console.error("Failed to persist run failure diagnostic", {
+        error: getErrorMessage(error, "Unknown diagnostic persistence error"),
+        runId: input.runId,
+      });
+    }
+  } catch (error) {
+    console.error("Failed to persist run failure diagnostic", {
+      error: getErrorMessage(error, "Unknown diagnostic persistence error"),
+      runId: input.runId,
+    });
+  }
+}
+
+function sanitizeRunFailureDiagnostic(message: string): string {
+  const fallback = "Stage generation failed";
+  let sanitized = message.trim() || fallback;
+
+  sanitized = sanitized
+    .replace(
+      /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi,
+      `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}@`,
+    )
+    .replace(
+      /([?&](?:access_token|api[_-]?key|auth|code|credential|key|password|secret|token)=)[^&\s]+/gi,
+      `$1${REDACTED_RUN_DIAGNOSTIC_VALUE}`,
+    )
+    .replace(
+      /\b([A-Z0-9_]*(?:ACCESS_KEY|API_KEY|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Z0-9_]*\s*[:=]\s*)(["']?)[^\s"',;]+/gi,
+      `$1$2${REDACTED_RUN_DIAGNOSTIC_VALUE}`,
+    )
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{10,}/gi, `$1 ${REDACTED_RUN_DIAGNOSTIC_VALUE}`)
+    .replace(
+      /\b(?:eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|sb_[A-Za-z0-9_-]{16,}|vca_[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/g,
+      REDACTED_RUN_DIAGNOSTIC_VALUE,
+    );
+
+  if (sanitized.length > RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH) {
+    return `${sanitized.slice(0, RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH - 3)}...`;
+  }
+
+  return sanitized;
 }
 
 function isGenericRunnerCompletionSummary(summary: string) {
