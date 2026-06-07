@@ -267,6 +267,7 @@ function buildAdminMock(opts: MockOptions) {
       const chain = {
         eq: () => chain,
         in: () => chain,
+        is: () => chain,
         select: () => chain,
         // The CAS claim ends in `.maybeSingle()`.
         maybeSingle: async () => ({
@@ -1656,6 +1657,9 @@ function buildRejectionMock(opts: RejectionMockOptions) {
         eq() {
           return eqChain;
         },
+        is() {
+          return eqChain;
+        },
         select() {
           return {
             maybeSingle: async () => ({
@@ -1837,6 +1841,26 @@ describe("handleRejection", () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain("Session not found");
+  });
+
+  it("refuses to reject an archived session without enqueuing work", async () => {
+    const session = baseSession({
+      archived_at: "2026-06-07T12:00:00.000Z",
+      phase_status: "awaiting_review",
+      current_artifact_version: 1,
+    });
+    const { admin, enqueuedJobs } = buildRejectionMock({ session });
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("archived");
+    expect(enqueuedJobs).toHaveLength(0);
   });
 
   it("rejects with a version-mismatch error when current_artifact_version moved on", async () => {

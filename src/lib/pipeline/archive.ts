@@ -29,12 +29,13 @@ export async function archiveSession(
   admin: AdminClient,
   input: { reason: string; sessionId: string },
 ): Promise<SessionArchiveState> {
-  await cancelSessionWork(admin, {
-    parkPhaseStatus: true,
-    reason: input.reason,
-    sessionId: input.sessionId,
-  });
-
+  // Set the archived marker FIRST, before canceling any work. Order matters:
+  // the run-enqueue/retry path rejects archived sessions, so landing the marker
+  // up front blocks new work before cleanup begins. If we canceled first, a
+  // concurrent request that passed the archived check could insert a fresh
+  // job/run in the window before the marker lands — work this call would never
+  // cancel. The processor's claim CAS is also archive-aware, so anything that
+  // still slips in before the marker cannot execute.
   const { data, error } = await admin
     .from("sessions")
     .update({ archived_at: new Date().toISOString() })
@@ -47,11 +48,19 @@ export async function archiveSession(
     throw error;
   }
 
-  // No row matched ⇒ the session was already archived. Read the current state
-  // so the caller still gets the id + archived_at to echo back.
+  // No row matched ⇒ the session was already archived; a prior archive owns the
+  // cancellation. Read the current state so the caller still gets the id +
+  // archived_at to echo back.
   if (!data) {
     return readSessionArchiveState(admin, input.sessionId);
   }
+
+  // Marker is set; now stop in-flight work.
+  await cancelSessionWork(admin, {
+    parkPhaseStatus: true,
+    reason: input.reason,
+    sessionId: input.sessionId,
+  });
 
   return { archivedAt: data.archived_at, id: data.id };
 }

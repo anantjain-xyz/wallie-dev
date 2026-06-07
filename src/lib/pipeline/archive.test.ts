@@ -81,7 +81,7 @@ afterEach(() => {
 });
 
 describe("archiveSession", () => {
-  it("cancels in-flight work, then sets archived_at under the is-null guard", async () => {
+  it("sets archived_at under the is-null guard, then cancels in-flight work", async () => {
     const { admin, calls } = buildAdmin({
       updateRow: { archived_at: "2026-06-07T12:00:00.000Z", id: "s1" },
     });
@@ -120,6 +120,8 @@ describe("archiveSession", () => {
 
     expect(result).toEqual({ archivedAt: "2026-06-01T00:00:00.000Z", id: "s1" });
     expect(calls.some((c) => c.op === "select")).toBe(true);
+    // A prior archive already canceled the work; this no-op must not re-cancel.
+    expect(cancelMocks.cancelSessionWork).not.toHaveBeenCalled();
   });
 });
 

@@ -93,13 +93,16 @@ export async function processPipelineJob(input: {
     }
 
     // Atomic CAS claim: only proceed if the session is in a non-terminal
-    // state for the current stage. Prevents a second worker from regenerating
-    // an artifact that has already been approved.
+    // state for the current stage AND is not archived. Prevents a second worker
+    // from regenerating an artifact that has already been approved, and closes
+    // the archive race — a job enqueued in the narrow window before archive's
+    // marker landed cannot execute against an archived session.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
       .update({ phase_status: "agent_generating" })
       .eq("id", session.id)
       .in("phase_status", ["agent_generating", "awaiting_review", "rejected"])
+      .is("archived_at", null)
       .select("id")
       .maybeSingle();
 
@@ -662,6 +665,10 @@ export async function handleRejection(input: {
     return { error: "Session not found.", success: false };
   }
 
+  if (session.archived_at) {
+    return { error: "Session is archived.", success: false };
+  }
+
   if (session.phase_status !== "awaiting_review") {
     return { error: "Session is not awaiting review.", success: false };
   }
@@ -682,7 +689,10 @@ export async function handleRejection(input: {
 
   // Atomic CAS on rejection_count: only the first rejection that observed
   // the current count can advance it. A concurrent second rejection sees
-  // rows-updated=0 and exits without double-counting.
+  // rows-updated=0 and exits without double-counting. The `archived_at is null`
+  // predicate also makes this atomic with archive — an archive that lands
+  // between the load above and this CAS turns the rejection into a no-op rather
+  // than enqueueing fresh work on an archived session.
   const { data: claimedRejection, error: claimRejectionError } = await admin
     .from("sessions")
     .update({ rejection_count: newRejectionCount })
@@ -691,6 +701,7 @@ export async function handleRejection(input: {
     .eq("rejection_count", session.rejection_count)
     .eq("phase_status", "awaiting_review")
     .eq("current_artifact_version", input.version)
+    .is("archived_at", null)
     .select("id")
     .maybeSingle();
 
