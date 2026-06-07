@@ -1142,6 +1142,41 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
+  it("redacts multiline secret diagnostics before persisting sandbox failures", async () => {
+    mocked.createSessionSandbox.mockRejectedValueOnce(
+      new Error(
+        [
+          "sandbox failed while loading env",
+          'PRIVATE_KEY="-----BEGIN PRIVATE KEY-----',
+          "abc def ghi",
+          '-----END PRIVATE KEY-----"',
+          "ACCESS_TOKEN=first second third",
+          "Retry after reconnecting.",
+        ].join("\n"),
+      ),
+    );
+    const session = baseSession();
+    const { admin, insertedMessages } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedMessages).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message_md: [
+          "**Error:** sandbox failed while loading env",
+          'PRIVATE_KEY="[redacted]"',
+          "ACCESS_TOKEN=[redacted]",
+          "Retry after reconnecting.",
+        ].join("\n"),
+      }),
+    ]);
+    expect(insertedMessages[0]!.message_md).not.toContain("BEGIN PRIVATE KEY");
+    expect(insertedMessages[0]!.message_md).not.toContain("abc def ghi");
+    expect(insertedMessages[0]!.message_md).not.toContain("first second third");
+  });
+
   it("aborts the stage when persisting the sandbox id fails", async () => {
     const session = baseSession();
     const { admin, insertedArtifacts, insertedMessages, updatedRuns, updatedSessions } =
