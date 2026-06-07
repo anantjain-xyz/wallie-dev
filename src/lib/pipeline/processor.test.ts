@@ -383,12 +383,17 @@ function buildAdminMock(opts: MockOptions) {
         eq: async () => ({ error: null }),
       }),
     }),
-    update: (patch: Record<string, unknown>) => ({
-      eq: async () => {
-        updatedJobs.push(patch);
-        return { error: null };
-      },
-    }),
+    update: (patch: Record<string, unknown>) => {
+      const chain = {
+        eq: () => chain,
+        neq: () => chain,
+        then: (resolve: (value: { error: { message: string } | null }) => void) => {
+          updatedJobs.push(patch);
+          resolve({ error: null });
+        },
+      };
+      return chain;
+    },
     insert: () => ({
       select: () => ({ single: async () => ({ data: { id: "job-enqueued" }, error: null }) }),
     }),

@@ -2,6 +2,7 @@ import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   buildWallieBlockingReasons,
+  canCancelWallieRun,
   canRetryWallieRun,
   inferWallieRunMode,
   isWallieRunActiveStatus,
@@ -49,6 +50,7 @@ export function normalizeWallieRuns(runs: readonly WallieRun[]) {
 
   return sortedRuns.map((run) => ({
     ...run,
+    canCancel: canCancelWallieRun(run.status),
     canRetry: canRetryWallieRun(run.status, hasActiveRun),
     isActive: isWallieRunActiveStatus(run.status),
     isTerminal: isWallieRunTerminalStatus(run.status),
@@ -75,6 +77,7 @@ export function mapAgentRunRow(
   messages: WallieRunMessage[],
 ): WallieRun {
   return {
+    canCancel: false,
     canRetry: false,
     createdAt: row.created_at,
     finishedAt: row.finished_at,

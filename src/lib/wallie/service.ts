@@ -6,6 +6,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
+import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import {
   buildWallieBlockingReasons,
@@ -744,6 +745,51 @@ export async function retryWallieRun(input: {
     triggerType: "manual_retry",
     workspace: validated.workspace,
   });
+}
+
+export type CancelWallieRunResult = {
+  canceled: boolean;
+  run: AgentRunRow;
+};
+
+/**
+ * Cancel a run and the rest of its session's in-flight work: flip the active
+ * job + run to `canceled`, stop the sandbox, and park the session in
+ * `rejected`. Idempotent — a run that is already terminal is returned as-is
+ * with `canceled: false`. There is at most one active run/job per session, so
+ * cancelling "the run" cancels the stage's current attempt.
+ */
+export async function cancelWallieRun(input: {
+  admin?: AdminClient;
+  requestedByMemberId: string;
+  runId: string;
+  workspace: WorkspaceAccessWorkspace;
+}) {
+  const admin = input.admin ?? createSupabaseAdminClient();
+  const existingRun = await loadRunById(admin, input.runId);
+
+  if (!existingRun || existingRun.workspace_id !== input.workspace.id) {
+    throw new WallieActionError({
+      code: "run_not_found",
+      message: "Wallie run not found.",
+      statusCode: 404,
+    });
+  }
+
+  // A run that already reached a terminal state has nothing to cancel. Return
+  // it unchanged so the caller can treat a double-click as a no-op.
+  if (!["queued", "started", "running"].includes(existingRun.status)) {
+    return { canceled: false, run: existingRun } satisfies CancelWallieRunResult;
+  }
+
+  await cancelSessionWork(admin, {
+    parkPhaseStatus: true,
+    reason: "Run canceled by a workspace member.",
+    sessionId: existingRun.session_id,
+  });
+
+  const updatedRun = (await loadRunById(admin, input.runId)) ?? existingRun;
+  return { canceled: true, run: updatedRun } satisfies CancelWallieRunResult;
 }
 
 async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {

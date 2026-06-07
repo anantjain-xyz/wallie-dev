@@ -342,7 +342,10 @@ async function runStage(input: {
         current_artifact_version: newVersion,
         phase_status: "awaiting_review",
       })
-      .eq("id", session.id);
+      .eq("id", session.id)
+      // If the session was canceled (parked in `rejected`) while this run was
+      // generating, don't un-park it or surface the now-orphaned artifact.
+      .eq("phase_status", "agent_generating");
     if (pointerError) throw pointerError;
     sessionPointerAdvanced = true;
 
@@ -755,7 +758,12 @@ async function updateSessionStatus(
   const { error } = await admin
     .from("sessions")
     .update({ phase_status: status })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    // Every caller runs after the stage was CAS-claimed to `agent_generating`,
+    // so this guard is a no-op on the normal path. Its job is to keep a session
+    // that was canceled mid-run parked in `rejected` instead of being moved
+    // back to a live phase by a late-finishing worker.
+    .eq("phase_status", "agent_generating");
   if (error) throw error;
 }
 
@@ -773,7 +781,11 @@ async function updateSessionStatusAfterStageFailure(
       current_artifact_version: input.currentArtifactVersion,
       phase_status: input.phaseStatus,
     })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    // Reached only after the pointer advanced to `awaiting_review`; the guard
+    // keeps a session canceled in that window parked in `rejected` rather than
+    // rolling its version/phase back.
+    .eq("phase_status", "awaiting_review");
   if (error) throw error;
 }
 
@@ -1020,7 +1032,10 @@ async function markRunSuccess(
           }
         : {}),
     })
-    .eq("id", runId);
+    .eq("id", runId)
+    // Don't resurrect a run that was canceled while this worker was still
+    // processing it.
+    .in("status", ["queued", "started", "running"]);
 }
 
 async function markRunError(admin: AdminClient, runId: string): Promise<void> {
@@ -1030,7 +1045,9 @@ async function markRunError(admin: AdminClient, runId: string): Promise<void> {
       finished_at: new Date().toISOString(),
       status: "error" as const,
     })
-    .eq("id", runId);
+    .eq("id", runId)
+    // Don't flip a canceled run back to error.
+    .in("status", ["queued", "started", "running"]);
 }
 
 async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise<string | null> {
@@ -1313,7 +1330,9 @@ async function markPipelineJobSuccess(
       finished_at: new Date().toISOString(),
       status: "success",
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    // A job canceled mid-flight stays canceled — never flip it to success.
+    .neq("status", "canceled");
 }
 
 async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<number> {
@@ -1358,7 +1377,9 @@ async function markPipelineJobError(
       last_error: errorMessage,
       status: "error",
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    // A job canceled mid-flight stays canceled — never flip it to error.
+    .neq("status", "canceled");
   await markActiveRunsForJobError(admin, job.id);
 }
 

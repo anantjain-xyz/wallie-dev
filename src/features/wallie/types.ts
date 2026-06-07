@@ -52,6 +52,7 @@ export type WallieRunMessage = {
 };
 
 export type WallieRun = {
+  canCancel: boolean;
   canRetry: boolean;
   createdAt: string;
   finishedAt: string | null;

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
+import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
@@ -241,31 +242,15 @@ async function cancelActiveWorkForSession(
   session: Pick<SessionRow, "id">,
   reason: string,
 ): Promise<void> {
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: reason,
-      status: "canceled",
-    })
-    .eq("session_id", session.id)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES);
-
-  const { data: jobIds } = await admin.from("agent_jobs").select("id").eq("session_id", session.id);
-
-  if (jobIds && jobIds.length > 0) {
-    await admin
-      .from("agent_runs")
-      .update({
-        finished_at: new Date().toISOString(),
-        status: "canceled" as const,
-      })
-      .in(
-        "agent_job_id",
-        jobIds.map((j) => j.id),
-      )
-      .in("status", ["queued", "started", "running"]);
-  }
+  // Delegate to the shared cancel primitive, which also stops the runs'
+  // sandboxes. `parkPhaseStatus` is false because every reconciler caller sets
+  // `phase_status` itself right after (archive sets archived_at + rejected,
+  // reroute resets the stage), so the primitive must not pre-empt that.
+  await cancelSessionWork(admin, {
+    parkPhaseStatus: false,
+    reason,
+    sessionId: session.id,
+  });
 }
 
 type StageRouteResult = "archived" | "routed" | "skipped";

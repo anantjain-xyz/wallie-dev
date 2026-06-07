@@ -2,6 +2,7 @@ import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
   AgentRunActionResponse,
+  AgentRunCancelResponse,
 } from "@/features/wallie/contracts";
 import { mapAgentRunRow } from "@/features/wallie/data";
 import type { Tables } from "@/lib/supabase/database.types";
@@ -20,6 +21,16 @@ export function buildAgentRunActionResponse(input: {
     processScheduled: input.processScheduled,
     run: mapAgentRunRow(input.run, emptyMemberIndex, []),
   } satisfies AgentRunActionResponse;
+}
+
+export function buildAgentRunCancelResponse(input: {
+  canceled: boolean;
+  run: Tables<"agent_runs">;
+}) {
+  return {
+    canceled: input.canceled,
+    run: mapAgentRunRow(input.run, emptyMemberIndex, []),
+  } satisfies AgentRunCancelResponse;
 }
 
 export function buildAgentRunActionErrorResponse(error: unknown) {

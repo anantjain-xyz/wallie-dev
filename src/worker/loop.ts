@@ -78,5 +78,7 @@ async function markJobError(
       last_error: errorMessage,
       status: "error",
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    // A job canceled mid-flight stays canceled — never flip it to error.
+    .neq("status", "canceled");
 }

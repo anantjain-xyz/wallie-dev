@@ -21,6 +21,7 @@ const baseMember: WorkspaceMember = {
 
 function run(overrides: Partial<WallieRun> = {}): WallieRun {
   return {
+    canCancel: false,
     canRetry: false,
     createdAt: "2026-05-20T20:00:00.000Z",
     finishedAt: "2026-05-20T20:05:00.000Z",

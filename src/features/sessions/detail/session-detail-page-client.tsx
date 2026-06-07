@@ -91,6 +91,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const [feedbackDraft, setFeedbackDraft] = useState("");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
+  const [stopPending, setStopPending] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
@@ -279,6 +280,30 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     }
   }
 
+  async function handleStopRun() {
+    setActionError(null);
+    setStopPending(true);
+
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/cancel`, {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setActionError(body?.error ?? "Could not stop the run.");
+        return;
+      }
+
+      startTransition(() => {
+        router.refresh();
+      });
+    } finally {
+      setStopPending(false);
+    }
+  }
+
   return (
     <PageContainer>
       <PageHeader
@@ -381,6 +406,37 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
               </details>
             ) : null}
           </div>
+
+          {isDraftingSelectedStage ? (
+            <div className="border-t border-border bg-surface-muted p-4">
+              {actionError ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+                >
+                  {actionError}
+                </div>
+              ) : null}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <button
+                  type="button"
+                  className="ui-button-danger gap-1.5"
+                  disabled={stopPending}
+                  onClick={() => void handleStopRun()}
+                >
+                  {stopPending ? (
+                    <>
+                      <Spinner />
+                      <span>Stopping…</span>
+                    </>
+                  ) : (
+                    "Stop run"
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {canActOnCurrent ? (
             <div className="border-t border-border bg-surface-muted p-4">

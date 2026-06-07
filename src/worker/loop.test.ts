@@ -122,7 +122,8 @@ describe("runClaimedJob", () => {
     const runStatusUpdate = { in: vi.fn(async () => ({ error: null })) };
     const runJobFilter = { eq: vi.fn(() => runStatusUpdate) };
     const runQuery = { update: vi.fn(() => runJobFilter) };
-    const jobErrorUpdate = { eq: vi.fn(async () => ({ error: null })) };
+    const jobErrorTerminal = { neq: vi.fn(async () => ({ error: null })) };
+    const jobErrorUpdate = { eq: vi.fn(() => jobErrorTerminal) };
     const jobQuery = { update: vi.fn(() => jobErrorUpdate) };
     const admin = {
       from: vi.fn((table: string) => {
