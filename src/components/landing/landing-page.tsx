@@ -9,6 +9,7 @@ import {
   RuntimeChoiceMockup,
   SandboxExecutionMockup,
 } from "@/components/landing/product-mockups";
+import { GitHubIcon } from "@/components/shared/icons";
 
 type FeatureSectionProps = {
   body: string;
@@ -20,6 +21,8 @@ type FeatureSectionProps = {
 };
 
 const nextPath = "/";
+const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
+const authorUrl = "https://anantjain.xyz";
 
 export function LandingPage() {
   return (
@@ -72,6 +75,8 @@ export function LandingPage() {
           <RuntimeChoiceMockup />
         </FeatureSection>
       </div>
+
+      <LandingFooter />
     </main>
   );
 }
@@ -79,8 +84,8 @@ export function LandingPage() {
 function LandingHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 px-5 py-4 sm:px-8 lg:flex-row lg:items-center lg:justify-between lg:px-10">
-        <Link href="/" className="flex items-center gap-3 focus-visible:outline-none">
+      <div className="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-3 px-5 py-4 sm:px-8 lg:px-10">
+        <Link href="/" className="flex shrink-0 items-center gap-3 focus-visible:outline-none">
           <Image
             src="/wallie-logo-minimal.png"
             alt=""
@@ -92,18 +97,81 @@ function LandingHeader() {
           <span className="text-[16px] font-semibold text-foreground">Wallie</span>
         </Link>
 
-        <div className="w-full lg:max-w-[500px]">
-          <EmailMagicLinkForm
-            next={nextPath}
-            variant="inline"
-            className="flex flex-col gap-2 sm:flex-row sm:items-center"
-            inputClassName="h-9 w-full rounded-[6px] border border-border bg-surface px-3 text-[13px] text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-muted focus-visible:border-accent/50 focus-visible:shadow-[0_0_0_4px_var(--focus-ring-soft)]"
-            submitClassName="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            submitLabel="Get started"
-          />
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <a
+            href={githubUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-border bg-surface px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            <GitHubIcon className="h-4 w-4" />
+            <span>GitHub</span>
+          </a>
+
+          {/* Desktop keeps the inline email capture; narrower widths fall back to
+              a single Get started button so the header always stays on one row. */}
+          <div className="hidden lg:block lg:w-[420px]">
+            <EmailMagicLinkForm
+              next={nextPath}
+              variant="inline"
+              className="flex items-center gap-2"
+              inputClassName="h-9 w-full rounded-[6px] border border-border bg-surface px-3 text-[13px] text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-muted focus-visible:border-accent/50 focus-visible:shadow-[0_0_0_4px_var(--focus-ring-soft)]"
+              submitClassName="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              submitLabel="Get started"
+            />
+          </div>
+
+          <Link
+            href="/login"
+            className="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden"
+          >
+            Get started
+          </Link>
         </div>
       </div>
     </header>
+  );
+}
+
+function LandingFooter() {
+  return (
+    <footer className="border-t border-border bg-surface">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
+        <div className="flex items-center gap-3">
+          <Image
+            src="/wallie-logo-minimal.png"
+            alt=""
+            width={28}
+            height={28}
+            className="h-7 w-7 rounded-[8px] bg-surface object-contain"
+          />
+          <span className="text-[14px] font-semibold text-foreground">Wallie</span>
+        </div>
+
+        <div className="flex flex-col gap-2 text-[14px] text-muted sm:flex-row sm:items-center sm:gap-6">
+          <a
+            href={githubUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-2 text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+          >
+            <GitHubIcon className="h-4 w-4" />
+            <span>GitHub</span>
+          </a>
+          <span>
+            Built by{" "}
+            <a
+              href={authorUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="font-medium text-foreground underline-offset-4 transition-colors hover:text-accent hover:underline focus-visible:outline-none focus-visible:text-accent"
+            >
+              Anant Jain
+            </a>
+          </span>
+        </div>
+      </div>
+    </footer>
   );
 }
 
