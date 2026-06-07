@@ -120,8 +120,11 @@ describe("repository onboarding planner", () => {
     const content = screenshotSkill!.content;
 
     expect(content).toContain("never be part of the final PR diff");
-    expect(content).toContain("commit-SHA raw GitHub URLs");
+    expect(content).toContain("one `Screenshot proof` link");
+    expect(content).toContain("Do not list or embed each screenshot file");
+    expect(content).toContain("github.com/<owner>/<repo>/commit/<screenshot-commit-sha>");
     expect(content).toContain("git revert <screenshot-commit-sha>");
+    expect(content).not.toContain("commit-SHA raw GitHub URLs");
     expect(content).not.toContain("git push --force-with-lease");
     expect(WALLIE_AGENTS_INSTRUCTIONS).toContain("never leave them in the final PR diff");
   });
