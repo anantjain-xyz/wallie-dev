@@ -27,6 +27,11 @@ export type UpdateSessionTitleResult = {
   updatedAt: string;
 };
 
+export type SessionArchiveResult = {
+  archivedAt: string | null;
+  id: string;
+};
+
 export async function createSessionFromClient(
   _supabase: SupabaseClient<Database>,
   input: CreateSessionInput,
@@ -102,4 +107,42 @@ export async function updateSessionTitleFromClient(
     title: responsePayload.title,
     updatedAt: responsePayload.updatedAt,
   };
+}
+
+async function mutateSessionArchive(
+  sessionId: string,
+  method: "DELETE" | "POST",
+  fallbackError: string,
+): Promise<SessionArchiveResult> {
+  const response = await fetch(`/api/sessions/${sessionId}/archive`, { method });
+  const responsePayload = (await response.json().catch(() => null)) as {
+    archivedAt?: string | null;
+    error?: string;
+    id?: string;
+  } | null;
+
+  if (!response.ok) {
+    throw new Error(responsePayload?.error ?? fallbackError);
+  }
+
+  if (typeof responsePayload?.id !== "string") {
+    throw new Error("Session archive response was invalid.");
+  }
+
+  return {
+    archivedAt: responsePayload.archivedAt ?? null,
+    id: responsePayload.id,
+  };
+}
+
+export async function archiveSessionFromClient(input: {
+  sessionId: string;
+}): Promise<SessionArchiveResult> {
+  return mutateSessionArchive(input.sessionId, "POST", "Failed to archive session.");
+}
+
+export async function unarchiveSessionFromClient(input: {
+  sessionId: string;
+}): Promise<SessionArchiveResult> {
+  return mutateSessionArchive(input.sessionId, "DELETE", "Failed to unarchive session.");
 }

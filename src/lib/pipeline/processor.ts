@@ -93,13 +93,16 @@ export async function processPipelineJob(input: {
     }
 
     // Atomic CAS claim: only proceed if the session is in a non-terminal
-    // state for the current stage. Prevents a second worker from regenerating
-    // an artifact that has already been approved.
+    // state for the current stage AND is not archived. Prevents a second worker
+    // from regenerating an artifact that has already been approved, and closes
+    // the archive race — a job enqueued in the narrow window before archive's
+    // marker landed cannot execute against an archived session.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
       .update({ phase_status: "agent_generating" })
       .eq("id", session.id)
       .in("phase_status", ["agent_generating", "awaiting_review", "rejected"])
+      .is("archived_at", null)
       .select("id")
       .maybeSingle();
 
@@ -109,7 +112,11 @@ export async function processPipelineJob(input: {
     }
 
     if (!claimed) {
-      // Terminal state — nothing to do for this job.
+      // Terminal state (already approved) or archived — this job has nothing to
+      // generate. Cancel any run queued up-front for it (e.g. by
+      // enqueueSessionJobWithRun or a manual enqueue that raced an archive) so
+      // it does not dangle as a permanently-active run, then close the job.
+      await cancelQueuedRunsForJob(admin, job.id);
       await markPipelineJobSuccess(admin, job);
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
@@ -354,10 +361,12 @@ async function runStage(input: {
         phase_status: "awaiting_review",
       })
       .eq("id", session.id)
-      // Only advance a session that is still generating. If it was parked
-      // (canceled or stalled) while this run produced its artifact, this CAS
-      // affects zero rows and we must not un-park it or surface the draft.
+      // Only advance a session that is still generating AND not archived. If it
+      // was parked (canceled or stalled) or archived while this run produced its
+      // artifact, this CAS affects zero rows and we must not un-park/un-freeze
+      // it or surface the draft.
       .eq("phase_status", "agent_generating")
+      .is("archived_at", null)
       .select("id");
     if (pointerError) throw pointerError;
 
@@ -662,6 +671,10 @@ export async function handleRejection(input: {
     return { error: "Session not found.", success: false };
   }
 
+  if (session.archived_at) {
+    return { error: "Session is archived.", success: false };
+  }
+
   if (session.phase_status !== "awaiting_review") {
     return { error: "Session is not awaiting review.", success: false };
   }
@@ -682,7 +695,10 @@ export async function handleRejection(input: {
 
   // Atomic CAS on rejection_count: only the first rejection that observed
   // the current count can advance it. A concurrent second rejection sees
-  // rows-updated=0 and exits without double-counting.
+  // rows-updated=0 and exits without double-counting. The `archived_at is null`
+  // predicate also makes this atomic with archive — an archive that lands
+  // between the load above and this CAS turns the rejection into a no-op rather
+  // than enqueueing fresh work on an archived session.
   const { data: claimedRejection, error: claimRejectionError } = await admin
     .from("sessions")
     .update({ rejection_count: newRejectionCount })
@@ -691,6 +707,7 @@ export async function handleRejection(input: {
     .eq("rejection_count", session.rejection_count)
     .eq("phase_status", "awaiting_review")
     .eq("current_artifact_version", input.version)
+    .is("archived_at", null)
     .select("id")
     .maybeSingle();
 
@@ -1083,6 +1100,25 @@ async function markRunError(admin: AdminClient, runId: string): Promise<void> {
     .eq("id", runId)
     // Don't flip a canceled run back to error.
     .in("status", ["queued", "started", "running"]);
+}
+
+// Best-effort cleanup for a job whose session is no longer claimable (terminal
+// or archived). Flips any still-active run inserted up-front for the job to
+// `canceled` so it cannot linger as a permanently-active run. Logs and swallows
+// errors — failing to tidy a run must not wedge the job-close path.
+async function cancelQueuedRunsForJob(admin: AdminClient, jobId: string): Promise<void> {
+  const { error } = await admin
+    .from("agent_runs")
+    .update({ finished_at: new Date().toISOString(), status: "canceled" })
+    .eq("agent_job_id", jobId)
+    .in("status", ["queued", "started", "running"]);
+
+  if (error) {
+    console.error("Failed to cancel runs for an unclaimable job", {
+      error: getErrorMessage(error, "Unknown run cancel error"),
+      jobId,
+    });
+  }
 }
 
 async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise<string | null> {

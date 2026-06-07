@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(() => ({})),
@@ -55,7 +55,7 @@ function makeRequest(body: Record<string, unknown>) {
   });
 }
 
-function buildSupabase() {
+function buildSupabase(opts: { archivedAt?: string | null } = {}) {
   return {
     from: (table: string) => {
       if (table === "sessions") {
@@ -64,6 +64,7 @@ function buildSupabase() {
             eq: () => ({
               maybeSingle: async () => ({
                 data: {
+                  archived_at: opts.archivedAt ?? null,
                   current_stage_id: "stage-product",
                   id: "sess-1",
                   phase_status: "awaiting_review",
@@ -97,6 +98,10 @@ function buildSupabase() {
 }
 
 describe("POST /api/sessions/[sessionId]/phase-action", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("attributes rejection reruns to the reviewer member", async () => {
     mocked.createSupabaseServerClient.mockResolvedValue(buildSupabase());
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
@@ -117,5 +122,22 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
       version: 1,
     });
     expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
+  });
+
+  it("rejects phase actions on an archived session before mutating", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue(
+      buildSupabase({ archivedAt: "2026-06-07T12:00:00.000Z" }),
+    );
+    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
+    mocked.enforceRateLimit.mockResolvedValue({ response: null });
+
+    const response = await POST(makeRequest({ action: "approve", version: 1 }), {
+      params: Promise.resolve({ sessionId: "sess-1" }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "Session is archived." });
+    expect(mocked.handleApproval).not.toHaveBeenCalled();
+    expect(mocked.handleRejection).not.toHaveBeenCalled();
   });
 });

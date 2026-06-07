@@ -30,13 +30,22 @@ type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type SessionForRun = Pick<
   Tables<"sessions">,
-  "created_at" | "current_stage_id" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
+  | "archived_at"
+  | "created_at"
+  | "current_stage_id"
+  | "id"
+  | "number"
+  | "phase_status"
+  | "prompt_md"
+  | "title"
+  | "workspace_id"
 >;
 type AgentJobRow = Tables<"agent_jobs">;
 type AgentRunRow = Tables<"agent_runs">;
 type StageSnapshot = Pick<Tables<"pipeline_stages">, "id" | "name" | "slug">;
 
-const sessionSelect = "id, workspace_id, number, title, prompt_md, current_stage_id, created_at";
+const sessionSelect =
+  "id, workspace_id, number, title, prompt_md, current_stage_id, created_at, archived_at, phase_status";
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
@@ -256,10 +265,7 @@ async function loadSessionForRun(
     return null;
   }
 
-  return data as Pick<
-    Tables<"sessions">,
-    "created_at" | "current_stage_id" | "id" | "number" | "prompt_md" | "title" | "workspace_id"
-  >;
+  return data as SessionForRun;
 }
 
 async function loadStageSnapshot(
@@ -501,6 +507,29 @@ async function validateQueuedRunRequest(input: {
       code: "session_not_found",
       message: "Session not found.",
       statusCode: 404,
+    });
+  }
+
+  // An archived session accepts no new work. This guards both the manual run
+  // and the retry-run paths so the run panel cannot resurrect work that archive
+  // just canceled.
+  if (session.archived_at) {
+    throw new WallieActionError({
+      code: "session_archived",
+      message: "This session is archived. Unarchive it to run Wallie.",
+      statusCode: 409,
+    });
+  }
+
+  // A completed session sits in `approved` (terminal-stage approval leaves it
+  // there). The processor only claims agent_generating/awaiting_review/rejected,
+  // so enqueueing here would strand a queued run the worker never finishes.
+  // Reject up front — this also covers a completed session that was unarchived.
+  if (session.phase_status === "approved") {
+    throw new WallieActionError({
+      code: "session_not_runnable",
+      message: "This session is complete. There is nothing left to run.",
+      statusCode: 409,
     });
   }
 
