@@ -39,7 +39,7 @@ Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Wi
 
 Wallie turns Linear issues into **sessions** that move through a user-configurable **pipeline** of **stages**, each producing a versioned markdown **artifact** that a human approves or rejects from the dashboard. See the README for the full walkthrough; the essentials:
 
-**Stages are data, not code.** Each stage is a row in `pipeline_stages` (slug, position, prompt template, approver list). Nothing in code distinguishes one stage from another — a single generic runner drives all of them. New workspaces are seeded with `product → design → engineering → review → land`, but workspaces can edit, add, remove, or reorder stages. Sessions are pinned to a pipeline at create time, so pipeline edits don't reshape historical sessions.
+**Stages are data, not code.** Each stage is a row in `pipeline_stages` (slug, position, prompt template, approver list). Nothing in code distinguishes one stage from another — a single generic runner drives all of them. New workspaces are seeded with `plan → build → land`, but workspaces can edit, add, remove, or reorder stages. Sessions are pinned to a pipeline at create time, so pipeline edits don't reshape historical sessions.
 
 **The core loop:** a job is enqueued (deduped per active stage) → the worker polls `agent_jobs` and claims one with an atomic compare-and-swap on `phase_status` → `processPipelineJob()` renders the stage's prompt template against session context, spins up a Vercel Sandbox cloned from the workspace's GitHub repo, runs the configured agent CLI (Codex or Claude Code) inside it, and writes the output as a versioned artifact → session flips to `awaiting_review` → approval calls the `approve_session_stage` RPC (advances to the next stage by position, enqueues the next job); rejection saves feedback on the artifact and re-runs the same stage with `{{attempt.feedback}}` injected.
 
@@ -81,7 +81,7 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 
 - **Session** — top-level entity representing one end-to-end Wallie workflow. Replaces the legacy "issue" framing.
 - **Pipeline** — an ordered, workspace-owned list of stages. Sessions are pinned to a pipeline at create time.
-- **Stage** — a row in `pipeline_stages` (slug, position, name, prompt template, approver list). User-configurable; new workspaces are seeded with `product → design → engineering → review → land`. The legacy term "phase" survives in column names like `phase_status`.
+- **Stage** — a row in `pipeline_stages` (slug, position, name, prompt template, approver list). User-configurable; new workspaces are seeded with `plan → build → land`. The legacy term "phase" survives in column names like `phase_status`.
 - **Artifact** — versioned markdown output per stage. Stored in `session_artifacts`, keyed on `(session_id, stage_slug, version)`.
 - **Run** — one agent execution within a stage. A rejected artifact triggers a new run of the same stage.
 
