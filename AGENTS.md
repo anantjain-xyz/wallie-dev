@@ -33,9 +33,10 @@ Use Vercel route handlers for privileged and third-party integrations.
 ## Glossary
 
 - **Session** — top-level entity representing one end-to-end Wallie workflow. Replaces the legacy "issue" framing.
-- **Phase** — a stage within a session: `product`, `design`, `engineering`, `review`, `land`.
-- **Artifact** — versioned JSON output per phase (e.g. the product spec). Stored in `session_artifacts`, keyed on `(session_id, phase, version)`.
-- **Run** — one agent execution within a phase. A rejected artifact triggers a new run of the same phase.
+- **Pipeline** — an ordered, workspace-owned list of stages. Sessions are pinned to a pipeline at create time.
+- **Stage** — a row in `pipeline_stages` (slug, position, name, prompt template, approver list). User-configurable; new workspaces are seeded with `product → design → engineering → review → land`. The legacy term "phase" survives in column names like `phase_status`.
+- **Artifact** — versioned markdown output per stage. Stored in `session_artifacts`, keyed on `(session_id, stage_slug, version)`.
+- **Run** — one agent execution within a stage. A rejected artifact triggers a new run of the same stage.
 
 ## gstack
 
