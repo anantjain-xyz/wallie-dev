@@ -35,8 +35,8 @@ export function LandingPage() {
             Bring agents together with your team in one shared workspace.
           </h1>
           <p className="mx-auto mt-6 max-w-[720px] text-[17px] leading-8 text-muted sm:text-[18px]">
-            Wallie turns your plan, build, and land stages into gated, sandboxed
-            runs your team can inspect and approve together.
+            Wallie turns your plan, build, and land stages into gated, sandboxed runs your team can
+            inspect and approve together.
           </p>
         </div>
 
