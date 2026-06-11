@@ -1,16 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Newsreader } from "next/font/google";
 
 import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
 import "./globals.css";
-
-const newsreader = Newsreader({
-  subsets: ["latin"],
-  display: "swap",
-  weight: ["400"],
-  variable: "--font-newsreader",
-});
 
 const themeBootstrapScript = `
 (() => {
@@ -92,11 +84,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`h-full antialiased ${newsreader.variable}`}
-      suppressHydrationWarning
-    >
+    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         <a href="#main-content" className="ui-skip-link">
