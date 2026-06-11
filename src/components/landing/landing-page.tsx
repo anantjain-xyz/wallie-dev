@@ -31,7 +31,7 @@ export function LandingPage() {
 
       <section className="mx-auto flex w-full max-w-[1180px] flex-col px-5 pb-16 pt-12 sm:px-8 sm:pb-20 sm:pt-16 lg:px-10">
         <div className="mx-auto max-w-[860px] text-center">
-          <h1 className="text-balance font-[family-name:var(--font-newsreader)] text-[48px] font-normal leading-[0.96] tracking-[-0.01em] text-foreground sm:text-[72px] lg:text-[88px]">
+          <h1 className="text-[48px] font-normal leading-[0.96] text-foreground sm:text-[72px] lg:text-[88px]">
             Bring agents together with your team in one shared workspace.
           </h1>
           <p className="mx-auto mt-6 max-w-[720px] text-[17px] leading-8 text-muted sm:text-[18px]">
