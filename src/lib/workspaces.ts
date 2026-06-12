@@ -15,6 +15,20 @@ export const createWorkspaceInputSchema = z.object({
 
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
 
+export const workspaceIdParamsSchema = z.object({
+  workspaceId: z.string().uuid("Workspace id is invalid."),
+});
+
+export const updateWorkspaceNamePayloadSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Workspace name is required.")
+    .max(80, "Workspace names must stay under 81 characters."),
+});
+
+export type UpdateWorkspaceNamePayload = z.infer<typeof updateWorkspaceNamePayloadSchema>;
+
 export function normalizeWorkspaceSlug(value: string | null | undefined) {
   const normalized = value?.trim().toLowerCase();
 
