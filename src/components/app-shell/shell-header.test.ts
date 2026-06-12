@@ -60,6 +60,7 @@ describe("ShellHeader", () => {
         sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
         viewerEmail: "owner@example.com",
         workspace,
+        workspaceAvatarUrl: null,
       }),
     );
 
@@ -80,6 +81,7 @@ describe("ShellHeader", () => {
         sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
         viewerEmail: "owner@example.com",
         workspace,
+        workspaceAvatarUrl: null,
       }),
     );
 
@@ -99,12 +101,52 @@ describe("ShellHeader", () => {
         sessionRepositoryOptions: [],
         viewerEmail: "owner@example.com",
         workspace,
+        workspaceAvatarUrl: null,
       }),
     );
 
     expect(html).toContain('aria-label="Switch to dark mode"');
     expect(html).toContain('aria-pressed="false"');
     expect(html).toContain('title="Switch to dark mode"');
+  });
+
+  it("shows the workspace identity beside the Wallie wordmark", () => {
+    const html = renderToStaticMarkup(
+      createElement(ShellHeader, {
+        navItems,
+        defaultSessionGithubRepositoryId: null,
+        onboarding: { currentStep: "verify", status: "completed" },
+        sessionRepositoryOptions: [],
+        viewerEmail: "owner@example.com",
+        workspace,
+        workspaceAvatarUrl: null,
+      }),
+    );
+
+    expect(html).toContain("Wallie");
+    expect(html).toContain("Acme Corp");
+    // No avatar URL → initial fallback badge.
+    expect(html).toContain(">A<");
+  });
+
+  it("renders an account menu exposing the signed-in email and sign-out", () => {
+    const html = renderToStaticMarkup(
+      createElement(ShellHeader, {
+        navItems,
+        defaultSessionGithubRepositoryId: null,
+        onboarding: { currentStep: "verify", status: "completed" },
+        sessionRepositoryOptions: [],
+        viewerEmail: "owner@example.com",
+        workspace,
+        workspaceAvatarUrl: null,
+      }),
+    );
+
+    // The signed-in email is exposed on the menu trigger; the menu panel
+    // (with the sign-out form) mounts on open, which the AccountMenu test covers.
+    expect(html).toContain('aria-label="Account: owner@example.com"');
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
   });
 });
 

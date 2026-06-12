@@ -18,6 +18,7 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
     sessionRepositoryOptions,
     user,
     workspace,
+    workspaceAvatarUrl,
   } = await loadWorkspaceLayoutContext(workspaceSlug);
 
   return (
@@ -27,6 +28,7 @@ export default async function WorkspaceAppLayout({ children, params }: Workspace
       sessionRepositoryOptions={sessionRepositoryOptions}
       viewerEmail={user.email ?? null}
       workspace={workspace}
+      workspaceAvatarUrl={workspaceAvatarUrl}
     >
       {children}
     </AppShell>

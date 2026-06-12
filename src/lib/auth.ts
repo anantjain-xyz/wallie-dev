@@ -89,7 +89,7 @@ export async function getWorkspaceBySlugForUser(
 ) {
   const { data, error } = await supabase
     .from("workspaces")
-    .select("id, name, slug")
+    .select("id, name, slug, avatar_path")
     .eq("slug", workspaceSlug)
     .maybeSingle();
 
@@ -97,7 +97,7 @@ export async function getWorkspaceBySlugForUser(
     throw error;
   }
 
-  return data satisfies WorkspaceSummary | null;
+  return data satisfies (WorkspaceSummary & { avatar_path: string | null }) | null;
 }
 
 export async function hasAnyWorkspaceForUser(supabase: SupabaseServerClient) {
