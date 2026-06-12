@@ -1870,6 +1870,15 @@ export type Database = {
         Args: { target_run_id: string; target_user_id: string }
         Returns: undefined
       }
+      remove_workspace_member: {
+        Args: { expected_workspace_id: string; target_member_id: string }
+        Returns: {
+          email: string
+          full_name: string
+          id: string
+          role: Database["public"]["Enums"]["member_role"]
+        }[]
+      }
       rewrite_default_pipeline: {
         Args: {
           operating_rules_md?: string

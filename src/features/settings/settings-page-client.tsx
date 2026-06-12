@@ -277,6 +277,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             />
             <WorkspaceMembersSection
               canManage={isManager}
+              currentMemberId={pageData.currentMember.id}
               initialInvitations={pageData.workspaceInvitations}
               setFlashMessage={setFlashMessage}
               workspaceId={pageData.workspace.id}
