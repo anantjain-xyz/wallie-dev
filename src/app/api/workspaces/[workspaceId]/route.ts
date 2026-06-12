@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthenticatedHomePath } from "@/lib/auth";
+import { workspaceAvatarBucket } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   deleteWorkspacePayloadSchema,
@@ -119,10 +120,36 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
     return NextResponse.json({ error: "Failed to delete workspace." }, { status: 500 });
   }
 
+  // The FK cascade drops the `workspaces` row and its children, but avatar
+  // uploads live in the public `workspace-avatars` storage bucket and only their
+  // object path is referenced from the row — so the cascade can't reach them.
+  // Best-effort delete every object under this workspace's prefix (re-uploads
+  // leave older objects behind, so list rather than relying on avatar_path) so a
+  // deleted workspace's avatar isn't left publicly fetchable. Storage failures
+  // must not surface as a delete error: the workspace is already gone.
+  await removeWorkspaceAvatars(admin, access.context.workspace.id);
+
   // Resolve where the now-workspaceless (or fewer-workspace) user should land.
   // The RLS-scoped server client no longer sees the deleted workspace, so this
   // returns their next workspace or the onboarding path.
   const redirectTo = await resolveAuthenticatedHomePath(access.context.supabase);
 
   return NextResponse.json({ deleted: true, redirectTo }, { status: 200 });
+}
+
+async function removeWorkspaceAvatars(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+) {
+  try {
+    const bucket = admin.storage.from(workspaceAvatarBucket);
+    const { data: objects } = await bucket.list(workspaceId);
+
+    if (objects && objects.length > 0) {
+      await bucket.remove(objects.map((object) => `${workspaceId}/${object.name}`));
+    }
+  } catch {
+    // Best-effort cleanup: the workspace row is already deleted, so a storage
+    // failure here should not turn a successful delete into an error response.
+  }
 }

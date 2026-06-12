@@ -154,12 +154,15 @@ function deleteRequestWith(body: unknown) {
   });
 }
 
-function mockDeleteResult(result: { error?: unknown }) {
+function mockDeleteResult(result: { error?: unknown; avatarObjects?: { name: string }[] }) {
   const eq = vi.fn().mockResolvedValue({ error: result.error ?? null });
   const del = vi.fn().mockReturnValue({ eq });
   const from = vi.fn().mockReturnValue({ delete: del });
-  mocked.createSupabaseAdminClient.mockReturnValue({ from });
-  return { del, eq, from };
+  const list = vi.fn().mockResolvedValue({ data: result.avatarObjects ?? [], error: null });
+  const remove = vi.fn().mockResolvedValue({ data: [], error: null });
+  const storageFrom = vi.fn().mockReturnValue({ list, remove });
+  mocked.createSupabaseAdminClient.mockReturnValue({ from, storage: { from: storageFrom } });
+  return { del, eq, from, list, remove, storageFrom };
 }
 
 describe("DELETE /api/workspaces/[workspaceId]", () => {
@@ -184,6 +187,43 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     });
     expect(calls.from).toHaveBeenCalledWith("workspaces");
     expect(calls.eq).toHaveBeenCalledWith("id", WORKSPACE_ID);
+  });
+
+  it("removes orphaned avatar objects from storage after deleting", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
+    const calls = mockDeleteResult({ avatarObjects: [{ name: "a.png" }, { name: "b.png" }] });
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+
+    expect(response.status).toBe(200);
+    expect(calls.storageFrom).toHaveBeenCalledWith("workspace-avatars");
+    expect(calls.list).toHaveBeenCalledWith(WORKSPACE_ID);
+    expect(calls.remove).toHaveBeenCalledWith([`${WORKSPACE_ID}/a.png`, `${WORKSPACE_ID}/b.png`]);
+  });
+
+  it("still succeeds when storage cleanup throws", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+      }),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          list: vi.fn().mockRejectedValue(new Error("storage down")),
+          remove: vi.fn(),
+        }),
+      },
+    });
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      deleted: true,
+      redirectTo: "/onboarding/workspace",
+    });
   });
 
   it("trims the confirmation before comparing it to the workspace name", async () => {

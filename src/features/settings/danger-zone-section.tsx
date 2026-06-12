@@ -29,12 +29,12 @@ export function DangerZoneSection({
   const [dialog, setDialog] = useState<"delete" | "leave" | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function deleteWorkspace() {
+  async function deleteWorkspace(confirmation: string) {
     setBusy(true);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}`, {
-        body: JSON.stringify({ confirmation: workspaceName }),
+        body: JSON.stringify({ confirmation }),
         headers: { "content-type": "application/json" },
         method: "DELETE",
       });
@@ -132,7 +132,7 @@ export function DangerZoneSection({
         <DeleteWorkspaceDialog
           busy={busy}
           onCancel={() => setDialog(null)}
-          onConfirm={() => void deleteWorkspace()}
+          onConfirm={(confirmation) => void deleteWorkspace(confirmation)}
           workspaceName={workspaceName}
         />
       ) : null}
@@ -198,7 +198,7 @@ function DeleteWorkspaceDialog({
 }: {
   busy: boolean;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (confirmation: string) => void;
   workspaceName: string;
 }) {
   const titleId = useId();
@@ -238,7 +238,7 @@ function DeleteWorkspaceDialog({
         <button
           className="ui-button-danger min-h-9"
           disabled={busy || !confirmed}
-          onClick={onConfirm}
+          onClick={() => onConfirm(confirmation)}
           type="button"
         >
           {busy ? "Deleting" : "Delete workspace"}

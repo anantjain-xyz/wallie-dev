@@ -275,6 +275,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           <div className="space-y-16 min-w-0">
             <WorkspaceAvatarSection
               canManage={isManager}
+              onWorkspaceNameChange={(name) =>
+                setData((currentData) => ({
+                  ...currentData,
+                  workspace: { ...currentData.workspace, name },
+                }))
+              }
               setFlashMessage={setFlashMessage}
               workspace={pageData.workspace}
             />
