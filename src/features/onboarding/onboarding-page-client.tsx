@@ -82,6 +82,10 @@ import type {
   UpsertWorkspaceSecretResponse,
   WorkspaceSecretPreview,
 } from "@/lib/secrets/contracts";
+import type {
+  VercelSandboxConnectionPreview,
+  VercelSandboxConnectionResponse,
+} from "@/lib/vercel-sandbox/contracts";
 import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -432,6 +436,38 @@ export function updateSandboxCapabilityCheckInData(
   };
 }
 
+export function updateVercelSandboxConnectionInData(
+  currentData: WorkspaceOnboardingData,
+  connection: VercelSandboxConnectionPreview | null,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    vercelSandboxConnection: connection,
+    setupHealth: {
+      ...currentData.setupHealth,
+      vercelSandboxConnection: connection
+        ? {
+            connected: connection.status === "connected",
+            lastValidationError: connection.lastValidationError,
+            projectId: connection.projectId,
+            projectName: connection.projectName,
+            status: connection.status,
+            teamId: connection.teamId,
+            updatedAt: connection.updatedAt,
+          }
+        : {
+            connected: false,
+            lastValidationError: null,
+            projectId: null,
+            projectName: null,
+            status: "missing",
+            teamId: null,
+            updatedAt: null,
+          },
+    },
+  };
+}
+
 function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
   const github = health.githubInstallation.connected
     ? {
@@ -687,6 +723,215 @@ function RuntimeRequirementList({
   );
 }
 
+function OnboardingVercelSandboxPanel({
+  canManage,
+  connection,
+  disabled,
+  onConnectionChange,
+  workspaceId,
+}: {
+  canManage: boolean;
+  connection: VercelSandboxConnectionPreview | null;
+  disabled: boolean;
+  onConnectionChange: (connection: VercelSandboxConnectionPreview | null) => void;
+  workspaceId: string;
+}) {
+  const [token, setToken] = useState("");
+  const [teamId, setTeamId] = useState(connection?.teamId ?? "");
+  const [projectId, setProjectId] = useState(connection?.projectId ?? "");
+  const [busyAction, setBusyAction] = useState<"disconnect" | "save" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const busy = disabled || busyAction !== null;
+  const connected = connection?.status === "connected";
+  const statusTone: HealthTone = !connection ? "warning" : connected ? "success" : "danger";
+  const statusLabel = !connection ? "Missing" : connected ? "Connected" : "Needs attention";
+
+  async function handleSave() {
+    if (!canManage || busy) return;
+    if (!token.trim() || !teamId.trim() || !projectId.trim()) {
+      setMessage(null);
+      setError("Enter a Vercel token, team id, and project id.");
+      return;
+    }
+    setBusyAction("save");
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/vercel-sandbox-connection`, {
+        body: JSON.stringify({
+          projectId: projectId.trim(),
+          teamId: teamId.trim(),
+          token: token.trim(),
+        }),
+        headers: { "content-type": "application/json" },
+        method: "PUT",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (VercelSandboxConnectionResponse & { error?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.error ?? "Vercel Sandbox connection failed.");
+      }
+      onConnectionChange(body.connection);
+      setToken("");
+      setMessage("Vercel Sandbox connection saved.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Vercel Sandbox connection failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!canManage || busy) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Disconnect Vercel Sandbox for this workspace?")
+    ) {
+      return;
+    }
+    setBusyAction("disconnect");
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/vercel-sandbox-connection`, {
+        method: "DELETE",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | (VercelSandboxConnectionResponse & { error?: string })
+        | null;
+      if (!response.ok || !body) {
+        throw new Error(body?.error ?? "Vercel Sandbox disconnect failed.");
+      }
+      onConnectionChange(body.connection);
+      setMessage("Vercel Sandbox disconnected.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Vercel Sandbox disconnect failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  return (
+    <div className="rounded-[6px] border border-border bg-surface p-4" id="onboarding-vercel">
+      <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-semibold text-foreground">Vercel Sandbox</h3>
+          <p className="mt-1 text-[12px] leading-5 text-muted">
+            Wallie runs every session inside this workspace&apos;s Vercel project. Connect it here
+            so sessions can run — the token is encrypted and never returned to the browser.
+          </p>
+        </div>
+        <Badge tone={statusTone}>{statusLabel}</Badge>
+      </div>
+
+      {error ? (
+        <div
+          className="mt-4 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          role="alert"
+        >
+          {error}
+        </div>
+      ) : null}
+      {message ? (
+        <div
+          className="mt-4 rounded-[6px] border border-success/20 bg-success-soft px-3 py-2 text-[13px] text-success"
+          role="status"
+        >
+          {message}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-col gap-1">
+        {connection ? (
+          <p className="text-[12px] leading-5 text-muted">
+            {connection.projectName ?? connection.projectId} on {connection.teamId}
+            {connection.tokenPreview ? ` · ${connection.tokenPreview}` : ""}
+          </p>
+        ) : (
+          <p className="text-[12px] leading-5 text-muted">
+            Connect a Vercel project before running Wallie sessions.
+          </p>
+        )}
+        {connection?.lastValidationError ? (
+          <p className="text-[12px] leading-5 text-danger">{connection.lastValidationError}</p>
+        ) : null}
+      </div>
+
+      {canManage ? (
+        <>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="block space-y-1.5 sm:col-span-2">
+              <span className="text-[12px] font-medium text-muted">Vercel token</span>
+              <input
+                autoComplete="off"
+                className="ui-input"
+                disabled={busy}
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="vca_..."
+                spellCheck={false}
+                type="password"
+                value={token}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-muted">Team id</span>
+              <input
+                autoComplete="off"
+                className="ui-input"
+                disabled={busy}
+                onChange={(event) => setTeamId(event.target.value)}
+                placeholder="team_..."
+                spellCheck={false}
+                value={teamId}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[12px] font-medium text-muted">Project id</span>
+              <input
+                autoComplete="off"
+                className="ui-input"
+                disabled={busy}
+                onChange={(event) => setProjectId(event.target.value)}
+                placeholder="prj_..."
+                spellCheck={false}
+                value={projectId}
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+            {connection ? (
+              <button
+                className="ui-button-danger"
+                disabled={busy}
+                onClick={() => void handleDisconnect()}
+                type="button"
+              >
+                {busyAction === "disconnect" ? "Disconnecting..." : "Disconnect"}
+              </button>
+            ) : null}
+            <button
+              className="ui-button-primary"
+              disabled={busy}
+              onClick={() => void handleSave()}
+              type="button"
+            >
+              {busyAction === "save" ? "Validating..." : "Save Vercel connection"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="mt-4 text-[13px] leading-6 text-muted">
+          Workspace admins can connect the Vercel Sandbox project used for Wallie runs.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RuntimeStep({
   data,
   isSaving,
@@ -715,6 +960,11 @@ function RuntimeStep({
   const handleClaudeCodeStatusChange = useCallback(
     (status: ClaudeCodeConnectionStatus) =>
       onDataChange((current) => updateClaudeCodeConnectionInData(current, status)),
+    [onDataChange],
+  );
+  const handleVercelConnectionChange = useCallback(
+    (connection: VercelSandboxConnectionPreview | null) =>
+      onDataChange((current) => updateVercelSandboxConnectionInData(current, connection)),
     [onDataChange],
   );
   const fields = AGENT_CONFIG_FIELDS;
@@ -1118,13 +1368,21 @@ function RuntimeStep({
             onCodexStatusChange={handleCodexStatusChange}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
-            vercelConnectionHref={settingsHref(data.workspace.slug, "vercel")}
+            vercelConnectionHref="#onboarding-vercel"
             vercelSandboxConnection={data.vercelSandboxConnection}
             variant="embedded"
             workspaceId={data.workspace.id}
           />
         </div>
       </div>
+
+      <OnboardingVercelSandboxPanel
+        canManage={data.canManage}
+        connection={data.vercelSandboxConnection}
+        disabled={isSaving}
+        onConnectionChange={handleVercelConnectionChange}
+        workspaceId={data.workspace.id}
+      />
 
       <div className="space-y-4">
         <div className="rounded-[6px] border border-border bg-surface">
@@ -1387,11 +1645,7 @@ function VerifyStep({
                 <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
                   {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
                 </Badge>
-                {!item.passed && item.id === "vercel-sandbox" ? (
-                  <Link className="ui-button" href={settingsHref(data.workspace.slug, "vercel")}>
-                    Open Vercel
-                  </Link>
-                ) : !item.passed && item.step !== "verify" ? (
+                {!item.passed && item.step !== "verify" ? (
                   <button
                     className="ui-button"
                     data-step-link={item.step}
@@ -2056,7 +2310,8 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     !activeStepAlreadyResolved &&
     (!runtimeCompletionState.readiness.canComplete ||
       runtimeCompletionState.hasInvalidDrafts ||
-      runtimeCompletionState.hasUnsavedDrafts);
+      runtimeCompletionState.hasUnsavedDrafts ||
+      !data.setupHealth.vercelSandboxConnection.connected);
   const verifyChecklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,

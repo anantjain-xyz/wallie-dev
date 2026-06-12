@@ -1167,6 +1167,80 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("truncate font-mono");
   });
 
+  it("connects the Vercel Sandbox inline from the Connect Agent step", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain('id="onboarding-vercel"');
+    expect(html).toContain("Save Vercel connection");
+    expect(html).toContain('placeholder="vca_..."');
+    expect(html).toContain('placeholder="team_..."');
+    expect(html).toContain('placeholder="prj_..."');
+    // Default data has a connection, so an inline Disconnect control is offered.
+    expect(html).toContain("Disconnect");
+    // The Vercel connection is made in the wizard, not by detouring into Settings.
+    expect(html).not.toContain('href="/w/northwind/settings#vercel"');
+  });
+
+  it("blocks Connect Agent completion until the Vercel Sandbox is connected", () => {
+    const connectedCodex = {
+      connected: true,
+      credentialType: "platform_api_key" as const,
+      expiresAt: null,
+      status: "connected" as const,
+      updatedAt: "2026-05-16T18:00:00.000Z",
+    };
+
+    const blockedHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+          setupHealth: {
+            codexConnection: connectedCodex,
+            vercelSandboxConnection: {
+              connected: false,
+              lastValidationError: null,
+              projectId: null,
+              projectName: null,
+              status: "missing",
+              teamId: null,
+              updatedAt: null,
+            },
+          },
+          vercelSandboxConnection: null,
+        }),
+      }),
+    );
+    expect(primaryFooterButton(blockedHtml)).toContain("disabled");
+    expect(blockedHtml).toContain("Connect a Vercel project before running Wallie sessions.");
+
+    const readyHtml = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedSteps: ["github", "repository", "pipeline", "linear"],
+            currentStep: "runtime",
+          },
+          setupHealth: {
+            codexConnection: connectedCodex,
+          },
+        }),
+      }),
+    );
+    expect(primaryFooterButton(readyHtml)).not.toContain("disabled");
+  });
+
   it("normalizes repository env keys before rendering saved state", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
@@ -1293,7 +1367,7 @@ describe("OnboardingPageClient", () => {
     expect(button).toContain(">Complete setup</button>");
   });
 
-  it("routes the Vercel Sandbox blocker to the Vercel settings section", () => {
+  it("routes the Vercel Sandbox blocker back into the Connect Agent step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
@@ -1324,9 +1398,13 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
+    const vercelRow = html.slice(html.indexOf("Vercel Sandbox connected"));
     expect(html).toContain("Vercel Sandbox connected");
-    expect(html).toContain('href="/w/northwind/settings#vercel"');
-    expect(html).toContain("Open Vercel");
+    // The blocker stays inside the wizard (Connect Agent / runtime step), not Settings.
+    expect(html).not.toContain('href="/w/northwind/settings#vercel"');
+    expect(html).not.toContain("Open Vercel");
+    expect(vercelRow).toContain('data-step-link="runtime"');
+    expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Agent");
   });
 
   it("enables the Verify completion CTA when every blocker passes", () => {
