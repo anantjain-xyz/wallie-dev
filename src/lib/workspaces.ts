@@ -29,6 +29,12 @@ export const updateWorkspaceNamePayloadSchema = z.object({
 
 export type UpdateWorkspaceNamePayload = z.infer<typeof updateWorkspaceNamePayloadSchema>;
 
+export const deleteWorkspacePayloadSchema = z.object({
+  confirmation: z.string().min(1, "Type the workspace name to confirm deletion."),
+});
+
+export type DeleteWorkspacePayload = z.infer<typeof deleteWorkspacePayloadSchema>;
+
 export function normalizeWorkspaceSlug(value: string | null | undefined) {
   const normalized = value?.trim().toLowerCase();
 

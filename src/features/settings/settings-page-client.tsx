@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
+import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -39,6 +40,7 @@ const ANCHORS: SettingsAnchor[] = [
   { id: "verify", label: "Verify setup" },
   { dividerBefore: true, id: "usage", label: "Usage" },
   { id: "rate-limits", label: "Rate limits" },
+  { dividerBefore: true, id: "danger-zone", label: "Danger zone" },
 ];
 
 const LEGACY_ANCHOR_REDIRECTS: Record<string, string> = {
@@ -240,6 +242,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
   );
   const pageData = applySecretsToData(data, secrets);
   const isManager = pageData.canManage;
+  const isOwner = pageData.currentMember.role === "owner";
   const linearSecret = pageData.linearSecret;
 
   return (
@@ -417,6 +420,13 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 ))}
               </ul>
             </Section>
+
+            <DangerZoneSection
+              canDelete={isOwner}
+              setFlashMessage={setFlashMessage}
+              workspaceId={pageData.workspace.id}
+              workspaceName={pageData.workspace.name}
+            />
           </div>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
+  resolveAuthenticatedHomePath: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -13,7 +14,11 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-import { PATCH } from "./route";
+vi.mock("@/lib/auth", () => ({
+  resolveAuthenticatedHomePath: mocked.resolveAuthenticatedHomePath,
+}));
+
+import { DELETE, PATCH } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -138,5 +143,117 @@ describe("PATCH /api/workspaces/[workspaceId]", () => {
 
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({ error: "Failed to update workspace name." });
+  });
+});
+
+function deleteRequestWith(body: unknown) {
+  return new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}`, {
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "DELETE",
+  });
+}
+
+function mockDeleteResult(result: { error?: unknown }) {
+  const eq = vi.fn().mockResolvedValue({ error: result.error ?? null });
+  const del = vi.fn().mockReturnValue({ eq });
+  const from = vi.fn().mockReturnValue({ delete: del });
+  mocked.createSupabaseAdminClient.mockReturnValue({ from });
+  return { del, eq, from };
+}
+
+describe("DELETE /api/workspaces/[workspaceId]", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("deletes the workspace for the owner with a matching confirmation", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
+    const calls = mockDeleteResult({});
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      deleted: true,
+      redirectTo: "/onboarding/workspace",
+    });
+    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith(WORKSPACE_ID, {
+      requireOwner: true,
+    });
+    expect(calls.from).toHaveBeenCalledWith("workspaces");
+    expect(calls.eq).toHaveBeenCalledWith("id", WORKSPACE_ID);
+  });
+
+  it("trims the confirmation before comparing it to the workspace name", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/w/next");
+    mockDeleteResult({});
+
+    const response = await DELETE(
+      deleteRequestWith({ confirmation: "  Wallie  " }),
+      routeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ deleted: true, redirectTo: "/w/next" });
+  });
+
+  it("rejects an invalid workspace id without touching access or the database", async () => {
+    const response = await DELETE(
+      deleteRequestWith({ confirmation: "Wallie" }),
+      routeContext("not-a-uuid"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty confirmation with a 400 before checking access", async () => {
+    const response = await DELETE(deleteRequestWith({ confirmation: "" }), routeContext());
+
+    expect(response.status).toBe(400);
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+  });
+
+  it("rejects a confirmation that does not match the workspace name", async () => {
+    grantAccess();
+    const calls = mockDeleteResult({});
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "wallie" }), routeContext());
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Type the workspace name exactly to confirm deletion.",
+    });
+    expect(calls.from).not.toHaveBeenCalled();
+  });
+
+  it("propagates the access failure status for non-owners", async () => {
+    mocked.requireWorkspaceAccessById.mockResolvedValue({
+      error: "Only the workspace owner can perform this action.",
+      ok: false,
+      status: 403,
+    });
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Only the workspace owner can perform this action.",
+    });
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when the delete fails", async () => {
+    grantAccess();
+    mockDeleteResult({ error: new Error("db down") });
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Failed to delete workspace." });
   });
 });

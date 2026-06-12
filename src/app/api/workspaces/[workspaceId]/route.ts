@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { resolveAuthenticatedHomePath } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { updateWorkspaceNamePayloadSchema, workspaceIdParamsSchema } from "@/lib/workspaces";
+import {
+  deleteWorkspacePayloadSchema,
+  updateWorkspaceNamePayloadSchema,
+  workspaceIdParamsSchema,
+} from "@/lib/workspaces";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type WorkspaceRouteContext = {
@@ -59,4 +64,65 @@ export async function PATCH(request: Request, context: WorkspaceRouteContext) {
     },
     { status: 200 },
   );
+}
+
+export async function DELETE(request: Request, context: WorkspaceRouteContext) {
+  const params = await context.params;
+  const parsedParams = workspaceIdParamsSchema.safeParse(params);
+
+  if (!parsedParams.success) {
+    return NextResponse.json(
+      { error: parsedParams.error.issues[0]?.message ?? "Workspace id is invalid." },
+      { status: 400 },
+    );
+  }
+
+  const payload = await request.json().catch(() => null);
+  const parsedPayload = deleteWorkspacePayloadSchema.safeParse(payload);
+
+  if (!parsedPayload.success) {
+    return NextResponse.json(
+      { error: parsedPayload.error.issues[0]?.message ?? "Confirmation is required." },
+      { status: 400 },
+    );
+  }
+
+  const access = await requireWorkspaceAccessById(parsedParams.data.workspaceId, {
+    requireOwner: true,
+  });
+
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
+
+  // Typed-confirmation guard: the deleter must retype the exact workspace name.
+  // The UI enforces this too, but the server is the real gate against an
+  // accidental or forged request deleting the wrong workspace.
+  if (parsedPayload.data.confirmation.trim() !== access.context.workspace.name) {
+    return NextResponse.json(
+      { error: "Type the workspace name exactly to confirm deletion." },
+      { status: 400 },
+    );
+  }
+
+  // Hard delete: every workspace-scoped table references workspaces with
+  // ON DELETE CASCADE, so removing this row revokes all access and tears down
+  // members, pipelines, sessions, artifacts, secrets, and integrations in one
+  // shot. Service role bypasses RLS for the write.
+  const admin = createSupabaseAdminClient();
+  const { error: deleteError } = await admin
+    .from("workspaces")
+    .delete()
+    .eq("id", access.context.workspace.id);
+
+  if (deleteError) {
+    return NextResponse.json({ error: "Failed to delete workspace." }, { status: 500 });
+  }
+
+  // Resolve where the now-workspaceless (or fewer-workspace) user should land.
+  // The RLS-scoped server client no longer sees the deleted workspace, so this
+  // returns their next workspace or the onboarding path.
+  const redirectTo = await resolveAuthenticatedHomePath(access.context.supabase);
+
+  return NextResponse.json({ deleted: true, redirectTo }, { status: 200 });
 }
