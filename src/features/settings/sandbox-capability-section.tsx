@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { SelectField } from "@/components/ui/select";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { dateFormatter } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import { formatSentenceCaseLabel } from "@/lib/labels";
 import type {
@@ -235,25 +236,31 @@ export function SandboxCapabilitySection({
                 {formatSentenceCaseLabel(check.status)}
               </span>
             </p>
-            <p className="text-[12px] text-muted">{new Date(check.checkedAt).toLocaleString()}</p>
+            <p className="text-[12px] text-muted">
+              {dateFormatter.format(new Date(check.checkedAt))}
+            </p>
           </div>
           {check.errorText ? (
             <p className="text-[12px] leading-5 text-danger">{check.errorText}</p>
           ) : null}
           <div className="grid gap-2 md:grid-cols-2">
-            {Object.entries(check.capabilities).map(([name, result]) => (
-              <div
-                className={`rounded-[6px] border px-3 py-2 text-[12px] leading-5 ${
-                  result?.ok
-                    ? "border-success/20 bg-success-soft text-success"
-                    : "border-danger/20 bg-danger-soft text-danger"
-                }`}
-                key={name}
-              >
-                <p className="font-semibold">{name}</p>
-                <p>{result?.detail ?? "No detail recorded."}</p>
-              </div>
-            ))}
+            {Object.entries(check.capabilities).map(([name, result]) => {
+              const hasDetail = Boolean(result?.detail);
+              const tone = result?.ok
+                ? "border-success/20 bg-success-soft text-success"
+                : hasDetail
+                  ? "border-danger/20 bg-danger-soft text-danger"
+                  : "border-border bg-surface-muted text-muted";
+              return (
+                <div
+                  className={`rounded-[6px] border px-3 py-2 text-[12px] leading-5 ${tone}`}
+                  key={name}
+                >
+                  <p className="font-semibold">{name}</p>
+                  <p>{result?.detail ?? "No detail recorded."}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
