@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   from: vi.fn(),
+  rpc: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
 
@@ -28,8 +29,9 @@ function routeContext(memberId = TARGET_MEMBER_ID) {
 
 /**
  * A chainable query stub whose `maybeSingle` resolves the queued results in
- * order. The route fetches the target first, then performs the mutation, so
- * each `from("workspace_members")` chain ends in one `maybeSingle` call.
+ * order. The guard fetches the target first; PATCH then performs the role
+ * update via the same `from(...)` chain, while DELETE delegates the soft-remove
+ * to the `remove_workspace_member` RPC (set via `rpcReturns`).
  */
 function adminWith(...maybeSingleResults: unknown[]) {
   const queue = [...maybeSingleResults];
@@ -46,8 +48,12 @@ function adminWith(...maybeSingleResults: unknown[]) {
     lastQuery.select = query.select;
     return query;
   });
-  mocked.createSupabaseAdminClient.mockReturnValue({ from: mocked.from });
+  mocked.createSupabaseAdminClient.mockReturnValue({ from: mocked.from, rpc: mocked.rpc });
   return lastQuery;
+}
+
+function rpcReturns(result: unknown) {
+  mocked.rpc.mockResolvedValue(result);
 }
 
 function grantManager(role: "owner" | "admin" = "admin") {
@@ -158,28 +164,41 @@ describe("PATCH /api/workspaces/[workspaceId]/members/[memberId]", () => {
 });
 
 describe("DELETE /api/workspaces/[workspaceId]/members/[memberId]", () => {
-  it("soft-removes an active member", async () => {
+  it("soft-removes an active member via the remove_workspace_member RPC", async () => {
     grantManager();
-    const lastQuery = adminWith(
-      {
-        data: { id: TARGET_MEMBER_ID, role: "member", kind: "human", is_active: true },
-        error: null,
-      },
-      {
-        data: {
-          id: TARGET_MEMBER_ID,
-          full_name: "Mara",
-          email: "mara@example.com",
-          role: "member",
-        },
-        error: null,
-      },
-    );
+    adminWith({
+      data: { id: TARGET_MEMBER_ID, role: "member", kind: "human", is_active: true },
+      error: null,
+    });
+    rpcReturns({
+      data: [
+        { id: TARGET_MEMBER_ID, full_name: "Mara", email: "mara@example.com", role: "member" },
+      ],
+      error: null,
+    });
+
+    const response = await DELETE(deleteRequest(), routeContext());
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.member.id).toBe(TARGET_MEMBER_ID);
+    expect(mocked.rpc).toHaveBeenCalledWith("remove_workspace_member", {
+      expected_workspace_id: WORKSPACE_ID,
+      target_member_id: TARGET_MEMBER_ID,
+    });
+  });
+
+  it("returns 404 when the RPC removes nothing", async () => {
+    grantManager();
+    adminWith({
+      data: { id: TARGET_MEMBER_ID, role: "member", kind: "human", is_active: true },
+      error: null,
+    });
+    rpcReturns({ data: [], error: null });
 
     const response = await DELETE(deleteRequest(), routeContext());
 
-    expect(response.status).toBe(200);
-    expect(lastQuery.update).toHaveBeenCalledWith({ is_active: false });
+    expect(response.status).toBe(404);
   });
 
   it("refuses to remove yourself", async () => {

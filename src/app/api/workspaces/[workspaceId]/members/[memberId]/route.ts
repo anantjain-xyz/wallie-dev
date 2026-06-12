@@ -167,30 +167,30 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return guard.response;
   }
 
-  // Soft-remove: flipping `is_active` to false revokes access immediately because
-  // `internal.current_user_workspace_ids()` (and every RLS policy built on it)
-  // only counts active memberships. It also preserves authorship references on
-  // sessions/artifacts that a hard delete would null out.
-  const { data, error } = await guard.admin
-    .from("workspace_members")
-    .update({ is_active: false })
-    .eq("id", guard.memberId)
-    .eq("workspace_id", guard.workspaceId)
-    .eq("kind", "human")
-    .eq("is_active", true)
-    .select(memberSelect)
-    .maybeSingle();
+  // Soft-remove via RPC: flipping `is_active` to false revokes access immediately
+  // because `internal.current_user_workspace_ids()` (and every RLS policy built on
+  // it) only counts active memberships, and it preserves authorship references on
+  // sessions/artifacts that a hard delete would null out. The RPC also prunes the
+  // member from pipeline_stages.approver_member_ids in the same transaction so a
+  // stage whose only explicit approver was this member falls back to owner/admin
+  // approval instead of becoming unapprovable.
+  const { data, error } = await guard.admin.rpc("remove_workspace_member", {
+    expected_workspace_id: guard.workspaceId,
+    target_member_id: guard.memberId,
+  });
 
   if (error) {
     throw error;
   }
 
-  if (!data) {
+  const removed = data?.[0];
+
+  if (!removed) {
     return NextResponse.json({ error: "Workspace member not found." }, { status: 404 });
   }
 
   const response: WorkspaceMemberResponse = {
-    member: mapWorkspaceMemberSummaryRow(data),
+    member: mapWorkspaceMemberSummaryRow(removed),
   };
 
   return NextResponse.json(response, { status: 200 });
