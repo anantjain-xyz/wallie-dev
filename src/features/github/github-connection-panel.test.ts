@@ -187,4 +187,61 @@ describe("GitHubConnectionPanel", () => {
     expect(markup).not.toContain("Primary");
     expect(markup).not.toContain("Setup PR open");
   });
+
+  it("explains the blocked state for self-hosters when GitHub App env vars are unset", () => {
+    const github = {
+      installation: null,
+      missingAppKeys: ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"],
+      missingWebhookKeys: ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
+      primaryProfile: null,
+      repositories: [],
+    } satisfies WorkspaceGitHubData;
+
+    const markup = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: true,
+        github,
+        source: "onboarding",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    // Human-readable explanation instead of a bare error box.
+    expect(markup).toContain("Wallie needs a GitHub App to read your repositories");
+    // Direct link to the GitHub App section of the self-hosting guide.
+    expect(markup).toContain("docs/SELF_HOSTING.md#5-create-the-production-github-app");
+    expect(markup).toContain("GitHub App setup guide");
+    // Disabled affordances are explained rather than left dead.
+    expect(markup).toContain("the install button turns on");
+    expect(markup).toContain("cannot finish this step or continue");
+    expect(markup).toContain(
+      'title="Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, then restart the app to enable install."',
+    );
+    expect(markup).toContain("Install GitHub App");
+    expect(markup).toContain("disabled");
+    // The precise missing-env-var detail is still surfaced.
+    expect(markup).toContain("GITHUB_WEBHOOK_SECRET");
+  });
+
+  it("omits the onboarding-only continue hint when rendered in settings", () => {
+    const github = {
+      installation: null,
+      missingAppKeys: ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"],
+      missingWebhookKeys: ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
+      primaryProfile: null,
+      repositories: [],
+    } satisfies WorkspaceGitHubData;
+
+    const markup = renderToStaticMarkup(
+      React.createElement(GitHubConnectionPanel, {
+        canManage: true,
+        github,
+        source: "settings",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(markup).toContain("the install button turns on");
+    expect(markup).not.toContain("cannot finish this step or continue");
+  });
 });

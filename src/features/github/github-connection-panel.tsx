@@ -10,11 +10,17 @@ import type {
 } from "@/features/github/contracts";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { ConfigState, dateFormatter } from "@/features/settings/settings-ui";
+import { ConfigState, dateFormatter, interactiveLinkClass } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 
 export { mergeRepositoryOnboardingState } from "@/features/repositories/repository-setup-controls";
+
+// Deep link to the "Create the production GitHub App" section of the self-hosting
+// guide so a self-hoster on the blocked GitHub step can reach setup instructions
+// without leaving the page blind.
+const GITHUB_APP_SETUP_DOCS_URL =
+  "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/SELF_HOSTING.md#5-create-the-production-github-app";
 
 type GitHubConnectionPanelProps = {
   canManage: boolean;
@@ -181,6 +187,30 @@ export function GitHubConnectionPanel({
   if (!githubInstallation) {
     return (
       <div className="space-y-6">
+        {hasGitHubAppConfig ? null : (
+          <div className="space-y-3 rounded-[8px] border border-border bg-surface-strong px-5 py-4">
+            <p className="text-[14px] font-semibold text-foreground">
+              Wallie needs a GitHub App to read your repositories
+            </p>
+            <p className="text-[13px] leading-6 text-muted">
+              Wallie reads the repositories you pick and opens pull requests through a GitHub App.
+              This self-hosted instance does not have one configured yet, so the install flow below
+              stays off until you create the App and add its credentials as environment variables.
+            </p>
+            <p className="text-[13px] leading-6 text-muted">
+              The{" "}
+              <a
+                className={interactiveLinkClass}
+                href={GITHUB_APP_SETUP_DOCS_URL}
+                rel="noreferrer"
+                target="_blank"
+              >
+                GitHub App setup guide
+              </a>{" "}
+              walks through creating the App and shows where each value goes.
+            </p>
+          </div>
+        )}
         <ConfigState missingKeys={github.missingAppKeys} title="GitHub install flow disabled" />
         <ConfigState
           missingKeys={github.missingWebhookKeys.filter(
@@ -190,13 +220,21 @@ export function GitHubConnectionPanel({
         />
         <div className="flex flex-wrap items-center justify-between gap-4">
           <p className="max-w-2xl text-[13px] leading-6 text-muted">
-            The app requests read access to repositories and metadata, plus write access to pull
-            requests on the repos you select during install.
+            {hasGitHubAppConfig
+              ? "The app requests read access to repositories and metadata, plus write access to pull requests on the repos you select during install."
+              : source === "onboarding"
+                ? "Once these variables are set and the app restarts, the install button turns on. You cannot finish this step or continue until the App is installed and a repository is connected."
+                : "Once these variables are set and the app restarts, the install button turns on."}
           </p>
           <button
             className="ui-button-primary"
             disabled={!canManage || !hasGitHubAppConfig || launchInstall.isBusy}
             onClick={() => void launchInstall.run()}
+            title={
+              hasGitHubAppConfig
+                ? undefined
+                : "Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY, then restart the app to enable install."
+            }
             type="button"
           >
             {launchInstall.isBusy ? "Preparing install..." : "Install GitHub App"}
