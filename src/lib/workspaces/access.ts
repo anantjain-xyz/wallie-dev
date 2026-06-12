@@ -45,6 +45,7 @@ export async function requireWorkspaceAccessById(
   workspaceId: string | null | undefined,
   options?: {
     requireManager?: boolean;
+    requireOwner?: boolean;
   },
 ): Promise<WorkspaceAccessResult> {
   if (!workspaceId) {
@@ -104,6 +105,14 @@ export async function requireWorkspaceAccessById(
   if (options?.requireManager && currentMember.role !== "owner" && currentMember.role !== "admin") {
     return {
       error: "Workspace admin access is required for this action.",
+      ok: false,
+      status: 403,
+    };
+  }
+
+  if (options?.requireOwner && currentMember.role !== "owner") {
+    return {
+      error: "Only the workspace owner can perform this action.",
       ok: false,
       status: 403,
     };

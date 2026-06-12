@@ -20,17 +20,27 @@ type WorkspaceNameUpdateResponse = {
 
 type WorkspaceAvatarSectionProps = {
   canManage: boolean;
+  onWorkspaceNameChange?: (name: string) => void;
   setFlashMessage: (message: FlashMessage) => void;
   workspace: SettingsPageData["workspace"];
 };
 
 export function WorkspaceAvatarSection({
   canManage,
+  onWorkspaceNameChange,
   setFlashMessage,
   workspace,
 }: WorkspaceAvatarSectionProps) {
   const [workspaceAvatarUrl, setWorkspaceAvatarUrl] = useState(workspace.avatarUrl);
   const [workspaceName, setWorkspaceName] = useState(workspace.name);
+
+  // Lift the saved name to the parent settings data too, so sibling sections
+  // (e.g. the danger-zone delete confirmation) compare against the current name
+  // rather than the stale value rendered at page load.
+  function handleNameSaved(nextName: string) {
+    setWorkspaceName(nextName);
+    onWorkspaceNameChange?.(nextName);
+  }
 
   const uploadAvatar = useApiAction<WorkspaceAvatarUploadResponse, [File]>({
     call: (file) => {
@@ -87,7 +97,7 @@ export function WorkspaceAvatarSection({
           {canManage ? (
             <EditableWorkspaceName
               name={workspaceName}
-              onNameSaved={setWorkspaceName}
+              onNameSaved={handleNameSaved}
               setFlashMessage={setFlashMessage}
               workspaceId={workspace.id}
             />
