@@ -26,6 +26,7 @@ import {
   OnboardingPageClient,
   RepositoryProfileEditor,
   scrollOnboardingSetupToTop,
+  setupHealthItems,
   updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
@@ -1661,5 +1662,52 @@ describe("OnboardingPageClient", () => {
     scrollOnboardingSetupToTop({ scrollTo });
 
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 0, top: 0 });
+  });
+});
+
+describe("setupHealthItems Linear routing badge", () => {
+  const routingItem = (setupHealth: Partial<WorkspaceOnboardingData["setupHealth"]>) =>
+    setupHealthItems(onboardingData({ setupHealth }).setupHealth).find(
+      (item) => item.label === "Linear routing",
+    );
+
+  it("does not show a green 'Saved' badge for seeded default routes without a Linear key", () => {
+    // Fresh workspace: routing row is seeded (configured) but no Linear key yet.
+    expect(
+      routingItem({
+        linearKey: { configured: false, status: "missing", updatedAt: null },
+        linearRouting: {
+          configured: true,
+          status: "present",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+        },
+      }),
+    ).toMatchObject({
+      value: "Defaults",
+      tone: "neutral",
+      detail: "Default routes — add a Linear key",
+    });
+  });
+
+  it("shows green 'Saved' only once the Linear key is present", () => {
+    expect(
+      routingItem({
+        linearKey: { configured: true, status: "present", updatedAt: "2026-05-16T18:00:00.000Z" },
+        linearRouting: {
+          configured: true,
+          status: "present",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+        },
+      }),
+    ).toMatchObject({ value: "Saved", tone: "success" });
+  });
+
+  it("shows 'Missing' when no routing row exists", () => {
+    expect(
+      routingItem({
+        linearKey: { configured: false, status: "missing", updatedAt: null },
+        linearRouting: { configured: false, status: "missing", updatedAt: null },
+      }),
+    ).toMatchObject({ value: "Missing", tone: "warning" });
   });
 });

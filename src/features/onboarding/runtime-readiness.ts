@@ -274,6 +274,20 @@ export function buildVerifyChecklist(input: {
     ? input.health.agentConfig.configured || stepSatisfied("runtime")
     : stepSatisfied("runtime");
 
+  // In onboarding mode these three items track *step completion*, not readiness —
+  // a seeded pipeline can be "Ready" in Health while its step is still unfinished.
+  // Label that state as "Not finished" (neutral) instead of "Blocked" (warning) so
+  // the checklist never contradicts the Health panel for the same noun. Settings
+  // mode already tracks readiness, so its default Ready/Blocked vocabulary stands.
+  const stepCompletionStatus = (
+    passed: boolean,
+  ): Pick<VerifyChecklistItem, "statusLabel" | "statusTone"> | undefined =>
+    useSetupHealth
+      ? undefined
+      : passed
+        ? { statusLabel: "Done", statusTone: "success" }
+        : { statusLabel: "Not finished", statusTone: "neutral" };
+
   return [
     {
       detail: input.health.githubInstallation.connected
@@ -320,6 +334,7 @@ export function buildVerifyChecklist(input: {
       label: useSetupHealth ? "Pipeline configured" : "Pipeline completed",
       passed: pipelinePassed,
       step: "pipeline",
+      ...stepCompletionStatus(pipelinePassed),
     },
     {
       detail: useSetupHealth
@@ -333,6 +348,7 @@ export function buildVerifyChecklist(input: {
       label: useSetupHealth ? "Linear configured" : "Linear completed",
       passed: linearPassed,
       step: "linear",
+      ...stepCompletionStatus(linearPassed),
     },
     {
       detail: useSetupHealth
@@ -348,6 +364,7 @@ export function buildVerifyChecklist(input: {
       label: useSetupHealth ? "Runtime configured" : "Runtime completed",
       passed: runtimePassed,
       step: "runtime",
+      ...stepCompletionStatus(runtimePassed),
     },
     {
       detail: runtimeReadiness.canComplete

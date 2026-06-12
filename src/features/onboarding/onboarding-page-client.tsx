@@ -468,7 +468,7 @@ export function updateVercelSandboxConnectionInData(
   };
 }
 
-function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
+export function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
   const github = health.githubInstallation.connected
     ? {
         detail: health.githubInstallation.targetName ?? "Connected installation",
@@ -492,7 +492,15 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
         value: "Missing",
       };
   const linearKey = presenceBadge(health.linearKey.configured);
-  const linearRouting = presenceBadge(health.linearRouting.configured);
+  // Routing rows are seeded with workspace defaults, so `configured` is true even
+  // before a Linear key exists. Only show the green "Saved" state once the key is
+  // present; otherwise surface the default routes as a neutral "Defaults" badge so a
+  // fresh workspace never reads as configured.
+  const linearRouting = !health.linearRouting.configured
+    ? { tone: "warning" as const, value: "Missing" }
+    : health.linearKey.configured
+      ? { tone: "success" as const, value: "Saved" }
+      : { tone: "neutral" as const, value: "Defaults" };
   const agentConfig = presenceBadge(health.agentConfig.configured);
   const selectedProvider =
     typeof health.agentConfig.values.agent_provider === "string"
@@ -577,7 +585,11 @@ function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
       value: linearKey.value,
     },
     {
-      detail: health.linearRouting.updatedAt ? "Routes saved" : "Routing not mapped",
+      detail: !health.linearRouting.configured
+        ? "Routing not mapped"
+        : health.linearKey.configured
+          ? "Routes saved"
+          : "Default routes — add a Linear key",
       label: "Linear routing",
       tone: linearRouting.tone,
       value: linearRouting.value,
