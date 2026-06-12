@@ -1020,7 +1020,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Save pipeline");
     expect(html).not.toContain("Use current pipeline");
     expect(button).toContain("disabled");
-    expect(button).toContain(">Complete in step</button>");
+    expect(button).toContain(">Save pipeline to continue</button>");
   });
 
   it("allows fallback progression when Linear routing cannot load pipeline stages", () => {
