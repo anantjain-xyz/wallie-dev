@@ -50,6 +50,17 @@ export function AuthEntryPanel({
   return (
     <div className="w-full max-w-[360px]">
       <div className="ui-panel-elevated p-5">
+        <div className="mb-4">
+          <h1 className="text-[16px] font-semibold tracking-tight text-foreground">
+            Sign in to Wallie
+          </h1>
+          {!showEmailCodeForm ? (
+            <p className="mt-1 text-[13px] leading-5 text-muted">
+              We&rsquo;ll email you a sign-in link. New accounts are created automatically.
+            </p>
+          ) : null}
+        </div>
+
         {statusMessage ? (
           <div
             aria-live="polite"

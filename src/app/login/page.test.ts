@@ -101,6 +101,9 @@ describe("/login page", () => {
       }),
     );
 
+    expect(html).toContain("Sign in to Wallie");
+    expect(html).toContain("We");
+    expect(html).toContain("email you a sign-in link. New accounts are created automatically.");
     expect(html).toContain("Send magic link");
     expect(html).toContain('name="email"');
     expect(html).toContain("you@company.com");
