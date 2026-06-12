@@ -2046,6 +2046,8 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     (activeStep.id === "pipeline" || activeStep.id === "linear") &&
     !inlineCompletionUnavailable &&
     !activeStepAlreadyResolved;
+  const inlineCompletionLabel =
+    activeStep.id === "linear" ? "Finish Linear setup to continue" : "Save pipeline to continue";
   const githubContinueBlocked = activeStep.id === "github" && !canCompleteGitHubSetupStep(data);
   const repositoryContinueBlocked =
     activeStep.id === "repository" && !canCompleteRepositoryStep(data);
@@ -2492,7 +2494,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               disabled={!data.canManage || !canGoBack || isSaving}
               onClick={() => void goBack()}
             >
-              {savingAction === "back" ? "Saving..." : "Back"}
+              {savingAction === "back" ? "Saving…" : "Back"}
             </button>
             {skipAllowed && !isCompleted ? (
               <button
@@ -2501,7 +2503,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
                 disabled={!data.canManage || isSaving}
                 onClick={() => void skipStep()}
               >
-                {savingAction === "skip" ? "Saving..." : "Skip"}
+                {savingAction === "skip" ? "Saving…" : "Skip"}
               </button>
             ) : null}
             <button
@@ -2522,9 +2524,9 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               {isCompleted
                 ? "Setup complete"
                 : requiresInlineCompletion
-                  ? "Complete in step"
+                  ? inlineCompletionLabel
                   : savingAction === "continue" || savingAction === "complete"
-                    ? "Saving..."
+                    ? "Saving…"
                     : activeStep.id === "verify"
                       ? "Complete setup"
                       : "Continue"}
