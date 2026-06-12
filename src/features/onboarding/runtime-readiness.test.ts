@@ -274,6 +274,67 @@ describe("buildVerifyChecklist", () => {
     ).toMatchObject({ passed: false, statusLabel: "Unavailable", statusTone: "neutral" });
   });
 
+  it("labels unfinished onboarding steps as 'Not finished', never 'Blocked', so Health and Verify never contradict", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      // Pipeline is objectively ready in Health, but its step is not yet completed.
+      health: health(),
+      onboarding: onboarding({ completedSteps: ["github", "repository"] }),
+    });
+    const item = (id: string) => checklist.find((entry) => entry.id === id);
+
+    expect(item("pipeline")).toMatchObject({
+      passed: false,
+      statusLabel: "Not finished",
+      statusTone: "neutral",
+    });
+    expect(item("linear")).toMatchObject({
+      passed: false,
+      statusLabel: "Not finished",
+      statusTone: "neutral",
+    });
+    expect(item("runtime")).toMatchObject({
+      passed: false,
+      statusLabel: "Not finished",
+      statusTone: "neutral",
+    });
+    // No onboarding step-completion item may render the warning "Blocked" vocabulary.
+    for (const id of ["pipeline", "linear", "runtime"]) {
+      expect(item(id)?.statusTone).not.toBe("warning");
+    }
+  });
+
+  it("marks finished onboarding steps as 'Done'", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health(),
+      onboarding: onboarding(),
+    });
+    const item = (id: string) => checklist.find((entry) => entry.id === id);
+
+    expect(item("pipeline")).toMatchObject({ passed: true, statusLabel: "Done" });
+    expect(item("linear")).toMatchObject({ passed: true, statusLabel: "Done" });
+    expect(item("runtime")).toMatchObject({ passed: true, statusLabel: "Done" });
+  });
+
+  it("keeps Settings-mode readiness vocabulary (no step-completion override)", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        defaultPipeline: { configured: false, pipelineId: null, stageCount: 0, status: "missing" },
+      }),
+      mode: "settings",
+      onboarding: onboarding({ completedSteps: [], skippedSteps: [] }),
+    });
+    const pipeline = checklist.find((entry) => entry.id === "pipeline");
+
+    // Settings mode tracks readiness, so an unconfigured pipeline keeps the default
+    // Ready/Blocked vocabulary (no statusLabel override) consistent with Health.
+    expect(pipeline?.passed).toBe(false);
+    expect(pipeline?.statusLabel).toBeUndefined();
+    expect(pipeline?.statusTone).toBeUndefined();
+  });
+
   it("treats skipped optional steps as satisfied", () => {
     const checklist = buildVerifyChecklist({
       agentConfig: health().agentConfig.values,
