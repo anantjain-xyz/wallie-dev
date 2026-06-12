@@ -12,6 +12,7 @@ import {
 import { mapOnboardingResumeState } from "@/features/onboarding/flow";
 import type { SessionRepositoryOption } from "@/features/sessions/types";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
+import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -131,5 +132,6 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
     supabase,
     user,
     workspace,
+    workspaceAvatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),
   };
 });

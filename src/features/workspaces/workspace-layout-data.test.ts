@@ -34,6 +34,10 @@ vi.mock("@/lib/auth", () => ({
   workspaceLoginRedirectPath: (workspaceSlug: string) => `/w/${workspaceSlug}`,
 }));
 
+vi.mock("@/lib/storage/workspace-avatar", () => ({
+  getWorkspaceAvatarUrl: (path: string | null) => (path ? `https://cdn.example.com/${path}` : null),
+}));
+
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 
 const user = { email: "owner@example.com", id: "user-1" };
@@ -180,6 +184,7 @@ describe("loadWorkspaceLayoutContext", () => {
       supabase,
       user,
       workspace,
+      workspaceAvatarUrl: null,
     });
     expect(mocked.ensureProfileForUser).toHaveBeenCalledWith(supabase, user);
   });

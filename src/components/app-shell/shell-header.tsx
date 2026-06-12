@@ -1,11 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
-import { LogoutIcon, PlusIcon } from "@/components/shared/icons";
+import { PlusIcon } from "@/components/shared/icons";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
@@ -23,7 +25,34 @@ type ShellHeaderProps = {
   sessionRepositoryOptions: SessionRepositoryOption[];
   viewerEmail: string | null;
   workspace: WorkspaceSummary;
+  workspaceAvatarUrl: string | null;
 };
+
+function WorkspaceAvatar({ name, url }: { name: string; url: string | null }) {
+  if (url) {
+    return (
+      <Image
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-5 shrink-0 rounded-[5px] border border-border object-cover"
+        height={20}
+        src={url}
+        width={20}
+      />
+    );
+  }
+
+  const initial = name.trim().charAt(0).toUpperCase() || "W";
+
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-border bg-surface-strong text-[11px] font-semibold text-foreground"
+    >
+      {initial}
+    </span>
+  );
+}
 
 function isActive(pathname: string, workspaceSlug: string, item: WorkspaceNavItem) {
   const pipelineHref = workspaceBasePath(workspaceSlug);
@@ -42,11 +71,11 @@ export function ShellHeader({
   sessionRepositoryOptions,
   viewerEmail,
   workspace,
+  workspaceAvatarUrl,
 }: ShellHeaderProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const signOutLabel = viewerEmail ? `Sign out ${viewerEmail}` : "Sign out";
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
   const onboardingHref = workspaceOnboardingPath(workspace.slug);
 
@@ -95,12 +124,27 @@ export function ShellHeader({
     <>
       <header className="sticky top-0 z-20 min-w-0 border-b border-border bg-surface">
         <div className="flex h-14 min-w-0 items-center justify-between gap-3 px-3 sm:px-5">
-          <Link
-            href={pipelineHref}
-            className="shrink-0 text-[15px] font-semibold tracking-tight text-foreground hover:opacity-80"
-          >
-            Wallie
-          </Link>
+          <div className="flex min-w-0 shrink items-center gap-2">
+            <Link
+              href={pipelineHref}
+              className="shrink-0 text-[15px] font-semibold tracking-tight text-foreground hover:opacity-80"
+            >
+              Wallie
+            </Link>
+            <span aria-hidden="true" className="shrink-0 text-muted">
+              /
+            </span>
+            <Link
+              href={pipelineHref}
+              className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
+              title={workspace.name}
+            >
+              <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
+              <span className="min-w-0 truncate text-[15px] font-medium text-foreground">
+                {workspace.name}
+              </span>
+            </Link>
+          </div>
           <nav className="hidden min-w-0 flex-1 sm:block" aria-label="Workspace navigation">
             <div className="flex min-w-0 items-center gap-1">{renderNavLinks()}</div>
           </nav>
@@ -122,11 +166,7 @@ export function ShellHeader({
               </button>
             )}
             <ThemeToggle />
-            <form action="/auth/signout" method="post">
-              <button type="submit" className="ui-icon-button" aria-label={signOutLabel}>
-                <LogoutIcon className="h-3.5 w-3.5" />
-              </button>
-            </form>
+            <AccountMenu email={viewerEmail} />
           </div>
         </div>
 

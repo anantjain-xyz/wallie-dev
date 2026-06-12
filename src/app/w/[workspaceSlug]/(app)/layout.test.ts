@@ -26,6 +26,7 @@ describe("workspace app route group layout", () => {
       sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
       user: { email: "owner@example.com" },
       workspace,
+      workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
     });
 
     const element = (await WorkspaceAppLayout({
@@ -38,6 +39,7 @@ describe("workspace app route group layout", () => {
       sessionRepositoryOptions: Array<{ fullName: string; id: string }>;
       viewerEmail: string;
       workspace: typeof workspace;
+      workspaceAvatarUrl: string | null;
     }>;
 
     expect(element.type).toBe(mocked.AppShell);
@@ -48,6 +50,7 @@ describe("workspace app route group layout", () => {
       sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
       viewerEmail: "owner@example.com",
       workspace,
+      workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
     });
   });
 });

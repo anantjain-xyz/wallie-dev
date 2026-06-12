@@ -13,6 +13,7 @@ type AppShellProps = {
   sessionRepositoryOptions: SessionRepositoryOption[];
   viewerEmail: string | null;
   workspace: WorkspaceSummary;
+  workspaceAvatarUrl: string | null;
 };
 
 export function AppShell({
@@ -22,6 +23,7 @@ export function AppShell({
   sessionRepositoryOptions,
   viewerEmail,
   workspace,
+  workspaceAvatarUrl,
 }: AppShellProps) {
   const navItems = getWorkspaceNavItems(workspace.slug);
 
@@ -35,6 +37,7 @@ export function AppShell({
           sessionRepositoryOptions={sessionRepositoryOptions}
           viewerEmail={viewerEmail}
           workspace={workspace}
+          workspaceAvatarUrl={workspaceAvatarUrl}
         />
         <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
           {children}
