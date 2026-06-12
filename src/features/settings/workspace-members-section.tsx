@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { PlusIcon, XIcon } from "@/components/shared/icons";
 import { SelectField } from "@/components/ui/select";
@@ -8,6 +8,7 @@ import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitiv
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { dateFormatter, Section, StatusBadge } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
+import type { WorkspaceMemberResponse } from "@/lib/workspace-members/contracts";
 import type {
   WorkspaceInvitation,
   WorkspaceInvitationResponse,
@@ -44,21 +45,27 @@ function upsertInvitation(
 
 export function WorkspaceMembersSection({
   canManage,
+  currentMemberId,
   initialInvitations,
   setFlashMessage,
   workspaceId,
   workspaceMembers,
 }: {
   canManage: boolean;
+  currentMemberId: string;
   initialInvitations: WorkspaceInvitation[];
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 }) {
   const [email, setEmail] = useState("");
+  const [members, setMembers] = useState(workspaceMembers);
   const [invitations, setInvitations] = useState(initialInvitations);
   const [role, setRole] = useState<WorkspaceInvitationRole>("member");
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [memberPendingRemoval, setMemberPendingRemoval] = useState<WorkspaceMemberSummary | null>(
+    null,
+  );
 
   async function inviteMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -85,6 +92,68 @@ export function WorkspaceMembersSection({
       setFlashMessage({
         kind: "error",
         text: error instanceof Error ? error.message : "Wallie could not send that invitation.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function changeMemberRole(member: WorkspaceMemberSummary, nextRole: string) {
+    if (nextRole === member.role) {
+      return;
+    }
+    setBusyAction(`role:${member.id}`);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, {
+        body: JSON.stringify({ role: nextRole }),
+        headers: { "content-type": "application/json" },
+        method: "PATCH",
+      });
+      const payload = await readResponseJson<WorkspaceMemberResponse>(response);
+
+      setMembers((currentMembers) =>
+        currentMembers.map((existingMember) =>
+          existingMember.id === payload.member.id
+            ? { ...existingMember, role: payload.member.role }
+            : existingMember,
+        ),
+      );
+      setFlashMessage({
+        kind: "success",
+        text: `${memberDisplayName(payload.member)} is now ${roleLabel(payload.member.role)}.`,
+      });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Wallie could not update that role.",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function removeMember(member: WorkspaceMemberSummary) {
+    setBusyAction(`remove:${member.id}`);
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, {
+        method: "DELETE",
+      });
+      const payload = await readResponseJson<WorkspaceMemberResponse>(response);
+
+      setMembers((currentMembers) =>
+        currentMembers.filter((existingMember) => existingMember.id !== payload.member.id),
+      );
+      setMemberPendingRemoval(null);
+      setFlashMessage({
+        kind: "success",
+        text: `${memberDisplayName(payload.member)} was removed from the workspace.`,
+      });
+    } catch (error) {
+      setFlashMessage({
+        kind: "error",
+        text: error instanceof Error ? error.message : "Wallie could not remove that member.",
       });
     } finally {
       setBusyAction(null);
@@ -192,24 +261,58 @@ export function WorkspaceMembersSection({
         <div className="space-y-3">
           <h3 className="text-[14px] font-semibold text-foreground">Active members</h3>
           <ul className="divide-y divide-border overflow-hidden rounded-[8px] border border-border bg-surface">
-            {workspaceMembers.map((member) => (
-              <li
-                className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                key={member.id}
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {memberDisplayName(member)}
-                  </p>
-                  {member.email ? (
-                    <p className="truncate text-[12px] leading-5 text-muted">{member.email}</p>
-                  ) : null}
-                </div>
-                <StatusBadge tone={member.role === "owner" ? "accent" : "neutral"}>
-                  {roleLabel(member.role)}
-                </StatusBadge>
-              </li>
-            ))}
+            {members.map((member) => {
+              const isOwner = member.role === "owner";
+              const isSelf = member.id === currentMemberId;
+              // Ownership transfer is out of scope and you cannot manage your own
+              // row, so those rows stay read-only even for managers.
+              const canManageRow = canManage && !isOwner && !isSelf;
+              const removeBusy = busyAction === `remove:${member.id}`;
+
+              return (
+                <li
+                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  key={member.id}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {memberDisplayName(member)}
+                      {isSelf ? <span className="ml-2 text-[12px] text-muted">(you)</span> : null}
+                    </p>
+                    {member.email ? (
+                      <p className="truncate text-[12px] leading-5 text-muted">{member.email}</p>
+                    ) : null}
+                  </div>
+                  {canManageRow ? (
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <SelectField
+                        className="w-[140px]"
+                        disabled={busyAction !== null}
+                        label={
+                          <span className="sr-only">{`Role for ${memberDisplayName(member)}`}</span>
+                        }
+                        onValueChange={(value) => void changeMemberRole(member, value)}
+                        options={ROLE_OPTIONS}
+                        value={member.role}
+                      />
+                      <button
+                        className="ui-button min-h-9 gap-2"
+                        disabled={busyAction !== null}
+                        onClick={() => setMemberPendingRemoval(member)}
+                        type="button"
+                      >
+                        <XIcon />
+                        {removeBusy ? "Removing" : "Remove"}
+                      </button>
+                    </div>
+                  ) : (
+                    <StatusBadge tone={isOwner ? "accent" : "neutral"}>
+                      {roleLabel(member.role)}
+                    </StatusBadge>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
 
@@ -271,6 +374,76 @@ export function WorkspaceMembersSection({
           </div>
         ) : null}
       </div>
+
+      {memberPendingRemoval ? (
+        <RemoveMemberDialog
+          busy={busyAction === `remove:${memberPendingRemoval.id}`}
+          memberName={memberDisplayName(memberPendingRemoval)}
+          onCancel={() => setMemberPendingRemoval(null)}
+          onConfirm={() => void removeMember(memberPendingRemoval)}
+        />
+      ) : null}
     </Section>
+  );
+}
+
+function RemoveMemberDialog({
+  busy,
+  memberName,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  memberName: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) {
+        onCancel();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [busy, onCancel]);
+
+  return (
+    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
+      <div
+        aria-describedby={descriptionId}
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="ui-panel-elevated relative z-10 mt-[20vh] w-full max-w-md overflow-y-auto overscroll-contain bg-surface p-5 sm:p-6"
+        role="dialog"
+      >
+        <h2 id={titleId} className="text-lg font-semibold tracking-tight text-foreground">
+          Remove member
+        </h2>
+        <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
+          Remove <span className="font-medium text-foreground">{memberName}</span> from this
+          workspace? They lose access immediately. You can re-invite them later.
+        </p>
+        <div className="mt-6 flex justify-end gap-2">
+          <button className="ui-button min-h-9" disabled={busy} onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button
+            className="ui-button-danger min-h-9"
+            disabled={busy}
+            onClick={onConfirm}
+            type="button"
+          >
+            {busy ? "Removing" : "Remove member"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
