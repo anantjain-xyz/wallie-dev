@@ -15,7 +15,13 @@
 -- compact and consistent. Dropped at the end of this script.
 --   p_kind: 'completed' (approved prior stage) | 'awaiting' (current, awaiting
 --           review) | 'rejected' (produced an artifact that was rejected) |
---           'running' (currently generating)
+--           'queued' (the current attempt, still generating)
+--
+-- The 'queued' run is deliberately seeded with status 'queued' and a null
+-- agent_job_id: the worker's stall detector skips queued runs that have no
+-- running parent job (src/worker/stall-detector.ts), so an agent_generating
+-- demo session keeps a coherent in-flight run instead of being swept into an
+-- "Error: Stalled" state that contradicts its "Wallie is drafting" banner.
 CREATE OR REPLACE FUNCTION internal.seed_agent_run(
   p_workspace_id uuid,
   p_session_id   uuid,
@@ -32,12 +38,15 @@ CREATE OR REPLACE FUNCTION internal.seed_agent_run(
 LANGUAGE plpgsql
 AS $fn$
 DECLARE
-  v_run_id  uuid := gen_random_uuid();
-  v_status  public.agent_run_status := CASE WHEN p_kind = 'running' THEN 'running' ELSE 'success' END;
-  v_retry   text := CASE WHEN p_attempt > 1 THEN ' (attempt ' || p_attempt || ')' ELSE '' END;
-  v_user_md text;
-  v_asst_md text;
+  v_run_id   uuid := gen_random_uuid();
+  v_queued   boolean := (p_kind = 'queued');
+  v_status   public.agent_run_status := CASE WHEN v_queued THEN 'queued' ELSE 'success' END;
+  v_retry    text := CASE WHEN p_attempt > 1 THEN ' (attempt ' || p_attempt || ')' ELSE '' END;
+  v_user_md  text;
+  v_asst_md  text;
 BEGIN
+  -- A queued run has not started yet: no started_at / finished_at / activity.
+  -- Every other run is terminal (success), finishing at p_finished_at.
   INSERT INTO public.agent_runs
     (id, workspace_id, session_id, agent_job_id, triggered_by_member_id,
      stage_id, stage_slug, stage_name, run_type, model_provider, model_name,
@@ -45,7 +54,10 @@ BEGIN
   VALUES
     (v_run_id, p_workspace_id, p_session_id, null, p_member_id,
      p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-7[1m]',
-     v_status, coalesce(p_finished_at, p_started_at), p_started_at, p_finished_at,
+     v_status,
+     CASE WHEN v_queued THEN null ELSE coalesce(p_finished_at, p_started_at) END,
+     CASE WHEN v_queued THEN null ELSE p_started_at END,
+     CASE WHEN v_queued THEN null ELSE p_finished_at END,
      p_started_at - interval '2 minutes');
 
   v_user_md := CASE p_stage_slug
@@ -55,20 +67,22 @@ BEGIN
     WHEN 'land'   THEN 'Approved — land: ' || p_title || '.'
     ELSE 'Run the ' || lower(p_stage_name) || ' stage for: ' || p_title || '.'
   END;
-  IF p_kind = 'rejected' THEN
+  -- Any attempt past the first was triggered by a reviewer rejection.
+  IF p_attempt > 1 THEN
     v_user_md := 'Reviewer requested changes — re-run the ' || lower(p_stage_name)
       || v_retry || ' for: ' || p_title || '.';
   END IF;
 
-  IF p_kind = 'running' THEN
-    v_asst_md := CASE p_stage_slug
-      WHEN 'plan'   THEN 'Drafting the plan now — outlining the problem, acceptance criteria, and technical approach.'
-      WHEN 'build'  THEN 'Implementing now — wiring up the change and running the test suite in the sandbox.'
-      WHEN 'review' THEN 'Running the review-and-fix loop — checking the plan, sweeping PR feedback, and confirming CI.'
-      WHEN 'land'   THEN 'Landing now — squash-merging the PR and watching the deploy.'
-      ELSE 'Working on the ' || lower(p_stage_name) || ' stage now.'
-    END;
-  ELSE
+  -- The enqueued request is always present.
+  INSERT INTO public.agent_run_messages
+    (id, workspace_id, agent_run_id, kind, message_md, created_at)
+  VALUES
+    (gen_random_uuid(), p_workspace_id, v_run_id, 'user', v_user_md,
+     p_started_at + interval '5 seconds');
+
+  -- A queued run has produced no assistant output yet; terminal runs close
+  -- with the agent's completion message.
+  IF NOT v_queued THEN
     v_asst_md := CASE p_stage_slug
       WHEN 'plan'   THEN 'Plan complete — captured the problem statement, user story, acceptance criteria, and technical approach.'
       WHEN 'build'  THEN 'Build complete — implemented the change and pushed it to the working branch for review.'
@@ -76,15 +90,13 @@ BEGIN
       WHEN 'land'   THEN 'Land complete — squash-merged the PR and confirmed the deploy.'
       ELSE 'Finished the ' || lower(p_stage_name) || ' stage.'
     END;
-  END IF;
 
-  INSERT INTO public.agent_run_messages
-    (id, workspace_id, agent_run_id, kind, message_md, created_at)
-  VALUES
-    (gen_random_uuid(), p_workspace_id, v_run_id, 'user', v_user_md,
-     p_started_at + interval '5 seconds'),
-    (gen_random_uuid(), p_workspace_id, v_run_id, 'assistant', v_asst_md,
-     coalesce(p_finished_at, p_started_at + interval '4 minutes'));
+    INSERT INTO public.agent_run_messages
+      (id, workspace_id, agent_run_id, kind, message_md, created_at)
+    VALUES
+      (gen_random_uuid(), p_workspace_id, v_run_id, 'assistant', v_asst_md,
+       coalesce(p_finished_at, p_started_at + interval '4 minutes'));
+  END IF;
 END;
 $fn$;
 
@@ -950,7 +962,9 @@ BEGIN
   --   * one success run per already-approved stage (from phase completions),
   --   * plus the current stage's run(s) derived from phase_status, where
   --     N = sessions.rejection_count (rejections of the current stage):
-  --       agent_generating -> N rejected attempts + 1 running run
+  --       agent_generating -> N rejected attempts + 1 queued run (the current
+  --                           attempt; queued + null job survives the worker's
+  --                           stall sweep, so it stays in-flight in the demo)
   --       awaiting_review  -> N rejected attempts + 1 success run (awaiting)
   --       rejected         -> N success runs that were each rejected
   --       approved         -> already covered by the completed-stage runs
@@ -1013,7 +1027,7 @@ BEGIN
             PERFORM internal.seed_agent_run(
               ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
               sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
-              'running', v_rej + 1, sess_rec.updated_at, null);
+              'queued', v_rej + 1, sess_rec.updated_at, null);
           ELSE  -- awaiting_review
             PERFORM internal.seed_agent_run(
               ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
