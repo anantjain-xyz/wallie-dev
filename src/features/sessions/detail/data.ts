@@ -246,6 +246,7 @@ export async function loadSessionDetailPageData(
     currentArtifactVersion: sessionRow.current_artifact_version,
     currentStageId: sessionRow.current_stage_id,
     currentStageName: currentStage?.name ?? "Unknown",
+    currentStagePosition: currentStage?.position ?? Number.MAX_SAFE_INTEGER,
     currentStageSlug: currentStage?.slug ?? "unknown",
     id: sessionRow.id,
     linearIssueId: sessionRow.linear_issue_id,

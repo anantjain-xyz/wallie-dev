@@ -52,6 +52,7 @@ export function mergeSessionRealtimeRow(
     currentArtifactVersion: row.current_artifact_version,
     currentStageId: row.current_stage_id,
     currentStageName: currentStage?.name ?? session.currentStageName,
+    currentStagePosition: currentStage?.position ?? session.currentStagePosition,
     currentStageSlug: currentStage?.slug ?? session.currentStageSlug,
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,

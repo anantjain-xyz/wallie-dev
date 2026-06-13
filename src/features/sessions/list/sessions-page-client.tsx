@@ -89,18 +89,25 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   // Build the stage filter chips from whatever stages appear in the loaded
   // sessions. This keeps the chip set in sync with workspaces that have
   // edited their pipeline; we don't need to know the workspace's pipeline
-  // shape at this layer.
+  // shape at this layer. Chips are ordered by the stage's pipeline `position`
+  // so they line up with the board columns, with name as a stable tiebreak
+  // for the (cross-pipeline) case where two stages share a position.
   const stageGroups = useMemo(() => {
-    const order: { name: string; slug: string }[] = [];
+    const order: { name: string; position: number; slug: string }[] = [];
     const counts = new Map<string, number>();
     const seen = new Set<string>();
     for (const session of sessions) {
       if (!seen.has(session.currentStageSlug)) {
         seen.add(session.currentStageSlug);
-        order.push({ name: session.currentStageName, slug: session.currentStageSlug });
+        order.push({
+          name: session.currentStageName,
+          position: session.currentStagePosition,
+          slug: session.currentStageSlug,
+        });
       }
       counts.set(session.currentStageSlug, (counts.get(session.currentStageSlug) ?? 0) + 1);
     }
+    order.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
     return { counts, order };
   }, [sessions]);
 

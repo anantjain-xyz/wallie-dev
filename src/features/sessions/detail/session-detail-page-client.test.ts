@@ -35,6 +35,7 @@ function makeSessionDetailData(): SessionDetailPageData {
       currentArtifactVersion: 1,
       currentStageId: "stage-1",
       currentStageName: "Product",
+      currentStagePosition: 0,
       currentStageSlug: "product",
       id: "11111111-1111-4111-8111-111111111111",
       linearIssueId: null,

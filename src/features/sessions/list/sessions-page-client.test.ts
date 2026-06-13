@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
 import type { SessionListPageData } from "@/features/sessions/list/data";
+import type { SessionSummary } from "@/features/sessions/types";
 
 const mocked = vi.hoisted(() => ({
   refresh: vi.fn(),
@@ -17,7 +18,33 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-function makeSessionListData(): SessionListPageData {
+function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
+  return {
+    archivedAt: null,
+    createdAt: "2026-06-07T10:00:00.000Z",
+    currentArtifactVersion: 1,
+    currentStageId: "stage-1",
+    currentStageName: "Product",
+    currentStagePosition: 0,
+    currentStageSlug: "product",
+    id: "11111111-1111-4111-8111-111111111111",
+    linearIssueId: null,
+    linearIssueUrl: null,
+    number: 7,
+    phaseStatus: "awaiting_review",
+    pipelineId: "pipeline-1",
+    promptMd: "Build the title editor",
+    pullRequestCount: 0,
+    pullRequests: [],
+    rejectionCount: 0,
+    title: "Editable Session",
+    updatedAt: "2026-06-07T11:00:00.000Z",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    ...overrides,
+  };
+}
+
+function makeSessionListData(sessions: SessionSummary[] = [makeSession()]): SessionListPageData {
   return {
     onboarding: null,
     queryState: {
@@ -25,30 +52,8 @@ function makeSessionListData(): SessionListPageData {
       scope: "all",
       stageSlug: null,
     },
-    sessions: [
-      {
-        archivedAt: null,
-        createdAt: "2026-06-07T10:00:00.000Z",
-        currentArtifactVersion: 1,
-        currentStageId: "stage-1",
-        currentStageName: "Product",
-        currentStageSlug: "product",
-        id: "11111111-1111-4111-8111-111111111111",
-        linearIssueId: null,
-        linearIssueUrl: null,
-        number: 7,
-        phaseStatus: "awaiting_review",
-        pipelineId: "pipeline-1",
-        promptMd: "Build the title editor",
-        pullRequestCount: 0,
-        pullRequests: [],
-        rejectionCount: 0,
-        title: "Editable Session",
-        updatedAt: "2026-06-07T11:00:00.000Z",
-        workspaceId: "22222222-2222-4222-8222-222222222222",
-      },
-    ],
-    totalCount: 1,
+    sessions,
+    totalCount: sessions.length,
     workspace: {
       id: "22222222-2222-4222-8222-222222222222",
       name: "Acme",
@@ -70,5 +75,54 @@ describe("SessionsPageClient", () => {
     expect(html).toContain('aria-label="Edit title for session #7"');
     expect(html).toContain('title="Edit title"');
     expect(html).not.toContain('aria-label="Session #7 title"');
+  });
+
+  it("orders stage filter chips by pipeline position, not session arrival order", () => {
+    // Sessions arrive ordered by updated_at (build is most recent), but the
+    // chips must follow pipeline position: plan → build → review → land.
+    const sessions: SessionSummary[] = [
+      makeSession({
+        id: "11111111-1111-4111-8111-111111111111",
+        number: 1,
+        currentStageId: "stage-build",
+        currentStageName: "Build",
+        currentStagePosition: 1,
+        currentStageSlug: "build",
+      }),
+      makeSession({
+        id: "22222222-2222-4222-8222-222222222222",
+        number: 2,
+        currentStageId: "stage-land",
+        currentStageName: "Land",
+        currentStagePosition: 3,
+        currentStageSlug: "land",
+      }),
+      makeSession({
+        id: "33333333-3333-4333-8333-333333333333",
+        number: 3,
+        currentStageId: "stage-plan",
+        currentStageName: "Plan",
+        currentStagePosition: 0,
+        currentStageSlug: "plan",
+      }),
+      makeSession({
+        id: "44444444-4444-4444-8444-444444444444",
+        number: 4,
+        currentStageId: "stage-review",
+        currentStageName: "Review",
+        currentStagePosition: 2,
+        currentStageSlug: "review",
+      }),
+    ];
+
+    const html = renderToStaticMarkup(
+      createElement(SessionsPageClient, {
+        initialData: makeSessionListData(sessions),
+      }),
+    );
+
+    const order = ["Plan", "Build", "Review", "Land"].map((name) => html.indexOf(`>${name}`));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 });
