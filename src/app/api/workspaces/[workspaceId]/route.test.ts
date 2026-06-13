@@ -4,6 +4,7 @@ const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedHomePath: vi.fn(),
+  stopWorkspaceProviderSandboxes: vi.fn().mockResolvedValue({ stoppedSandboxIds: [] }),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -16,6 +17,10 @@ vi.mock("@/lib/workspaces/access", () => ({
 
 vi.mock("@/lib/auth", () => ({
   resolveAuthenticatedHomePath: mocked.resolveAuthenticatedHomePath,
+}));
+
+vi.mock("@/lib/vercel-sandbox/teardown", () => ({
+  stopWorkspaceProviderSandboxes: mocked.stopWorkspaceProviderSandboxes,
 }));
 
 import { DELETE, PATCH } from "./route";
@@ -187,6 +192,25 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     });
     expect(calls.from).toHaveBeenCalledWith("workspaces");
     expect(calls.eq).toHaveBeenCalledWith("id", WORKSPACE_ID);
+  });
+
+  it("stops active provider sandboxes before deleting the workspace row", async () => {
+    grantAccess();
+    mocked.resolveAuthenticatedHomePath.mockResolvedValue("/onboarding/workspace");
+    const calls = mockDeleteResult({});
+
+    const response = await DELETE(deleteRequestWith({ confirmation: "Wallie" }), routeContext());
+
+    expect(response.status).toBe(200);
+    expect(mocked.stopWorkspaceProviderSandboxes).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+    );
+    // Teardown must run while the run records and connection credentials still
+    // exist — i.e. before the cascade drops them.
+    expect(mocked.stopWorkspaceProviderSandboxes.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.del.mock.invocationCallOrder[0],
+    );
   });
 
   it("removes orphaned avatar objects from storage after deleting", async () => {
