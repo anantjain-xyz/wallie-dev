@@ -313,7 +313,15 @@ function PipelineCard({
     <article
       className={cn(
         "relative rounded-[8px] border border-border/80 bg-surface p-3 transition-colors duration-150 hover:bg-surface-strong",
-        card.phaseStatus === "rejected" && "border-danger/30 border-l-2 border-l-danger",
+        // Awaiting review is the call to action — give it the loudest treatment
+        // (accent border + left bar + faint accent wash) so reviewers can scan
+        // the board for work that needs them.
+        card.phaseStatus === "awaiting_review" &&
+          "border-accent/40 border-l-2 border-l-accent bg-accent-soft hover:bg-accent-soft",
+        // Rejection is a routine part of the loop (it just reruns the stage), so
+        // calm it down: a thin muted danger edge instead of the old full red
+        // border. The red "Rejected" chip still carries the status.
+        card.phaseStatus === "rejected" && "border-l-2 border-l-danger/40",
       )}
     >
       <Link
