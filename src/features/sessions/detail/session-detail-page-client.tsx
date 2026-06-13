@@ -517,7 +517,13 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           Created {dateTimeFormatter.format(new Date(session.createdAt))}
         </span>
         <span aria-hidden="true">·</span>
-        <span title={fullDateTimeFormatter.format(new Date(session.updatedAt))}>
+        {/* Relative time derives from Date.now(), which differs between the
+            server render and hydration; suppress the resulting text mismatch
+            (the label is approximate by nature). */}
+        <span
+          title={fullDateTimeFormatter.format(new Date(session.updatedAt))}
+          suppressHydrationWarning
+        >
           Updated {relativeTime(session.updatedAt)}
         </span>
         {hasConnectionLinks ? (
