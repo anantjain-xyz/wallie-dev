@@ -31,6 +31,10 @@ import {
 import { StatusChip } from "@/components/shared/status-chip";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
+import {
+  getWorkspaceMemberDisplayName,
+  type WorkspaceMember,
+} from "@/features/workspace-members/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
@@ -46,6 +50,36 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
   month: "short",
 });
+
+const fullDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const diffMs = Date.now() - then;
+  const minutes = Math.round(diffMs / 60000);
+  if (Number.isNaN(minutes)) return "";
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function CreatorAvatar({ member }: { member: WorkspaceMember }) {
+  const initial = getWorkspaceMemberDisplayName(member).trim().charAt(0).toUpperCase() || "?";
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-[9px] font-semibold text-foreground"
+    >
+      {initial}
+    </span>
+  );
+}
 
 type StageRailEntry = {
   stage: PipelineStage;
@@ -90,6 +124,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
+  const sessionCreator = initialData.sessionCreator;
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
@@ -441,12 +476,18 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     <PageContainer>
       <PageHeader
         eyebrow={
-          <Link
-            href={workspaceSessionsPath(initialData.workspace.slug)}
-            className="hover:text-foreground"
-          >
-            ← Sessions
-          </Link>
+          <span className="inline-flex items-center gap-1.5">
+            <Link
+              href={workspaceSessionsPath(initialData.workspace.slug)}
+              className="hover:text-foreground"
+            >
+              ← Sessions
+            </Link>
+            <span aria-hidden="true" className="text-muted/60">
+              /
+            </span>
+            <span className="font-mono tracking-normal">#{session.number}</span>
+          </span>
         }
         titleAsChild
         title={
@@ -460,8 +501,25 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         actions={headerActions}
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px] text-muted">
-        <span className="font-mono">#{session.number}</span>
+      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-muted">
+        {sessionCreator ? (
+          <>
+            <span className="inline-flex items-center gap-1.5">
+              <CreatorAvatar member={sessionCreator} />
+              <span className="text-foreground">
+                {getWorkspaceMemberDisplayName(sessionCreator)}
+              </span>
+            </span>
+            <span aria-hidden="true">·</span>
+          </>
+        ) : null}
+        <span title={fullDateTimeFormatter.format(new Date(session.createdAt))}>
+          Created {dateTimeFormatter.format(new Date(session.createdAt))}
+        </span>
+        <span aria-hidden="true">·</span>
+        <span title={fullDateTimeFormatter.format(new Date(session.updatedAt))}>
+          Updated {relativeTime(session.updatedAt)}
+        </span>
         {hasConnectionLinks ? (
           <>
             <span aria-hidden="true">·</span>
