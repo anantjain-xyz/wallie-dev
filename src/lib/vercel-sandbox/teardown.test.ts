@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  cancelWorkspaceWork: vi.fn(),
   loadVercelSandboxConnection: vi.fn(),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/pipeline/cancel", () => ({
+  cancelWorkspaceWork: mocked.cancelWorkspaceWork,
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -23,12 +28,12 @@ interface SandboxRow {
 }
 
 /**
- * Minimal Supabase query-builder stand-in. Every filter method returns the same
- * chain object, and the chain resolves (via `then`) to the table's preset rows
- * so `await admin.from(...).select(...)...` works regardless of filter order.
+ * Minimal Supabase query-builder stand-in for the capability-check query. Every
+ * filter method returns the same chain object, and the chain resolves (via
+ * `then`) to the table's preset rows so `await admin.from(...).select(...)...`
+ * works regardless of filter order.
  */
 function buildAdminMock(tables: {
-  agent_runs?: { data?: SandboxRow[]; error?: { message: string } };
   sandbox_capability_checks?: { data?: SandboxRow[]; error?: { message: string } };
 }) {
   const from = vi.fn((name: string) => {
@@ -51,53 +56,90 @@ function connection() {
   return { credentials: CREDENTIALS, preview: {} };
 }
 
+function cancelResult(
+  overrides: {
+    canceledJobIds?: string[];
+    canceledRunIds?: string[];
+    stoppedSandboxIds?: string[];
+  } = {},
+) {
+  return {
+    canceledJobIds: overrides.canceledJobIds ?? [],
+    canceledRunIds: overrides.canceledRunIds ?? [],
+    stoppedSandboxIds: overrides.stoppedSandboxIds ?? [],
+  };
+}
+
 describe("stopWorkspaceProviderSandboxes", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("stops sandboxes owned by active runs and capability checks", async () => {
+  it("cancels the workspace's jobs and runs before snapshotting sandboxes", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(
+      cancelResult({ canceledJobIds: ["job-1"], canceledRunIds: ["run-1"] }),
+    );
+    mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
+
+    const result = await stopWorkspaceProviderSandboxes(buildAdminMock({}), WORKSPACE_ID);
+
+    expect(mocked.cancelWorkspaceWork).toHaveBeenCalledWith(expect.anything(), {
+      reason: "Workspace deleted.",
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(result.canceledJobIds).toEqual(["job-1"]);
+    expect(result.canceledRunIds).toEqual(["run-1"]);
+  });
+
+  it("merges sandboxes stopped by the cancel step with capability-check sandboxes", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(
+      cancelResult({ canceledRunIds: ["run-1"], stoppedSandboxIds: ["sbx_run_1"] }),
+    );
     mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
     const admin = buildAdminMock({
-      agent_runs: { data: [{ sandbox_id: "sbx_run_1" }, { sandbox_id: "sbx_run_2" }] },
       sandbox_capability_checks: { data: [{ sandbox_id: "sbx_check_1" }] },
     });
 
     const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
 
-    expect(result.stoppedSandboxIds).toEqual(["sbx_run_1", "sbx_run_2", "sbx_check_1"]);
-    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(3);
-    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_run_1", {
-      vercelCredentials: CREDENTIALS,
-    });
+    expect(result.stoppedSandboxIds).toEqual(["sbx_run_1", "sbx_check_1"]);
+    // The run sandbox was already stopped inside cancelWorkspaceWork; only the
+    // capability-check sandbox is stopped here.
+    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_check_1", {
       vercelCredentials: CREDENTIALS,
     });
   });
 
-  it("deduplicates a sandbox id shared by a run and a capability check", async () => {
+  it("does not stop a capability-check sandbox already stopped by the cancel step", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(
+      cancelResult({ stoppedSandboxIds: ["sbx_shared"] }),
+    );
     mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
     const admin = buildAdminMock({
-      agent_runs: { data: [{ sandbox_id: "sbx_shared" }] },
       sandbox_capability_checks: { data: [{ sandbox_id: "sbx_shared" }] },
     });
 
     const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
 
     expect(result.stoppedSandboxIds).toEqual(["sbx_shared"]);
-    expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
+    expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
-  it("does nothing when the workspace has no Vercel connection", async () => {
+  it("still cancels work but stops no sandboxes when the workspace has no connection", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult({ canceledJobIds: ["job-1"] }));
     mocked.loadVercelSandboxConnection.mockResolvedValue(null);
 
     const result = await stopWorkspaceProviderSandboxes(buildAdminMock({}), WORKSPACE_ID);
 
+    expect(mocked.cancelWorkspaceWork).toHaveBeenCalled();
+    expect(result.canceledJobIds).toEqual(["job-1"]);
     expect(result.stoppedSandboxIds).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
-  it("does nothing when there are no active runs or checks", async () => {
+  it("does nothing extra when there are no capability checks to stop", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
     mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
 
     const result = await stopWorkspaceProviderSandboxes(buildAdminMock({}), WORKSPACE_ID);
@@ -106,10 +148,11 @@ describe("stopWorkspaceProviderSandboxes", () => {
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
-  it("ignores null sandbox ids", async () => {
+  it("ignores null capability-check sandbox ids", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
     mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
     const admin = buildAdminMock({
-      agent_runs: { data: [{ sandbox_id: null }, { sandbox_id: "sbx_ok" }] },
+      sandbox_capability_checks: { data: [{ sandbox_id: null }, { sandbox_id: "sbx_ok" }] },
     });
 
     const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
@@ -117,19 +160,25 @@ describe("stopWorkspaceProviderSandboxes", () => {
     expect(result.stoppedSandboxIds).toEqual(["sbx_ok"]);
   });
 
-  it("returns without throwing when loading the connection fails", async () => {
+  it("returns the cancel result without throwing when loading the connection fails", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(
+      cancelResult({ canceledRunIds: ["run-1"], stoppedSandboxIds: ["sbx_run"] }),
+    );
     mocked.loadVercelSandboxConnection.mockRejectedValue(new Error("db down"));
 
     const result = await stopWorkspaceProviderSandboxes(buildAdminMock({}), WORKSPACE_ID);
 
-    expect(result.stoppedSandboxIds).toEqual([]);
+    expect(result.canceledRunIds).toEqual(["run-1"]);
+    expect(result.stoppedSandboxIds).toEqual(["sbx_run"]);
+    // The run sandbox was stopped inside cancelWorkspaceWork; the failed
+    // connection load only blocks capability-check stops.
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
   });
 
-  it("still stops capability-check sandboxes when the runs query errors", async () => {
+  it("still stops capability-check sandboxes after the cancel step ran", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
     mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
     const admin = buildAdminMock({
-      agent_runs: { error: { message: "boom" } },
       sandbox_capability_checks: { data: [{ sandbox_id: "sbx_check" }] },
     });
 

@@ -196,3 +196,110 @@ export async function cancelSessionWork(
 
   return result;
 }
+
+export type CancelWorkspaceWorkResult = {
+  canceledJobIds: string[];
+  canceledRunIds: string[];
+  stoppedSandboxIds: string[];
+};
+
+/**
+ * Cancel every in-flight job and run for a workspace and stop the provider
+ * sandboxes those runs own. Called right before a workspace is hard-deleted.
+ *
+ * The delete relies on the FK cascade, which drops `agent_jobs`, `agent_runs`,
+ * AND `workspace_vercel_sandbox_connections` together. A worker still mid-flight
+ * when those rows vanish would leak its sandbox: no run record for the reaper to
+ * find, and no connection credentials to reach the provider even if it could.
+ * Cancelling first closes that window the same way {@link cancelSessionWork}
+ * does for a single session:
+ *
+ *   - A queued job a worker has not claimed yet is refused by the claim CAS once
+ *     it is `canceled`, so no new sandbox spins up after this point.
+ *   - Flipping a claimed run to `canceled` makes the processor's
+ *     `updateRunSandbox` active-status guard refuse a sandbox that attaches
+ *     *after* the flip — the worker then stops that orphan itself. The cancel
+ *     UPDATE returns each run's sandbox ref as it stood at the flip, so a sandbox
+ *     that landed in the race window *just before* it is stopped here.
+ *
+ * Best-effort, unlike {@link cancelSessionWork}: a query or provider failure is
+ * logged, never thrown, so a cleanup hiccup can't fail a delete the owner
+ * explicitly confirmed. Vercel sandboxes auto-expire, so a missed stop is a slow
+ * leak, not a permanent one. Unlike the session path it does not write a cancel
+ * message per run — those rows are about to be cascade-deleted with the run.
+ */
+export async function cancelWorkspaceWork(
+  admin: AdminClient,
+  input: { reason: string; workspaceId: string },
+): Promise<CancelWorkspaceWorkResult> {
+  const nowIso = new Date().toISOString();
+  const result: CancelWorkspaceWorkResult = {
+    canceledJobIds: [],
+    canceledRunIds: [],
+    stoppedSandboxIds: [],
+  };
+
+  const { data: canceledJobs, error: jobsError } = await admin
+    .from("agent_jobs")
+    .update({
+      finished_at: nowIso,
+      last_error: input.reason,
+      status: "canceled",
+    })
+    .eq("workspace_id", input.workspaceId)
+    .in("status", ACTIVE_AGENT_JOB_STATUSES)
+    .select("id");
+
+  if (jobsError) {
+    console.error("[cancel] failed to cancel workspace jobs", {
+      error: jobsError.message,
+      workspaceId: input.workspaceId,
+    });
+  } else {
+    result.canceledJobIds = (canceledJobs ?? []).map((job) => job.id);
+  }
+
+  // Returning the updated rows gives us each run's sandbox ref as it stood at
+  // the flip — including a sandbox id persisted in the race window just before
+  // it. A sandbox attached *after* the flip is caught instead by the
+  // active-status guard in updateRunSandbox, which stops it.
+  const { data: canceledRuns, error: runsError } = await admin
+    .from("agent_runs")
+    .update({
+      finished_at: nowIso,
+      status: "canceled",
+    })
+    .eq("workspace_id", input.workspaceId)
+    .in("status", ACTIVE_AGENT_RUN_STATUSES)
+    .select(
+      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+    );
+
+  if (runsError) {
+    console.error("[cancel] failed to cancel workspace runs", {
+      error: runsError.message,
+      workspaceId: input.workspaceId,
+    });
+    return result;
+  }
+  result.canceledRunIds = (canceledRuns ?? []).map((run) => run.id);
+
+  const credentialsCache = new Map<string, VercelSandboxCredentials | null>();
+  for (const run of canceledRuns ?? []) {
+    if (!run.sandbox_id) {
+      continue;
+    }
+    try {
+      await stopRunSandbox(admin, run, credentialsCache);
+      result.stoppedSandboxIds.push(run.sandbox_id);
+    } catch (error) {
+      console.error("[cancel] failed to stop sandbox for canceled workspace run", {
+        error: error instanceof Error ? error.message : String(error),
+        runId: run.id,
+        sandboxId: run.sandbox_id,
+      });
+    }
+  }
+
+  return result;
+}

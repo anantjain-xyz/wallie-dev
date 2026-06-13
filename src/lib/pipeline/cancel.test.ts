@@ -14,7 +14,7 @@ vi.mock("@/lib/vercel-sandbox/server", () => ({
   loadVercelSandboxConnection: vercelMocks.loadVercelSandboxConnection,
 }));
 
-import { cancelSessionWork, stopRunSandbox } from "@/lib/pipeline/cancel";
+import { cancelSessionWork, cancelWorkspaceWork, stopRunSandbox } from "@/lib/pipeline/cancel";
 
 type ActiveRun = {
   id: string;
@@ -181,6 +181,103 @@ describe("cancelSessionWork", () => {
 
     expect(sandboxMocks.stopSandboxById).not.toHaveBeenCalled();
     expect(result.stoppedSandboxIds).toEqual([]);
+  });
+});
+
+describe("cancelWorkspaceWork", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vercelMocks.loadVercelSandboxConnection.mockResolvedValue(null as unknown);
+  });
+
+  it("cancels active jobs + runs scoped to the workspace and stops their sandboxes", async () => {
+    vercelMocks.loadVercelSandboxConnection.mockResolvedValue({
+      credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+    } as unknown);
+    const { admin, calls } = buildAdmin({
+      activeJobs: [{ id: "job-1" }],
+      activeRuns: [vercelRun()],
+    });
+
+    const result = await cancelWorkspaceWork(admin as never, {
+      reason: "Workspace deleted.",
+      workspaceId: "w1",
+    });
+
+    expect(result.canceledJobIds).toEqual(["job-1"]);
+    expect(result.canceledRunIds).toEqual(["run-1"]);
+    expect(result.stoppedSandboxIds).toEqual(["sb-1"]);
+
+    const jobCancel = calls.find((c) => c.table === "agent_jobs" && c.op === "update");
+    expect(jobCancel?.patch).toMatchObject({ status: "canceled" });
+    expect(jobCancel?.filters["eq.workspace_id"]).toBe("w1");
+    expect(jobCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
+
+    const runCancel = calls.find((c) => c.table === "agent_runs" && c.op === "update");
+    expect(runCancel?.patch).toMatchObject({ status: "canceled" });
+    expect(runCancel?.filters["eq.workspace_id"]).toBe("w1");
+    expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
+
+    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1", {
+      vercelCredentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+    });
+
+    // No per-run cancel message — those rows are about to be cascade-deleted.
+    expect(calls.find((c) => c.table === "agent_run_messages")).toBeUndefined();
+    // The workspace is being deleted; we do not touch session phase_status.
+    expect(calls.find((c) => c.table === "sessions")).toBeUndefined();
+  });
+
+  it("flips a claimed run whose sandbox id has not landed yet without trying to stop it", async () => {
+    // This is the race the snapshot alone could not close: the run is active but
+    // sandbox_id is still null. Flipping it to `canceled` is what makes
+    // updateRunSandbox refuse a late attach.
+    const { admin } = buildAdmin({
+      activeJobs: [{ id: "job-1" }],
+      activeRuns: [vercelRun({ sandbox_id: null })],
+    });
+
+    const result = await cancelWorkspaceWork(admin as never, {
+      reason: "Workspace deleted.",
+      workspaceId: "w1",
+    });
+
+    expect(result.canceledRunIds).toEqual(["run-1"]);
+    expect(result.stoppedSandboxIds).toEqual([]);
+    expect(sandboxMocks.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op for a workspace with no active jobs or runs", async () => {
+    const { admin } = buildAdmin({});
+
+    const result = await cancelWorkspaceWork(admin as never, {
+      reason: "Workspace deleted.",
+      workspaceId: "w1",
+    });
+
+    expect(result).toEqual({ canceledJobIds: [], canceledRunIds: [], stoppedSandboxIds: [] });
+    expect(sandboxMocks.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("stops sandboxes for every active run in the workspace, not just one", async () => {
+    vercelMocks.loadVercelSandboxConnection.mockResolvedValue({
+      credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+    } as unknown);
+    const { admin } = buildAdmin({
+      activeRuns: [
+        vercelRun({ id: "run-1", sandbox_id: "sb-1" }),
+        vercelRun({ id: "run-2", sandbox_id: "sb-2" }),
+      ],
+    });
+
+    const result = await cancelWorkspaceWork(admin as never, {
+      reason: "Workspace deleted.",
+      workspaceId: "w1",
+    });
+
+    expect(result.canceledRunIds).toEqual(["run-1", "run-2"]);
+    expect(result.stoppedSandboxIds).toEqual(["sb-1", "sb-2"]);
+    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledTimes(2);
   });
 });
 
