@@ -14,7 +14,10 @@ import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
-import { type SettingsAnchor, SettingsAnchorNav } from "@/features/settings/settings-anchor-nav";
+import {
+  type SettingsAnchorGroup,
+  SettingsAnchorNav,
+} from "@/features/settings/settings-anchor-nav";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
 import {
@@ -28,19 +31,37 @@ import { buildRepositorySetupHealth } from "@/features/onboarding/repository-hea
 import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readiness";
 import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 
-const ANCHORS: SettingsAnchor[] = [
-  { id: "workspace", label: "Workspace" },
-  { id: "members", label: "Members" },
-  { id: "github", label: "Connect GitHub" },
-  { id: "repository", label: "Analyze repositories" },
-  { id: "vercel", label: "Connect Vercel" },
-  { id: "pipeline", label: "Review pipeline" },
-  { id: "linear", label: "Connect Linear" },
-  { id: "runtime", label: "Connect Agent" },
-  { id: "verify", label: "Verify setup" },
-  { dividerBefore: true, id: "usage", label: "Usage" },
-  { id: "rate-limits", label: "Rate limits" },
-  { dividerBefore: true, id: "danger-zone", label: "Danger zone" },
+const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
+  {
+    label: "Workspace",
+    anchors: [
+      { id: "workspace", label: "Workspace" },
+      { id: "members", label: "Members" },
+      { id: "danger-zone", label: "Danger zone" },
+    ],
+  },
+  {
+    label: "Integrations",
+    anchors: [
+      { id: "github", label: "GitHub" },
+      { id: "repository", label: "Repositories" },
+      { id: "vercel", label: "Vercel Sandbox" },
+      { id: "linear", label: "Linear" },
+      { id: "runtime", label: "Agent" },
+    ],
+  },
+  {
+    label: "Pipeline",
+    anchors: [{ id: "pipeline", label: "Pipeline" }],
+  },
+  {
+    label: "Advanced",
+    anchors: [
+      { id: "verify", label: "Verify setup" },
+      { id: "usage", label: "Usage" },
+      { id: "rate-limits", label: "Rate limits" },
+    ],
+  },
 ];
 
 const LEGACY_ANCHOR_REDIRECTS: Record<string, string> = {
@@ -270,7 +291,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         ) : null}
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
-          <SettingsAnchorNav anchors={ANCHORS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
+          <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
 
           <div className="space-y-16 min-w-0">
             <WorkspaceAvatarSection
@@ -291,6 +312,12 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               setFlashMessage={setFlashMessage}
               workspaceId={pageData.workspace.id}
               workspaceMembers={pageData.workspaceMembers}
+            />
+            <DangerZoneSection
+              canDelete={isOwner}
+              setFlashMessage={setFlashMessage}
+              workspaceId={pageData.workspace.id}
+              workspaceName={pageData.workspace.name}
             />
             <GitHubInstallSection
               canManage={isManager}
@@ -316,19 +343,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               setFlashMessage={setFlashMessage}
               workspaceId={pageData.workspace.id}
             />
-
-            <Section
-              anchorId="pipeline"
-              tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
-              title="Review pipeline"
-            >
-              <PipelineEditor
-                canManage={isManager}
-                pipeline={pageData.pipeline}
-                workspaceId={pageData.workspace.id}
-                workspaceMembers={pageData.workspaceMembers}
-              />
-            </Section>
 
             <LinearConfigurationSection
               canManage={isManager}
@@ -378,10 +392,23 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               }
               setFlashMessage={setFlashMessage}
               tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
-              title="Connect Agent"
+              title="Agent"
               vercelSandboxConnection={pageData.vercelSandboxConnection}
               workspaceId={pageData.workspace.id}
             />
+
+            <Section
+              anchorId="pipeline"
+              tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
+              title="Pipeline"
+            >
+              <PipelineEditor
+                canManage={isManager}
+                pipeline={pageData.pipeline}
+                workspaceId={pageData.workspace.id}
+                workspaceMembers={pageData.workspaceMembers}
+              />
+            </Section>
 
             <VerifySetupSection
               data={pageData}
@@ -426,13 +453,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 ))}
               </ul>
             </Section>
-
-            <DangerZoneSection
-              canDelete={isOwner}
-              setFlashMessage={setFlashMessage}
-              workspaceId={pageData.workspace.id}
-              workspaceName={pageData.workspace.name}
-            />
           </div>
         </div>
       </div>
