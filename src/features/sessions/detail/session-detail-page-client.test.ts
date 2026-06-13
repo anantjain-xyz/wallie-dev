@@ -124,4 +124,65 @@ describe("SessionDetailPageClient", () => {
     // The heading must contain only the title text — no nested buttons/controls.
     expect(headingMatch?.[1]).toBe("Editable Session");
   });
+
+  it("folds the session number into the breadcrumb instead of an orphaned row", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        initialData: makeSessionDetailData(),
+      }),
+    );
+
+    // Session number lives next to the "Sessions" breadcrumb link.
+    const breadcrumbMatch = html.match(/← Sessions[\s\S]*?#7/);
+    expect(breadcrumbMatch).not.toBeNull();
+    // No standalone `#7` sitting on its own between title and stage tracker.
+    expect(html).not.toMatch(/<span class="font-mono">#7<\/span>/);
+  });
+
+  it("renders a metadata row with created and updated times", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        initialData: makeSessionDetailData(),
+      }),
+    );
+
+    expect(html).toContain("Created");
+    expect(html).toContain("Updated");
+  });
+
+  it("renders the created date deterministically (UTC) on the server", () => {
+    // The server render must not depend on the host timezone, otherwise it
+    // mismatches the browser on hydration. createdAt is 2026-06-07T10:00:00Z,
+    // so a UTC-pinned formatter yields the 10:00 hour regardless of the
+    // timezone this test runs in (a local formatter would shift the hour/day).
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        initialData: makeSessionDetailData(),
+      }),
+    );
+
+    expect(html).toContain("Created Jun 7, 10:00");
+  });
+
+  it("renders the session creator when present", () => {
+    const data = makeSessionDetailData();
+    data.sessionCreator = {
+      avatarUrl: null,
+      fullName: "Ada Lovelace",
+      id: "creator-1",
+      isActive: true,
+      kind: "human",
+      role: "member",
+      userId: "user-1",
+      username: "ada",
+    };
+
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        initialData: data,
+      }),
+    );
+
+    expect(html).toContain("Ada Lovelace");
+  });
 });
