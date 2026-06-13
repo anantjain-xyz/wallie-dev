@@ -44,16 +44,36 @@ type SessionDetailPageClientProps = {
   initialData: SessionDetailPageData;
 };
 
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+const dateTimeFormatOptions: Intl.DateTimeFormatOptions = {
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
   month: "short",
-});
+};
 
-const fullDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+const fullDateTimeFormatOptions: Intl.DateTimeFormatOptions = {
   dateStyle: "medium",
   timeStyle: "short",
+};
+
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, dateTimeFormatOptions);
+
+const fullDateTimeFormatter = new Intl.DateTimeFormat(undefined, fullDateTimeFormatOptions);
+
+// Deterministic formatters (fixed locale + UTC) for the initial server render.
+// `Intl.DateTimeFormat(undefined, …)` resolves to the environment timezone —
+// UTC on Vercel, local in the browser — so an always-visible absolute date
+// would mismatch on hydration and could even show the wrong calendar day near
+// midnight UTC. We render these UTC-pinned values during SSR/first paint, then
+// swap to the viewer's local formatters after mount (see `mounted` below).
+const ssrDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  ...dateTimeFormatOptions,
+  timeZone: "UTC",
+});
+
+const ssrFullDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  ...fullDateTimeFormatOptions,
+  timeZone: "UTC",
 });
 
 function relativeTime(iso: string): string {
@@ -137,6 +157,19 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  // Gate locale/timezone-sensitive timestamps so the absolute "Created" date
+  // renders identically on the server and during the first client paint, then
+  // re-renders in the viewer's local timezone once mounted.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const createdAtDate = new Date(session.createdAt);
+  const createdAtLabel = (mounted ? dateTimeFormatter : ssrDateTimeFormatter).format(createdAtDate);
+  const createdAtFull = (mounted ? fullDateTimeFormatter : ssrFullDateTimeFormatter).format(
+    createdAtDate,
+  );
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
   const hasConnectionLinks =
@@ -513,8 +546,8 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             <span aria-hidden="true">·</span>
           </>
         ) : null}
-        <span title={fullDateTimeFormatter.format(new Date(session.createdAt))}>
-          Created {dateTimeFormatter.format(new Date(session.createdAt))}
+        <span title={createdAtFull} suppressHydrationWarning>
+          Created {createdAtLabel}
         </span>
         <span aria-hidden="true">·</span>
         {/* Relative time derives from Date.now(), which differs between the
