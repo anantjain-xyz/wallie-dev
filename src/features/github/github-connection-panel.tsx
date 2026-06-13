@@ -237,7 +237,7 @@ export function GitHubConnectionPanel({
             }
             type="button"
           >
-            {launchInstall.isBusy ? "Preparing install..." : "Install GitHub App"}
+            {launchInstall.isBusy ? "Preparing install…" : "Install GitHub App"}
           </button>
         </div>
       </div>
@@ -275,7 +275,7 @@ export function GitHubConnectionPanel({
             onClick={() => void refreshRepositories.run()}
             type="button"
           >
-            {refreshRepositories.isBusy ? "Refreshing..." : "Refresh repositories"}
+            {refreshRepositories.isBusy ? "Refreshing…" : "Refresh repositories"}
           </button>
           <Link
             className="ui-button"

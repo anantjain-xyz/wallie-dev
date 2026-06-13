@@ -102,7 +102,7 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
       {status === null ? (
-        <p className="text-[13px] text-muted">Checking connection...</p>
+        <p className="text-[13px] text-muted">Checking connection…</p>
       ) : status.connected ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
@@ -117,7 +117,7 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
             disabled={isBusy}
             onClick={handleDisconnect}
           >
-            {isBusy ? "Disconnecting..." : "Disconnect"}
+            {isBusy ? "Disconnecting…" : "Disconnect"}
           </button>
         </div>
       ) : (
@@ -132,7 +132,7 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
             className="ui-input font-mono text-[13px]"
             disabled={isBusy}
             onChange={(event) => setCredential(event.target.value)}
-            placeholder="sk-ant-..."
+            placeholder="sk-ant-…"
             spellCheck={false}
             type="password"
             value={credential}
@@ -141,7 +141,7 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
 
         <div className="flex justify-end">
           <button className="ui-button-primary" disabled={saveDisabled} type="submit">
-            {isBusy ? "Saving..." : status?.connected ? "Update API key" : "Save API key"}
+            {isBusy ? "Saving…" : status?.connected ? "Update API key" : "Save API key"}
           </button>
         </div>
       </form>
