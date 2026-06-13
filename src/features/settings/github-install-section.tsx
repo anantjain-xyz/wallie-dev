@@ -35,7 +35,7 @@ export function GitHubInstallSection({
       anchorId="github"
       statusBadge={statusBadge}
       tagline="Install the workspace GitHub App so PR status appears on each session and Wallie can open PRs from agent runs."
-      title="Connect GitHub"
+      title="GitHub"
     >
       <GitHubConnectionPanel
         canManage={canManage}

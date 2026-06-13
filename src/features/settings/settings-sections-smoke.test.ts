@@ -230,7 +230,7 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    expect(html).toContain("Connect Linear");
+    expect(html).toContain(">Linear</h2>");
     expect(html).toContain("Linear API key");
     expect(html).toContain("Linear routing");
     expect(html).toContain("••••1234");
@@ -283,7 +283,7 @@ describe("Settings integration sections", () => {
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in with ChatGPT<\/button>/);
   });
 
-  it("renders Settings anchors in onboarding order with usage at the bottom", () => {
+  it("renders Settings anchors grouped under noun labels", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
@@ -294,24 +294,43 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    const labels = [
+    const groupHeadings = ["Workspace", "Integrations", "Pipeline", "Advanced"];
+    let lastGroupIndex = -1;
+    for (const heading of groupHeadings) {
+      const index = html.indexOf(`>${heading}</p>`);
+      expect(index).toBeGreaterThan(lastGroupIndex);
+      lastGroupIndex = index;
+    }
+
+    const items = [
       "Workspace",
       "Members",
-      "Connect GitHub",
-      "Analyze repositories",
-      "Review pipeline",
-      "Connect Linear",
-      "Connect Agent",
+      "Danger zone",
+      "GitHub",
+      "Repositories",
+      "Vercel Sandbox",
+      "Linear",
+      "Agent",
+      "Pipeline",
       "Verify setup",
       "Usage",
       "Rate limits",
     ];
     let lastIndex = -1;
-    for (const label of labels) {
-      const index = html.indexOf(`>${label}</`);
+    for (const label of items) {
+      const index = html.indexOf(`>${label}</span>`);
       expect(index).toBeGreaterThan(lastIndex);
       lastIndex = index;
     }
+
+    // The sidebar no longer reads as an onboarding wizard transcript.
+    expect(html).not.toContain(">Connect GitHub</span>");
+    expect(html).not.toContain(">Analyze repositories</span>");
+    expect(html).not.toContain(">Connect Vercel</span>");
+    expect(html).not.toContain(">Review pipeline</span>");
+    expect(html).not.toContain(">Connect Linear</span>");
+    expect(html).not.toContain(">Connect Agent</span>");
+
     expect(html).not.toContain('href="#secrets"');
     expect(html).not.toContain('href="#linear-routing"');
     expect(html).not.toContain('href="#coding-agent"');
@@ -492,13 +511,13 @@ describe("Settings integration sections", () => {
     expect(html).toContain('id="members"');
     expect(html).toContain("Pending invitations");
     expect(html).toContain('id="repository"');
-    expect(html).toContain("Analyze repositories");
+    expect(html).toContain(">Repositories</h2>");
     expect(html).toContain('id="linear"');
-    expect(html).toContain("Connect Linear");
+    expect(html).toContain(">Linear</h2>");
     expect(html).toContain('id="runtime"');
     expect(html).toContain("Workspace secrets");
     expect(html).toContain('id="vercel"');
-    expect(html).toContain("Connect Vercel");
+    expect(html).toContain(">Vercel Sandbox</h2>");
     expect(html).toContain('id="verify"');
     expect(html).toContain("Verify setup");
   });
@@ -540,7 +559,7 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain("teammate@company.com");
   });
 
-  it("renders repository setup actions inside Settings Analyze repositories", () => {
+  it("renders repository setup actions inside Settings Repositories", () => {
     const repository: SettingsPageData["github"]["repositories"][number] = {
       defaultBranch: "main",
       defaultProgrammingLanguage: "TypeScript",
@@ -598,7 +617,7 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    expect(html).toContain("Analyze repositories");
+    expect(html).toContain(">Repositories</h2>");
     expect(html).toContain("Install skills");
     expect(html).toContain("Mark skills as installed");
     expect(html).not.toContain(">Analyze repository</button>");
@@ -814,7 +833,7 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain(">Primary<");
   });
 
-  it("renders provider access inside Connect Agent instead of a standalone Codex section", () => {
+  it("renders provider access inside the Agent section instead of a standalone Codex section", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {
         initialData: settingsData(),
@@ -826,7 +845,7 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain('id="runtime"');
-    expect(html).toContain("Connect Agent");
+    expect(html).toContain(">Agent</h2>");
     expect(html).toContain("Provider access");
     expect(html).toContain("Checking connection");
     expect(html).not.toContain('id="codex"');

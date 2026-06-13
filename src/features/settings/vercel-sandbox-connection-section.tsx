@@ -95,7 +95,7 @@ export function VercelSandboxConnectionSection({
     <Section
       anchorId="vercel"
       tagline="Wallie session sandboxes are created in this workspace's Vercel project. Token values are encrypted and never returned to the browser."
-      title="Connect Vercel"
+      title="Vercel Sandbox"
     >
       <div className="space-y-6">
         <div className="flex flex-col gap-3 rounded-[8px] border border-border bg-surface px-4 py-3 sm:flex-row sm:items-start sm:justify-between">

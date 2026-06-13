@@ -1,15 +1,19 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 export type SettingsAnchor = {
-  dividerBefore?: boolean;
   id: string;
   label: string;
 };
 
-type SettingsAnchorNavProps = {
+export type SettingsAnchorGroup = {
+  label: string;
   anchors: SettingsAnchor[];
+};
+
+type SettingsAnchorNavProps = {
+  groups: SettingsAnchorGroup[];
   legacyRedirects?: Record<string, string>;
 };
 
@@ -24,9 +28,10 @@ export function resolveLegacySettingsAnchorHash(
 }
 
 export function SettingsAnchorNav({
-  anchors,
+  groups,
   legacyRedirects = EMPTY_LEGACY_REDIRECTS,
 }: SettingsAnchorNavProps) {
+  const anchors = groups.flatMap((group) => group.anchors);
   const [activeId, setActiveId] = useState<string | null>(anchors[0]?.id ?? null);
 
   useEffect(() => {
@@ -54,7 +59,8 @@ export function SettingsAnchorNav({
   }, [legacyRedirects]);
 
   useEffect(() => {
-    const sections = anchors
+    const sections = groups
+      .flatMap((group) => group.anchors)
       .map((anchor) => document.getElementById(anchor.id))
       .filter((node): node is HTMLElement => node !== null);
 
@@ -82,7 +88,7 @@ export function SettingsAnchorNav({
     }
 
     return () => observer.disconnect();
-  }, [anchors]);
+  }, [groups]);
 
   function handleClick(event: React.MouseEvent<HTMLAnchorElement>, id: string) {
     const target = document.getElementById(id);
@@ -98,29 +104,29 @@ export function SettingsAnchorNav({
 
   return (
     <div className="hidden lg:block">
-      <nav aria-label="Settings sections" className="sticky top-6">
-        <ul className="flex flex-col gap-0.5">
-          {anchors.map((anchor) => {
-            const isActive = anchor.id === activeId;
-            return (
-              <Fragment key={anchor.id}>
-                {anchor.dividerBefore ? (
-                  <li aria-hidden="true" className="my-2 border-t border-border" />
-                ) : null}
-                <li>
-                  <a
-                    aria-current={isActive ? "true" : undefined}
-                    className={`settings-anchor ${isActive ? "settings-anchor-active" : ""}`}
-                    href={`#${anchor.id}`}
-                    onClick={(event) => handleClick(event, anchor.id)}
-                  >
-                    <span>{anchor.label}</span>
-                  </a>
-                </li>
-              </Fragment>
-            );
-          })}
-        </ul>
+      <nav aria-label="Settings sections" className="sticky top-6 flex flex-col gap-5">
+        {groups.map((group) => (
+          <div key={group.label}>
+            <p className="settings-anchor-group">{group.label}</p>
+            <ul className="flex flex-col gap-0.5">
+              {group.anchors.map((anchor) => {
+                const isActive = anchor.id === activeId;
+                return (
+                  <li key={anchor.id}>
+                    <a
+                      aria-current={isActive ? "true" : undefined}
+                      className={`settings-anchor ${isActive ? "settings-anchor-active" : ""}`}
+                      href={`#${anchor.id}`}
+                      onClick={(event) => handleClick(event, anchor.id)}
+                    >
+                      <span>{anchor.label}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
       </nav>
     </div>
   );
