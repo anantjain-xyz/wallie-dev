@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { shouldShowOnboardingResumeCta } from "@/features/onboarding/flow";
 import {
   archiveSessionFromClient,
   unarchiveSessionFromClient,
@@ -14,6 +13,7 @@ import {
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
+import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
   type SessionFilterKey,
@@ -67,7 +67,6 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
-  const shouldResumeSetup = shouldShowOnboardingResumeCta(initialData.onboarding);
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
@@ -173,16 +172,22 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
       </div>
 
       {sessions.length === 0 ? (
-        <div className="flex flex-col items-center rounded-[10px] border border-dashed border-border bg-surface-strong px-6 py-16 text-center">
-          <p className="text-[14px] font-semibold text-foreground">No sessions match.</p>
-          <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
-            {initialData.totalCount === 0
-              ? shouldResumeSetup
-                ? "Finish workspace setup before starting the first session."
-                : "Start your first session from the top nav."
-              : "Adjust the stage, scope, or search to see more sessions."}
-          </p>
-        </div>
+        initialData.totalCount === 0 ? (
+          <SessionsZeroState
+            onboarding={initialData.onboarding}
+            workspaceSlug={workspaceSlug}
+            newSessionHref={workspaceSessionsPath(workspaceSlug, { create: 1 })}
+          />
+        ) : (
+          <div className="flex flex-col items-center rounded-[10px] border border-dashed border-border bg-surface-strong px-6 py-16 text-center">
+            <p className="text-[14px] font-semibold text-foreground">
+              No sessions match these filters
+            </p>
+            <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
+              Adjust the stage, scope, or search to see more sessions.
+            </p>
+          </div>
+        )
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
           {sessions.map((session) => (
