@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
+import { MarkdownContent } from "@/components/shared/markdown-content";
 import { Spinner } from "@/components/shared/spinner";
 import {
   archiveSessionFromClient,
@@ -926,6 +927,11 @@ function ArtifactView({
   artifact: SessionArtifactSummary;
   compact?: boolean;
 }) {
+  const [showRaw, setShowRaw] = useState(false);
+
+  // String payloads are markdown; structured (JSON) payloads are shown verbatim.
+  const isMarkdown = typeof artifact.payload === "string";
+
   const formatted = useMemo(() => {
     if (typeof artifact.payload === "string") {
       return artifact.payload;
@@ -937,20 +943,40 @@ function ArtifactView({
     }
   }, [artifact.payload]);
 
-  const isMarkdown = typeof artifact.payload === "string";
+  const showHeaderRow = !compact || isMarkdown;
 
   return (
     <div>
-      {!compact ? (
-        <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-          v{artifact.version} · {dateTimeFormatter.format(new Date(artifact.createdAt))}
-        </p>
+      {showHeaderRow ? (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          {!compact ? (
+            <p className="text-[11px] uppercase tracking-wide text-muted">
+              v{artifact.version} · {dateTimeFormatter.format(new Date(artifact.createdAt))}
+            </p>
+          ) : (
+            <span />
+          )}
+          {isMarkdown ? (
+            <button
+              type="button"
+              className="text-[11px] font-medium text-muted hover:text-foreground"
+              aria-pressed={showRaw}
+              onClick={() => setShowRaw((value) => !value)}
+            >
+              {showRaw ? "View formatted" : "View raw"}
+            </button>
+          ) : null}
+        </div>
       ) : null}
-      <pre
-        className={`max-h-[480px] overflow-auto rounded-[4px] p-3 text-[12px] leading-5 text-foreground ${isMarkdown ? "whitespace-pre-wrap" : "bg-background"}`}
-      >
-        {formatted}
-      </pre>
+      {isMarkdown && !showRaw ? (
+        <MarkdownContent className="max-h-[480px] overflow-auto">{formatted}</MarkdownContent>
+      ) : (
+        <pre
+          className={`max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-[12px] leading-5 text-foreground ${isMarkdown ? "" : "bg-background"}`}
+        >
+          {formatted}
+        </pre>
+      )}
     </div>
   );
 }
