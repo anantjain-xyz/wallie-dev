@@ -33,6 +33,7 @@ type SessionRow = Pick<
 
 export interface CurrentStageInfo {
   name: string;
+  position: number;
   slug: string;
 }
 
@@ -48,6 +49,7 @@ export function mapSessionRow(
     currentArtifactVersion: row.current_artifact_version,
     currentStageId: row.current_stage_id,
     currentStageName: stage.name,
+    currentStagePosition: stage.position,
     currentStageSlug: stage.slug,
     id: row.id,
     linearIssueId: row.linear_issue_id,

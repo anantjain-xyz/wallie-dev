@@ -14,6 +14,7 @@ const baseSession: SessionDetail = {
   currentArtifactVersion: 0,
   currentStageId: "stage-product",
   currentStageName: "Product",
+  currentStagePosition: 1,
   currentStageSlug: "product",
   id: "sess-1",
   linearIssueId: null,

@@ -68,6 +68,7 @@ export type SessionSummary = {
   currentArtifactVersion: number | null;
   currentStageId: string;
   currentStageName: string;
+  currentStagePosition: number;
   currentStageSlug: string;
   id: string;
   linearIssueId: string | null;

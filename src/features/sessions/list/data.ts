@@ -120,15 +120,15 @@ export async function loadSessionListPageData(
   // query. Sessions in this workspace may pin to multiple pipelines, so we
   // index by stage id rather than assuming one pipeline.
   const stageIds = Array.from(new Set(rows.map((r) => r.current_stage_id))).filter(Boolean);
-  const stageMap = new Map<string, { name: string; slug: string }>();
+  const stageMap = new Map<string, { name: string; position: number; slug: string }>();
   if (stageIds.length > 0) {
     const { data: stageRows, error: stageError } = await context.supabase
       .from("pipeline_stages")
-      .select("id, slug, name")
+      .select("id, slug, name, position")
       .in("id", stageIds);
     if (stageError) throw stageError;
     for (const s of stageRows ?? []) {
-      stageMap.set(s.id, { name: s.name, slug: s.slug });
+      stageMap.set(s.id, { name: s.name, position: s.position, slug: s.slug });
     }
   }
 
@@ -166,7 +166,12 @@ export async function loadSessionListPageData(
 
   const sessions = rows
     .map((row) => {
-      const stage = stageMap.get(row.current_stage_id) ?? { name: "Unknown", slug: "unknown" };
+      const stage = stageMap.get(row.current_stage_id) ?? {
+        name: "Unknown",
+        // Unknown stages sort after every real pipeline position.
+        position: Number.MAX_SAFE_INTEGER,
+        slug: "unknown",
+      };
       const pullRequests = pullRequestsBySession.get(row.id) ?? [];
       return mapSessionRow(row, stage, pullRequests.length, pullRequests);
     })
