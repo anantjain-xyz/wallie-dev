@@ -7,9 +7,11 @@ import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
 // Artifact bodies are agent-produced markdown — untrusted input. `react-markdown`
-// never renders embedded raw HTML (it treats it as text) and strips dangerous URL
-// schemes by default; `rehype-sanitize` is layered on as an explicit, auditable
-// allowlist so no script/style/event-handler content can reach the DOM.
+// never renders embedded raw HTML (it drops it rather than parsing it) and strips
+// dangerous URL schemes by default; `rehype-sanitize` is layered on as an explicit,
+// auditable allowlist so no script/style/event-handler content can reach the DOM.
+// Markdown image syntax is additionally downgraded to a click-only link (see `img`
+// below) so viewing an artifact can't auto-fetch attacker-controlled remote URLs.
 const markdownComponents: Components = {
   a: ({ children, href }) => (
     <a
@@ -52,6 +54,23 @@ const markdownComponents: Components = {
     <h4 className="mt-3 mb-1.5 text-[12px] font-semibold text-foreground first:mt-0">{children}</h4>
   ),
   hr: () => <hr className="my-4 border-border" />,
+  // Artifact markdown is agent-produced and untrusted. An auto-loading <img>
+  // would make the reviewer's browser fetch an attacker-controlled URL just by
+  // viewing the artifact (a tracking/beacon vector the old raw <pre> never had),
+  // so render image syntax as an explicit, click-only link instead.
+  img: ({ src, alt }) => {
+    const href = typeof src === "string" ? src : undefined;
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+      >
+        🖼 {alt?.trim() ? alt : (href ?? "image")}
+      </a>
+    );
+  },
   li: ({ children }) => <li className="leading-6">{children}</li>,
   ol: ({ children }) => (
     <ol className="my-2 list-decimal space-y-1 pl-5 first:mt-0 last:mb-0">{children}</ol>

@@ -43,4 +43,14 @@ describe("MarkdownContent", () => {
     const html = render("[click](javascript:alert(1))");
     expect(html).not.toContain("javascript:alert");
   });
+
+  it("renders images as click-only links so untrusted markdown can't auto-fetch remote URLs", () => {
+    const html = render("![alt text](https://attacker.example/track.png)");
+    // No auto-loading <img> and no resource-fetching preload hint.
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('rel="preload"');
+    // The URL is preserved as an explicit external anchor the reviewer can choose to open.
+    expect(html).toContain('href="https://attacker.example/track.png"');
+    expect(html).toContain("alt text");
+  });
 });
