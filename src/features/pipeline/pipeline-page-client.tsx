@@ -10,8 +10,9 @@ import type {
 } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
+import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import { type SessionPhaseStatus } from "@/features/sessions/types";
-import { workspaceSessionDetailPath } from "@/lib/routes";
+import { workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Tables } from "@/lib/supabase/database.types";
 import { cn } from "@/lib/utils";
@@ -212,89 +213,106 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
         </div>
       </header>
 
-      <div className="px-4 pb-10 md:hidden">
-        <div className="space-y-6">
-          {lanes.order.map((lane) => {
-            const items = lanes.buckets.get(lane.slug) ?? [];
-
-            return (
-              <section key={lane.slug} className="border-t border-border/70 pt-4 first:border-t-0">
-                <header className="mb-3">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <h2 className="truncate text-[15px] font-semibold text-foreground">
-                      {lane.name}
-                    </h2>
-                    <span className="font-mono text-[11px] tabular-nums text-muted">
-                      {items.length}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[12px] leading-5 text-muted">{lane.description}</p>
-                </header>
-
-                <div className="space-y-2">
-                  {items.length === 0 ? (
-                    <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-[12px] text-muted">
-                      No sessions
-                    </p>
-                  ) : null}
-
-                  {items.map((card) => (
-                    <PipelineCard
-                      key={card.id}
-                      card={card}
-                      workspaceSlug={initialData.workspace.slug}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
+      {cards.length === 0 ? (
+        <div className="px-4 pb-12 sm:px-8">
+          <div className="mx-auto max-w-2xl">
+            <SessionsZeroState
+              onboarding={initialData.onboarding}
+              workspaceSlug={initialData.workspace.slug}
+              newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
+            />
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="px-4 pb-10 md:hidden">
+            <div className="space-y-6">
+              {lanes.order.map((lane) => {
+                const items = lanes.buckets.get(lane.slug) ?? [];
 
-      <div className="hidden overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8 md:block">
-        <div className="mx-auto flex" style={{ width: boardContainerWidth }}>
-          {lanes.order.map((lane) => {
-            const items = lanes.buckets.get(lane.slug) ?? [];
-            return (
-              <section
-                key={lane.slug}
-                className="flex min-h-[calc(100vh-230px)] w-[260px] shrink-0 flex-col border-l border-border/70 px-3 first:border-l-0 first:pl-0 last:pr-0"
-              >
-                <header className="pb-3">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <h2 className="truncate text-[14px] font-semibold text-foreground">
-                      {lane.name}
-                    </h2>
-                    <span className="font-mono text-[11px] tabular-nums text-muted">
-                      {items.length}
-                    </span>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted">
-                      {lane.description}
-                    </p>
-                  </div>
-                </header>
+                return (
+                  <section
+                    key={lane.slug}
+                    className="border-t border-border/70 pt-4 first:border-t-0"
+                  >
+                    <header className="mb-3">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <h2 className="truncate text-[15px] font-semibold text-foreground">
+                          {lane.name}
+                        </h2>
+                        <span className="font-mono text-[11px] tabular-nums text-muted">
+                          {items.length}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[12px] leading-5 text-muted">{lane.description}</p>
+                    </header>
 
-                <div className="flex flex-1 flex-col gap-2">
-                  {items.length === 0 ? (
-                    <p className="py-8 text-[12px] text-muted">No sessions</p>
-                  ) : null}
+                    <div className="space-y-2">
+                      {items.length === 0 ? (
+                        <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-[12px] text-muted">
+                          No sessions
+                        </p>
+                      ) : null}
 
-                  {items.map((card) => (
-                    <PipelineCard
-                      key={card.id}
-                      card={card}
-                      workspaceSlug={initialData.workspace.slug}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      </div>
+                      {items.map((card) => (
+                        <PipelineCard
+                          key={card.id}
+                          card={card}
+                          workspaceSlug={initialData.workspace.slug}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="hidden overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8 md:block">
+            <div className="mx-auto flex" style={{ width: boardContainerWidth }}>
+              {lanes.order.map((lane) => {
+                const items = lanes.buckets.get(lane.slug) ?? [];
+                return (
+                  <section
+                    key={lane.slug}
+                    className="flex min-h-[calc(100vh-230px)] w-[260px] shrink-0 flex-col border-l border-border/70 px-3 first:border-l-0 first:pl-0 last:pr-0"
+                  >
+                    <header className="pb-3">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <h2 className="truncate text-[14px] font-semibold text-foreground">
+                          {lane.name}
+                        </h2>
+                        <span className="font-mono text-[11px] tabular-nums text-muted">
+                          {items.length}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted">
+                          {lane.description}
+                        </p>
+                      </div>
+                    </header>
+
+                    <div className="flex flex-1 flex-col gap-2">
+                      {items.length === 0 ? (
+                        <p className="py-8 text-[12px] text-muted">No sessions</p>
+                      ) : null}
+
+                      {items.map((card) => (
+                        <PipelineCard
+                          key={card.id}
+                          card={card}
+                          workspaceSlug={initialData.workspace.slug}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -313,7 +331,15 @@ function PipelineCard({
     <article
       className={cn(
         "relative rounded-[8px] border border-border/80 bg-surface p-3 transition-colors duration-150 hover:bg-surface-strong",
-        card.phaseStatus === "rejected" && "border-danger/30 border-l-2 border-l-danger",
+        // Awaiting review is the call to action — give it the loudest treatment
+        // (accent border + left bar + faint accent wash) so reviewers can scan
+        // the board for work that needs them.
+        card.phaseStatus === "awaiting_review" &&
+          "border-accent/40 border-l-2 border-l-accent bg-accent-soft hover:bg-accent-soft",
+        // Rejection is a routine part of the loop (it just reruns the stage), so
+        // calm it down: a thin muted danger edge instead of the old full red
+        // border. The red "Rejected" chip still carries the status.
+        card.phaseStatus === "rejected" && "border-l-2 border-l-danger/40",
       )}
     >
       <Link
