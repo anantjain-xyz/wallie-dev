@@ -311,7 +311,7 @@ export function HeroWorkspaceMockup() {
               alt=""
               width={32}
               height={32}
-              className="h-8 w-8 rounded-[8px] bg-surface object-contain"
+              className="h-8 w-8 rounded-[8px] object-contain dark:invert"
             />
             <div>
               <p className="text-[13px] font-semibold text-foreground">Wallie</p>

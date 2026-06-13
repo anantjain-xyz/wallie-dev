@@ -203,7 +203,7 @@ export function RepositoryProfileEditor({
             onClick={onInfer}
             type="button"
           >
-            {isAnalyzing ? "Analyzing..." : reanalyzeLabel}
+            {isAnalyzing ? "Analyzing…" : reanalyzeLabel}
           </button>
           <button
             className="ui-button-primary"
@@ -211,7 +211,7 @@ export function RepositoryProfileEditor({
             onClick={onSave}
             type="button"
           >
-            {isSaving ? "Saving..." : "Save profile"}
+            {isSaving ? "Saving…" : "Save profile"}
           </button>
         </div>
       </div>

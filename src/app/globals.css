@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* The app toggles themes via `<html data-theme="dark">` (see the bootstrap
+   script in layout.tsx), not the class/media default. Wire Tailwind's `dark:`
+   variant to that attribute so `dark:` utilities track the active theme. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   color-scheme: light;
   --background: #f5f5f5;
@@ -269,6 +274,10 @@
   .ui-badge-dot {
     @apply inline-block h-1.5 w-1.5 rounded-full;
     background: currentColor;
+  }
+
+  .settings-anchor-group {
+    @apply px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted/70;
   }
 
   .settings-anchor {

@@ -95,7 +95,7 @@ export function VercelSandboxConnectionSection({
     <Section
       anchorId="vercel"
       tagline="Wallie session sandboxes are created in this workspace's Vercel project. Token values are encrypted and never returned to the browser."
-      title="Connect Vercel"
+      title="Vercel Sandbox"
     >
       <div className="space-y-6">
         <div className="flex flex-col gap-3 rounded-[8px] border border-border bg-surface px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
@@ -127,7 +127,7 @@ export function VercelSandboxConnectionSection({
               onClick={handleDisconnect}
               type="button"
             >
-              {disconnect.isBusy ? "Disconnecting..." : "Disconnect"}
+              {disconnect.isBusy ? "Disconnecting…" : "Disconnect"}
             </button>
           ) : null}
         </div>
@@ -140,7 +140,7 @@ export function VercelSandboxConnectionSection({
                 autoComplete="off"
                 className="ui-input"
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="vca_..."
+                placeholder="vca_…"
                 spellCheck={false}
                 type="password"
                 value={token}
@@ -152,7 +152,7 @@ export function VercelSandboxConnectionSection({
                 autoComplete="off"
                 className="ui-input"
                 onChange={(event) => setTeamId(event.target.value)}
-                placeholder="team_..."
+                placeholder="team_…"
                 spellCheck={false}
                 value={teamId}
               />
@@ -163,7 +163,7 @@ export function VercelSandboxConnectionSection({
                 autoComplete="off"
                 className="ui-input"
                 onChange={(event) => setProjectId(event.target.value)}
-                placeholder="prj_..."
+                placeholder="prj_…"
                 spellCheck={false}
                 value={projectId}
               />
@@ -175,7 +175,7 @@ export function VercelSandboxConnectionSection({
                 onClick={handleSave}
                 type="button"
               >
-                {saveConnection.isBusy ? "Validating..." : "Save Vercel connection"}
+                {saveConnection.isBusy ? "Validating…" : "Save Vercel connection"}
               </button>
             </div>
           </div>

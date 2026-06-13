@@ -288,7 +288,7 @@ export function RepositoryAnalysisSection({
     <Section
       anchorId="repository"
       tagline="Prepare each synced repository for Wallie by installing skills and saving repository profiles."
-      title="Analyze repositories"
+      title="Repositories"
     >
       <div className="space-y-5">
         {selectableRepositories.length === 0 ? (
@@ -382,7 +382,7 @@ export function RepositoryAnalysisSection({
                     />
                   ) : selected && profileAction === "analyzing" ? (
                     <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
-                      Analyzing repository...
+                      Analyzing repository…
                     </div>
                   ) : null}
                 </li>

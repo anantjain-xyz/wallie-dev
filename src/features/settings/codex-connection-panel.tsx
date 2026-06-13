@@ -83,18 +83,18 @@ export function ChatGptSubscriptionControls({
         onClick={onStart}
         type="button"
       >
-        {isBusy ? "Starting..." : "Sign in with ChatGPT"}
+        {isBusy ? "Starting…" : "Sign in with ChatGPT"}
       </button>
 
       {deviceFlow ? (
         <div className="space-y-2 rounded-[6px] border border-border bg-surface p-3">
           <p className="text-[12px] font-medium text-foreground">
             {deviceFlow.status === "starting"
-              ? "Waiting for sign-in code..."
+              ? "Waiting for sign-in code…"
               : deviceFlow.status === "prompted"
                 ? deviceFlow.userCode
                   ? "Enter this code in ChatGPT"
-                  : "Waiting for sign-in code..."
+                  : "Waiting for sign-in code…"
                 : formatSentenceCaseLabel(deviceFlow.status)}
           </p>
           {deviceFlow.userCode ? (
@@ -388,7 +388,7 @@ export function CodexConnectionPanel({
       {notice ? <p className="text-[13px] leading-5 text-success">{notice}</p> : null}
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
-      {status === null ? <p className="text-[13px] text-muted">Checking connection...</p> : null}
+      {status === null ? <p className="text-[13px] text-muted">Checking connection…</p> : null}
 
       {status && connectionTone ? (
         <div className="flex items-center justify-between gap-3">
@@ -455,7 +455,7 @@ export function CodexConnectionPanel({
                   disabled={isBusy}
                   onChange={(event) => setCredential(event.target.value)}
                   placeholder={
-                    credentialType === "platform_api_key" ? "sk-..." : "Paste access token"
+                    credentialType === "platform_api_key" ? "sk-…" : "Paste access token"
                   }
                   spellCheck={false}
                   type="password"
@@ -500,7 +500,7 @@ export function CodexConnectionPanel({
                 </p>
                 <button className="ui-button-primary" disabled={saveDisabled} type="submit">
                   {isBusy
-                    ? "Saving..."
+                    ? "Saving…"
                     : status?.expired || status?.reconnectRequired
                       ? "Update credential"
                       : "Save credential"}
