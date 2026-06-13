@@ -110,8 +110,12 @@ export function isTerminalStage(pipeline: SessionPipeline, stageSlug: string): b
 
 export function sessionPhaseStatusTone(
   status: SessionPhaseStatus,
-): "blocked" | "planned" | "ready" {
+): "attention" | "blocked" | "planned" | "ready" {
   if (status === "approved") return "ready";
+  // Awaiting review is the one state that needs a human to act, so it gets its
+  // own call-to-action tone rather than sharing the passive "planned" muted
+  // styling with agent_generating ("Drafting").
+  if (status === "awaiting_review") return "attention";
   if (status === "rejected") return "blocked";
   return "planned";
 }

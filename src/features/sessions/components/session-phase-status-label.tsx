@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const phaseStatusTextClasses: Record<ReturnType<typeof sessionPhaseStatusTone>, string> = {
+  attention: "text-accent",
   blocked: "text-danger",
   planned: "text-muted",
   ready: "text-accent",
