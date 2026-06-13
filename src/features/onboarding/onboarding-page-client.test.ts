@@ -1607,7 +1607,9 @@ describe("OnboardingPageClient", () => {
 
   it("normalizes agent config drafts before dirty comparison", () => {
     expect(isAgentConfigDraftDirty("concurrency_limit", "number", "01", "1")).toBe(false);
-    expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "3e5", "300000")).toBe(false);
+    // Stall timeout drafts are entered in minutes; "15.0" normalizes to the saved "15".
+    expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "15.0", "15")).toBe(false);
+    expect(isAgentConfigDraftDirty("stall_timeout_ms", "number", "10", "15")).toBe(true);
     expect(isAgentConfigDraftDirty("max_retries", "number", "2", "3")).toBe(true);
   });
 

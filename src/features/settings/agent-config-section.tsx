@@ -21,11 +21,15 @@ import {
   type AgentProvider,
   AGENT_CONFIG_LIMITS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  STALL_TIMEOUT_MINUTE_LIMITS,
   getRecommendedAgentModel,
   normalizeAgentProviderName,
-  parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
-import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
+import {
+  agentConfigValueToDraft,
+  applyAgentConfigDraftChange,
+  parseAgentConfigDraft,
+} from "@/lib/agent-config/drafts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type AgentConfigSectionProps = {
@@ -54,38 +58,6 @@ type FieldDescriptor = {
   placeholder?: string;
   type: FieldType;
 };
-
-function parseDraftForKey(
-  configKey: AgentConfigKey,
-  type: FieldType,
-  draft: string,
-): { ok: true; value: unknown } | { ok: false; error: string } {
-  const trimmed = draft.trim();
-
-  if (type === "number") {
-    if (trimmed === "") {
-      return { ok: false, error: "Enter a number." };
-    }
-    const numeric = Number(trimmed);
-    if (Number.isNaN(numeric)) {
-      return { ok: false, error: "Must be a number." };
-    }
-    return parseAgentConfigValue(configKey, numeric);
-  }
-
-  if (type === "select") {
-    if (trimmed === "") {
-      return { ok: false, error: "Pick a value." };
-    }
-    return parseAgentConfigValue(configKey, trimmed);
-  }
-
-  return parseAgentConfigValue(configKey, trimmed);
-}
-
-function configValueToString(value: unknown): string {
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
-}
 
 function AgentConfigField({
   description,
@@ -166,11 +138,17 @@ export function AgentConfigSection({
 }: AgentConfigSectionProps) {
   const [agentConfig, setAgentConfig] = useState<AgentConfigMap>(initialAgentConfig);
   const [drafts, setDrafts] = useState<Record<AgentConfigKey, string>>(() => ({
-    agent_provider: configValueToString(initialAgentConfig.agent_provider),
-    agent_model: configValueToString(initialAgentConfig.agent_model),
-    concurrency_limit: configValueToString(initialAgentConfig.concurrency_limit),
-    stall_timeout_ms: configValueToString(initialAgentConfig.stall_timeout_ms),
-    max_retries: configValueToString(initialAgentConfig.max_retries),
+    agent_provider: agentConfigValueToDraft("agent_provider", initialAgentConfig.agent_provider),
+    agent_model: agentConfigValueToDraft("agent_model", initialAgentConfig.agent_model),
+    concurrency_limit: agentConfigValueToDraft(
+      "concurrency_limit",
+      initialAgentConfig.concurrency_limit,
+    ),
+    stall_timeout_ms: agentConfigValueToDraft(
+      "stall_timeout_ms",
+      initialAgentConfig.stall_timeout_ms,
+    ),
+    max_retries: agentConfigValueToDraft("max_retries", initialAgentConfig.max_retries),
   }));
 
   const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown], true>({
@@ -222,9 +200,12 @@ export function AgentConfigSection({
       },
       {
         configKey: "stall_timeout_ms",
-        description: `Time in milliseconds before a run with no activity is considered stalled (${AGENT_CONFIG_LIMITS.stall_timeout_ms.min.toLocaleString()}–${AGENT_CONFIG_LIMITS.stall_timeout_ms.max.toLocaleString()} ms).`,
-        label: "Stall timeout (ms)",
-        placeholder: String(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms),
+        description: `Time in minutes before a run with no activity is considered stalled (${STALL_TIMEOUT_MINUTE_LIMITS.min}–${STALL_TIMEOUT_MINUTE_LIMITS.max} minutes).`,
+        label: "Stall timeout (minutes)",
+        placeholder: agentConfigValueToDraft(
+          "stall_timeout_ms",
+          RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms,
+        ),
         type: "number",
       },
       {
@@ -240,10 +221,12 @@ export function AgentConfigSection({
 
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];
-    const currentValue = configValueToString(agentConfig[field.configKey]);
+    const currentValue = agentConfigValueToDraft(field.configKey, agentConfig[field.configKey]);
     const isDirty = draft !== currentValue;
     const draftIsEmpty = draft.trim() === "";
-    const validation = draftIsEmpty ? null : parseDraftForKey(field.configKey, field.type, draft);
+    const validation = draftIsEmpty
+      ? null
+      : parseAgentConfigDraft(field.configKey, field.type, draft);
     const validationError = validation && !validation.ok ? validation.error : null;
     return { field, draft, isDirty, validation, validationError };
   });

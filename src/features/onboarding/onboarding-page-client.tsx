@@ -66,11 +66,17 @@ import {
   AGENT_CONFIG_LIMITS,
   ALLOWED_AGENT_CONFIG_KEYS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  STALL_TIMEOUT_MINUTE_LIMITS,
   getRecommendedAgentConfigDefault,
   normalizeAgentProviderName,
-  parseAgentConfigValue,
+  stallTimeoutMinutesToMs,
 } from "@/lib/agent-config/contracts";
-import { type AgentConfigDrafts, applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
+import {
+  type AgentConfigDrafts,
+  agentConfigValueToDraft,
+  applyAgentConfigDraftChange,
+  parseAgentConfigDraft,
+} from "@/lib/agent-config/drafts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type {
@@ -255,70 +261,58 @@ function repositoryVariableKeys(
   return rows;
 }
 
-function configValueToString(value: unknown): string {
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
-}
-
 function buildAgentConfigDrafts(agentConfig: AgentConfigMap): AgentConfigDrafts {
   return {
-    agent_provider: configValueToString(resolveAgentConfigValue("agent_provider", agentConfig)),
-    agent_model: configValueToString(resolveAgentConfigValue("agent_model", agentConfig)),
-    concurrency_limit: configValueToString(
+    agent_provider: agentConfigValueToDraft(
+      "agent_provider",
+      resolveAgentConfigValue("agent_provider", agentConfig),
+    ),
+    agent_model: agentConfigValueToDraft(
+      "agent_model",
+      resolveAgentConfigValue("agent_model", agentConfig),
+    ),
+    concurrency_limit: agentConfigValueToDraft(
+      "concurrency_limit",
       resolveAgentConfigValue("concurrency_limit", agentConfig),
     ),
-    stall_timeout_ms: configValueToString(resolveAgentConfigValue("stall_timeout_ms", agentConfig)),
-    max_retries: configValueToString(resolveAgentConfigValue("max_retries", agentConfig)),
+    stall_timeout_ms: agentConfigValueToDraft(
+      "stall_timeout_ms",
+      resolveAgentConfigValue("stall_timeout_ms", agentConfig),
+    ),
+    max_retries: agentConfigValueToDraft(
+      "max_retries",
+      resolveAgentConfigValue("max_retries", agentConfig),
+    ),
   };
-}
-
-function parseDraftForKey(
-  configKey: AgentConfigKey,
-  type: FieldType,
-  draft: string,
-): { ok: true; value: unknown } | { ok: false; error: string } {
-  const trimmed = draft.trim();
-
-  if (type === "number") {
-    if (trimmed === "") {
-      return { ok: false, error: "Enter a number." };
-    }
-    const numeric = Number(trimmed);
-    if (Number.isNaN(numeric)) {
-      return { ok: false, error: "Must be a number." };
-    }
-    return parseAgentConfigValue(configKey, numeric);
-  }
-
-  if (type === "select") {
-    if (trimmed === "") {
-      return { ok: false, error: "Pick a value." };
-    }
-    return parseAgentConfigValue(configKey, trimmed);
-  }
-
-  return parseAgentConfigValue(configKey, trimmed);
 }
 
 function draftValueToConfigMap(drafts: AgentConfigDrafts, fields: readonly FieldDescriptor[]) {
   const config: AgentConfigMap = {};
   for (const field of fields) {
     const draft = drafts[field.configKey].trim();
-    config[field.configKey] = field.type === "number" ? Number(draft) : draft;
+    if (field.type !== "number") {
+      config[field.configKey] = draft;
+      continue;
+    }
+    config[field.configKey] =
+      field.configKey === "stall_timeout_ms"
+        ? stallTimeoutMinutesToMs(Number(draft))
+        : Number(draft);
   }
   return config;
 }
 
 export function isAgentConfigDraftDirty(
   configKey: AgentConfigKey,
-  type: "number" | "select" | "text",
+  type: FieldType,
   draft: string,
   savedDraft: string,
 ): boolean {
-  const validation = parseDraftForKey(configKey, type, draft);
+  const validation = parseAgentConfigDraft(configKey, type, draft);
   if (!validation.ok) {
     return draft !== savedDraft;
   }
-  return configValueToString(validation.value) !== savedDraft;
+  return agentConfigValueToDraft(configKey, validation.value) !== savedDraft;
 }
 
 function runtimeReadinessFromData(data: WorkspaceOnboardingData, agentConfig = data.agentConfig) {
@@ -677,9 +671,12 @@ const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
   },
   {
     configKey: "stall_timeout_ms",
-    description: `Stall timeout in milliseconds (${AGENT_CONFIG_LIMITS.stall_timeout_ms.min.toLocaleString()}-${AGENT_CONFIG_LIMITS.stall_timeout_ms.max.toLocaleString()}).`,
-    label: "Stall timeout",
-    placeholder: String(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms),
+    description: `Stall timeout in minutes (${STALL_TIMEOUT_MINUTE_LIMITS.min}-${STALL_TIMEOUT_MINUTE_LIMITS.max}).`,
+    label: "Stall timeout (minutes)",
+    placeholder: agentConfigValueToDraft(
+      "stall_timeout_ms",
+      RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms,
+    ),
     type: "number",
   },
   {
@@ -983,7 +980,7 @@ function RuntimeStep({
   const savedDrafts = buildAgentConfigDrafts(data.agentConfig);
   const fieldStatuses = fields.map((field) => {
     const draft = drafts[field.configKey];
-    const validation = parseDraftForKey(field.configKey, field.type, draft);
+    const validation = parseAgentConfigDraft(field.configKey, field.type, draft);
     const isDirty = isAgentConfigDraftDirty(
       field.configKey,
       field.type,
@@ -1022,7 +1019,7 @@ function RuntimeStep({
   const selectedProvider = readiness.provider;
   const defaultsProvider = runtimeReadinessFromData(data).provider;
   const defaultDraftForKey = (key: AgentConfigKey) =>
-    configValueToString(getRecommendedAgentConfigDefault(key, defaultsProvider));
+    agentConfigValueToDraft(key, getRecommendedAgentConfigDefault(key, defaultsProvider));
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
   const secretByKey = new Map(
     data.workspaceSecrets.map((secret) => [normalizeSecretKey(secret.key), secret]),
@@ -1096,7 +1093,10 @@ function RuntimeStep({
         if (ALLOWED_AGENT_CONFIG_KEYS.includes(body.entry.key as AgentConfigKey)) {
           setDrafts((current) => ({
             ...current,
-            [body.entry.key]: configValueToString(body.entry.value),
+            [body.entry.key]: agentConfigValueToDraft(
+              body.entry.key as AgentConfigKey,
+              body.entry.value,
+            ),
           }));
         }
         onDataChange(nextData);
