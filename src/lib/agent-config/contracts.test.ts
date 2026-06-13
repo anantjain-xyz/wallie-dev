@@ -7,6 +7,8 @@ import {
   RECOMMENDED_AGENT_MODELS,
   RECOMMENDED_CLAUDE_CODE_EFFORT,
   RECOMMENDED_CODEX_REASONING_EFFORT,
+  STALL_TIMEOUT_MINUTE_LIMITS,
+  formatStallTimeoutMinutes,
   getRecommendedAgentConfigDefault,
   getRecommendedAgentModel,
   isAgentConfigKey,
@@ -14,6 +16,9 @@ import {
   modelMatchesProvider,
   normalizeAgentProviderName,
   parseAgentConfigValue,
+  parseStallTimeoutMinutes,
+  stallTimeoutMinutesToMs,
+  stallTimeoutMsToMinutes,
 } from "./contracts";
 
 describe("parseAgentConfigValue — concurrency_limit", () => {
@@ -82,6 +87,58 @@ describe("parseAgentConfigValue — stall_timeout_ms", () => {
     expect(parseAgentConfigValue("stall_timeout_ms", 5_000_000)).toEqual({
       ok: false,
       error: expect.stringContaining("at most 1800000"),
+    });
+  });
+});
+
+describe("stall timeout minutes ↔ milliseconds", () => {
+  it("exposes minute bounds derived from the millisecond limits", () => {
+    expect(STALL_TIMEOUT_MINUTE_LIMITS.min).toBe(0.5);
+    expect(STALL_TIMEOUT_MINUTE_LIMITS.max).toBe(30);
+  });
+
+  it("round-trips the recommended default (900000 ms ⇄ 15 minutes)", () => {
+    expect(stallTimeoutMsToMinutes(900_000)).toBe(15);
+    expect(formatStallTimeoutMinutes(900_000)).toBe("15");
+    expect(stallTimeoutMinutesToMs(15)).toBe(900_000);
+  });
+
+  it("round-trips the published bounds", () => {
+    expect(formatStallTimeoutMinutes(AGENT_CONFIG_LIMITS.stall_timeout_ms.min)).toBe("0.5");
+    expect(formatStallTimeoutMinutes(AGENT_CONFIG_LIMITS.stall_timeout_ms.max)).toBe("30");
+    expect(stallTimeoutMinutesToMs(0.5)).toBe(AGENT_CONFIG_LIMITS.stall_timeout_ms.min);
+    expect(stallTimeoutMinutesToMs(30)).toBe(AGENT_CONFIG_LIMITS.stall_timeout_ms.max);
+  });
+});
+
+describe("parseStallTimeoutMinutes", () => {
+  it("accepts the minute bounds and returns milliseconds", () => {
+    expect(parseStallTimeoutMinutes(STALL_TIMEOUT_MINUTE_LIMITS.min)).toEqual({
+      ok: true,
+      value: AGENT_CONFIG_LIMITS.stall_timeout_ms.min,
+    });
+    expect(parseStallTimeoutMinutes(STALL_TIMEOUT_MINUTE_LIMITS.max)).toEqual({
+      ok: true,
+      value: AGENT_CONFIG_LIMITS.stall_timeout_ms.max,
+    });
+    expect(parseStallTimeoutMinutes(15)).toEqual({ ok: true, value: 900_000 });
+  });
+
+  it("reports minute-framed errors below and above the range", () => {
+    expect(parseStallTimeoutMinutes(0.25)).toEqual({
+      ok: false,
+      error: expect.stringContaining("at least 0.5 minutes"),
+    });
+    expect(parseStallTimeoutMinutes(45)).toEqual({
+      ok: false,
+      error: expect.stringContaining("at most 30 minutes"),
+    });
+  });
+
+  it("rejects non-numbers", () => {
+    expect(parseStallTimeoutMinutes("15")).toEqual({
+      ok: false,
+      error: expect.stringContaining("must be a number"),
     });
   });
 });

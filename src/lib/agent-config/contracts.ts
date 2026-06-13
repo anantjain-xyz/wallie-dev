@@ -41,6 +41,32 @@ export const AGENT_CONFIG_LIMITS = {
   max_retries: { min: 0, max: 10 },
 } as const;
 
+const MS_PER_MINUTE = 60_000;
+
+/**
+ * The stall timeout is stored and validated in milliseconds (the API/DB
+ * contract), but presented to users in minutes — raw values like 900000 are
+ * hard to reason about. These limits and helpers bridge the two units at the UI
+ * boundary; nothing past the UI ever sees minutes.
+ */
+export const STALL_TIMEOUT_MINUTE_LIMITS = {
+  min: AGENT_CONFIG_LIMITS.stall_timeout_ms.min / MS_PER_MINUTE, // 0.5
+  max: AGENT_CONFIG_LIMITS.stall_timeout_ms.max / MS_PER_MINUTE, // 30
+} as const;
+
+export function stallTimeoutMsToMinutes(ms: number): number {
+  return ms / MS_PER_MINUTE;
+}
+
+export function stallTimeoutMinutesToMs(minutes: number): number {
+  return Math.round(minutes * MS_PER_MINUTE);
+}
+
+/** Render a millisecond stall timeout as a minutes string for display (900000 → "15"). */
+export function formatStallTimeoutMinutes(ms: number): string {
+  return String(Number(stallTimeoutMsToMinutes(ms).toFixed(2)));
+}
+
 export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
   agent_provider: "codex",
   agent_model: RECOMMENDED_AGENT_MODELS.codex,
@@ -106,6 +132,35 @@ const maxRetriesSchema = intInRange(
   AGENT_CONFIG_LIMITS.max_retries.min,
   AGENT_CONFIG_LIMITS.max_retries.max,
 );
+
+const stallTimeoutMinutesSchema = z
+  .number({
+    invalid_type_error: "Stall timeout must be a number.",
+    required_error: "Stall timeout is required.",
+  })
+  .min(
+    STALL_TIMEOUT_MINUTE_LIMITS.min,
+    `Stall timeout must be at least ${STALL_TIMEOUT_MINUTE_LIMITS.min} minutes.`,
+  )
+  .max(
+    STALL_TIMEOUT_MINUTE_LIMITS.max,
+    `Stall timeout must be at most ${STALL_TIMEOUT_MINUTE_LIMITS.max} minutes.`,
+  );
+
+/**
+ * Validate a stall timeout entered in minutes (the UI unit) and return the value
+ * in milliseconds (the stored contract). UI surfaces edit minutes; the API/DB
+ * keep milliseconds, so this is the single conversion point on the write path.
+ */
+export function parseStallTimeoutMinutes(
+  minutes: unknown,
+): { ok: true; value: number } | { ok: false; error: string } {
+  const result = stallTimeoutMinutesSchema.safeParse(minutes);
+  if (result.success) {
+    return { ok: true, value: stallTimeoutMinutesToMs(result.data) };
+  }
+  return { ok: false, error: result.error.issues[0]?.message ?? "Invalid value." };
+}
 
 const agentProviderSchema = z
   .string({ invalid_type_error: "Provider must be a string." })

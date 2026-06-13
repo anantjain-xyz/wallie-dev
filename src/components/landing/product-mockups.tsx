@@ -156,7 +156,7 @@ const agentConfigRows = [
   { detail: "Provider", label: "Agent provider", value: "Codex" },
   { detail: "Model", label: "Agent model", value: "gpt-5.5" },
   { detail: "Parallel jobs per workspace", label: "Concurrency limit", value: "1" },
-  { detail: "Stalled run timeout", label: "Stall timeout (ms)", value: "900000" },
+  { detail: "Stalled run timeout", label: "Stall timeout (minutes)", value: "15" },
 ];
 
 const providerAccessRows: StatusRow[] = [
