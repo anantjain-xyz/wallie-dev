@@ -1,5 +1,8 @@
+import Image from "next/image";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { AccountMenu } from "@/components/app-shell/account-menu";
 import { WorkspaceOnboardingForm } from "@/components/onboarding/workspace-onboarding-form";
 import { PageHeader } from "@/components/ui/page-shell";
 import { ensureProfileForUser, resolveAuthenticatedHomePath } from "@/lib/auth";
@@ -24,11 +27,39 @@ export default async function WorkspaceOnboardingPage() {
   }
 
   return (
-    <main id="main-content" className="min-h-screen bg-surface text-foreground">
-      <div className="mx-auto w-full max-w-[640px] px-6 pb-24 pt-10 sm:px-8">
-        <PageHeader title="Create workspace" description="Name your workspace to finish setup." />
+    <div className="flex min-h-screen flex-col bg-surface text-foreground">
+      <header className="sticky top-0 z-20 border-b border-border bg-surface">
+        <div className="mx-auto flex h-14 w-full max-w-[640px] items-center justify-between gap-3 px-6 sm:px-8">
+          <Link
+            href="/"
+            aria-label="Wallie home"
+            className="flex items-center gap-2.5 focus-visible:outline-none"
+          >
+            <Image
+              src="/wallie-logo-minimal.png"
+              alt=""
+              width={32}
+              height={32}
+              className="h-8 w-8 rounded-[8px] bg-surface object-contain"
+              priority
+            />
+            <span className="text-[16px] font-semibold tracking-tight text-foreground">Wallie</span>
+          </Link>
+          <AccountMenu email={user.email ?? null} />
+        </div>
+      </header>
+
+      <main
+        id="main-content"
+        className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-24 pt-10 sm:px-8"
+      >
+        <PageHeader
+          eyebrow="Step 1 of 2"
+          title="Create workspace"
+          description="Name your workspace, then connect GitHub and your agent to finish setup."
+        />
         <WorkspaceOnboardingForm />
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
