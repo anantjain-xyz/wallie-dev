@@ -19,7 +19,7 @@ export function SplashShell({ children }: { children: ReactNode }) {
             alt=""
             width={36}
             height={36}
-            className="h-9 w-9 rounded-[9px] bg-surface object-contain"
+            className="h-9 w-9 rounded-[9px] object-contain dark:invert"
             priority
           />
           <span className="text-[18px] font-semibold tracking-tight text-foreground">Wallie</span>

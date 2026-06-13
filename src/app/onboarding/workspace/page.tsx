@@ -40,7 +40,7 @@ export default async function WorkspaceOnboardingPage() {
               alt=""
               width={32}
               height={32}
-              className="h-8 w-8 rounded-[8px] bg-surface object-contain"
+              className="h-8 w-8 rounded-[8px] object-contain dark:invert"
               priority
             />
             <span className="text-[16px] font-semibold tracking-tight text-foreground">Wallie</span>

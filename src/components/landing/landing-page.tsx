@@ -120,7 +120,7 @@ function LandingHeader() {
             alt=""
             width={44}
             height={44}
-            className="h-11 w-11 rounded-[10px] bg-surface object-contain"
+            className="h-11 w-11 rounded-[10px] object-contain dark:invert"
             priority
           />
           <span className="text-[16px] font-semibold text-foreground">Wallie</span>
@@ -172,7 +172,7 @@ function LandingFooter() {
             alt=""
             width={28}
             height={28}
-            className="h-7 w-7 rounded-[8px] bg-surface object-contain"
+            className="h-7 w-7 rounded-[8px] object-contain dark:invert"
           />
           <span className="text-[14px] font-semibold text-foreground">Wallie</span>
         </div>
