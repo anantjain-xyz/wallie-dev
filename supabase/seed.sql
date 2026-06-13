@@ -10,6 +10,84 @@
 -- board looks realistic.
 -- =============================================================================
 
+-- Helper: insert one agent run plus a user/assistant message pair, with stage-
+-- and outcome-appropriate copy. Keeps the generated run history in Section 10
+-- compact and consistent. Dropped at the end of this script.
+--   p_kind: 'completed' (approved prior stage) | 'awaiting' (current, awaiting
+--           review) | 'rejected' (produced an artifact that was rejected) |
+--           'running' (currently generating)
+CREATE OR REPLACE FUNCTION internal.seed_agent_run(
+  p_workspace_id uuid,
+  p_session_id   uuid,
+  p_member_id    uuid,
+  p_title        text,
+  p_stage_id     uuid,
+  p_stage_slug   text,
+  p_stage_name   text,
+  p_kind         text,
+  p_attempt      int,
+  p_started_at   timestamptz,
+  p_finished_at  timestamptz
+) RETURNS void
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+  v_run_id  uuid := gen_random_uuid();
+  v_status  public.agent_run_status := CASE WHEN p_kind = 'running' THEN 'running' ELSE 'success' END;
+  v_retry   text := CASE WHEN p_attempt > 1 THEN ' (attempt ' || p_attempt || ')' ELSE '' END;
+  v_user_md text;
+  v_asst_md text;
+BEGIN
+  INSERT INTO public.agent_runs
+    (id, workspace_id, session_id, agent_job_id, triggered_by_member_id,
+     stage_id, stage_slug, stage_name, run_type, model_provider, model_name,
+     status, last_activity_at, started_at, finished_at, created_at)
+  VALUES
+    (v_run_id, p_workspace_id, p_session_id, null, p_member_id,
+     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-7[1m]',
+     v_status, coalesce(p_finished_at, p_started_at), p_started_at, p_finished_at,
+     p_started_at - interval '2 minutes');
+
+  v_user_md := CASE p_stage_slug
+    WHEN 'plan'   THEN 'Generate the plan for: ' || p_title || '.'
+    WHEN 'build'  THEN 'Plan approved — implement: ' || p_title || '.'
+    WHEN 'review' THEN 'Run the review-and-fix loop for: ' || p_title || '.'
+    WHEN 'land'   THEN 'Approved — land: ' || p_title || '.'
+    ELSE 'Run the ' || lower(p_stage_name) || ' stage for: ' || p_title || '.'
+  END;
+  IF p_kind = 'rejected' THEN
+    v_user_md := 'Reviewer requested changes — re-run the ' || lower(p_stage_name)
+      || v_retry || ' for: ' || p_title || '.';
+  END IF;
+
+  IF p_kind = 'running' THEN
+    v_asst_md := CASE p_stage_slug
+      WHEN 'plan'   THEN 'Drafting the plan now — outlining the problem, acceptance criteria, and technical approach.'
+      WHEN 'build'  THEN 'Implementing now — wiring up the change and running the test suite in the sandbox.'
+      WHEN 'review' THEN 'Running the review-and-fix loop — checking the plan, sweeping PR feedback, and confirming CI.'
+      WHEN 'land'   THEN 'Landing now — squash-merging the PR and watching the deploy.'
+      ELSE 'Working on the ' || lower(p_stage_name) || ' stage now.'
+    END;
+  ELSE
+    v_asst_md := CASE p_stage_slug
+      WHEN 'plan'   THEN 'Plan complete — captured the problem statement, user story, acceptance criteria, and technical approach.'
+      WHEN 'build'  THEN 'Build complete — implemented the change and pushed it to the working branch for review.'
+      WHEN 'review' THEN 'Review complete — verified against the plan, swept PR feedback, and confirmed CI is green. Recommending approval.'
+      WHEN 'land'   THEN 'Land complete — squash-merged the PR and confirmed the deploy.'
+      ELSE 'Finished the ' || lower(p_stage_name) || ' stage.'
+    END;
+  END IF;
+
+  INSERT INTO public.agent_run_messages
+    (id, workspace_id, agent_run_id, kind, message_md, created_at)
+  VALUES
+    (gen_random_uuid(), p_workspace_id, v_run_id, 'user', v_user_md,
+     p_started_at + interval '5 seconds'),
+    (gen_random_uuid(), p_workspace_id, v_run_id, 'assistant', v_asst_md,
+     coalesce(p_finished_at, p_started_at + interval '4 minutes'));
+END;
+$fn$;
+
 -- Disable triggers during seeding (enforcement triggers check auth context
 -- which isn't available when running seed.sql).
 SET session_replication_role = replica;
@@ -70,16 +148,9 @@ DECLARE
   onboarding_id uuid := '17b2c3d4-0001-4000-8000-000000000001';
   sandbox_check_id uuid := '18b2c3d4-0001-4000-8000-000000000001';
 
-  -- Agent jobs & runs (pipeline work on session #2)
-  job1_id  uuid := '21b2c3d4-0001-4000-8000-000000000001';
-  job2_id  uuid := '21b2c3d4-0002-4000-8000-000000000002';
-  run1_id  uuid := '22b2c3d4-0001-4000-8000-000000000001';
-  run2_id  uuid := '22b2c3d4-0002-4000-8000-000000000002';
-  msg1_id  uuid := '23b2c3d4-0001-4000-8000-000000000001';
-  msg2_id  uuid := '23b2c3d4-0002-4000-8000-000000000002';
-  msg3_id  uuid := '23b2c3d4-0003-4000-8000-000000000003';
-  msg4_id  uuid := '23b2c3d4-0004-4000-8000-000000000004';
-  msg5_id  uuid := '23b2c3d4-0005-4000-8000-000000000005';
+  -- Loop cursors for the generated agent-run history (Section 10)
+  sess_rec record;
+  comp_rec record;
 
 BEGIN
 
@@ -291,11 +362,24 @@ BEGIN
     (ws_id, 'max_retries', to_jsonb(3), now() - interval '13 days'),
     (ws_id, 'stall_timeout_ms', to_jsonb(900000), now() - interval '13 days');
 
+  -- Capability payloads mirror the shape produced by probeSandboxCapabilities()
+  -- (src/lib/sandbox-capabilities/probe.ts): one entry per probed capability,
+  -- each a { ok, detail } object so the Settings tiles render green with real
+  -- detail text. The workspace agent provider is claude-code, so the codex-only
+  -- `codexExternalSandbox` probe is intentionally absent.
   INSERT INTO public.sandbox_capability_checks
     (id, workspace_id, github_repository_id, status, capabilities, checked_at, created_at)
   VALUES
     (sandbox_check_id, ws_id, gh_repo1_id, 'success',
-     '{"packageInstall":true,"build":true,"test":true,"network":true}'::jsonb,
+     jsonb_build_object(
+       'git',              jsonb_build_object('ok', true, 'detail', 'git version 2.43.0'),
+       'node',             jsonb_build_object('ok', true, 'detail', 'v20.18.1'),
+       'packageManager',   jsonb_build_object('ok', true, 'detail', 'pnpm 9.15.0'),
+       'agentCli',         jsonb_build_object('ok', true, 'detail', E'/usr/local/bin/claude\nclaude 2.0.14 (Claude Code)'),
+       'playwrightPackage', jsonb_build_object('ok', true, 'detail', '1.56.0'),
+       'chromium',         jsonb_build_object('ok', true, 'detail', 'Chromium install completed successfully.'),
+       'screenshotSmoke',  jsonb_build_object('ok', true, 'detail', 'Playwright screenshot smoke passed.')
+     ),
      now() - interval '12 days 20 hours',
      now() - interval '12 days 20 hours');
 
@@ -858,72 +942,96 @@ BEGIN
      now() - interval '1 day');
 
   -- -------------------------------------------------------------------------
-  -- 10. Agent jobs + runs (pipeline work on sessions #4 and #2)
+  -- 10. Agent runs + messages (one coherent run history per session)
+  --
+  -- Every artifact a session produced was generated by an agent run, so the
+  -- Run Activity panel on the session detail page never shows "No runs recorded
+  -- yet" for an in-flight session. Per session:
+  --   * one success run per already-approved stage (from phase completions),
+  --   * plus the current stage's run(s) derived from phase_status, where
+  --     N = sessions.rejection_count (rejections of the current stage):
+  --       agent_generating -> N rejected attempts + 1 running run
+  --       awaiting_review  -> N rejected attempts + 1 success run (awaiting)
+  --       rejected         -> N success runs that were each rejected
+  --       approved         -> already covered by the completed-stage runs
   -- -------------------------------------------------------------------------
+  FOR sess_rec IN
+    SELECT s.id, s.title, s.creator_member_id, s.phase_status,
+           s.current_stage_id, s.rejection_count, s.updated_at,
+           cs.slug AS cur_slug, cs.name AS cur_name
+    FROM public.sessions s
+    JOIN public.pipeline_stages cs ON cs.id = s.current_stage_id
+    WHERE s.workspace_id = ws_id
+    ORDER BY s.number
+  LOOP
+    -- Approved prior stages: one success run each, finishing at approval time.
+    FOR comp_rec IN
+      SELECT pc.stage_id, pc.stage_slug, pc.completed_at,
+             pc.completed_by_member_id, ps.name AS stage_name
+      FROM public.session_phase_completions pc
+      JOIN public.pipeline_stages ps ON ps.id = pc.stage_id
+      WHERE pc.session_id = sess_rec.id
+      ORDER BY ps.position
+    LOOP
+      PERFORM internal.seed_agent_run(
+        ws_id, sess_rec.id,
+        coalesce(comp_rec.completed_by_member_id, sess_rec.creator_member_id),
+        sess_rec.title, comp_rec.stage_id, comp_rec.stage_slug, comp_rec.stage_name,
+        'completed', 1,
+        comp_rec.completed_at - interval '25 minutes', comp_rec.completed_at);
+    END LOOP;
 
-  -- Job 1: successful run on session #4
-  INSERT INTO public.agent_jobs
-    (id, workspace_id, session_id, requested_by_member_id, trigger_type, job_type,
-     status, attempt_count, started_at, finished_at, created_at)
-  VALUES
-    (job1_id, ws_id, sess4_id, mem1_id, 'manual_run', 'session',
-     'success', 1, now() - interval '6 days', now() - interval '5 days 23 hours',
-     now() - interval '6 days');
+    -- Current stage runs (skipped when phase_status = 'approved': the final
+    -- stage is already represented as a completed run above).
+    IF sess_rec.phase_status <> 'approved' THEN
+      DECLARE
+        v_rej int := greatest(coalesce(sess_rec.rejection_count, 0), 0);
+        i int;
+        v_fin timestamptz;
+      BEGIN
+        IF sess_rec.phase_status = 'rejected' THEN
+          -- N success runs, each rejected; most recent finished at updated_at.
+          FOR i IN 1..greatest(v_rej, 1) LOOP
+            v_fin := sess_rec.updated_at - (greatest(v_rej, 1) - i) * interval '3 hours';
+            PERFORM internal.seed_agent_run(
+              ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
+              sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
+              'rejected', i, v_fin - interval '25 minutes', v_fin);
+          END LOOP;
+        ELSE
+          -- agent_generating / awaiting_review: N prior rejected attempts, then
+          -- the current attempt (running, or a success awaiting review).
+          FOR i IN 1..v_rej LOOP
+            v_fin := sess_rec.updated_at - (v_rej - i + 1) * interval '3 hours';
+            PERFORM internal.seed_agent_run(
+              ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
+              sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
+              'rejected', i, v_fin - interval '25 minutes', v_fin);
+          END LOOP;
 
-  INSERT INTO public.agent_runs
-    (id, workspace_id, session_id, agent_job_id, triggered_by_member_id,
-     run_type, model_provider, model_name, status,
-     started_at, finished_at, created_at)
-  VALUES
-    (run1_id, ws_id, sess4_id, job1_id, mem1_id,
-     'code', 'anthropic', 'claude-sonnet-4-20250514', 'success',
-     now() - interval '6 days', now() - interval '5 days 23 hours',
-     now() - interval '6 days');
-
-  INSERT INTO public.agent_run_messages
-    (id, workspace_id, agent_run_id, kind, message_md, created_at)
-  VALUES
-    (msg1_id, ws_id, run1_id, 'user',
-     E'Generate the plan for the rich-text editor request. See the session prompt.',
-     now() - interval '6 days'),
-    (msg2_id, ws_id, run1_id, 'assistant',
-     E'Analyzing the request. Going with Tiptap over CodeMirror 6 for block-level editing and image paste support.',
-     now() - interval '5 days 23 hours 55 minutes'),
-    (msg3_id, ws_id, run1_id, 'assistant',
-     E'Done — plan written to the session. Key points: Tiptap for formatting, Supabase Storage for image paste, Cmd+B/I/code shortcuts, code blocks with syntax highlighting.',
-     now() - interval '5 days 23 hours');
-
-  -- Job 2: currently running (session #2 build agent)
-  INSERT INTO public.agent_jobs
-    (id, workspace_id, session_id, requested_by_member_id, trigger_type, job_type,
-     status, attempt_count, started_at, created_at)
-  VALUES
-    (job2_id, ws_id, sess2_id, mem1_id, 'manual_run', 'session',
-     'running', 1, now() - interval '30 minutes',
-     now() - interval '30 minutes');
-
-  INSERT INTO public.agent_runs
-    (id, workspace_id, session_id, agent_job_id, triggered_by_member_id,
-     run_type, model_provider, model_name, status,
-     started_at, created_at)
-  VALUES
-    (run2_id, ws_id, sess2_id, job2_id, mem1_id,
-     'code', 'anthropic', 'claude-sonnet-4-20250514', 'running',
-     now() - interval '30 minutes',
-     now() - interval '30 minutes');
-
-  INSERT INTO public.agent_run_messages
-    (id, workspace_id, agent_run_id, kind, message_md, created_at)
-  VALUES
-    (msg4_id, ws_id, run2_id, 'user',
-     E'Plan is approved — implement the workspace creation flow.',
-     now() - interval '30 minutes'),
-    (msg5_id, ws_id, run2_id, 'assistant',
-     E'Building it now. Slug derivation + live preview, post-signup redirect, and a success-state confetti (stretch) for the new workspace landing.',
-     now() - interval '25 minutes');
+          IF sess_rec.phase_status = 'agent_generating' THEN
+            PERFORM internal.seed_agent_run(
+              ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
+              sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
+              'running', v_rej + 1, sess_rec.updated_at, null);
+          ELSE  -- awaiting_review
+            PERFORM internal.seed_agent_run(
+              ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
+              sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
+              'awaiting', v_rej + 1,
+              sess_rec.updated_at - interval '25 minutes', sess_rec.updated_at);
+          END IF;
+        END IF;
+      END;
+    END IF;
+  END LOOP;
 
 END;
 $$;
 
 -- Re-enable triggers.
 SET session_replication_role = DEFAULT;
+
+-- Drop the seeding helper so it doesn't linger in the database.
+DROP FUNCTION IF EXISTS internal.seed_agent_run(
+  uuid, uuid, uuid, text, uuid, text, text, text, int, timestamptz, timestamptz);
