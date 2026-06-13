@@ -880,7 +880,7 @@ function OnboardingVercelSandboxPanel({
                 className="ui-input"
                 disabled={busy}
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="vca_..."
+                placeholder="vca_…"
                 spellCheck={false}
                 type="password"
                 value={token}
@@ -893,7 +893,7 @@ function OnboardingVercelSandboxPanel({
                 className="ui-input"
                 disabled={busy}
                 onChange={(event) => setTeamId(event.target.value)}
-                placeholder="team_..."
+                placeholder="team_…"
                 spellCheck={false}
                 value={teamId}
               />
@@ -905,7 +905,7 @@ function OnboardingVercelSandboxPanel({
                 className="ui-input"
                 disabled={busy}
                 onChange={(event) => setProjectId(event.target.value)}
-                placeholder="prj_..."
+                placeholder="prj_…"
                 spellCheck={false}
                 value={projectId}
               />
@@ -919,7 +919,7 @@ function OnboardingVercelSandboxPanel({
                 onClick={() => void handleDisconnect()}
                 type="button"
               >
-                {busyAction === "disconnect" ? "Disconnecting..." : "Disconnect"}
+                {busyAction === "disconnect" ? "Disconnecting…" : "Disconnect"}
               </button>
             ) : null}
             <button
@@ -928,7 +928,7 @@ function OnboardingVercelSandboxPanel({
               onClick={() => void handleSave()}
               type="button"
             >
-              {busyAction === "save" ? "Validating..." : "Save Vercel connection"}
+              {busyAction === "save" ? "Validating…" : "Save Vercel connection"}
             </button>
           </div>
         </>
@@ -1276,7 +1276,7 @@ function RuntimeStep({
             onClick={() => void handleApplyDefaults()}
             type="button"
           >
-            {busyAction === "defaults" ? "Applying..." : "Apply recommended defaults"}
+            {busyAction === "defaults" ? "Applying…" : "Apply recommended defaults"}
           </button>
         </div>
 
@@ -1369,7 +1369,7 @@ function RuntimeStep({
               onClick={() => void handleSaveConfig()}
               type="button"
             >
-              {busyAction === "config" ? "Saving..." : "Save config"}
+              {busyAction === "config" ? "Saving…" : "Save config"}
             </button>
           </div>
         </div>
@@ -1499,7 +1499,7 @@ function RuntimeStep({
                 onClick={() => void handleSaveRepositoryConfig()}
                 type="button"
               >
-                {busyAction === "repository-config" ? "Saving..." : "Save config"}
+                {busyAction === "repository-config" ? "Saving…" : "Save config"}
               </button>
             </div>
           </div>
@@ -1712,9 +1712,9 @@ function VerifyStep({
             type="button"
           >
             {busyAction === "sandbox"
-              ? "Starting..."
+              ? "Starting…"
               : isPolling
-                ? "Checking..."
+                ? "Checking…"
                 : check?.status === "error"
                   ? "Retry capability check"
                   : "Run capability check"}
@@ -1861,7 +1861,7 @@ function RepositoryAnalysisStep({
               />
             ) : selected && profileAnalyzing ? (
               <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
-                Analyzing repository...
+                Analyzing repository…
               </div>
             ) : null}
           </li>
@@ -2681,7 +2681,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
             disabled={isSaving}
             onClick={() => void exitSetup()}
           >
-            {savingAction === "exit" ? "Exiting..." : "Exit setup"}
+            {savingAction === "exit" ? "Exiting…" : "Exit setup"}
           </button>
         </div>
       </header>

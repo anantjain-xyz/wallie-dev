@@ -382,7 +382,7 @@ export function RepositoryAnalysisSection({
                     />
                   ) : selected && profileAction === "analyzing" ? (
                     <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
-                      Analyzing repository...
+                      Analyzing repository…
                     </div>
                   ) : null}
                 </li>

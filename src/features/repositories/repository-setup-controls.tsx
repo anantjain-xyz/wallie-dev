@@ -222,10 +222,10 @@ export function RepositorySetupControls({
   const setupActionText =
     repository.onboarding.status === "ready"
       ? startOnboarding.isBusy
-        ? "Updating..."
+        ? "Updating…"
         : "Update skills"
       : startOnboarding.isBusy
-        ? "Installing..."
+        ? "Installing…"
         : "Install skills";
 
   return (
@@ -257,7 +257,7 @@ export function RepositorySetupControls({
           onClick={() => void markOnboardingReady.run(repository.id)}
           type="button"
         >
-          {markOnboardingReady.isBusy ? "Marking installed..." : "Mark skills as installed"}
+          {markOnboardingReady.isBusy ? "Marking installed…" : "Mark skills as installed"}
         </button>
       ) : null}
     </>

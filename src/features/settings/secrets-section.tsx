@@ -106,7 +106,7 @@ export function WorkspaceSecretsPanel({
             className="ui-input"
             name="secretKey"
             onChange={(event) => setSecretKey(event.target.value)}
-            placeholder="LINEAR_API_KEY..."
+            placeholder="LINEAR_API_KEY…"
             spellCheck={false}
             value={secretKey}
           />
@@ -118,7 +118,7 @@ export function WorkspaceSecretsPanel({
             className="ui-textarea min-h-28"
             name="secretValue"
             onChange={(event) => setSecretValue(event.target.value)}
-            placeholder="Paste the secret value..."
+            placeholder="Paste the secret value…"
             value={secretValue}
           />
         </label>
@@ -129,13 +129,13 @@ export function WorkspaceSecretsPanel({
             onClick={handleSaveSecret}
             type="button"
           >
-            {saveSecret.isBusy ? "Saving..." : "Save secret"}
+            {saveSecret.isBusy ? "Saving…" : "Save secret"}
           </button>
         </div>
       </div>
 
       {isLoadingSecrets ? (
-        <p className="text-[13px] text-muted">Loading secret previews...</p>
+        <p className="text-[13px] text-muted">Loading secret previews…</p>
       ) : otherSecrets.length === 0 ? (
         <p className="text-[13px] text-muted">No workspace secrets yet.</p>
       ) : (

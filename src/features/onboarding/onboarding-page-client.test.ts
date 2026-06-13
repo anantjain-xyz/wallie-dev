@@ -993,8 +993,8 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(html).toContain(">Re-analyze</button>");
-    expect(html).toContain(">Saving...</button>");
-    expect(html).not.toContain(">Analyzing...</button>");
+    expect(html).toContain(">Saving…</button>");
+    expect(html).not.toContain(">Analyzing…</button>");
   });
 
   it("allows fallback progression when the pipeline editor cannot render", () => {
@@ -1182,9 +1182,9 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain('id="onboarding-vercel"');
     expect(html).toContain("Save Vercel connection");
-    expect(html).toContain('placeholder="vca_..."');
-    expect(html).toContain('placeholder="team_..."');
-    expect(html).toContain('placeholder="prj_..."');
+    expect(html).toContain('placeholder="vca_…"');
+    expect(html).toContain('placeholder="team_…"');
+    expect(html).toContain('placeholder="prj_…"');
     // Default data has a connection, so an inline Disconnect control is offered.
     expect(html).toContain("Disconnect");
     // The Vercel connection is made in the wizard, not by detouring into Settings.
@@ -1563,7 +1563,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(running).toContain("Checking...");
+    expect(running).toContain("Checking…");
     expect(running).toContain(">Running</span>");
     expect(running).toContain("disabled");
     expect(failed).toContain(">Failed</span>");

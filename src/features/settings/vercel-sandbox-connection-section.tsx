@@ -127,7 +127,7 @@ export function VercelSandboxConnectionSection({
               onClick={handleDisconnect}
               type="button"
             >
-              {disconnect.isBusy ? "Disconnecting..." : "Disconnect"}
+              {disconnect.isBusy ? "Disconnecting…" : "Disconnect"}
             </button>
           ) : null}
         </div>
@@ -140,7 +140,7 @@ export function VercelSandboxConnectionSection({
                 autoComplete="off"
                 className="ui-input"
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="vca_..."
+                placeholder="vca_…"
                 spellCheck={false}
                 type="password"
                 value={token}
@@ -152,7 +152,7 @@ export function VercelSandboxConnectionSection({
                 autoComplete="off"
                 className="ui-input"
                 onChange={(event) => setTeamId(event.target.value)}
-                placeholder="team_..."
+                placeholder="team_…"
                 spellCheck={false}
                 value={teamId}
               />
@@ -163,7 +163,7 @@ export function VercelSandboxConnectionSection({
                 autoComplete="off"
                 className="ui-input"
                 onChange={(event) => setProjectId(event.target.value)}
-                placeholder="prj_..."
+                placeholder="prj_…"
                 spellCheck={false}
                 value={projectId}
               />
@@ -175,7 +175,7 @@ export function VercelSandboxConnectionSection({
                 onClick={handleSave}
                 type="button"
               >
-                {saveConnection.isBusy ? "Validating..." : "Save Vercel connection"}
+                {saveConnection.isBusy ? "Validating…" : "Save Vercel connection"}
               </button>
             </div>
           </div>

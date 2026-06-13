@@ -90,7 +90,7 @@ export function MaintenancePanel({
           {runMaintenance.isBusy ? (
             <>
               <Spinner />
-              <span>Running...</span>
+              <span>Running…</span>
             </>
           ) : (
             "Run maintenance"

@@ -88,7 +88,7 @@ export default function RootLayout({
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         <a href="#main-content" className="ui-skip-link">
-          Skip to Main Content
+          Skip to main content
         </a>
         {children}
       </body>
