@@ -22,7 +22,12 @@ type FeatureSectionProps = {
 
 const nextPath = "/";
 const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
+const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";
+const selfHostingUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/SELF_HOSTING.md";
+const licenseUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/LICENSE";
 const authorUrl = "https://anantjain.xyz";
+
+const heroBadges = ["Open source", "MIT licensed", "Self-hostable"];
 
 export function LandingPage() {
   return (
@@ -37,6 +42,30 @@ export function LandingPage() {
           <p className="mx-auto mt-6 max-w-[720px] text-[17px] leading-8 text-muted sm:text-[18px]">
             Wallie turns your plan, build, and land stages into gated, sandboxed runs your team can
             inspect and approve together.
+          </p>
+
+          <ul className="mx-auto mt-8 flex flex-wrap items-center justify-center gap-2">
+            {heroBadges.map((badge) => (
+              <li
+                key={badge}
+                className="inline-flex items-center rounded-full border border-border bg-surface px-3 py-1 text-[13px] font-medium text-muted"
+              >
+                {badge}
+              </li>
+            ))}
+          </ul>
+
+          <p className="mx-auto mt-4 max-w-[640px] text-[14px] leading-7 text-muted">
+            Works with Linear, GitHub, and Codex or Claude Code.{" "}
+            <a
+              href={selfHostingUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="font-medium text-foreground underline-offset-4 transition-colors hover:text-accent hover:underline focus-visible:outline-none focus-visible:text-accent"
+            >
+              Self-host it
+            </a>{" "}
+            or use the free hosted instance.
           </p>
         </div>
 
@@ -149,6 +178,30 @@ function LandingFooter() {
         </div>
 
         <div className="flex flex-col gap-2 text-[14px] text-muted sm:flex-row sm:items-center sm:gap-6">
+          <a
+            href={docsUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+          >
+            Docs
+          </a>
+          <a
+            href={selfHostingUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+          >
+            Self-hosting guide
+          </a>
+          <a
+            href={licenseUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+          >
+            MIT License
+          </a>
           <a
             href={githubUrl}
             target="_blank"
