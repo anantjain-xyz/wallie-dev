@@ -15,38 +15,31 @@ const stageCards: StageCard[] = [
   {
     count: 3,
     description: "Spec, acceptance criteria, and technical approach.",
-    name: "Product",
+    name: "Plan",
     items: [
-      { status: "review", title: "SAML SSO for enterprise workspaces" },
-      { status: "drafting", title: "Usage limits for sandbox minutes" },
+      { status: "review", title: "Usage limits for sandbox minutes" },
+      { status: "drafting", title: "Live artifact version history" },
       { status: "approved", title: "Repository import for monorepos" },
     ],
   },
   {
-    count: 2,
-    description: "Design states, interaction notes, and review proof.",
-    name: "Design",
+    count: 4,
+    description: "Implementation runs inside connected sandboxes.",
+    name: "Build",
     items: [
-      { status: "approved", title: "Mobile onboarding flow" },
+      { status: "drafting", title: "SAML SSO for enterprise workspaces" },
       { status: "review", title: "Session activity timeline" },
+      { status: "rejected", title: "GitHub app permission fallback" },
+      { status: "approved", title: "Mobile onboarding flow" },
     ],
   },
   {
     count: 3,
-    description: "Implementation runs inside connected sandboxes.",
-    name: "Engineering",
-    items: [
-      { status: "drafting", title: "Live artifact version history" },
-      { status: "rejected", title: "GitHub app permission fallback" },
-      { status: "approved", title: "Slack alerts for blocked runs" },
-    ],
-  },
-  {
-    count: 2,
-    description: "Final review, merge readiness, and rollout notes.",
-    name: "Review",
+    description: "Merge once CI is green, then capture the rollout.",
+    name: "Land",
     items: [
       { status: "review", title: "Enterprise audit log export" },
+      { status: "approved", title: "Slack alerts for blocked runs" },
       { status: "approved", title: "Linear duplicate issue handling" },
     ],
   },
@@ -302,7 +295,7 @@ function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
 
 export function HeroWorkspaceMockup() {
   return (
-    <BrowserFrame title="app.wallie.dev/w/acme">
+    <BrowserFrame title="wallie.dev/w/acme">
       <div className="grid min-h-[520px] grid-cols-[190px_minmax(0,1fr)] bg-surface text-left max-md:min-h-0 max-md:grid-cols-1">
         <aside className="border-r border-border bg-surface-strong p-4 max-md:hidden">
           <div className="mb-7 flex items-center gap-2">
@@ -346,7 +339,7 @@ export function HeroWorkspaceMockup() {
           </header>
 
           <div className="overflow-hidden p-4">
-            <div className="grid min-w-[820px] grid-cols-4 gap-3 max-md:min-w-0 max-md:grid-cols-2">
+            <div className="grid min-w-[620px] grid-cols-3 gap-3 max-md:min-w-0 max-md:grid-cols-1">
               {stageCards.map((stage) => (
                 <section
                   key={stage.name}
@@ -395,7 +388,7 @@ export function HeroWorkspaceMockup() {
 
 export function SandboxExecutionMockup() {
   return (
-    <BrowserFrame title="app.wallie.dev/w/acme/sessions/42">
+    <BrowserFrame title="wallie.dev/w/acme/sessions/42">
       <div className="grid min-h-[430px] grid-cols-[1fr_320px] bg-surface max-md:grid-cols-1">
         <div className="border-r border-border p-5 max-md:border-b max-md:border-r-0">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -460,7 +453,7 @@ export function SandboxExecutionMockup() {
 
 export function ApprovalGatesMockup() {
   return (
-    <BrowserFrame title="app.wallie.dev/w/acme/onboarding?step=pipeline">
+    <BrowserFrame title="wallie.dev/w/acme/onboarding?step=pipeline">
       <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-surface p-5 text-left max-md:grid-cols-1">
         <OnboardingRail activeTitle="Pipeline" />
 
@@ -557,7 +550,7 @@ export function ApprovalGatesMockup() {
 
 export function RuntimeChoiceMockup() {
   return (
-    <BrowserFrame title="app.wallie.dev/w/acme/onboarding?step=runtime">
+    <BrowserFrame title="wallie.dev/w/acme/onboarding?step=runtime">
       <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-surface p-5 text-left max-md:grid-cols-1">
         <OnboardingRail activeTitle="Agent" />
 
