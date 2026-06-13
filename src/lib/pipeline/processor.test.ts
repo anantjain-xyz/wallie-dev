@@ -183,6 +183,9 @@ interface MockOptions {
   session: Tables<"sessions"> | null;
   agentConfig?: Array<{ key: string; value_json: unknown }>;
   claimSucceeds?: boolean;
+  /** Status the agent_jobs row reports when the processor re-checks it after
+   * starting the run (isJobCanceled). Defaults to an active status. */
+  jobStatus?: string;
   artifactInsertError?: { message: string } | null;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
@@ -417,19 +420,23 @@ function buildAdminMock(opts: MockOptions) {
     insert: () => ({
       select: () => ({ single: async () => ({ data: { id: "job-enqueued" }, error: null }) }),
     }),
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          in: () => ({
-            order: () => ({
-              limit: () => ({
-                maybeSingle: async () => ({ data: { id: "job-enqueued" }, error: null }),
-              }),
-            }),
-          }),
+    select: () => {
+      // Flexible chain: serves both the enqueued-job lookup
+      // (.eq().eq().eq().in().order().limit().maybeSingle()) and the
+      // isJobCanceled re-check (.eq("id").maybeSingle()). The row carries both
+      // `id` and `status` so either caller finds what it reads.
+      const chain = {
+        eq: () => chain,
+        in: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        maybeSingle: async () => ({
+          data: { id: "job-enqueued", status: opts.jobStatus ?? "running" },
+          error: null,
         }),
-      }),
-    }),
+      };
+      return chain;
+    },
   } as const;
 
   const workspaceMembersTable = {
@@ -717,6 +724,28 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
       vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
     });
+  });
+
+  it("bails before creating a sandbox when the job was canceled after the claim", async () => {
+    const session = baseSession();
+    // A workspace delete (or session cancel) flipped this job to `canceled`
+    // between the worker's claim and the run start. The processor must re-check
+    // the job and stop before spinning up a sandbox that the cascade would
+    // orphan — its run row and Vercel credentials are about to be deleted.
+    const { admin, updatedRuns } = buildAdminMock({
+      session,
+      agentConfig: [],
+      jobStatus: "canceled",
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    // The run startAgentRun inserted (born `running` because the cancel sweep
+    // predated it) is canceled here so it can't linger as permanently active.
+    expect(updatedRuns).toContainEqual(expect.objectContaining({ status: "canceled" }));
+    expect(result.result).toBe("idle");
+    expect(result.runId).toBeNull();
   });
 
   it("fails the stage when the runner only emits completion bookkeeping", async () => {

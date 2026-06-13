@@ -207,6 +207,22 @@ async function runStage(input: {
       workspaceId: session.workspace_id,
     });
 
+    // A workspace delete or session cancel can flip this job to `canceled`
+    // between the worker's claim and now — both cancel the job (and any run that
+    // already existed) first. The run `startAgentRun` just inserted, though, was
+    // born `running` because the cancel sweep predated it, so the sweep's
+    // run-status guard didn't catch it. Re-check the job here and bail BEFORE
+    // creating a sandbox: for a workspace delete the run row and the Vercel
+    // connection credentials are about to be cascade-deleted together, so a
+    // sandbox spun up past this point would leave nothing for the reaper to find
+    // or stop. Cancelling the run we just started also re-arms `updateRunSandbox`
+    // as the backstop for the narrow race where the cancel lands during sandbox
+    // creation.
+    if (await isJobCanceled(admin, job.id)) {
+      await cancelQueuedRunsForJob(admin, job.id);
+      return { jobId: job.id, processed: true, result: "idle", runId: null };
+    }
+
     // CLI-backed runners require a GitHub repo to clone into the sandbox.
     if (resolvedRunner.runner.requiresSandbox) {
       github = await loadGitHubContext(admin, session.workspace_id, session.id);
@@ -1119,6 +1135,28 @@ async function cancelQueuedRunsForJob(admin: AdminClient, jobId: string): Promis
       jobId,
     });
   }
+}
+
+// True only when the job row has been flipped to `canceled` (e.g. by a workspace
+// delete or session cancel) since the worker claimed it. A read error returns
+// false so a transient blip can't strand an otherwise-healthy job — the
+// `updateRunSandbox` status guard and the sandbox reaper remain as backstops.
+async function isJobCanceled(admin: AdminClient, jobId: string): Promise<boolean> {
+  const { data, error } = await admin
+    .from("agent_jobs")
+    .select("status")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to re-check job status before sandbox creation", {
+      error: getErrorMessage(error, "Unknown job status lookup error"),
+      jobId,
+    });
+    return false;
+  }
+
+  return data?.status === "canceled";
 }
 
 async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise<string | null> {

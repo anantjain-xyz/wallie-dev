@@ -38,9 +38,12 @@ export interface WorkspaceSandboxTeardownResult {
  *      not landed yet is flipped first, so a sandbox attaching *after* the flip
  *      is refused by `updateRunSandbox` and stopped by the worker, while one that
  *      landed in the race window *just before* the flip is returned and stopped.
- *   2. Capability checks are not part of the job/run lifecycle; stop any that
- *      currently own a sandbox. They run in-process with their own `finally`
- *      teardown, so a snapshot is enough.
+ *   2. Capability checks are not part of the job/run lifecycle; stop any recent
+ *      check that still holds a sandbox id, whether or not it is still `running`
+ *      (a check writes its terminal status before its `finally` stops the
+ *      sandbox, so a process that dies in that gap leaves a finished row with a
+ *      live sandbox). They normally tear down in-process via their own `finally`;
+ *      this snapshot is the safety net for one whose process died first.
  *
  * Best-effort: a provider or query failure is logged, never thrown, so a cleanup
  * hiccup can't turn a successful workspace delete into an error. Vercel
@@ -114,6 +117,17 @@ async function loadActiveCapabilityCheckSandboxIds(
   // covers those while their (now-stale) connection still exists.
   const staleCutoff = new Date(Date.now() - STALE_SANDBOX_CAPABILITY_CHECK_MS).toISOString();
 
+  // Match every recent check that still holds a sandbox id, NOT only `running`
+  // ones. A check writes its terminal `success`/`error` status before the
+  // `finally` that stops its sandbox runs, so a process that dies in that gap
+  // leaves a `success`/`error` row whose sandbox is still up; filtering on
+  // `running` would miss it, and once the cascade drops the row and the
+  // connection the reaper can't reach it either. Stopping an already-stopped
+  // sandbox is a best-effort no-op, so re-stopping a check that did finish its
+  // teardown is harmless. The residual a snapshot still can't cover is a check
+  // that died *before* persisting its sandbox id (no id in the DB to find) —
+  // bounded by the provider's auto-expiry and the check's own in-process
+  // `finally`, the same irreducible window a crashed run leaves behind.
   const { data, error } = await admin
     .from("sandbox_capability_checks")
     .select("sandbox_id")
@@ -121,7 +135,6 @@ async function loadActiveCapabilityCheckSandboxIds(
     .eq("sandbox_provider", "vercel")
     .eq("sandbox_vercel_team_id", scope.teamId)
     .eq("sandbox_vercel_project_id", scope.projectId)
-    .eq("status", "running")
     .gte("checked_at", staleCutoff)
     .not("sandbox_id", "is", null);
 
