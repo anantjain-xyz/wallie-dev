@@ -85,6 +85,8 @@ export type SessionSummary = {
   workspaceId: string;
 };
 
+export type SessionListItem = Omit<SessionSummary, "promptMd">;
+
 export type SessionDetail = SessionSummary & {
   artifacts: SessionArtifactSummary[];
   phaseCompletions: SessionPhaseCompletion[];
@@ -95,6 +97,7 @@ export type SessionDetail = SessionSummary & {
 export type SessionFilterKey = "all" | "active" | "archived" | "has-pr";
 
 export type SessionListQueryState = {
+  cursor: string | null;
   query: string;
   scope: SessionFilterKey;
   stageSlug: string | null;

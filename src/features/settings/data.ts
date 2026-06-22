@@ -6,18 +6,16 @@ import {
   loadWorkspaceOnboardingData,
   type WorkspaceOnboardingData,
 } from "@/features/onboarding/data";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { describeRateLimits } from "@/lib/rate-limit";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   mapWorkspaceInvitationRow,
   type WorkspaceInvitation,
   type WorkspaceInvitationRow,
 } from "@/lib/workspace-invitations/contracts";
 
-const workspaceSelect = "id, name, slug, avatar_path";
 const currentMemberSelect = "id, role, is_active, kind";
 
 export type AgentConfigMap = WorkspaceOnboardingData["agentConfig"];
@@ -84,26 +82,7 @@ async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceI
 }
 
 export async function loadSettingsPageData(workspaceSlug: string) {
-  const supabase = await createSupabaseServerClient();
-  const user = await getSupabaseUserOrNull(supabase);
-
-  if (!user) {
-    notFound();
-  }
-
-  const { data: workspace, error: workspaceError } = await supabase
-    .from("workspaces")
-    .select(workspaceSelect)
-    .eq("slug", workspaceSlug)
-    .maybeSingle();
-
-  if (workspaceError) {
-    throw workspaceError;
-  }
-
-  if (!workspace) {
-    notFound();
-  }
+  const { supabase, user, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
 
   const { data: currentMember, error: currentMemberError } = await supabase
     .from("workspace_members")

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSessionPayloadSchema } from "@/features/sessions/create";
 import { updateSessionTitleClientInputSchema } from "@/features/sessions/update-title";
 import type { Database } from "@/lib/supabase/database.types";
+import type { SessionRepositoryOption } from "@/features/sessions/types";
 
 export type CreateSessionInput = {
   githubRepositoryId?: string | null;
@@ -31,6 +32,37 @@ export type SessionArchiveResult = {
   archivedAt: string | null;
   id: string;
 };
+
+export type SessionRepositoryOptionsResult = {
+  defaultGithubRepositoryId: string | null;
+  repositoryOptions: SessionRepositoryOption[];
+};
+
+export async function loadSessionRepositoryOptionsFromClient(input: {
+  workspaceId: string;
+}): Promise<SessionRepositoryOptionsResult> {
+  const response = await fetch(`/api/workspaces/${input.workspaceId}/session-repositories`, {
+    method: "GET",
+  });
+  const responsePayload = (await response.json().catch(() => null)) as {
+    defaultGithubRepositoryId?: string | null;
+    error?: string;
+    repositoryOptions?: SessionRepositoryOption[];
+  } | null;
+
+  if (!response.ok) {
+    throw new Error(responsePayload?.error ?? "Failed to load repositories.");
+  }
+
+  if (!Array.isArray(responsePayload?.repositoryOptions)) {
+    throw new Error("Repository response was invalid.");
+  }
+
+  return {
+    defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
+    repositoryOptions: responsePayload.repositoryOptions,
+  };
+}
 
 export async function createSessionFromClient(
   _supabase: SupabaseClient<Database>,

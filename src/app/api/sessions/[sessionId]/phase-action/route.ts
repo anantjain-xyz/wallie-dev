@@ -6,6 +6,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+export const preferredRegion = "home";
+
 type Params = { params: Promise<{ sessionId: string }> };
 
 type PhaseActionBody = {

@@ -137,6 +137,7 @@ export function upsertWallieRunMessage(
 
 export function buildWallieSessionData(input: {
   sessionGithubRepositoryId: string | null;
+  loadedMessageRunIds?: readonly string[];
   memberIndex: ReadonlyMap<string, WorkspaceMember>;
   messages: readonly Pick<
     Tables<"agent_run_messages">,
@@ -194,6 +195,7 @@ export function buildWallieSessionData(input: {
   return {
     blockingReasons,
     canEnqueue: blockingReasons.length === 0,
+    loadedMessageRunIds: [...(input.loadedMessageRunIds ?? messagesByRunId.keys())],
     missingSecretKeys: input.missingSecretKeys,
     mode,
     repository: input.repository,

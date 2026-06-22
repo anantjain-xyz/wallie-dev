@@ -17,8 +17,8 @@ import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
   type SessionFilterKey,
+  type SessionListItem,
   type SessionListQueryState,
-  type SessionSummary,
 } from "@/features/sessions/types";
 import { ArchiveIcon, CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
@@ -30,12 +30,13 @@ type SessionsPageClientProps = {
 
 function buildHref(
   base: string,
-  state: Pick<SessionListQueryState, "stageSlug" | "query" | "scope">,
+  state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope">,
 ): string {
   const params = new URLSearchParams();
   if (state.stageSlug) params.set("stage", state.stageSlug);
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.scope !== "all") params.set("scope", state.scope);
+  if (state.cursor) params.set("cursor", state.cursor);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 }
@@ -70,6 +71,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
+      cursor: next.cursor !== undefined ? next.cursor : null,
       query: next.query !== undefined ? next.query : initialData.queryState.query,
       scope: next.scope !== undefined ? next.scope : initialData.queryState.scope,
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : initialData.queryState.stageSlug,
@@ -179,7 +181,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
       </div>
 
       {sessions.length === 0 ? (
-        initialData.totalCount === 0 ? (
+        !initialData.hasAnySession ? (
           <SessionsZeroState
             onboarding={initialData.onboarding}
             workspaceSlug={workspaceSlug}
@@ -202,6 +204,20 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
           ))}
         </ul>
       )}
+
+      {initialData.hasMore && initialData.nextCursor ? (
+        <div className="mt-4 flex justify-center">
+          <Link
+            className="ui-button"
+            href={buildHref(basePath, {
+              ...initialData.queryState,
+              cursor: initialData.nextCursor,
+            })}
+          >
+            Load older sessions
+          </Link>
+        </div>
+      ) : null}
     </PageContainer>
   );
 }
@@ -210,7 +226,7 @@ function SessionRow({
   session,
   workspaceSlug,
 }: {
-  session: SessionSummary;
+  session: SessionListItem;
   workspaceSlug: string;
 }) {
   const router = useRouter();

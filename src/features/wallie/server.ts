@@ -54,25 +54,6 @@ export async function loadWallieSessionData(input: {
     throw secretError;
   }
 
-  const runIds = (runRows ?? []).map((run) => run.id);
-  let messageRows: Array<
-    Pick<Tables<"agent_run_messages">, "agent_run_id" | "created_at" | "id" | "kind" | "message_md">
-  > = [];
-
-  if (runIds.length > 0) {
-    const { data, error } = await input.supabase
-      .from("agent_run_messages")
-      .select("agent_run_id, created_at, id, kind, message_md")
-      .in("agent_run_id", runIds)
-      .order("created_at", { ascending: true });
-
-    if (error) {
-      throw error;
-    }
-
-    messageRows = (data ?? []) as typeof messageRows;
-  }
-
   const availableSecretKeys = new Set((secretRows ?? []).map((secret) => secret.key));
   const missingSecretKeys = [...WALLIE_REQUIRED_SECRET_KEYS].filter(
     (secretKey) => !availableSecretKeys.has(secretKey),
@@ -80,8 +61,9 @@ export async function loadWallieSessionData(input: {
 
   return buildWallieSessionData({
     sessionGithubRepositoryId: input.session.githubRepositoryId,
+    loadedMessageRunIds: [],
     memberIndex: input.memberIndex,
-    messages: messageRows,
+    messages: [],
     missingSecretKeys,
     repository: input.repository,
     requiresVercelSandbox: resolveSandboxImplementation() === "vercel",

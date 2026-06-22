@@ -9,6 +9,8 @@ import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import { enqueueWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
+export const preferredRegion = "home";
+
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
 async function cleanupCreatedSession(input: {

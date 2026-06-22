@@ -23,7 +23,6 @@ describe("workspace app route group layout", () => {
     mocked.loadWorkspaceLayoutContext.mockResolvedValue({
       defaultSessionGithubRepositoryId: "repo-1",
       onboarding,
-      sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
       user: { email: "owner@example.com" },
       workspace,
       workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
@@ -36,7 +35,6 @@ describe("workspace app route group layout", () => {
       children: string;
       defaultSessionGithubRepositoryId: string;
       onboarding: typeof onboarding;
-      sessionRepositoryOptions: Array<{ fullName: string; id: string }>;
       viewerEmail: string;
       workspace: typeof workspace;
       workspaceAvatarUrl: string | null;
@@ -47,7 +45,6 @@ describe("workspace app route group layout", () => {
       children: "app-page",
       defaultSessionGithubRepositoryId: "repo-1",
       onboarding,
-      sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
       viewerEmail: "owner@example.com",
       workspace,
       workspaceAvatarUrl: "https://cdn.example.com/avatar.png",

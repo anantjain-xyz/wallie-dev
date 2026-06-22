@@ -4,7 +4,10 @@ import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { SelectField } from "@/components/ui/select";
-import { createSessionFromClient } from "@/features/sessions/client";
+import {
+  createSessionFromClient,
+  loadSessionRepositoryOptionsFromClient,
+} from "@/features/sessions/client";
 import {
   deriveSessionTitleFromPrompt,
   type SessionRepositoryOption,
@@ -16,7 +19,6 @@ type CreateSessionDialogProps = {
   defaultGithubRepositoryId: string | null;
   onClose: () => void;
   open: boolean;
-  repositoryOptions: SessionRepositoryOption[];
   workspaceId: string;
   workspaceSlug: string;
 };
@@ -40,7 +42,6 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 function CreateSessionDialogBody({
   defaultGithubRepositoryId,
   onClose,
-  repositoryOptions,
   workspaceId,
   workspaceSlug,
 }: CreateSessionDialogProps) {
@@ -51,9 +52,10 @@ function CreateSessionDialogBody({
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [linearUrl, setLinearUrl] = useState("");
-  const [githubRepositoryId, setGithubRepositoryId] = useState(
-    defaultGithubRepositoryId ?? repositoryOptions[0]?.id ?? "",
-  );
+  const [repositoryOptions, setRepositoryOptions] = useState<SessionRepositoryOption[]>([]);
+  const [repositoryLoadError, setRepositoryLoadError] = useState<string | null>(null);
+  const [repositoryLoading, setRepositoryLoading] = useState(true);
+  const [githubRepositoryId, setGithubRepositoryId] = useState(defaultGithubRepositoryId ?? "");
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,6 +72,47 @@ function CreateSessionDialogBody({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    async function loadRepositories() {
+      setRepositoryLoading(true);
+      setRepositoryLoadError(null);
+
+      try {
+        const result = await loadSessionRepositoryOptionsFromClient({ workspaceId });
+        if (canceled) return;
+
+        setRepositoryOptions(result.repositoryOptions);
+        setGithubRepositoryId((currentRepositoryId) => {
+          if (
+            currentRepositoryId &&
+            result.repositoryOptions.some((repository) => repository.id === currentRepositoryId)
+          ) {
+            return currentRepositoryId;
+          }
+
+          return result.defaultGithubRepositoryId ?? result.repositoryOptions[0]?.id ?? "";
+        });
+      } catch (error) {
+        if (canceled) return;
+        setRepositoryLoadError(
+          error instanceof Error ? error.message : "Failed to load repositories.",
+        );
+      } finally {
+        if (!canceled) {
+          setRepositoryLoading(false);
+        }
+      }
+    }
+
+    void loadRepositories();
+
+    return () => {
+      canceled = true;
+    };
+  }, [workspaceId]);
 
   function handleLinearBlur() {
     const trimmed = linearUrl.trim();
@@ -210,6 +253,14 @@ function CreateSessionDialogBody({
               onValueChange={setGithubRepositoryId}
               value={selectedGithubRepositoryId}
             />
+          ) : repositoryLoading ? (
+            <div className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted">
+              Loading repositories...
+            </div>
+          ) : repositoryLoadError ? (
+            <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning">
+              {repositoryLoadError}
+            </div>
           ) : null}
 
           <div className="space-y-2">

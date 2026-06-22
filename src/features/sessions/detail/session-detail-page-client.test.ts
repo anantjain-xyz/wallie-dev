@@ -75,6 +75,7 @@ function makeSessionDetailData(): SessionDetailPageData {
     wallie: {
       blockingReasons: [],
       canEnqueue: false,
+      loadedMessageRunIds: [],
       missingSecretKeys: [],
       mode: "code",
       repository: null,

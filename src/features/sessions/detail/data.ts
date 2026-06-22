@@ -3,21 +3,16 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import type { WorkspaceSummary } from "@/lib/auth";
-import type { Tables } from "@/lib/supabase/database.types";
 import { loadSessionWorkspaceContext } from "@/features/sessions/server";
-import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
-import {
-  type PipelineStage,
-  type SessionArtifactSummary,
-  type SessionDetail,
-  type SessionPhaseCompletion,
-  type SessionPhaseStatus,
-  type SessionPipeline,
-  type SessionPullRequest,
-} from "@/features/sessions/types";
+import type { SessionDetail } from "@/features/sessions/types";
 import { loadWallieSessionData } from "@/features/wallie/server";
-import type { WallieSessionData } from "@/features/wallie/types";
+import type { WallieSessionData, WallieSessionRepository } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
+import {
+  approximatePayloadSizeBytes,
+  type ServerTimingCollector,
+  withServerTiming,
+} from "@/lib/server-timing";
 
 export type SessionDetailPageData = {
   currentMember: WorkspaceMember | null;
@@ -30,6 +25,13 @@ export type SessionDetailPageData = {
   workspace: WorkspaceSummary;
 };
 
+type SessionDetailRpcPayload = {
+  creatorMemberId?: string | null;
+  repository?: WallieSessionRepository | null;
+  session?: SessionDetail;
+  sessionGithubRepositoryId?: string | null;
+};
+
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
   sessionNumberValue: string,
@@ -39,267 +41,90 @@ export async function loadSessionDetailPageData(
     notFound();
   }
 
-  const context = await loadSessionWorkspaceContext(workspaceSlug);
+  return withServerTiming(
+    "sessions.detail",
+    {
+      sessionNumber,
+      workspaceSlug,
+    },
+    (timing) => loadSessionDetailPageDataWithTiming(workspaceSlug, sessionNumber, timing),
+  );
+}
 
-  const { data: sessionRow, error: sessionError } = await context.supabase
-    .from("sessions")
-    .select(
-      `
-        id,
-        archived_at,
-        created_at,
-        creator_member_id,
-        updated_at,
-        linear_issue_id,
-        linear_issue_url,
-        number,
-        pipeline_id,
-        current_stage_id,
-        phase_status,
-        current_artifact_version,
-        prompt_md,
-        rejection_count,
-        title,
-        workspace_id
-      `,
-    )
-    .eq("workspace_id", context.workspace.id)
-    .eq("number", sessionNumber)
-    .maybeSingle();
-
-  if (sessionError) {
-    throw sessionError;
-  }
-  if (!sessionRow) {
-    notFound();
-  }
-
-  const [
-    { data: pipelineRow, error: pipelineError },
-    { data: stageRows, error: stagesError },
-    { data: artifactRows, error: artifactError },
-    { data: completionRows, error: completionError },
-    { data: prRows, error: prError },
-  ] = await Promise.all([
-    context.supabase
-      .from("pipelines")
-      .select("id, name, is_default, operating_rules_md")
-      .eq("id", sessionRow.pipeline_id)
-      .maybeSingle(),
-    context.supabase
-      .from("pipeline_stages")
-      .select("*")
-      .eq("pipeline_id", sessionRow.pipeline_id)
-      .order("position", { ascending: true }),
-    context.supabase
-      .from("session_artifacts")
-      .select("artifact_json, created_at, stage_slug, version")
-      .eq("session_id", sessionRow.id)
-      .order("version", { ascending: false }),
-    context.supabase
-      .from("session_phase_completions")
-      .select("completed_at, stage_slug")
-      .eq("session_id", sessionRow.id),
-    context.supabase
-      .from("session_pull_requests")
-      .select(
-        "id, github_repository_id, branch_name, pull_request_number, pull_request_url, pull_request_state, is_draft, updated_at, created_at",
-      )
-      .eq("workspace_id", context.workspace.id)
-      .eq("session_id", sessionRow.id)
-      .order("created_at", { ascending: false }),
-  ]);
-
-  if (pipelineError) throw pipelineError;
-  if (stagesError) throw stagesError;
-  if (artifactError) throw artifactError;
-  if (completionError) throw completionError;
-  if (prError) throw prError;
-  if (!pipelineRow) {
-    throw new Error(
-      `Session ${sessionRow.id} references missing pipeline ${sessionRow.pipeline_id}`,
-    );
-  }
-
-  const pipelineStages: PipelineStage[] = (stageRows ?? []).map((s) => ({
-    approverMemberIds: s.approver_member_ids ?? [],
-    description: s.description,
-    id: s.id,
-    name: s.name,
-    pipelineId: s.pipeline_id,
-    position: s.position,
-    promptTemplateMd: s.prompt_template_md,
-    slug: s.slug,
-  }));
-
-  const pipeline: SessionPipeline = {
-    id: pipelineRow.id,
-    isDefault: pipelineRow.is_default,
-    name: pipelineRow.name,
-    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
-    stages: pipelineStages,
-  };
-
-  const currentStage = pipelineStages.find((s) => s.id === sessionRow.current_stage_id);
-
-  const artifacts: SessionArtifactSummary[] = (artifactRows ?? []).map((row) => ({
-    createdAt: row.created_at,
-    payload: row.artifact_json,
-    stageSlug: row.stage_slug,
-    version: row.version,
-  }));
-
-  const phaseCompletions: SessionPhaseCompletion[] = (completionRows ?? []).map((row) => ({
-    completedAt: row.completed_at,
-    stageSlug: row.stage_slug,
-  }));
-
-  const prRowsTyped = (prRows ?? []) as Array<
-    Pick<
-      Tables<"session_pull_requests">,
-      | "branch_name"
-      | "github_repository_id"
-      | "id"
-      | "is_draft"
-      | "pull_request_number"
-      | "pull_request_state"
-      | "pull_request_url"
-      | "updated_at"
-      | "created_at"
-    >
-  >;
-
-  const repoIds = Array.from(
-    new Set(
-      prRowsTyped.map((row) => row.github_repository_id).filter((id): id is string => Boolean(id)),
-    ),
+async function loadSessionDetailPageDataWithTiming(
+  workspaceSlug: string,
+  sessionNumber: number,
+  timing: ServerTimingCollector,
+): Promise<SessionDetailPageData> {
+  const context = await timing.segment(
+    "workspace-member-context",
+    () => loadSessionWorkspaceContext(workspaceSlug),
+    (resolvedContext) => ({
+      members: resolvedContext.members.length,
+      payloadBytes: approximatePayloadSizeBytes({
+        currentMember: resolvedContext.currentMember,
+        members: resolvedContext.members,
+        workspace: resolvedContext.workspace,
+      }),
+      rows: 1,
+    }),
   );
 
-  let repositoryIndex = new Map<
-    string,
-    {
-      defaultBranch: string | null;
-      defaultProgrammingLanguage: string | null;
-      fullName: string;
-      htmlUrl: string;
-      isArchived: boolean;
-      isPrivate: boolean;
-    }
-  >();
-  if (repoIds.length > 0) {
-    const { data: repoRows, error: repoError } = await context.supabase
-      .from("github_repositories")
-      .select(
-        "id, full_name, html_url, private, default_programming_language, default_branch, is_archived",
-      )
-      .in("id", repoIds);
-    if (repoError) {
-      throw repoError;
-    }
-    repositoryIndex = new Map(
-      (
-        (repoRows ?? []) as Array<
-          Pick<
-            Tables<"github_repositories">,
-            | "default_branch"
-            | "default_programming_language"
-            | "full_name"
-            | "html_url"
-            | "id"
-            | "is_archived"
-            | "private"
-          >
-        >
-      ).map((row) => [
-        row.id,
-        {
-          defaultBranch: row.default_branch,
-          defaultProgrammingLanguage: row.default_programming_language,
-          fullName: row.full_name,
-          htmlUrl: row.html_url,
-          isArchived: row.is_archived,
-          isPrivate: row.private,
-        },
-      ]),
-    );
-  }
+  const { data: rpcData, error: rpcError } = await timing.segment(
+    "session-detail-rpc",
+    () =>
+      context.supabase.rpc("get_session_detail_page", {
+        target_session_number: sessionNumber,
+        target_workspace_slug: workspaceSlug,
+      }),
+    (result) => ({
+      payloadBytes: approximatePayloadSizeBytes(result.data),
+      rows: result.data ? 1 : 0,
+    }),
+  );
 
-  const pullRequests: SessionPullRequest[] = prRowsTyped.map((row) => {
-    const repo = row.github_repository_id ? repositoryIndex.get(row.github_repository_id) : null;
-    return {
-      branchName: row.branch_name,
-      id: row.id,
-      isDraft: row.is_draft,
-      pullRequestNumber: row.pull_request_number,
-      pullRequestState: row.pull_request_state,
-      pullRequestUrl: row.pull_request_url,
-      repositoryFullName: repo?.fullName ?? null,
-      repositoryHtmlUrl: repo?.htmlUrl ?? null,
-      updatedAt: row.updated_at,
-    };
-  });
+  if (rpcError) throw rpcError;
+  if (!rpcData) notFound();
 
-  const session: SessionDetail = {
-    archivedAt: sessionRow.archived_at,
-    artifacts,
-    createdAt: sessionRow.created_at,
-    currentArtifactVersion: sessionRow.current_artifact_version,
-    currentStageId: sessionRow.current_stage_id,
-    currentStageName: currentStage?.name ?? "Unknown",
-    currentStagePosition: currentStage?.position ?? Number.MAX_SAFE_INTEGER,
-    currentStageSlug: currentStage?.slug ?? "unknown",
-    id: sessionRow.id,
-    linearIssueId: sessionRow.linear_issue_id,
-    linearIssueUrl: sessionRow.linear_issue_url,
-    number: sessionRow.number,
-    phaseStatus: sessionRow.phase_status as SessionPhaseStatus,
-    phaseCompletions,
-    pipeline,
-    pipelineId: sessionRow.pipeline_id,
-    promptMd: sessionRow.prompt_md,
-    pullRequestCount: pullRequests.length,
-    pullRequests,
-    rejectionCount: sessionRow.rejection_count,
-    title: sessionRow.title,
-    updatedAt: sessionRow.updated_at,
-    workspaceId: sessionRow.workspace_id,
-  };
+  const payload = rpcData as SessionDetailRpcPayload;
+  if (!payload.session) notFound();
 
-  const repositoryResolution = await resolveEffectiveSessionRepository({
-    sessionId: sessionRow.id,
-    supabase: context.supabase,
-    workspaceId: context.workspace.id,
-  });
-  const sessionGithubRepositoryId = repositoryResolution.repositoryId;
-  const repository = repositoryResolution.repository;
+  const sessionGithubRepositoryId = payload.sessionGithubRepositoryId ?? null;
+  const repository = payload.repository ?? null;
+  const wallie = await timing.segment(
+    "wallie-summary",
+    () =>
+      loadWallieSessionData({
+        memberIndex: context.memberIndex,
+        repository,
+        session: { githubRepositoryId: sessionGithubRepositoryId, id: payload.session!.id },
+        supabase: context.supabase,
+        workspaceId: context.workspace.id,
+      }),
+    (wallieData) => ({
+      blockingReasons: wallieData.blockingReasons.length,
+      missingSecrets: wallieData.missingSecretKeys.length,
+      payloadBytes: approximatePayloadSizeBytes({
+        blockingReasons: wallieData.blockingReasons,
+        loadedMessageRunIds: wallieData.loadedMessageRunIds,
+        missingSecretKeys: wallieData.missingSecretKeys,
+        repository: wallieData.repository,
+        runs: wallieData.runs,
+        vercelSandboxConnection: wallieData.vercelSandboxConnection,
+      }),
+      runs: wallieData.runs.length,
+    }),
+  );
 
-  const wallie = await loadWallieSessionData({
-    memberIndex: context.memberIndex,
-    repository: repository
-      ? {
-          defaultBranch: repository.defaultBranch,
-          defaultProgrammingLanguage: repository.defaultProgrammingLanguage,
-          fullName: repository.fullName,
-          htmlUrl: repository.htmlUrl,
-          id: repository.id,
-          isArchived: repository.isArchived,
-          isPrivate: repository.isPrivate,
-        }
-      : null,
-    session: { githubRepositoryId: sessionGithubRepositoryId, id: sessionRow.id },
-    supabase: context.supabase,
-    workspaceId: context.workspace.id,
-  });
-
-  const sessionCreator = sessionRow.creator_member_id
-    ? (context.memberIndex.get(sessionRow.creator_member_id) ?? null)
+  const sessionCreator = payload.creatorMemberId
+    ? (context.memberIndex.get(payload.creatorMemberId) ?? null)
     : null;
 
   return {
     currentMember: context.currentMember,
     memberIndex: context.memberIndex,
     members: context.members,
-    session,
+    session: payload.session,
     sessionGithubRepositoryId,
     sessionCreator,
     wallie,

@@ -1,12 +1,10 @@
 import "server-only";
 
-import { notFound, redirect } from "next/navigation";
+import { cache } from "react";
 
 import type { WorkspaceSummary } from "@/lib/auth";
-import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/auth";
-import { loginPath } from "@/lib/routes";
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import {
   buildWorkspaceMemberIndex,
   mapWorkspaceMemberRow,
@@ -32,21 +30,10 @@ export type WorkspaceMemberContext = {
   workspace: WorkspaceSummary;
 };
 
-export async function loadWorkspaceMemberContext(
+export const loadWorkspaceMemberContext = cache(async function loadWorkspaceMemberContext(
   workspaceSlug: string,
 ): Promise<WorkspaceMemberContext> {
-  const supabase = await createSupabaseServerClient();
-  const user = await getSupabaseUserOrNull(supabase);
-
-  if (!user) {
-    redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));
-  }
-
-  const workspace = await getWorkspaceBySlugForUser(supabase, workspaceSlug);
-
-  if (!workspace) {
-    notFound();
-  }
+  const { supabase, user, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
 
   const [
     { data: membersData, error: membersError },
@@ -92,4 +79,4 @@ export async function loadWorkspaceMemberContext(
     supabase,
     workspace,
   };
-}
+});

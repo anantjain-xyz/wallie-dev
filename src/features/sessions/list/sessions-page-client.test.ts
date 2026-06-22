@@ -46,8 +46,12 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
 
 function makeSessionListData(sessions: SessionSummary[] = [makeSession()]): SessionListPageData {
   return {
+    hasAnySession: sessions.length > 0,
+    hasMore: false,
+    nextCursor: null,
     onboarding: null,
     queryState: {
+      cursor: null,
       query: "",
       scope: "all",
       stageSlug: null,
