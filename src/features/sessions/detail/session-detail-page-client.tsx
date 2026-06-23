@@ -141,6 +141,23 @@ function buildStageRail(session: SessionDetail): StageRailEntry[] {
   });
 }
 
+export function mergeFetchedArtifacts(
+  currentArtifacts: readonly SessionArtifactSummary[],
+  fetchedArtifacts: readonly SessionArtifactSummary[],
+) {
+  const artifactIndex = new Map<string, SessionArtifactSummary>();
+
+  for (const artifact of fetchedArtifacts) {
+    artifactIndex.set(`${artifact.stageSlug}:${artifact.version}`, artifact);
+  }
+
+  for (const artifact of currentArtifacts) {
+    artifactIndex.set(`${artifact.stageSlug}:${artifact.version}`, artifact);
+  }
+
+  return [...artifactIndex.values()];
+}
+
 export function SessionDetailPageClient({ initialData }: SessionDetailPageClientProps) {
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
@@ -252,12 +269,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
         setSession((currentSession) => ({
           ...currentSession,
-          artifacts: [
-            ...currentSession.artifacts.filter(
-              (artifact) => artifact.stageSlug !== selectedStageSlug,
-            ),
-            ...payload.artifacts!,
-          ],
+          artifacts: mergeFetchedArtifacts(currentSession.artifacts, payload.artifacts!),
         }));
         setFullyLoadedArtifactStages((currentStages) => {
           const nextStages = new Set(currentStages);

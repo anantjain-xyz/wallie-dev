@@ -95,23 +95,13 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   // so they line up with the board columns, with name as a stable tiebreak
   // for the (cross-pipeline) case where two stages share a position.
   const stageGroups = useMemo(() => {
-    const order: { name: string; position: number; slug: string }[] = [];
-    const counts = new Map<string, number>();
-    const seen = new Set<string>();
-    for (const session of sessions) {
-      if (!seen.has(session.currentStageSlug)) {
-        seen.add(session.currentStageSlug);
-        order.push({
-          name: session.currentStageName,
-          position: session.currentStagePosition,
-          slug: session.currentStageSlug,
-        });
-      }
-      counts.set(session.currentStageSlug, (counts.get(session.currentStageSlug) ?? 0) + 1);
-    }
-    order.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+    const order = [...initialData.stageFacets].sort(
+      (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+    );
+    const counts = new Map(order.map((stage) => [stage.slug, stage.count]));
+
     return { counts, order };
-  }, [sessions]);
+  }, [initialData.stageFacets]);
 
   return (
     <PageContainer>

@@ -61,6 +61,7 @@ declare
     else websearch_to_tsquery('simple', search_query)
   end;
   v_rows jsonb := '[]'::jsonb;
+  v_stage_facets jsonb := '[]'::jsonb;
   v_has_any_session boolean := false;
   v_has_more boolean := false;
 begin
@@ -85,6 +86,44 @@ begin
     where s.workspace_id = v_workspace_id
   )
   into v_has_any_session;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'count', session_count,
+        'name', name,
+        'position', position,
+        'slug', slug
+      )
+      order by position asc, name asc
+    ),
+    '[]'::jsonb
+  )
+  into v_stage_facets
+  from (
+    select
+      ps.name,
+      ps.position,
+      ps.slug,
+      count(*)::integer as session_count
+    from public.sessions s
+    join public.pipeline_stages ps
+      on ps.id = s.current_stage_id
+    where s.workspace_id = v_workspace_id
+      and (v_scope <> 'active' or s.archived_at is null)
+      and (v_scope <> 'archived' or s.archived_at is not null)
+      and (
+        v_scope <> 'has-pr'
+        or exists (
+          select 1
+          from public.session_pull_requests spr
+          where spr.workspace_id = v_workspace_id
+            and spr.session_id = s.id
+        )
+      )
+      and (v_search_query is null or s.search_document @@ v_search_query)
+    group by ps.slug, ps.name, ps.position
+  ) facets;
 
   with filtered as (
     select
@@ -189,6 +228,7 @@ begin
     'hasAnySession', v_has_any_session,
     'hasMore', v_has_more,
     'sessions', v_rows,
+    'stageFacets', v_stage_facets,
     'workspaceId', v_workspace_id
   );
 end;

@@ -17,8 +17,16 @@ export type SessionListPageData = {
   onboarding: OnboardingResumeState | null;
   queryState: SessionListQueryState;
   sessions: SessionListItem[];
+  stageFacets: SessionStageFacet[];
   totalCount: number;
   workspace: WorkspaceSummary;
+};
+
+export type SessionStageFacet = {
+  count: number;
+  name: string;
+  position: number;
+  slug: string;
 };
 
 type SearchParamInput = Record<string, string | string[] | undefined>;
@@ -30,6 +38,7 @@ type SessionListRpcPayload = {
   hasAnySession?: boolean;
   hasMore?: boolean;
   sessions?: SessionListItem[];
+  stageFacets?: SessionStageFacet[];
 };
 
 const SESSION_LIST_PAGE_SIZE = 50;
@@ -142,6 +151,7 @@ export async function loadSessionListPageData(
 
       const payload = (rpcData ?? {}) as SessionListRpcPayload;
       const sessions = (payload.sessions ?? []).filter((session) => session.number > 0);
+      const stageFacets = payload.stageFacets ?? [];
       const hasMore = payload.hasMore === true;
       const nextCursor = hasMore && sessions.length > 0 ? encodeCursor(sessions.at(-1)!) : null;
 
@@ -152,6 +162,7 @@ export async function loadSessionListPageData(
         onboarding: context.onboarding,
         queryState,
         sessions,
+        stageFacets,
         totalCount: sessions.length,
         workspace: context.workspace,
       };
