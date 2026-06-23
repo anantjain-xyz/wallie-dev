@@ -159,6 +159,7 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     phase_status: "agent_generating",
     rejection_count: 0,
     search_document: null,
+    search_text: null,
     current_artifact_version: 0,
     archived_at: null,
     created_at: new Date().toISOString(),

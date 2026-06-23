@@ -1004,6 +1004,7 @@ export type Database = {
           prompt_md: string
           rejection_count: number
           search_document: unknown
+          search_text: string | null
           title: string
           updated_at: string
           workspace_id: string
@@ -1024,6 +1025,7 @@ export type Database = {
           prompt_md?: string
           rejection_count?: number
           search_document?: unknown
+          search_text?: string | null
           title: string
           updated_at?: string
           workspace_id: string
@@ -1044,6 +1046,7 @@ export type Database = {
           prompt_md?: string
           rejection_count?: number
           search_document?: unknown
+          search_text?: string | null
           title?: string
           updated_at?: string
           workspace_id?: string

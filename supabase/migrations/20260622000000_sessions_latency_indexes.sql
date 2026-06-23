@@ -11,6 +11,16 @@ alter table public.sessions
     )
   ) stored;
 
+alter table public.sessions
+  add column if not exists search_text text
+  generated always as (
+    lower(
+      coalesce(title, '') || ' ' ||
+      coalesce(linear_issue_id, '') || ' ' ||
+      coalesce(prompt_md, '')
+    )
+  ) stored;
+
 create index if not exists sessions_workspace_updated_at_id_desc_idx
   on public.sessions (workspace_id, updated_at desc, id desc);
 
@@ -27,6 +37,9 @@ create index if not exists sessions_workspace_stage_updated_at_id_desc_idx
 
 create index if not exists sessions_search_document_idx
   on public.sessions using gin (search_document);
+
+create index if not exists sessions_search_text_trgm_idx
+  on public.sessions using gin (search_text extensions.gin_trgm_ops);
 
 create index if not exists session_pull_requests_workspace_session_created_at_desc_idx
   on public.session_pull_requests (workspace_id, session_id, created_at desc);
@@ -56,15 +69,29 @@ declare
     else 'all'
   end;
   v_stage_slug text := nullif(stage_filter_slug, '');
-  v_search_query tsquery := case
-    when nullif(trim(coalesce(search_query, '')), '') is null then null
-    else websearch_to_tsquery('simple', search_query)
-  end;
+  v_search_raw text := nullif(trim(coalesce(search_query, '')), '');
+  v_search_query tsquery := null;
+  v_search_like_pattern text := null;
   v_rows jsonb := '[]'::jsonb;
   v_stage_facets jsonb := '[]'::jsonb;
   v_has_any_session boolean := false;
   v_has_more boolean := false;
 begin
+  if v_search_raw is not null then
+    v_search_query := websearch_to_tsquery('simple', v_search_raw);
+    v_search_like_pattern := '%' ||
+      replace(
+        replace(
+          replace(lower(v_search_raw), '\', '\\'),
+          '%',
+          '\%'
+        ),
+        '_',
+        '\_'
+      ) ||
+      '%';
+  end if;
+
   select w.id
   into v_workspace_id
   from public.workspaces w
@@ -102,27 +129,40 @@ begin
   into v_stage_facets
   from (
     select
-      ps.name,
-      ps.position,
-      ps.slug,
+      (array_agg(name order by updated_at desc, created_at desc, id desc))[1] as name,
+      (array_agg(position order by updated_at desc, created_at desc, id desc))[1] as position,
+      slug,
       count(*)::integer as session_count
-    from public.sessions s
-    join public.pipeline_stages ps
-      on ps.id = s.current_stage_id
-    where s.workspace_id = v_workspace_id
-      and (v_scope <> 'active' or s.archived_at is null)
-      and (v_scope <> 'archived' or s.archived_at is not null)
-      and (
-        v_scope <> 'has-pr'
-        or exists (
-          select 1
-          from public.session_pull_requests spr
-          where spr.workspace_id = v_workspace_id
-            and spr.session_id = s.id
+    from (
+      select
+        ps.created_at,
+        ps.id,
+        ps.name,
+        ps.position,
+        ps.slug,
+        ps.updated_at
+      from public.sessions s
+      join public.pipeline_stages ps
+        on ps.id = s.current_stage_id
+      where s.workspace_id = v_workspace_id
+        and (v_scope <> 'active' or s.archived_at is null)
+        and (v_scope <> 'archived' or s.archived_at is not null)
+        and (
+          v_scope <> 'has-pr'
+          or exists (
+            select 1
+            from public.session_pull_requests spr
+            where spr.workspace_id = v_workspace_id
+              and spr.session_id = s.id
+          )
         )
-      )
-      and (v_search_query is null or s.search_document @@ v_search_query)
-    group by ps.slug, ps.name, ps.position
+        and (
+          v_search_raw is null
+          or s.search_document @@ v_search_query
+          or s.search_text like v_search_like_pattern escape '\'
+        )
+    ) stage_rows
+    group by slug
   ) facets;
 
   with filtered as (
@@ -178,7 +218,11 @@ begin
       and (v_scope <> 'archived' or s.archived_at is not null)
       and (v_scope <> 'has-pr' or prs.pull_request_count > 0)
       and (v_stage_slug is null or ps.slug = v_stage_slug)
-      and (v_search_query is null or s.search_document @@ v_search_query)
+      and (
+        v_search_raw is null
+        or s.search_document @@ v_search_query
+        or s.search_text like v_search_like_pattern escape '\'
+      )
       and (
         cursor_updated_at is null
         or cursor_id is null
