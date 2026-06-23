@@ -10,6 +10,8 @@ import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
+export const preferredRegion = "home";
+
 type Params = { params: Promise<{ sessionId: string }> };
 
 const sessionIdSchema = z.string().uuid("Session id is invalid.");

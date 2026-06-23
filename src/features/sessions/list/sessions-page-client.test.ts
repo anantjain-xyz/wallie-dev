@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
-import type { SessionListPageData } from "@/features/sessions/list/data";
+import type { SessionListPageData, SessionStageFacet } from "@/features/sessions/list/data";
 import type { SessionSummary } from "@/features/sessions/types";
 
 const mocked = vi.hoisted(() => ({
@@ -44,21 +44,50 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
   };
 }
 
-function makeSessionListData(sessions: SessionSummary[] = [makeSession()]): SessionListPageData {
+function makeStageFacets(sessions: SessionSummary[]): SessionStageFacet[] {
+  const facets = new Map<string, SessionStageFacet>();
+  for (const session of sessions) {
+    const facet = facets.get(session.currentStageSlug);
+    if (facet) {
+      facet.count += 1;
+      continue;
+    }
+
+    facets.set(session.currentStageSlug, {
+      count: 1,
+      name: session.currentStageName,
+      position: session.currentStagePosition,
+      slug: session.currentStageSlug,
+    });
+  }
+
+  return [...facets.values()];
+}
+
+function makeSessionListData(
+  sessions: SessionSummary[] = [makeSession()],
+  overrides: Partial<SessionListPageData> = {},
+): SessionListPageData {
   return {
+    hasAnySession: sessions.length > 0,
+    hasMore: false,
+    nextCursor: null,
     onboarding: null,
     queryState: {
+      cursor: null,
       query: "",
       scope: "all",
       stageSlug: null,
     },
     sessions,
+    stageFacets: makeStageFacets(sessions),
     totalCount: sessions.length,
     workspace: {
       id: "22222222-2222-4222-8222-222222222222",
       name: "Acme",
       slug: "acme",
     },
+    ...overrides,
   };
 }
 
@@ -124,5 +153,34 @@ describe("SessionsPageClient", () => {
     const order = ["Plan", "Build", "Review", "Land"].map((name) => html.indexOf(`>${name}`));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("renders stage filters from facets independent of the current page rows", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionsPageClient, {
+        initialData: makeSessionListData(
+          [
+            makeSession({
+              currentStageName: "Build",
+              currentStagePosition: 1,
+              currentStageSlug: "build",
+              number: 1,
+            }),
+          ],
+          {
+            stageFacets: [
+              { count: 12, name: "Plan", position: 0, slug: "plan" },
+              { count: 1, name: "Build", position: 1, slug: "build" },
+              { count: 4, name: "Land", position: 3, slug: "land" },
+            ],
+          },
+        ),
+      }),
+    );
+
+    expect(html).toContain(">Plan");
+    expect(html).toContain(">Land");
+    expect(html).toContain(">12</span>");
+    expect(html).toContain(">4</span>");
   });
 });

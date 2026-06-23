@@ -51,6 +51,7 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
 }
 
 function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
+  const runs = overrides.runs ?? [run()];
   return {
     blockingReasons: [],
     canEnqueue: true,
@@ -67,7 +68,7 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
     },
     requiresVercelSandbox: true,
     requiredSecretKeys: [],
-    runs: [run()],
+    runs,
     vercelSandboxConnection: {
       connected: true,
       lastValidationError: null,
@@ -77,6 +78,7 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
       teamId: "team_123",
     },
     ...overrides,
+    loadedMessageRunIds: overrides.loadedMessageRunIds ?? runs.map((entry) => entry.id),
   };
 }
 

@@ -141,11 +141,33 @@ function buildStageRail(session: SessionDetail): StageRailEntry[] {
   });
 }
 
+export function mergeFetchedArtifacts(
+  currentArtifacts: readonly SessionArtifactSummary[],
+  fetchedArtifacts: readonly SessionArtifactSummary[],
+) {
+  const artifactIndex = new Map<string, SessionArtifactSummary>();
+
+  for (const artifact of fetchedArtifacts) {
+    artifactIndex.set(`${artifact.stageSlug}:${artifact.version}`, artifact);
+  }
+
+  for (const artifact of currentArtifacts) {
+    artifactIndex.set(`${artifact.stageSlug}:${artifact.version}`, artifact);
+  }
+
+  return [...artifactIndex.values()];
+}
+
 export function SessionDetailPageClient({ initialData }: SessionDetailPageClientProps) {
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
   const sessionCreator = initialData.sessionCreator;
+  const [fullyLoadedArtifactStages, setFullyLoadedArtifactStages] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [artifactLoadingStageSlug, setArtifactLoadingStageSlug] = useState<string | null>(null);
+  const [artifactLoadError, setArtifactLoadError] = useState<string | null>(null);
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
@@ -204,6 +226,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
   useEffect(() => {
     setSession(initialData.session);
+    setFullyLoadedArtifactStages(new Set());
+    setArtifactLoadingStageSlug(null);
+    setArtifactLoadError(null);
     setSelectedStageSlug((currentSlug) => {
       const stageStillExists = initialData.session.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
@@ -212,6 +237,66 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
       return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
     });
   }, [initialData.session]);
+
+  useEffect(() => {
+    if (fullyLoadedArtifactStages.has(selectedStageSlug)) {
+      return;
+    }
+
+    let canceled = false;
+    setArtifactLoadingStageSlug(selectedStageSlug);
+    setArtifactLoadError(null);
+
+    async function loadArtifacts() {
+      try {
+        const response = await fetch(
+          `/api/sessions/${session.id}/artifacts?stage=${encodeURIComponent(selectedStageSlug)}`,
+        );
+        const payload = (await response.json().catch(() => null)) as {
+          artifacts?: SessionArtifactSummary[];
+          error?: string;
+        } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error ?? "Could not load artifacts.");
+        }
+
+        if (!Array.isArray(payload?.artifacts)) {
+          throw new Error("Artifact response was invalid.");
+        }
+
+        if (canceled) return;
+
+        setSession((currentSession) => ({
+          ...currentSession,
+          artifacts: mergeFetchedArtifacts(currentSession.artifacts, payload.artifacts!),
+        }));
+        setFullyLoadedArtifactStages((currentStages) => {
+          const nextStages = new Set(currentStages);
+          nextStages.add(selectedStageSlug);
+          return nextStages;
+        });
+      } catch (error) {
+        if (!canceled) {
+          setArtifactLoadError(
+            error instanceof Error ? error.message : "Could not load artifacts.",
+          );
+        }
+      } finally {
+        if (!canceled) {
+          setArtifactLoadingStageSlug((currentStageSlug) =>
+            currentStageSlug === selectedStageSlug ? null : currentStageSlug,
+          );
+        }
+      }
+    }
+
+    void loadArtifacts();
+
+    return () => {
+      canceled = true;
+    };
+  }, [fullyLoadedArtifactStages, selectedStageSlug, session.id]);
 
   const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
     let previousCurrentStageSlug: string | null = null;
@@ -606,10 +691,23 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             {latestArtifact && isDraftingSelectedStage ? (
               <ProgressHint text="Wallie is drafting the next artifact version." />
             ) : null}
+            {artifactLoadError ? (
+              <div
+                role="status"
+                className="mb-3 rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+              >
+                {artifactLoadError}
+              </div>
+            ) : null}
+
+            {artifactLoadingStageSlug === selectedStageSlug && !latestArtifact ? (
+              <ProgressHint text="Loading artifacts for this stage." />
+            ) : null}
+
             {latestArtifact ? (
               <ArtifactView artifact={latestArtifact} />
-            ) : selectedStageSlug === session.currentStageSlug &&
-              session.phaseStatus === "agent_generating" ? (
+            ) : artifactLoadingStageSlug === selectedStageSlug ? null : selectedStageSlug ===
+                session.currentStageSlug && session.phaseStatus === "agent_generating" ? (
               <ProgressHint text="Wallie is drafting the artifact for this stage." />
             ) : (
               <EmptyHint

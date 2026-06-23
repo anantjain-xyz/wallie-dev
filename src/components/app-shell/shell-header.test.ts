@@ -22,11 +22,9 @@ vi.mock("@/features/sessions/create-session-dialog", () => ({
   CreateSessionDialog: ({
     defaultGithubRepositoryId,
     open,
-    repositoryOptions,
   }: {
     defaultGithubRepositoryId: string | null;
     open: boolean;
-    repositoryOptions: Array<{ fullName: string; id: string }>;
   }) =>
     open
       ? createElement(
@@ -34,7 +32,6 @@ vi.mock("@/features/sessions/create-session-dialog", () => ({
           {
             "data-default-repository-id": defaultGithubRepositoryId ?? "",
             "data-dialog-state": "open",
-            "data-repository-count": repositoryOptions.length,
           },
           "Create dialog",
         )
@@ -57,7 +54,6 @@ describe("ShellHeader", () => {
         navItems,
         defaultSessionGithubRepositoryId: "repo-1",
         onboarding: { currentStep: "repository", status: "in_progress" },
-        sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
         viewerEmail: "owner@example.com",
         workspace,
         workspaceAvatarUrl: null,
@@ -78,7 +74,6 @@ describe("ShellHeader", () => {
         navItems,
         defaultSessionGithubRepositoryId: "repo-1",
         onboarding: { currentStep: "verify", status: "completed" },
-        sessionRepositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
         viewerEmail: "owner@example.com",
         workspace,
         workspaceAvatarUrl: null,
@@ -89,7 +84,6 @@ describe("ShellHeader", () => {
     expect(html).not.toContain("Resume setup");
     expect(html).toContain('data-dialog-state="open"');
     expect(html).toContain('data-default-repository-id="repo-1"');
-    expect(html).toContain('data-repository-count="1"');
   });
 
   it("renders the topbar theme toggle as an accessible icon button", () => {
@@ -98,7 +92,6 @@ describe("ShellHeader", () => {
         navItems,
         defaultSessionGithubRepositoryId: null,
         onboarding: { currentStep: "verify", status: "completed" },
-        sessionRepositoryOptions: [],
         viewerEmail: "owner@example.com",
         workspace,
         workspaceAvatarUrl: null,
@@ -116,7 +109,6 @@ describe("ShellHeader", () => {
         navItems,
         defaultSessionGithubRepositoryId: null,
         onboarding: { currentStep: "verify", status: "completed" },
-        sessionRepositoryOptions: [],
         viewerEmail: "owner@example.com",
         workspace,
         workspaceAvatarUrl: null,
@@ -135,7 +127,6 @@ describe("ShellHeader", () => {
         navItems,
         defaultSessionGithubRepositoryId: null,
         onboarding: { currentStep: "verify", status: "completed" },
-        sessionRepositoryOptions: [],
         viewerEmail: "owner@example.com",
         workspace,
         workspaceAvatarUrl: null,

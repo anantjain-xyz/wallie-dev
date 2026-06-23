@@ -77,6 +77,7 @@ export type WallieRun = {
 export type WallieSessionData = {
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
+  loadedMessageRunIds: string[];
   missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;

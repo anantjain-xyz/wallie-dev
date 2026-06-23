@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createSessionFromClient, updateSessionTitleFromClient } from "./client";
+import {
+  createSessionFromClient,
+  loadSessionRepositoryOptionsFromClient,
+  updateSessionTitleFromClient,
+} from "./client";
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
@@ -82,6 +86,53 @@ describe("createSessionFromClient", () => {
         workspaceId: WORKSPACE_ID,
       }),
     ).rejects.toThrow("Session response did not include a session number.");
+  });
+});
+
+describe("loadSessionRepositoryOptionsFromClient", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads repository options lazily for the workspace", async () => {
+    const fetchMock = mockFetch({
+      body: {
+        defaultGithubRepositoryId: REPOSITORY_ID,
+        repositoryOptions: [{ fullName: "acme/app", id: REPOSITORY_ID }],
+      },
+      ok: true,
+    });
+
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
+    ).resolves.toEqual({
+      defaultGithubRepositoryId: REPOSITORY_ID,
+      repositoryOptions: [{ fullName: "acme/app", id: REPOSITORY_ID }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${WORKSPACE_ID}/session-repositories`, {
+      method: "GET",
+    });
+  });
+
+  it("surfaces repository option API errors", async () => {
+    mockFetch({
+      body: { error: "Workspace not found." },
+      ok: false,
+      status: 404,
+    });
+
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
+    ).rejects.toThrow("Workspace not found.");
+  });
+
+  it("rejects malformed repository option responses", async () => {
+    mockFetch({ body: { repositoryOptions: null }, ok: true });
+
+    await expect(
+      loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
+    ).rejects.toThrow("Repository response was invalid.");
   });
 });
 

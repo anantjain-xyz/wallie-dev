@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 
+export const preferredRegion = "home";
+
 type WorkspaceLayoutProps = {
   children: ReactNode;
   params: Promise<{

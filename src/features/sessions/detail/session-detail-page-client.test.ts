@@ -2,7 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
+import {
+  mergeFetchedArtifacts,
+  SessionDetailPageClient,
+} from "@/features/sessions/detail/session-detail-page-client";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 
 const mocked = vi.hoisted(() => ({
@@ -75,6 +78,7 @@ function makeSessionDetailData(): SessionDetailPageData {
     wallie: {
       blockingReasons: [],
       canEnqueue: false,
+      loadedMessageRunIds: [],
       missingSecretKeys: [],
       mode: "code",
       repository: null,
@@ -185,5 +189,49 @@ describe("SessionDetailPageClient", () => {
     );
 
     expect(html).toContain("Ada Lovelace");
+  });
+});
+
+describe("mergeFetchedArtifacts", () => {
+  it("keeps realtime artifacts when a stale history fetch returns", () => {
+    expect(
+      mergeFetchedArtifacts(
+        [
+          {
+            createdAt: "2026-06-07T11:01:00.000Z",
+            payload: { markdown: "realtime artifact" },
+            stageSlug: "build",
+            version: 2,
+          },
+        ],
+        [
+          {
+            createdAt: "2026-06-07T11:00:00.000Z",
+            payload: { markdown: "stale fetched artifact" },
+            stageSlug: "build",
+            version: 2,
+          },
+          {
+            createdAt: "2026-06-07T10:00:00.000Z",
+            payload: { markdown: "older fetched artifact" },
+            stageSlug: "build",
+            version: 1,
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        createdAt: "2026-06-07T11:01:00.000Z",
+        payload: { markdown: "realtime artifact" },
+        stageSlug: "build",
+        version: 2,
+      },
+      {
+        createdAt: "2026-06-07T10:00:00.000Z",
+        payload: { markdown: "older fetched artifact" },
+        stageSlug: "build",
+        version: 1,
+      },
+    ]);
   });
 });

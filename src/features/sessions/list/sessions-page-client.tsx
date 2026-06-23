@@ -17,8 +17,8 @@ import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
   type SessionFilterKey,
+  type SessionListItem,
   type SessionListQueryState,
-  type SessionSummary,
 } from "@/features/sessions/types";
 import { ArchiveIcon, CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
@@ -30,12 +30,13 @@ type SessionsPageClientProps = {
 
 function buildHref(
   base: string,
-  state: Pick<SessionListQueryState, "stageSlug" | "query" | "scope">,
+  state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope">,
 ): string {
   const params = new URLSearchParams();
   if (state.stageSlug) params.set("stage", state.stageSlug);
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.scope !== "all") params.set("scope", state.scope);
+  if (state.cursor) params.set("cursor", state.cursor);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 }
@@ -70,6 +71,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
+      cursor: next.cursor !== undefined ? next.cursor : null,
       query: next.query !== undefined ? next.query : initialData.queryState.query,
       scope: next.scope !== undefined ? next.scope : initialData.queryState.scope,
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : initialData.queryState.stageSlug,
@@ -93,23 +95,13 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   // so they line up with the board columns, with name as a stable tiebreak
   // for the (cross-pipeline) case where two stages share a position.
   const stageGroups = useMemo(() => {
-    const order: { name: string; position: number; slug: string }[] = [];
-    const counts = new Map<string, number>();
-    const seen = new Set<string>();
-    for (const session of sessions) {
-      if (!seen.has(session.currentStageSlug)) {
-        seen.add(session.currentStageSlug);
-        order.push({
-          name: session.currentStageName,
-          position: session.currentStagePosition,
-          slug: session.currentStageSlug,
-        });
-      }
-      counts.set(session.currentStageSlug, (counts.get(session.currentStageSlug) ?? 0) + 1);
-    }
-    order.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+    const order = [...initialData.stageFacets].sort(
+      (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+    );
+    const counts = new Map(order.map((stage) => [stage.slug, stage.count]));
+
     return { counts, order };
-  }, [sessions]);
+  }, [initialData.stageFacets]);
 
   return (
     <PageContainer>
@@ -179,7 +171,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
       </div>
 
       {sessions.length === 0 ? (
-        initialData.totalCount === 0 ? (
+        !initialData.hasAnySession ? (
           <SessionsZeroState
             onboarding={initialData.onboarding}
             workspaceSlug={workspaceSlug}
@@ -202,6 +194,20 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
           ))}
         </ul>
       )}
+
+      {initialData.hasMore && initialData.nextCursor ? (
+        <div className="mt-4 flex justify-center">
+          <Link
+            className="ui-button"
+            href={buildHref(basePath, {
+              ...initialData.queryState,
+              cursor: initialData.nextCursor,
+            })}
+          >
+            Load older sessions
+          </Link>
+        </div>
+      ) : null}
     </PageContainer>
   );
 }
@@ -210,7 +216,7 @@ function SessionRow({
   session,
   workspaceSlug,
 }: {
-  session: SessionSummary;
+  session: SessionListItem;
   workspaceSlug: string;
 }) {
   const router = useRouter();

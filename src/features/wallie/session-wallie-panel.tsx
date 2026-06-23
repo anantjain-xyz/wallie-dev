@@ -168,6 +168,9 @@ export function SessionWalliePanel({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
     buildDefaultExpandedRunIds(initialData.runs),
   );
+  const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
+    () => new Set(initialData.loadedMessageRunIds),
+  );
   const runIdsKey = useMemo(
     () =>
       runs
@@ -176,15 +179,15 @@ export function SessionWalliePanel({
         .join(","),
     [runs],
   );
-
   useEffect(() => {
     setRuns(initialData.runs);
     setFlashMessage(null);
     setPendingActionId(null);
     setExpandedRunIds(buildDefaultExpandedRunIds(initialData.runs));
-  }, [initialData.runs, session.id]);
+    setLoadedMessageRunIds(new Set(initialData.loadedMessageRunIds));
+  }, [initialData.loadedMessageRunIds, initialData.runs, session.id]);
 
-  async function loadRunMessages(runId: string) {
+  const loadRunMessages = useEffectEvent(async (runId: string) => {
     const { data, error } = await supabase
       .from("agent_run_messages")
       .select("agent_run_id, created_at, id, kind, message_md")
@@ -211,7 +214,12 @@ export function SessionWalliePanel({
 
       return nextRuns;
     });
-  }
+    setLoadedMessageRunIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      nextIds.add(runId);
+      return nextIds;
+    });
+  });
 
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
     let isNewRun = false;
@@ -272,6 +280,14 @@ export function SessionWalliePanel({
       void supabase.removeChannel(runChannel);
     };
   }, [session.id, supabase]);
+
+  useEffect(() => {
+    for (const runId of expandedRunIds) {
+      if (!loadedMessageRunIds.has(runId) && runs.some((run) => run.id === runId)) {
+        void loadRunMessages(runId);
+      }
+    }
+  }, [expandedRunIds, loadedMessageRunIds, runs]);
 
   useEffect(() => {
     const runIds = runIdsKey ? runIdsKey.split(",") : [];
@@ -592,7 +608,16 @@ export function SessionWalliePanel({
                           </div>
                         ))
                       : null}
-                    {run.messages.length === 0 && !runIsBusy ? (
+                    {run.messages.length === 0 && !runIsBusy && !loadedMessageRunIds.has(run.id) ? (
+                      <div
+                        aria-live="polite"
+                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
+                        role="status"
+                      >
+                        Loading run messages...
+                      </div>
+                    ) : null}
+                    {run.messages.length === 0 && !runIsBusy && loadedMessageRunIds.has(run.id) ? (
                       <div
                         aria-live="polite"
                         className="ui-muted-panel px-4 py-4 text-sm text-muted"

@@ -40,6 +40,8 @@ export const serverEnvSchema = z.object({
   VERCEL_PROJECT_ID: optionalEnvStringSchema,
   // "vercel" (default) or "fake" (tests). Any other value throws at runtime.
   WALLIE_SANDBOX_IMPL: optionalEnvStringSchema,
+  // Opt-in request loader timing logs for production canaries.
+  WALLIE_TIMING_LOGS: optionalEnvStringSchema,
 });
 type ServerOnlyEnv = z.infer<typeof serverEnvSchema>;
 export type ServerEnv = ClientEnv & ServerOnlyEnv;
@@ -71,6 +73,7 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     VERCEL_TEAM_ID: input.VERCEL_TEAM_ID,
     VERCEL_PROJECT_ID: input.VERCEL_PROJECT_ID,
     WALLIE_SANDBOX_IMPL: input.WALLIE_SANDBOX_IMPL,
+    WALLIE_TIMING_LOGS: input.WALLIE_TIMING_LOGS,
   });
 
   return {

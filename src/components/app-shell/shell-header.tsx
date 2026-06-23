@@ -13,7 +13,6 @@ import {
   type OnboardingResumeState,
 } from "@/features/onboarding/flow";
 import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
-import type { SessionRepositoryOption } from "@/features/sessions/types";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -22,7 +21,6 @@ type ShellHeaderProps = {
   defaultSessionGithubRepositoryId: string | null;
   navItems: WorkspaceNavItem[];
   onboarding: OnboardingResumeState | null;
-  sessionRepositoryOptions: SessionRepositoryOption[];
   viewerEmail: string | null;
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
@@ -68,7 +66,6 @@ export function ShellHeader({
   defaultSessionGithubRepositoryId,
   navItems,
   onboarding,
-  sessionRepositoryOptions,
   viewerEmail,
   workspace,
   workspaceAvatarUrl,
@@ -184,7 +181,6 @@ export function ShellHeader({
         defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
         open={createOpen}
         onClose={handleCreateClose}
-        repositoryOptions={sessionRepositoryOptions}
         workspaceId={workspace.id}
         workspaceSlug={workspace.slug}
       />

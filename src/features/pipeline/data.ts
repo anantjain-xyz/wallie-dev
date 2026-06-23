@@ -1,12 +1,7 @@
 import "server-only";
 
-import { notFound, redirect } from "next/navigation";
-
 import { mapOnboardingResumeState, type OnboardingResumeState } from "@/features/onboarding/flow";
-import { getWorkspaceBySlugForUser, workspaceLoginRedirectPath } from "@/lib/auth";
-import { loginPath } from "@/lib/routes";
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import type {
   PipelineStage,
   SessionPhaseStatus,
@@ -49,17 +44,7 @@ export type PipelineDashboardData = {
 export async function loadPipelineDashboardData(
   workspaceSlug: string,
 ): Promise<PipelineDashboardData> {
-  const supabase = await createSupabaseServerClient();
-  const user = await getSupabaseUserOrNull(supabase);
-
-  if (!user) {
-    redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));
-  }
-
-  const workspace = await getWorkspaceBySlugForUser(supabase, workspaceSlug);
-  if (!workspace) {
-    notFound();
-  }
+  const { supabase, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
 
   const { data: onboardingRow, error: onboardingError } = await supabase
     .from("workspace_onboarding")
