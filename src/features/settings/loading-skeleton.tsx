@@ -1,20 +1,20 @@
 import { SkeletonBlock } from "@/components/ui/skeleton";
 
-const anchorGroupSizes = [3, 5, 1, 3];
+const anchorGroupSizes = [5, 1, 3, 3];
 
 const sectionSkeletons = [
+  { rows: 2 },
+  { rows: 3 },
+  { rows: 3 },
+  { rows: 2 },
+  { rows: 4 },
+  { rows: 3 },
+  { rows: 4 },
+  { rows: 2 },
+  { rows: 3 },
   { rows: 2, withAvatar: true },
   { rows: 3 },
   { rows: 1, tone: "danger" },
-  { rows: 2 },
-  { rows: 3 },
-  { rows: 3 },
-  { rows: 2 },
-  { rows: 4 },
-  { rows: 3 },
-  { rows: 4 },
-  { rows: 2 },
-  { rows: 3 },
 ] satisfies { rows: number; tone?: "danger"; withAvatar?: boolean }[];
 
 function SettingsAnchorSkeleton() {

@@ -33,14 +33,6 @@ import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 
 const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
   {
-    label: "Workspace",
-    anchors: [
-      { id: "workspace", label: "Workspace" },
-      { id: "members", label: "Members" },
-      { id: "danger-zone", label: "Danger zone" },
-    ],
-  },
-  {
     label: "Integrations",
     anchors: [
       { id: "github", label: "GitHub" },
@@ -60,6 +52,14 @@ const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
       { id: "verify", label: "Verify setup" },
       { id: "usage", label: "Usage" },
       { id: "rate-limits", label: "Rate limits" },
+    ],
+  },
+  {
+    label: "Workspace",
+    anchors: [
+      { id: "workspace", label: "Workspace" },
+      { id: "members", label: "Members" },
+      { id: "danger-zone", label: "Danger zone" },
     ],
   },
 ];
@@ -294,31 +294,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
 
           <div className="space-y-16 min-w-0">
-            <WorkspaceAvatarSection
-              canManage={isManager}
-              onWorkspaceNameChange={(name) =>
-                setData((currentData) => ({
-                  ...currentData,
-                  workspace: { ...currentData.workspace, name },
-                }))
-              }
-              setFlashMessage={setFlashMessage}
-              workspace={pageData.workspace}
-            />
-            <WorkspaceMembersSection
-              canManage={isManager}
-              currentMemberId={pageData.currentMember.id}
-              initialInvitations={pageData.workspaceInvitations}
-              setFlashMessage={setFlashMessage}
-              workspaceId={pageData.workspace.id}
-              workspaceMembers={pageData.workspaceMembers}
-            />
-            <DangerZoneSection
-              canDelete={isOwner}
-              setFlashMessage={setFlashMessage}
-              workspaceId={pageData.workspace.id}
-              workspaceName={pageData.workspace.name}
-            />
             <GitHubInstallSection
               canManage={isManager}
               github={pageData.github}
@@ -453,6 +428,32 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 ))}
               </ul>
             </Section>
+
+            <WorkspaceAvatarSection
+              canManage={isManager}
+              onWorkspaceNameChange={(name) =>
+                setData((currentData) => ({
+                  ...currentData,
+                  workspace: { ...currentData.workspace, name },
+                }))
+              }
+              setFlashMessage={setFlashMessage}
+              workspace={pageData.workspace}
+            />
+            <WorkspaceMembersSection
+              canManage={isManager}
+              currentMemberId={pageData.currentMember.id}
+              initialInvitations={pageData.workspaceInvitations}
+              setFlashMessage={setFlashMessage}
+              workspaceId={pageData.workspace.id}
+              workspaceMembers={pageData.workspaceMembers}
+            />
+            <DangerZoneSection
+              canDelete={isOwner}
+              setFlashMessage={setFlashMessage}
+              workspaceId={pageData.workspace.id}
+              workspaceName={pageData.workspace.name}
+            />
           </div>
         </div>
       </div>

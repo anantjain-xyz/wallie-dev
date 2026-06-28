@@ -294,7 +294,7 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    const groupHeadings = ["Workspace", "Integrations", "Pipeline", "Advanced"];
+    const groupHeadings = ["Integrations", "Pipeline", "Advanced", "Workspace"];
     let lastGroupIndex = -1;
     for (const heading of groupHeadings) {
       const index = html.indexOf(`>${heading}</p>`);
@@ -303,9 +303,6 @@ describe("Settings integration sections", () => {
     }
 
     const items = [
-      "Workspace",
-      "Members",
-      "Danger zone",
       "GitHub",
       "Repositories",
       "Vercel Sandbox",
@@ -315,6 +312,9 @@ describe("Settings integration sections", () => {
       "Verify setup",
       "Usage",
       "Rate limits",
+      "Workspace",
+      "Members",
+      "Danger zone",
     ];
     let lastIndex = -1;
     for (const label of items) {
