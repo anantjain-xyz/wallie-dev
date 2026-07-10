@@ -68,3 +68,5 @@ Correctness concerns must be addressed (or validated as inapplicable, with proof
 ## Loop
 
 Repeat sweep → fix → reply → re-run validation → push, until **zero outstanding actionable comments** *and* PR checks are green on the latest commit. Only then move the issue to `In Review`.
+
+- Before completing review work, inspect all unresolved review threads, address the actionable items, and verify the resulting diff and checks.
