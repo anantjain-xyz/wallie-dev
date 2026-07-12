@@ -57,7 +57,7 @@ If this is a retry (the prompt ends with a `## Retry context` trailer, or the wo
 5. **No-op redispatch short-circuit.** Only applies when the issue state is `Todo` or `In Progress` (NOT `Rework` — that always requires the full reset of Step 3, and NOT `Merging` — that always runs the Land procedure). Within those two states, the short-circuit fires only if **all** of the following hold:
    - Every Plan / Acceptance / Validation checkbox in the workpad is already ticked.
    - A PR is linked.
-   - `gh pr view --json state,mergeable,mergeStateStatus,statusCheckRollup` shows the PR `OPEN`/`MERGED`, `mergeable` is `MERGEABLE` (NOT `CONFLICTING` or `UNKNOWN`), `mergeStateStatus` is `CLEAN`/`HAS_HOOKS`/`UNSTABLE` (NOT `DIRTY`/`BLOCKED` due to conflicts), and no checks have failed (`FAILURE`/`CANCELLED`/`TIMED_OUT`/`ACTION_REQUIRED`). Pending checks like `PR Reviews` are OK — we do not wait for human-gated checks.
+   - `gh pr view --json state,mergeable,mergeStateStatus,statusCheckRollup` shows the PR `OPEN`, `mergeable` is `MERGEABLE` (NOT `CONFLICTING` or `UNKNOWN`), `mergeStateStatus` is `CLEAN`/`HAS_HOOKS`/`UNSTABLE` (NOT `DIRTY`/`BLOCKED` due to conflicts), and no checks have failed (`FAILURE`/`CANCELLED`/`TIMED_OUT`/`ACTION_REQUIRED`). Pending checks like `PR Reviews` are OK — we do not wait for human-gated checks.
    - `git log --oneline origin/main..HEAD` matches the workpad's recorded commits.
    - The `symphony-pr-feedback` sweep is clean: no unresolved or actionable top-level comments, inline comments, or review feedback remain.
 
@@ -80,7 +80,7 @@ Route on the issue's current state. Before routing, check whether the branch PR 
 | `Rework`                        | Run Step 3 (full reset).                                                                                                                                                                                                                                                                                                                                                                               |
 | `Done`                          | Shut down.                                                                                                                                                                                                                                                                                                                                                                                             |
 
-**Branch-PR-closed guard** (pre-merge states only — `Todo`/`In Progress`/`Rework`): if the branch's PR is `CLOSED` or `MERGED`, prior branch work is non-reusable. Fresh branch from `origin/main`, restart from Step 1.
+**Branch-PR-closed guard** (`Todo`/`In Progress` only): if the branch's PR is `CLOSED` or `MERGED`, prior branch work is non-reusable. Fresh branch from `origin/main`, restart from Step 1. In `Rework`, always run the full Step 3 reset, which creates the fresh branch after preserving the rework context.
 
 ## Step 1: Setup and plan (Todo / In Progress)
 
@@ -153,7 +153,7 @@ Run the `symphony-land` skill — it handles the approve/sync/squash-merge loop,
 - **Test data cleanup is mandatory.** Any artifacts created in external systems during testing (Linear issues/comments/attachments, non-issue GitHub branches/draft PRs/gists, rows in shared databases, etc.) must be deleted before transitioning to `In Review`. Do not delete the active issue branch, its PR, or issue-owned evidence/attachments needed for review. Leaving test residue is treated the same as leaving a temporary code edit unreverted.
 - **Proof-of-testing screenshots must be Playwright-captured** for user-facing changes and embedded in the GitHub PR description via the `symphony-screenshot` skill. Default to full-page captures and document every state worth reviewing (happy path, loading, error, empty, mobile, hover) — one screenshot per state, not a single representative shot. Hand-cropped screenshots, `console.log` snippets, or text-only descriptions do not satisfy this requirement. The screenshot commit must not survive in branch history once the URLs are captured.
 - Out-of-scope improvements → new Backlog issue (clear title / description / acceptance criteria, same project as current issue, `related` link to current, `blockedBy` if dependent).
-- Never `--no-verify`, `git reset --hard`, `git push --force*`, or `git clean -f*` without an explicit ask.
+- Never `--no-verify`, `git reset --hard`, `git push --force*`, or `git clean -f*` without an explicit ask, except for the documented temporary-commit cleanup inside the `symphony-screenshot` skill. That skill may use only its scoped `--no-verify`, `git reset --hard HEAD~1`, and `git push --force-with-lease` commands.
 - Never run `pkill`/`killall`/`pgrep -f` with a broad pattern (e.g. `pkill -f "next dev"`, `pkill -f node`). Agents share the host with the operator's Symphony app and with other workspaces' dev servers — unscoped matches kill _every_ matching process, including the operator's. Scope cleanup to the port or the workspace: prefer `lsof -t -i :<PORT> | xargs -r kill` (handles the zero-match and multi-PID cases safely); when matching by command line, anchor to this workspace (`pkill -f 'next-server.*'"$ISSUE_IDENTIFIER"`). Same rule for `kill %1` / `kill %<jobspec>` only — those are scoped to the current shell.
 - `In Review` / `Done` / `Backlog` → do not modify the issue or its code.
 - Keep issue text concise, specific, reviewer-oriented.
@@ -165,6 +165,6 @@ Run the `symphony-land` skill — it handles the approve/sync/squash-merge loop,
 - Acceptance criteria and ticket-mandated validation items all checked.
 - Validation/tests green for the latest commit.
 - `symphony-pr-feedback` sweep clean (no actionable comments remain).
-- PR checks green, branch pushed, PR linked on the issue, `symphony` label present.
+- No PR checks failing, branch pushed, PR linked on the issue, `symphony` label present. Pending human-gated checks do not block transition.
 - User-facing changes: `symphony-screenshot` skill ran; PR description embeds full-page screenshots covering every state worth reviewing; screenshot commit not present in branch history.
 - All test data created during validation has been cleaned up; no residue left in Linear, GitHub, or shared backends.
