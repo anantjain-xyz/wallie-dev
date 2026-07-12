@@ -24,17 +24,17 @@ You are working on issue **{{issue.identifier}}: {{issue.title}}**.
 
 Repeatable mechanics live under `.agents/skills/symphony-<name>/SKILL.md` in the target repo (the canonical, runner-agnostic location; `.claude/skills/symphony-<name>` are symlinks Claude Code uses for auto-discovery). Reach for them by name — your runner will surface the right one on demand:
 
-| Skill | Use when |
-|---|---|
-| `symphony-workpad` | finding, bootstrapping, updating, or resetting the Symphony Workpad on a Linear issue |
-| `symphony-pull` | syncing the branch with `origin/main` and resolving conflicts |
-| `symphony-commit` | creating a well-formed git commit from staged changes |
-| `symphony-push` | pushing the branch and ensuring a PR exists with the `symphony` label |
-| `symphony-pr-feedback` | sweeping the PR for actionable reviewer feedback before `In Review` |
-| `symphony-screenshot` | capturing Playwright screenshots and embedding them in the PR description (commit + force-push pattern) |
-| `symphony-land` | squash-merging the PR once approved and green (entered via `Merging`) |
+| Skill                  | Use when                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| `symphony-workpad`     | finding, bootstrapping, updating, or resetting the Symphony Workpad on a Linear issue                   |
+| `symphony-pull`        | syncing the branch with `origin/main` and resolving conflicts                                           |
+| `symphony-commit`      | creating a well-formed git commit from staged changes                                                   |
+| `symphony-push`        | pushing the branch and ensuring a PR exists with the `symphony` label                                   |
+| `symphony-pr-feedback` | sweeping the PR for actionable reviewer feedback before `In Review`                                     |
+| `symphony-screenshot`  | capturing Playwright screenshots and embedding them in the PR description (commit + force-push pattern) |
+| `symphony-land`        | squash-merging the PR once approved and green (entered via `Merging`)                                   |
 
-This workflow tells you *which* skill applies at each step; the skill body has the exact commands and gotchas. Don't re-derive what's already in a skill. If the target repo does not ship a skill, fall back to plain `git`/`gh`/Linear-API equivalents — the workflow steps below still apply.
+This workflow tells you _which_ skill applies at each step; the skill body has the exact commands and gotchas. Don't re-derive what's already in a skill. If the target repo does not ship a skill, fall back to plain `git`/`gh`/Linear-API equivalents — the workflow steps below still apply.
 
 ## Environment
 
@@ -69,16 +69,16 @@ If this is a retry (the prompt ends with a `## Retry context` trailer, or the wo
 
 Route on the issue's current state. Before routing, check whether the branch PR exists and its status (affects pre-merge states only).
 
-| State | Action |
-|---|---|
-| `Backlog` | Do not modify. Shut down. |
-| `Todo` | Bootstrap workpad (`symphony-workpad` skill), then move to `In Progress`, run Step 1. If a PR is already attached: check `gh pr view --json mergeable,mergeStateStatus` first — a `CONFLICTING`/`DIRTY` PR is the most common reason for a Todo redispatch and the conflicts MUST be resolved (`symphony-pull` skill) before anything else. Then run the `symphony-pr-feedback` sweep before new work. |
-| `In Progress` | Continue Step 1 from existing workpad. |
-| `In Review` | Do not change code or content. Symphony does not re-engage on CI failure or new review comments while in this state — the operator must move the issue back to `Todo`/`In Progress`/`Rework` to re-engage. |
-| `Merging` (PR already `MERGED`) | Skip land procedure; record merge SHA in workpad; move to `Done`. |
-| `Merging` (any other PR state) | Run the `symphony-land` skill. |
-| `Rework` | Run Step 3 (full reset). |
-| `Done` | Shut down. |
+| State                           | Action                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Backlog`                       | Do not modify. Shut down.                                                                                                                                                                                                                                                                                                                                                                              |
+| `Todo`                          | Bootstrap workpad (`symphony-workpad` skill), then move to `In Progress`, run Step 1. If a PR is already attached: check `gh pr view --json mergeable,mergeStateStatus` first — a `CONFLICTING`/`DIRTY` PR is the most common reason for a Todo redispatch and the conflicts MUST be resolved (`symphony-pull` skill) before anything else. Then run the `symphony-pr-feedback` sweep before new work. |
+| `In Progress`                   | Continue Step 1 from existing workpad.                                                                                                                                                                                                                                                                                                                                                                 |
+| `In Review`                     | Do not change code or content. Symphony does not re-engage on CI failure or new review comments while in this state — the operator must move the issue back to `Todo`/`In Progress`/`Rework` to re-engage.                                                                                                                                                                                             |
+| `Merging` (PR already `MERGED`) | Skip land procedure; record merge SHA in workpad; move to `Done`.                                                                                                                                                                                                                                                                                                                                      |
+| `Merging` (any other PR state)  | Run the `symphony-land` skill.                                                                                                                                                                                                                                                                                                                                                                         |
+| `Rework`                        | Run Step 3 (full reset).                                                                                                                                                                                                                                                                                                                                                                               |
+| `Done`                          | Shut down.                                                                                                                                                                                                                                                                                                                                                                                             |
 
 **Branch-PR-closed guard** (pre-merge states only — `Todo`/`In Progress`/`Rework`): if the branch's PR is `CLOSED` or `MERGED`, prior branch work is non-reusable. Fresh branch from `origin/main`, restart from Step 1.
 
@@ -154,7 +154,7 @@ Run the `symphony-land` skill — it handles the approve/sync/squash-merge loop,
 - **Proof-of-testing screenshots must be Playwright-captured** for user-facing changes and embedded in the GitHub PR description via the `symphony-screenshot` skill. Default to full-page captures and document every state worth reviewing (happy path, loading, error, empty, mobile, hover) — one screenshot per state, not a single representative shot. Hand-cropped screenshots, `console.log` snippets, or text-only descriptions do not satisfy this requirement. The screenshot commit must not survive in branch history once the URLs are captured.
 - Out-of-scope improvements → new Backlog issue (clear title / description / acceptance criteria, same project as current issue, `related` link to current, `blockedBy` if dependent).
 - Never `--no-verify`, `git reset --hard`, `git push --force*`, or `git clean -f*` without an explicit ask.
-- Never run `pkill`/`killall`/`pgrep -f` with a broad pattern (e.g. `pkill -f "next dev"`, `pkill -f node`). Agents share the host with the operator's Symphony app and with other workspaces' dev servers — unscoped matches kill *every* matching process, including the operator's. Scope cleanup to the port or the workspace: prefer `lsof -t -i :<PORT> | xargs -r kill` (handles the zero-match and multi-PID cases safely); when matching by command line, anchor to this workspace (`pkill -f 'next-server.*'"$ISSUE_IDENTIFIER"`). Same rule for `kill %1` / `kill %<jobspec>` only — those are scoped to the current shell.
+- Never run `pkill`/`killall`/`pgrep -f` with a broad pattern (e.g. `pkill -f "next dev"`, `pkill -f node`). Agents share the host with the operator's Symphony app and with other workspaces' dev servers — unscoped matches kill _every_ matching process, including the operator's. Scope cleanup to the port or the workspace: prefer `lsof -t -i :<PORT> | xargs -r kill` (handles the zero-match and multi-PID cases safely); when matching by command line, anchor to this workspace (`pkill -f 'next-server.*'"$ISSUE_IDENTIFIER"`). Same rule for `kill %1` / `kill %<jobspec>` only — those are scoped to the current shell.
 - `In Review` / `Done` / `Backlog` → do not modify the issue or its code.
 - Keep issue text concise, specific, reviewer-oriented.
 - If blocked before any workpad exists, post a single blocker comment: blocker, impact, next unblock action.
