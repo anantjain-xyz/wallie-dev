@@ -25,7 +25,10 @@ export function AppShell({
   const navItems = getWorkspaceNavItems(workspace.slug);
 
   return (
-    <div className="h-[100dvh] min-h-[100svh] overflow-hidden bg-background">
+    // Keep the workspace shell out of the document scroll flow. Settings anchors
+    // scroll the nested <main>; a fixed shell prevents scrollIntoView from also
+    // moving the root document and exposing blank space below the viewport.
+    <div className="fixed inset-x-0 top-0 h-[100dvh] min-h-[100svh] overflow-hidden bg-background">
       <div className="flex h-full min-w-0 flex-col bg-surface">
         <ShellHeader
           defaultSessionGithubRepositoryId={defaultSessionGithubRepositoryId}
