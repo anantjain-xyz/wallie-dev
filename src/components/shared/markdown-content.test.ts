@@ -26,6 +26,14 @@ describe("MarkdownContent", () => {
     expect(html).toContain("const x = 1;");
   });
 
+  it("renders GFM tables and task lists", () => {
+    const html = render("| A | B |\n| - | - |\n| x | y |\n\n- [x] shipped\n- [ ] pending");
+    expect(html).toContain("<table");
+    expect(html).toContain("<th");
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("shipped");
+  });
+
   it("renders links as external anchors", () => {
     const html = render("[docs](https://example.com)");
     expect(html).toContain('href="https://example.com"');
@@ -42,6 +50,14 @@ describe("MarkdownContent", () => {
   it("strips dangerous URL schemes from links", () => {
     const html = render("[click](javascript:alert(1))");
     expect(html).not.toContain("javascript:alert");
+  });
+
+  it("does not allow encoded dangerous URLs or HTML event handlers", () => {
+    const html = render(
+      '[click](jav&#x61;script:alert(1)) <a href="https://safe.example" onclick="alert(2)">safe</a>',
+    );
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("onclick");
   });
 
   it("renders images as click-only links so untrusted markdown can't auto-fetch remote URLs", () => {
