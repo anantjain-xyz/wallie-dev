@@ -3,6 +3,11 @@ import type {
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
+import type { OnboardingResumeState } from "@/features/onboarding/resume";
+export {
+  shouldShowOnboardingResumeCta,
+  type OnboardingResumeState,
+} from "@/features/onboarding/resume";
 import {
   WORKSPACE_ONBOARDING_STEPS,
   workspaceOnboardingStatusSchema,
@@ -57,6 +62,8 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
 
 export const SKIPPABLE_ONBOARDING_STEPS = ["linear", "runtime"] as const;
 
+type OnboardingResumeRow = { current_step: string; status: string } | null;
+
 export type OnboardingStepDisplayState =
   | "active"
   | "available"
@@ -70,9 +77,6 @@ export type OnboardingStepRailItem = OnboardingStepDefinition & {
   position: number;
 };
 
-export type OnboardingResumeState = Pick<WorkspaceOnboardingState, "currentStep" | "status">;
-type OnboardingResumeRow = { current_step: string; status: string } | null;
-
 const STEP_INDEX = new Map<WorkspaceOnboardingStep, number>(
   WORKSPACE_ONBOARDING_STEPS.map((step, index) => [step, index]),
 );
@@ -81,10 +85,6 @@ const REPOSITORY_SELECTION_DEPENDENT_STEPS = ["repository", "runtime", "verify"]
 
 export function onboardingStepIndex(step: WorkspaceOnboardingStep) {
   return STEP_INDEX.get(step) ?? 0;
-}
-
-export function shouldShowOnboardingResumeCta(onboarding: OnboardingResumeState | null) {
-  return Boolean(onboarding && onboarding.status !== "completed");
 }
 
 export function mapOnboardingResumeState(row: OnboardingResumeRow): OnboardingResumeState | null {

@@ -2,7 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ShellHeader } from "@/components/app-shell/shell-header";
+import {
+  CreateSessionDialogLoading,
+  preloadCreateSessionDialogOnce,
+  ShellHeader,
+} from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
 import { getWorkspaceNavItems } from "@/lib/routes";
 
@@ -16,26 +20,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => mocked.pathname,
   useRouter: () => ({ replace: mocked.replace }),
   useSearchParams: () => mocked.searchParams,
-}));
-
-vi.mock("@/features/sessions/create-session-dialog", () => ({
-  CreateSessionDialog: ({
-    defaultGithubRepositoryId,
-    open,
-  }: {
-    defaultGithubRepositoryId: string | null;
-    open: boolean;
-  }) =>
-    open
-      ? createElement(
-          "div",
-          {
-            "data-default-repository-id": defaultGithubRepositoryId ?? "",
-            "data-dialog-state": "open",
-          },
-          "Create dialog",
-        )
-      : null,
 }));
 
 const workspace = { id: "workspace-1", name: "Acme Corp", slug: "acme-corp" };
@@ -82,8 +66,7 @@ describe("ShellHeader", () => {
 
     expect(html).toContain("New session");
     expect(html).not.toContain("Resume setup");
-    expect(html).toContain('data-dialog-state="open"');
-    expect(html).toContain('data-default-repository-id="repo-1"');
+    expect(html).toContain("Loading session form…");
   });
 
   it("renders the topbar theme toggle as an accessible icon button", () => {
@@ -138,6 +121,26 @@ describe("ShellHeader", () => {
     expect(html).toContain('aria-label="Account: owner@example.com"');
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');
+  });
+});
+
+describe("create-session dialog loading", () => {
+  it("renders a stable announced loading state", () => {
+    const html = renderToStaticMarkup(createElement(CreateSessionDialogLoading));
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("Loading session form…");
+  });
+
+  it("deduplicates preloads for one shell mount", () => {
+    const started = { current: false };
+    const load = vi.fn(async () => undefined);
+
+    preloadCreateSessionDialogOnce(started, load);
+    preloadCreateSessionDialogOnce(started, load);
+
+    expect(load).toHaveBeenCalledTimes(1);
   });
 });
 

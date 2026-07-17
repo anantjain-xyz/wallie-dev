@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { WorkspaceSummary } from "@/lib/auth";
-import type { OnboardingResumeState } from "@/features/onboarding/flow";
+import type { OnboardingResumeState } from "@/features/onboarding/resume";
 import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
 import {
   type SessionFilterKey,
