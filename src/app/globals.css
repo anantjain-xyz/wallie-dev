@@ -7,33 +7,60 @@
 
 :root {
   color-scheme: light;
-  --background: #f5f5f5;
-  --foreground: #1d1f22;
-  --surface: #ffffff;
-  --surface-strong: #f8f8f8;
-  --surface-muted: #efefef;
-  --border: #e0e0e0;
-  --border-strong: #d0d0d0;
-  --muted: #8c8f94;
-  --accent: #5e6ad2;
-  --accent-foreground: #ffffff;
-  --accent-soft: rgba(94, 106, 210, 0.12);
-  --danger: #d63a3a;
-  --danger-soft: rgba(214, 58, 58, 0.12);
-  --success: #1f845a;
-  --success-soft: rgba(31, 132, 90, 0.12);
-  --warning: #d97706;
-  --warning-soft: rgba(217, 119, 6, 0.08);
+  /* One perceptual neutral ramp and one accent family feed both themes. */
+  --neutral-0: #ffffff;
+  --neutral-50: #f7f8fa;
+  --neutral-75: #f4f5f7;
+  --neutral-100: #eff1f5;
+  --neutral-300: #b9bec7;
+  --neutral-500: #7f8793;
+  --neutral-600: #5b616b;
+  --neutral-750: #343943;
+  --neutral-800: #292d35;
+  --neutral-900: #1d2027;
+  --neutral-950: #13161b;
+  --indigo-50: #eeedff;
+  --indigo-300: #a5b4fc;
+  --indigo-600: #4f46e5;
+
+  --canvas: var(--neutral-75);
+  --sheet: var(--neutral-0);
+  --raised: var(--neutral-50);
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --border: var(--neutral-500);
+  --primary: var(--indigo-600);
+  --primary-foreground: var(--neutral-0);
+  --primary-soft: var(--indigo-50);
+  --warning: #8a4b08;
+  --warning-soft: #fff1dd;
+  --danger: #b42318;
+  --danger-soft: #ffedeb;
+  --success: #176b45;
+  --success-soft: #e7f5ee;
+
+  /* Compatibility aliases keep the Tailwind utility surface stable. */
+  --background: var(--canvas);
+  --foreground: var(--text-primary);
+  --surface: var(--sheet);
+  --surface-strong: var(--raised);
+  --surface-muted: var(--neutral-100);
+  --border-strong: var(--text-secondary);
+  --muted: var(--text-secondary);
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --accent-soft: var(--primary-soft);
   --shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-elevated: 0 1px 1px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
   --shadow-control: 0 1px 1px rgba(16, 24, 40, 0.02);
-  --focus-ring: rgba(94, 106, 210, 0.32);
-  --focus-ring-soft: rgba(94, 106, 210, 0.08);
+  --focus-ring: var(--primary);
+  --focus-ring-contrast: var(--sheet);
+  --focus-ring-soft: var(--primary-soft);
   --subtle-hover: rgba(47, 45, 40, 0.04);
   --sidebar-hover: rgba(0, 0, 0, 0.035);
-  --dropdown-item-foreground: #666259;
-  --list-pill-background: #f5f5f5;
-  --list-pill-foreground: #6b6f76;
+  --dropdown-item-foreground: var(--text-secondary);
+  --list-pill-background: var(--surface-muted);
+  --list-pill-foreground: var(--text-secondary);
   --font-inter:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-ibm-plex-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -41,36 +68,53 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #0e1117;
-  --foreground: #eef1f6;
-  --surface: #151922;
-  --surface-strong: #1b202b;
-  --surface-muted: #242b38;
-  --border: #2d3442;
-  --border-strong: #3b4657;
-  --muted: #9aa3b2;
-  --accent: #8b95ff;
-  --accent-foreground: #ffffff;
-  --accent-soft: rgba(139, 149, 255, 0.18);
-  --danger: #ff6b6b;
-  --danger-soft: rgba(255, 107, 107, 0.16);
-  --success: #4ade9a;
-  --success-soft: rgba(74, 222, 154, 0.14);
-  --warning: #f6b45d;
-  --warning-soft: rgba(246, 180, 93, 0.16);
+  --canvas: var(--neutral-950);
+  --sheet: var(--neutral-900);
+  --raised: var(--neutral-800);
+  --text-primary: var(--neutral-50);
+  --text-secondary: var(--neutral-300);
+  --border: var(--neutral-500);
+  --primary: var(--indigo-300);
+  --primary-foreground: var(--neutral-950);
+  --primary-soft: #2b2b50;
+  --warning: #f5bd69;
+  --warning-soft: #3a2d1b;
+  --danger: #ff8a91;
+  --danger-soft: #44252a;
+  --success: #62d6a3;
+  --success-soft: #1c392d;
+
+  --background: var(--canvas);
+  --foreground: var(--text-primary);
+  --surface: var(--sheet);
+  --surface-strong: var(--raised);
+  --surface-muted: var(--neutral-750);
+  --border-strong: var(--text-secondary);
+  --muted: var(--text-secondary);
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --accent-soft: var(--primary-soft);
   --shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.28);
   --shadow-elevated: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.34);
   --shadow-control: 0 1px 1px rgba(0, 0, 0, 0.22);
-  --focus-ring: rgba(139, 149, 255, 0.42);
-  --focus-ring-soft: rgba(139, 149, 255, 0.18);
+  --focus-ring: var(--primary);
+  --focus-ring-contrast: var(--sheet);
+  --focus-ring-soft: var(--primary-soft);
   --subtle-hover: rgba(255, 255, 255, 0.06);
   --sidebar-hover: rgba(255, 255, 255, 0.055);
-  --dropdown-item-foreground: #c5cbd6;
-  --list-pill-background: #1d2330;
-  --list-pill-foreground: #a8b1c0;
+  --dropdown-item-foreground: var(--text-secondary);
+  --list-pill-background: var(--surface-muted);
+  --list-pill-foreground: var(--text-secondary);
 }
 
 @theme inline {
+  --color-canvas: var(--canvas);
+  --color-sheet: var(--sheet);
+  --color-raised: var(--raised);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
@@ -116,11 +160,6 @@
   a {
     color: inherit;
     text-decoration: none;
-  }
-
-  a:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 3px;
   }
 
   button,
@@ -183,14 +222,13 @@
   .ui-input:focus-visible,
   .ui-select:focus-visible,
   .ui-textarea:focus-visible {
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--surface));
-    box-shadow: 0 0 0 4px var(--focus-ring-soft);
+    border-color: var(--accent);
   }
 
   .ui-button,
   .ui-button-primary,
   .ui-button-danger {
-    @apply inline-flex cursor-pointer items-center justify-center rounded-[6px] border px-3 py-2 text-[13px] font-medium transition-[color,background-color,border-color,box-shadow,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex cursor-pointer items-center justify-center rounded-[6px] border px-3 py-2 text-[13px] font-medium transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 disabled:cursor-not-allowed disabled:opacity-60;
     box-shadow: var(--shadow-control);
   }
 
@@ -200,6 +238,10 @@
 
   .ui-button:hover {
     @apply border-border-strong bg-surface-strong;
+  }
+
+  .ui-button:active:not(:disabled) {
+    @apply bg-surface-muted;
   }
 
   .ui-button-primary {
@@ -213,6 +255,11 @@
     border-color: color-mix(in srgb, var(--accent) 88%, white);
   }
 
+  .ui-button-primary:active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 84%, black);
+    border-color: color-mix(in srgb, var(--accent) 84%, black);
+  }
+
   .ui-button-danger {
     border-color: color-mix(in srgb, var(--danger) 26%, var(--surface));
     background: var(--danger-soft);
@@ -221,6 +268,10 @@
 
   .ui-button-danger:hover {
     background: color-mix(in srgb, var(--danger-soft) 88%, var(--surface));
+  }
+
+  .ui-button-danger:active:not(:disabled) {
+    background: color-mix(in srgb, var(--danger-soft) 90%, var(--danger));
   }
 
   .ui-dropdown {
@@ -236,6 +287,10 @@
   .ui-dropdown-item:hover {
     background: var(--subtle-hover);
     color: var(--foreground);
+  }
+
+  .ui-dropdown-item:active {
+    background: var(--surface-muted);
   }
 
   .ui-pill {
@@ -277,7 +332,7 @@
   }
 
   .settings-anchor-group {
-    @apply px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted/70;
+    @apply px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted;
   }
 
   .settings-anchor {
@@ -287,6 +342,10 @@
   .settings-anchor:hover {
     background: var(--subtle-hover);
     color: var(--foreground);
+  }
+
+  .settings-anchor:active {
+    background: var(--surface-muted);
   }
 
   .settings-anchor-active {
@@ -304,7 +363,7 @@
   }
 
   .ui-tab {
-    @apply inline-flex cursor-pointer items-center rounded-full border border-transparent px-2.5 py-1 text-[12px] font-medium text-muted transition-[color,background-color,border-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    @apply inline-flex cursor-pointer items-center rounded-full border border-transparent px-2.5 py-1 text-[12px] font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
   }
 
   .ui-tab:hover {
@@ -315,8 +374,12 @@
     @apply bg-surface-muted text-foreground;
   }
 
+  .ui-tab:active {
+    @apply bg-surface-muted;
+  }
+
   .ui-top-nav-tab {
-    @apply inline-flex h-8 items-center whitespace-nowrap rounded-[6px] px-3 text-[13px] font-medium text-muted transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface;
+    @apply inline-flex h-8 items-center whitespace-nowrap rounded-[6px] px-3 text-[13px] font-medium text-muted transition-[color,background-color,transform] duration-150;
   }
 
   .ui-top-nav-tab:hover {
@@ -327,20 +390,32 @@
     @apply bg-surface-muted text-foreground;
   }
 
+  .ui-top-nav-tab:active {
+    @apply bg-surface-muted;
+  }
+
   .ui-icon-button {
-    @apply inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-muted transition-[color,background-color,border-color,box-shadow,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-muted transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150;
   }
 
   .ui-icon-button:hover {
     @apply bg-surface-strong text-foreground;
   }
 
+  .ui-icon-button:active:not(:disabled) {
+    @apply bg-surface-muted;
+  }
+
   .ui-filter-chip {
-    @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-[13px] font-medium text-muted transition-[color,background-color,border-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-[13px] font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
   }
 
   .ui-filter-chip:hover {
     @apply bg-surface-strong text-foreground;
+  }
+
+  .ui-filter-chip:active {
+    @apply bg-surface-muted;
   }
 
   .ui-filter-chip-active {
@@ -385,11 +460,15 @@
   }
 
   .sidebar-icon-btn {
-    @apply inline-flex h-[28px] w-[28px] cursor-pointer items-center justify-center rounded-[5px] text-muted transition-colors duration-75;
+    @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-[5px] text-muted transition-[color,background-color,transform] duration-75;
   }
 
   .sidebar-icon-btn:hover {
     @apply bg-surface-muted text-foreground;
+  }
+
+  .sidebar-icon-btn:active:not(:disabled) {
+    @apply bg-surface-strong;
   }
 
   .sidebar-icon-btn:disabled {
@@ -437,20 +516,22 @@
 
   .sidebar-input::placeholder {
     color: var(--muted);
-    opacity: 0.7;
   }
 
   .sidebar-input:focus-visible {
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--surface));
-    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+    border-color: var(--accent);
   }
 
   .sidebar-action-btn {
-    @apply inline-flex h-[26px] shrink-0 cursor-pointer items-center rounded-[5px] border border-border bg-surface px-2 text-[12px] font-medium text-muted transition-colors duration-100;
+    @apply inline-flex h-8 shrink-0 cursor-pointer items-center rounded-[5px] border border-border bg-surface px-2 text-[12px] font-medium text-muted transition-[color,background-color,border-color,transform] duration-100;
   }
 
   .sidebar-action-btn:hover {
     @apply border-border-strong bg-surface-strong text-foreground;
+  }
+
+  .sidebar-action-btn:active:not(:disabled) {
+    @apply bg-surface-muted;
   }
 
   .sidebar-action-btn:disabled {
@@ -464,12 +545,73 @@
 
   .issue-textarea::placeholder {
     color: var(--muted);
-    opacity: 0.6;
   }
 
   .issue-textarea:focus {
     @apply border-border bg-surface px-3 py-2;
-    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+}
+
+/* Unlayered so one focus contract overrides component-level utility rings. */
+:where(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [role="combobox"]
+):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--focus-ring-contrast);
+}
+
+:where(.ui-dropdown-item, [role="menuitem"], [role="option"]):focus-visible {
+  outline-offset: -4px;
+  box-shadow: inset 0 0 0 2px var(--focus-ring-contrast);
+}
+
+:where(button, [role="button"]):active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+:where(.ui-icon-button, .sidebar-icon-btn) {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+/* Coarse pointers and narrow layouts keep the dense desktop visual while
+   expanding every control to the WCAG 2.2 target minimum. */
+@media (pointer: coarse), (max-width: 767px) {
+  :where(button, input, select, textarea, summary),
+  :where(
+    .ui-button,
+    .ui-button-primary,
+    .ui-button-danger,
+    .ui-tab,
+    .ui-top-nav-tab,
+    .ui-filter-chip,
+    .ui-dropdown-item,
+    .settings-anchor,
+    .sidebar-property-trigger,
+    .sidebar-dropdown-item,
+    .sidebar-action-btn
+  ) {
+    min-height: 44px;
+  }
+
+  :where(.ui-icon-button, .sidebar-icon-btn) {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  :where(button[aria-label], a[aria-label]) {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 
