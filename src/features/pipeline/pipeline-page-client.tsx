@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import type {
@@ -9,6 +8,10 @@ import type {
   PipelineDashboardPullRequest,
 } from "@/features/pipeline/data";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
+import {
+  SessionDetailLink,
+  SessionDetailLinkPrefetchBoundary,
+} from "@/features/sessions/components/session-detail-link";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import { type SessionPhaseStatus } from "@/features/sessions/types";
@@ -38,6 +41,14 @@ function relativeTime(iso: string): string {
 }
 
 export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
+  return (
+    <SessionDetailLinkPrefetchBoundary>
+      <PipelinePageContent initialData={initialData} />
+    </SessionDetailLinkPrefetchBoundary>
+  );
+}
+
+function PipelinePageContent({ initialData }: PipelinePageClientProps) {
   const [cards, setCards] = useState<PipelineDashboardCard[]>(initialData.cards);
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
@@ -342,7 +353,7 @@ function PipelineCard({
         card.phaseStatus === "rejected" && "border-l-2 border-l-danger/40",
       )}
     >
-      <Link
+      <SessionDetailLink
         href={sessionHref}
         aria-label={`Open session ${card.title}`}
         className="absolute inset-0 z-10 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
