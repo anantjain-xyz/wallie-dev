@@ -140,19 +140,35 @@ function ArtifactPanelStage({
 
   useEffect(() => {
     if (latestArtifact) {
-      const body = asCachedBody(latestArtifact);
-      bodyCache.set(
-        artifactBodyCacheKey(sessionId, latestArtifact.stageSlug, latestArtifact.version),
-        body,
+      const bodyKey = artifactBodyCacheKey(
+        sessionId,
+        latestArtifact.stageSlug,
+        latestArtifact.version,
       );
+      const body = bodyCache.get(bodyKey) ?? asCachedBody(latestArtifact);
+      bodyCache.set(bodyKey, body);
       latestVersionCache.set(currentStageKey, latestArtifact.version);
+
+      const cachedMetadata = metadataCache.get(currentStageKey);
+      if (cachedMetadata) {
+        const nextMetadata = [
+          {
+            createdAt: latestArtifact.createdAt,
+            stageSlug: latestArtifact.stageSlug,
+            version: latestArtifact.version,
+          },
+          ...cachedMetadata.filter((artifact) => artifact.version !== latestArtifact.version),
+        ].sort((left, right) => right.version - left.version);
+        metadataCache.set(currentStageKey, nextMetadata);
+        queueMicrotask(() => setMetadata(nextMetadata));
+      }
     }
 
     return () => {
       metadataController.current?.abort();
       bodyController.current?.abort();
     };
-  }, [bodyCache, currentStageKey, latestArtifact, latestVersionCache, sessionId]);
+  }, [bodyCache, currentStageKey, latestArtifact, latestVersionCache, metadataCache, sessionId]);
 
   useEffect(() => {
     if (activeTab !== "artifact") return;
@@ -171,6 +187,16 @@ function ArtifactPanelStage({
       bodyKey === initialFormattedArtifactKey;
 
     if (body && hasFormattedBody) {
+      queueMicrotask(() => {
+        setLatestBody((current) => {
+          const currentKey = current
+            ? artifactBodyCacheKey(sessionId, current.stageSlug, current.version)
+            : null;
+          return currentKey === bodyKey ? current : body;
+        });
+        setLatestLoading(false);
+        setLatestError(null);
+      });
       return;
     }
     if (!body && !loadLatest) {
