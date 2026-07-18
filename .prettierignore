@@ -9,4 +9,5 @@ build
 coverage
 out
 pnpm-lock.yaml
+.pnpm-store
 src/lib/supabase/database.types.ts

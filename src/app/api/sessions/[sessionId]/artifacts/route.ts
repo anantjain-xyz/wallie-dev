@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -16,12 +17,15 @@ const paramsSchema = z.object({
   sessionId: z.string().uuid("Session id is invalid."),
 });
 
-const artifactQuerySchema = z.object({
-  stage: z
-    .string()
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-    .optional(),
-});
+const artifactQuerySchema = z
+  .object({
+    stage: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    latest: z.literal("true").optional(),
+    version: z.coerce.number().int().positive().optional(),
+  })
+  .refine(({ latest, version }) => !(latest && version), {
+    message: "Choose either latest or a version, not both.",
+  });
 
 export async function GET(request: Request, context: RouteContext) {
   const params = await context.params;
@@ -35,7 +39,9 @@ export async function GET(request: Request, context: RouteContext) {
 
   const url = new URL(request.url);
   const parsedQuery = artifactQuerySchema.safeParse({
+    latest: url.searchParams.get("latest") ?? undefined,
     stage: url.searchParams.get("stage") ?? undefined,
+    version: url.searchParams.get("version") ?? undefined,
   });
   if (!parsedQuery.success) {
     return NextResponse.json(
@@ -63,17 +69,47 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
 
-  let artifactQuery = supabase
-    .from("session_artifacts")
-    .select("artifact_json, created_at, stage_slug, version")
-    .eq("session_id", parsedParams.data.sessionId)
-    .order("version", { ascending: false });
+  const { latest, stage, version } = parsedQuery.data;
 
-  if (parsedQuery.data.stage) {
-    artifactQuery = artifactQuery.eq("stage_slug", parsedQuery.data.stage);
+  if (latest || version) {
+    let bodyQuery = supabase
+      .from("session_artifacts")
+      .select("artifact_json, created_at, stage_slug, version")
+      .eq("session_id", parsedParams.data.sessionId)
+      .eq("stage_slug", stage)
+      .order("version", { ascending: false });
+
+    if (version) {
+      bodyQuery = bodyQuery.eq("version", version);
+    }
+
+    const { data: artifactRow, error: artifactError } = await bodyQuery.limit(1).maybeSingle();
+    if (artifactError) {
+      return NextResponse.json({ error: artifactError.message }, { status: 500 });
+    }
+    if (!artifactRow) {
+      return NextResponse.json({ error: "Artifact not found." }, { status: 404 });
+    }
+
+    const payload = artifactRow.artifact_json;
+    return NextResponse.json({
+      artifact: {
+        createdAt: artifactRow.created_at,
+        payload,
+        sanitizedHtml: typeof payload === "string" ? await renderMarkdownToHtml(payload) : null,
+        stageSlug: artifactRow.stage_slug,
+        version: artifactRow.version,
+      },
+    });
   }
 
-  const { data: artifactRows, error: artifactError } = await artifactQuery;
+  const { data: artifactRows, error: artifactError } = await supabase
+    .from("session_artifacts")
+    .select("created_at, stage_slug, version")
+    .eq("session_id", parsedParams.data.sessionId)
+    .eq("stage_slug", stage)
+    .order("version", { ascending: false });
+
   if (artifactError) {
     return NextResponse.json({ error: artifactError.message }, { status: 500 });
   }
@@ -81,7 +117,6 @@ export async function GET(request: Request, context: RouteContext) {
   return NextResponse.json({
     artifacts: (artifactRows ?? []).map((row) => ({
       createdAt: row.created_at,
-      payload: row.artifact_json,
       stageSlug: row.stage_slug,
       version: row.version,
     })),
