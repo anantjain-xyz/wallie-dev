@@ -21,13 +21,18 @@ import {
 } from "@/lib/linear-routing/contracts";
 import { credentialExpired, isCodexCredentialType } from "@/lib/codex/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
+import { getLatestSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/server";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Json, Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import {
+  type OnboardingSetupHealthDelta,
   type OnboardingSetupHealth,
   WORKSPACE_ONBOARDING_STEPS,
+  type WorkspaceOnboardingConflictResponse,
+  type WorkspaceOnboardingMutationDelta,
+  type WorkspaceOnboardingMutationRequest,
   type WorkspaceOnboardingState,
   type WorkspaceOnboardingStep,
   type WorkspaceOnboardingUpdatePayload,
@@ -83,6 +88,19 @@ type OnboardingDataResult =
     }
   | OnboardingAccessFailure;
 
+type OnboardingMutationResult =
+  | {
+      data: WorkspaceOnboardingMutationDelta;
+      ok: true;
+    }
+  | OnboardingAccessFailure
+  | {
+      conflict: WorkspaceOnboardingConflictResponse;
+      error: string;
+      ok: false;
+      status: 409;
+    };
+
 type SandboxCapabilityCheckRow = Pick<
   Tables<"sandbox_capability_checks">,
   | "capabilities"
@@ -125,6 +143,19 @@ function mapOnboardingRow(row: Tables<"workspace_onboarding">): WorkspaceOnboard
     status: workspaceOnboardingStatusSchema.parse(row.status),
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,
+  };
+}
+
+function mapOnboardingStepState(row: Tables<"workspace_onboarding">) {
+  const onboarding = mapOnboardingRow(row);
+  return {
+    completedAt: onboarding.completedAt,
+    completedSteps: onboarding.completedSteps,
+    currentStep: onboarding.currentStep,
+    dismissedAt: onboarding.dismissedAt,
+    selectedGithubRepositoryId: onboarding.selectedGithubRepositoryId,
+    skippedSteps: onboarding.skippedSteps,
+    status: onboarding.status,
   };
 }
 
@@ -281,7 +312,7 @@ function loadOnboardingSnapshotRows(
   workspaceId: string,
 ) {
   // These forward-migration RPCs are intentionally not hand-added to generated database.types.ts.
-  const rpc = admin.rpc as unknown as (
+  const rpc = admin.rpc.bind(admin) as unknown as (
     name: OnboardingSnapshotRpcName,
     args: { target_workspace_id: string },
   ) => OnboardingSnapshotRpcResult;
@@ -719,10 +750,165 @@ export async function loadWorkspaceOnboardingDataForContext(
   return { data, ok: true };
 }
 
+async function loadRepositorySelectionHealthDelta(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+  selectedRepositoryId: string | null,
+): Promise<OnboardingSetupHealthDelta> {
+  if (!selectedRepositoryId) {
+    return {
+      latestSandboxCapabilityCheck: null,
+      primaryRepositoryProfile: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+      repositorySetup: {
+        configured: false,
+        repositoryId: null,
+        status: "placeholder",
+      },
+      selectedRepository: {
+        configured: false,
+        fullName: null,
+        repositoryId: null,
+        status: "missing",
+      },
+    };
+  }
+
+  const [repositoryResult, profileResult, setupResult, latestSandboxCapabilityCheck] =
+    await Promise.all([
+      admin
+        .from("github_repositories")
+        .select("id, full_name, is_archived")
+        .eq("workspace_id", workspaceId)
+        .eq("id", selectedRepositoryId)
+        .maybeSingle(),
+      admin
+        .from("workspace_repository_profiles")
+        .select("github_repository_id")
+        .eq("workspace_id", workspaceId)
+        .eq("is_primary", true)
+        .maybeSingle(),
+      admin
+        .from("repository_onboarding_status")
+        .select("github_repository_id, status")
+        .eq("workspace_id", workspaceId)
+        .eq("github_repository_id", selectedRepositoryId)
+        .maybeSingle(),
+      getLatestSandboxCapabilityCheck({
+        admin,
+        repositoryId: selectedRepositoryId,
+        workspaceId,
+      }),
+    ]);
+
+  const firstError = repositoryResult.error ?? profileResult.error ?? setupResult.error;
+  if (firstError) throw firstError;
+
+  const repository =
+    repositoryResult.data && !repositoryResult.data.is_archived ? repositoryResult.data : null;
+  const primaryProfileMatches =
+    Boolean(repository) && profileResult.data?.github_repository_id === selectedRepositoryId;
+  const setupStatus = repository ? setupResult.data?.status : undefined;
+  const repositorySetupStatus =
+    setupStatus === "not_set_up" ||
+    setupStatus === "pr_open" ||
+    setupStatus === "ready" ||
+    setupStatus === "conflict" ||
+    setupStatus === "error"
+      ? setupStatus
+      : "placeholder";
+
+  return {
+    latestSandboxCapabilityCheck,
+    primaryRepositoryProfile: {
+      configured: primaryProfileMatches,
+      fullName: primaryProfileMatches ? (repository?.full_name ?? null) : null,
+      repositoryId: primaryProfileMatches ? selectedRepositoryId : null,
+      status: primaryProfileMatches ? "ready" : "missing",
+    },
+    repositorySetup: {
+      configured: repositorySetupStatus === "ready",
+      repositoryId: repository ? selectedRepositoryId : null,
+      status: repositorySetupStatus,
+    },
+    selectedRepository: {
+      configured: Boolean(repository),
+      fullName: repository?.full_name ?? null,
+      repositoryId: repository?.id ?? null,
+      status: repository ? "ready" : "missing",
+    },
+  };
+}
+
+async function mutationSetupHealthDelta(input: {
+  action: WorkspaceOnboardingMutationRequest["action"] | "complete";
+  admin: ReturnType<typeof createSupabaseAdminClient>;
+  row: Tables<"workspace_onboarding">;
+  workspaceId: string;
+}) {
+  return input.action === "repository-selection"
+    ? loadRepositorySelectionHealthDelta(
+        input.admin,
+        input.workspaceId,
+        input.row.selected_github_repository_id,
+      )
+    : {};
+}
+
+async function buildOnboardingConflict(input: {
+  action: WorkspaceOnboardingMutationRequest["action"] | "complete";
+  admin: ReturnType<typeof createSupabaseAdminClient>;
+  row: Tables<"workspace_onboarding">;
+  step: WorkspaceOnboardingStep;
+  workspaceId: string;
+}): Promise<WorkspaceOnboardingConflictResponse> {
+  const setupHealth = await loadRepositorySelectionHealthDelta(
+    input.admin,
+    input.workspaceId,
+    input.row.selected_github_repository_id,
+  );
+  return {
+    action: input.action,
+    authoritative: {
+      onboarding: mapOnboardingStepState(input.row),
+      setupHealth,
+      updatedAt: input.row.updated_at,
+    },
+    error:
+      "Onboarding changed in another session. Latest progress was restored; retry your action.",
+    kind: "onboarding-conflict",
+    retryable: true,
+    step: input.step,
+    validationErrors: [],
+  };
+}
+
+async function buildOnboardingMutationDelta(input: {
+  action: WorkspaceOnboardingMutationRequest["action"] | "complete";
+  admin: ReturnType<typeof createSupabaseAdminClient>;
+  row: Tables<"workspace_onboarding">;
+  step: WorkspaceOnboardingStep;
+  workspaceId: string;
+}): Promise<WorkspaceOnboardingMutationDelta> {
+  return {
+    action: input.action,
+    kind: "onboarding-mutation",
+    onboarding: mapOnboardingStepState(input.row),
+    setupHealth: await mutationSetupHealthDelta(input),
+    step: input.step,
+    updatedAt: input.row.updated_at,
+    validationErrors: [],
+  };
+}
+
 export async function updateWorkspaceOnboardingData(
   workspaceId: string,
-  payload: WorkspaceOnboardingUpdatePayload,
-): Promise<OnboardingDataResult> {
+  request: WorkspaceOnboardingMutationRequest,
+): Promise<OnboardingMutationResult> {
   const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
 
   if (!access.ok) {
@@ -742,10 +928,21 @@ export async function updateWorkspaceOnboardingData(
 
   if (currentError) throw currentError;
 
+  if (currentRow.updated_at !== request.expectedUpdatedAt) {
+    const conflict = await buildOnboardingConflict({
+      action: request.action,
+      admin,
+      row: currentRow,
+      step: request.step,
+      workspaceId: access.context.workspace.id,
+    });
+    return { conflict, error: conflict.error, ok: false, status: 409 };
+  }
+
   const normalizedPayload = await normalizeWorkspaceOnboardingUpdatePayload({
     admin,
     currentRow,
-    payload,
+    payload: request.changes,
     workspaceId: access.context.workspace.id,
   });
 
@@ -759,16 +956,39 @@ export async function updateWorkspaceOnboardingData(
     .from("workspace_onboarding")
     .update(updatePayload)
     .eq("workspace_id", access.context.workspace.id)
+    .eq("updated_at", request.expectedUpdatedAt)
     .select(onboardingSelect)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
-  const onboardingData = await buildWorkspaceOnboardingData(access.context, {
-    onboardingRow: data,
-  });
-  if (!onboardingData) return { error: "Workspace not found.", ok: false, status: 404 };
-  return { data: onboardingData, ok: true };
+  if (!data) {
+    const { data: authoritativeRow, error: authoritativeError } = await access.context.supabase
+      .from("workspace_onboarding")
+      .select(onboardingSelect)
+      .eq("workspace_id", access.context.workspace.id)
+      .single();
+    if (authoritativeError) throw authoritativeError;
+    const conflict = await buildOnboardingConflict({
+      action: request.action,
+      admin,
+      row: authoritativeRow,
+      step: request.step,
+      workspaceId: access.context.workspace.id,
+    });
+    return { conflict, error: conflict.error, ok: false, status: 409 };
+  }
+
+  return {
+    data: await buildOnboardingMutationDelta({
+      action: request.action,
+      admin,
+      row: data,
+      step: request.step,
+      workspaceId: access.context.workspace.id,
+    }),
+    ok: true,
+  };
 }
 
 const REPOSITORY_SELECTION_DEPENDENT_STEPS = new Set<WorkspaceOnboardingStep>([
@@ -876,11 +1096,12 @@ export async function normalizeWorkspaceOnboardingUpdatePayload(input: {
 
 type CompleteOnboardingResult =
   | {
-      data: WorkspaceOnboardingData;
+      data: WorkspaceOnboardingMutationDelta;
       ok: true;
     }
   | {
       blockers?: VerifyBlocker[];
+      conflict?: WorkspaceOnboardingConflictResponse;
       error: string;
       ok: false;
       status: 400 | 401 | 403 | 404 | 409;
@@ -888,6 +1109,7 @@ type CompleteOnboardingResult =
 
 export async function completeWorkspaceOnboarding(
   workspaceId: string,
+  expectedUpdatedAt: string,
 ): Promise<CompleteOnboardingResult> {
   const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });
 
@@ -906,6 +1128,18 @@ export async function completeWorkspaceOnboarding(
     .single();
 
   if (onboardingError) throw onboardingError;
+
+  const admin = createSupabaseAdminClient();
+  if (onboardingRow.updated_at !== expectedUpdatedAt) {
+    const conflict = await buildOnboardingConflict({
+      action: "complete",
+      admin,
+      row: onboardingRow,
+      step: "verify",
+      workspaceId: access.context.workspace.id,
+    });
+    return { conflict, error: conflict.error, ok: false, status: 409 };
+  }
 
   const currentData = await buildWorkspaceOnboardingData(access.context, { onboardingRow });
   if (!currentData) {
@@ -939,18 +1173,39 @@ export async function completeWorkspaceOnboarding(
     .from("workspace_onboarding")
     .update(updatePayload)
     .eq("workspace_id", access.context.workspace.id)
+    .eq("updated_at", expectedUpdatedAt)
     .select(onboardingSelect)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
-  const completedData = await buildWorkspaceOnboardingData(access.context, {
-    onboardingRow: data,
-  });
-  if (!completedData) {
-    return { error: "Workspace not found.", ok: false, status: 404 };
+  if (!data) {
+    const { data: authoritativeRow, error: authoritativeError } = await access.context.supabase
+      .from("workspace_onboarding")
+      .select(onboardingSelect)
+      .eq("workspace_id", access.context.workspace.id)
+      .single();
+    if (authoritativeError) throw authoritativeError;
+    const conflict = await buildOnboardingConflict({
+      action: "complete",
+      admin,
+      row: authoritativeRow,
+      step: "verify",
+      workspaceId: access.context.workspace.id,
+    });
+    return { conflict, error: conflict.error, ok: false, status: 409 };
   }
-  return { data: completedData, ok: true };
+
+  return {
+    data: await buildOnboardingMutationDelta({
+      action: "complete",
+      admin,
+      row: data,
+      step: "verify",
+      workspaceId: access.context.workspace.id,
+    }),
+    ok: true,
+  };
 }
 
 export function buildWorkspaceOnboardingUpdatePayload(

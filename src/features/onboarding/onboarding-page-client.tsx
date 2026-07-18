@@ -32,6 +32,7 @@ import {
 } from "@/features/onboarding/flow";
 import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
 import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import {
   buildRuntimeReadiness,
@@ -60,6 +61,10 @@ import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type {
   OnboardingSetupHealth,
+  WorkspaceOnboardingConflictResponse,
+  WorkspaceOnboardingMutationAction,
+  WorkspaceOnboardingMutationDelta,
+  WorkspaceOnboardingMutationErrorResponse,
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
@@ -118,6 +123,12 @@ type OnboardingDataUpdate =
   | WorkspaceOnboardingData
   | ((currentData: WorkspaceOnboardingData) => WorkspaceOnboardingData);
 type OnboardingDataChange = (update: OnboardingDataUpdate) => void;
+
+type PersistOnboardingAction = {
+  action: WorkspaceOnboardingMutationAction;
+  savingAction: string;
+  step: WorkspaceOnboardingStep;
+};
 
 type RuntimeCompletionState = {
   hasInvalidDrafts: boolean;
@@ -1874,6 +1885,7 @@ function StepBody({
   onRepositoryProfileSaved,
   onRepositorySetupMessage,
   onRuntimeStateChange,
+  onPipelineCompleted,
   onSelectStep,
   onSelectGithubRepository,
   profileAnalyzing,
@@ -1886,6 +1898,10 @@ function StepBody({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
+  onPipelineCompleted: (
+    action: string,
+    pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+  ) => Promise<void>;
   onAnalyzeRepository: (repository: WorkspaceGitHubRepository) => void;
   onDataChange: OnboardingDataChange;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
@@ -1968,7 +1984,7 @@ function StepBody({
     controls = (
       <OnboardingPipelineEditor
         canManage={data.canManage}
-        onCompleted={onCompleteStep}
+        onCompleted={onPipelineCompleted}
         pipeline={data.pipeline}
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
@@ -2140,6 +2156,7 @@ export function isRepositorySelectionCurrent(
 export function applySavedRepositoryProfileToData(
   currentData: WorkspaceOnboardingData,
   profile: EditableProfile,
+  latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null,
 ): WorkspaceOnboardingData {
   const nextGithub: WorkspaceGitHubData = {
     ...currentData.github,
@@ -2159,10 +2176,32 @@ export function applySavedRepositoryProfileToData(
     ...currentData,
     github: nextGithub,
     setupHealth: applyGithubHealth(
-      currentData.setupHealth,
+      {
+        ...currentData.setupHealth,
+        latestSandboxCapabilityCheck,
+      },
       nextGithub,
       currentData.onboarding.selectedGithubRepositoryId,
     ),
+  };
+}
+
+export function applySavedPipelineToData(
+  currentData: WorkspaceOnboardingData,
+  pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    pipeline,
+    setupHealth: {
+      ...currentData.setupHealth,
+      defaultPipeline: {
+        configured: pipeline.stages.length > 0,
+        pipelineId: pipeline.id,
+        stageCount: pipeline.stages.length,
+        status: pipeline.stages.length > 0 ? "ready" : "missing",
+      },
+    },
   };
 }
 
@@ -2333,29 +2372,49 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     scrollOnboardingSetupToTop();
   }, [onboarding.currentStep]);
 
-  async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
+  async function persistOnboarding(
+    changes: WorkspaceOnboardingUpdatePayload,
+    mutation: PersistOnboardingAction,
+  ) {
     if (!data.canManage || saveInFlightRef.current) return null;
 
     saveInFlightRef.current = true;
-    setSavingAction(action);
+    setSavingAction(mutation.savingAction);
     setError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding`, {
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          action: mutation.action,
+          changes,
+          expectedUpdatedAt: latestDataRef.current.onboarding.updatedAt,
+          step: mutation.step,
+        }),
         headers: { "content-type": "application/json" },
         method: "PATCH",
       });
 
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Failed to save onboarding state.");
+      const body = (await response.json().catch(() => null)) as
+        | WorkspaceOnboardingConflictResponse
+        | WorkspaceOnboardingMutationDelta
+        | WorkspaceOnboardingMutationErrorResponse
+        | null;
+
+      if (body?.kind === "onboarding-conflict") {
+        const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
+        latestDataRef.current = nextData;
+        setData(nextData);
+        throw new Error(body.error);
       }
 
-      const nextData = (await response.json()) as WorkspaceOnboardingData;
+      if (!response.ok || body?.kind !== "onboarding-mutation") {
+        const message = body && "error" in body ? body.error : "Failed to save onboarding state.";
+        throw new Error(message);
+      }
+
+      const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
       latestDataRef.current = nextData;
       setData(nextData);
-      router.refresh();
       return nextData;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to save onboarding state.");
@@ -2385,7 +2444,6 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       const nextData = (await response.json()) as WorkspaceOnboardingData;
       latestDataRef.current = nextData;
       setData(nextData);
-      router.refresh();
       return nextData;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to refresh onboarding state.");
@@ -2399,10 +2457,24 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     const patch = buildOnboardingStepCompletionPatch(latestDataRef.current.onboarding);
     if (!patch) return;
 
-    const nextData = await persistOnboarding(patch, action);
+    const nextData = await persistOnboarding(patch, {
+      action: "step-complete",
+      savingAction: action,
+      step: latestDataRef.current.onboarding.currentStep,
+    });
     if (!nextData) {
       throw new Error("Failed to save onboarding state.");
     }
+  }
+
+  async function completePipelineStep(
+    action: string,
+    pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+  ) {
+    const nextData = applySavedPipelineToData(latestDataRef.current, pipeline);
+    latestDataRef.current = nextData;
+    setData(nextData);
+    await completeCurrentStep(action);
   }
 
   async function continueSetup() {
@@ -2414,11 +2486,19 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     if (inlineCompletionUnavailable) {
       const patch = buildOnboardingAdvancePatch(onboarding);
       if (!patch) return;
-      await persistOnboarding(patch, "continue");
+      await persistOnboarding(patch, {
+        action: "continue",
+        savingAction: "continue",
+        step: onboarding.currentStep,
+      });
       return;
     }
 
-    await persistOnboarding(buildOnboardingContinuePatch(onboarding), "continue");
+    await persistOnboarding(buildOnboardingContinuePatch(onboarding), {
+      action: "continue",
+      savingAction: "continue",
+      step: onboarding.currentStep,
+    });
   }
 
   async function completeOnboarding() {
@@ -2430,26 +2510,38 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
 
     try {
       const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding/complete`, {
+        body: JSON.stringify({ expectedUpdatedAt: latestDataRef.current.onboarding.updatedAt }),
+        headers: { "content-type": "application/json" },
         method: "POST",
       });
       const body = (await response.json().catch(() => null)) as
-        | (WorkspaceOnboardingData & {
+        | (WorkspaceOnboardingMutationErrorResponse & {
             blockers?: ReturnType<typeof verifyBlockersFromChecklist>;
-            error?: string;
           })
+        | WorkspaceOnboardingConflictResponse
+        | WorkspaceOnboardingMutationDelta
         | null;
 
-      if (!response.ok || !body || "error" in body) {
-        const blockerText = body?.blockers?.length
-          ? ` Blocked: ${body.blockers.map((blocker) => blocker.label).join(", ")}.`
-          : "";
-        throw new Error((body?.error ?? "Failed to complete onboarding.") + blockerText);
+      if (body?.kind === "onboarding-conflict") {
+        const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
+        latestDataRef.current = nextData;
+        setData(nextData);
+        throw new Error(body.error);
       }
 
-      latestDataRef.current = body;
-      setData(body);
-      router.refresh();
-      router.push(workspaceBasePath(body.workspace.slug));
+      if (!response.ok || body?.kind !== "onboarding-mutation") {
+        const blockerText =
+          body && "blockers" in body && body.blockers?.length
+            ? ` Blocked: ${body.blockers.map((blocker) => blocker.label).join(", ")}.`
+            : "";
+        const message = body && "error" in body ? body.error : "Failed to complete onboarding.";
+        throw new Error(message + blockerText);
+      }
+
+      const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
+      latestDataRef.current = nextData;
+      setData(nextData);
+      router.push(workspaceBasePath(data.workspace.slug));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to complete onboarding.");
     } finally {
@@ -2461,7 +2553,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   async function skipStep() {
     const patch = buildOnboardingSkipPatch(onboarding);
     if (!patch) return;
-    await persistOnboarding(patch, "skip");
+    await persistOnboarding(patch, {
+      action: "skip",
+      savingAction: "skip",
+      step: onboarding.currentStep,
+    });
   }
 
   async function goBack() {
@@ -2469,7 +2565,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     if (!previousStep) return;
     const patch = buildOnboardingRailNavigationPatch(onboarding, previousStep);
     if (!patch) return;
-    await persistOnboarding(patch, "back");
+    await persistOnboarding(patch, {
+      action: "navigate",
+      savingAction: "back",
+      step: previousStep,
+    });
   }
 
   async function selectStep(step: WorkspaceOnboardingStep) {
@@ -2481,12 +2581,22 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       setData(nextData);
     }
     if (!data.canManage || !patch) return;
-    await persistOnboarding(patch, `rail:${step}`);
+    await persistOnboarding(patch, {
+      action: "navigate",
+      savingAction: `rail:${step}`,
+      step,
+    });
   }
 
   async function exitSetup() {
     const patch = data.canManage ? buildOnboardingExitPatch(onboarding) : null;
-    const nextData = patch ? await persistOnboarding(patch, "exit") : data;
+    const nextData = patch
+      ? await persistOnboarding(patch, {
+          action: "exit",
+          savingAction: "exit",
+          step: onboarding.currentStep,
+        })
+      : data;
     if (nextData) {
       router.push(workspaceBasePath(data.workspace.slug));
     }
@@ -2548,7 +2658,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       return true;
     }
 
-    const nextData = await persistOnboarding(patch, "repository-selection");
+    const nextData = await persistOnboarding(patch, {
+      action: "repository-selection",
+      savingAction: "repository-selection",
+      step: "repository",
+    });
     if (!nextData) return false;
 
     selectedRepositoryIdRef.current = repository.id;
@@ -2631,8 +2745,15 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         throw new Error(body?.error ?? "Failed to save repository profile.");
       }
 
-      const body = (await response.json()) as { profile: EditableProfile };
-      const nextData = applySavedRepositoryProfileToData(latestDataRef.current, body.profile);
+      const body = (await response.json()) as {
+        latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+        profile: EditableProfile;
+      };
+      const nextData = applySavedRepositoryProfileToData(
+        latestDataRef.current,
+        body.profile,
+        body.latestSandboxCapabilityCheck,
+      );
       latestDataRef.current = nextData;
       setData(nextData);
 
@@ -2645,7 +2766,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         ? buildRepositoryProfileCompletionPatch(latestDataRef.current.onboarding)
         : null;
       if (completionPatch) {
-        await persistOnboarding(completionPatch, "repository-profile");
+        await persistOnboarding(completionPatch, {
+          action: "step-complete",
+          savingAction: "repository-profile",
+          step: "repository",
+        });
       }
     } catch (caught) {
       setProfileError(
@@ -2714,6 +2839,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               data={data}
               isSaving={isSaving}
               onCompleteStep={completeCurrentStep}
+              onPipelineCompleted={completePipelineStep}
               onAnalyzeRepository={(repository) => void analyzeRepository(repository)}
               onDataChange={updateData}
               onInferRepository={(repository) => void inferRepositoryProfile(repository)}

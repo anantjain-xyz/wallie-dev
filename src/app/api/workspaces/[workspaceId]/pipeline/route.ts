@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { loadDefaultPipelineForWorkspace } from "@/lib/pipeline/stages";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -124,5 +125,10 @@ export async function PUT(request: Request, context: RouteContext) {
     }
   }
 
-  return NextResponse.json({ success: true });
+  const pipeline = await loadDefaultPipelineForWorkspace(admin, workspaceId);
+  if (!pipeline) {
+    return NextResponse.json({ error: "Workspace has no default pipeline." }, { status: 404 });
+  }
+
+  return NextResponse.json({ pipeline, success: true });
 }
