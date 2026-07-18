@@ -12,7 +12,6 @@ import {
   deriveSessionTitleFromPrompt,
   type SessionRepositoryOption,
 } from "@/features/sessions/types";
-import { workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type CreateSessionDialogProps = {
@@ -43,7 +42,6 @@ function CreateSessionDialogBody({
   defaultGithubRepositoryId,
   onClose,
   workspaceId,
-  workspaceSlug,
 }: CreateSessionDialogProps) {
   const titleId = useId();
   const router = useRouter();
@@ -176,8 +174,7 @@ function CreateSessionDialogBody({
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
       onClose();
-      router.push(workspaceSessionDetailPath(workspaceSlug, result.number));
-      router.refresh();
+      router.push(result.canonicalUrl);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
       setIsSubmitting(false);

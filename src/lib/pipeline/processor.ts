@@ -64,6 +64,13 @@ const RUN_FAILURE_UNQUOTED_SECRET_ASSIGNMENT_PATTERN = new RegExp(
 export type PipelinePhaseActionResult = {
   error?: string;
   jobId?: string | null;
+  session?: {
+    archivedAt: string | null;
+    currentArtifactVersion: number | null;
+    currentStageId: string;
+    phaseStatus: Tables<"sessions">["phase_status"];
+    rejectionCount: number;
+  };
   success: boolean;
 };
 
@@ -654,18 +661,48 @@ export async function handleApproval(input: {
         workspaceId: input.expectedWorkspaceId,
       });
 
-      return { jobId: queued.jobId, success: true };
+      return {
+        jobId: queued.jobId,
+        session: {
+          archivedAt: row.archived_at,
+          currentArtifactVersion: 0,
+          currentStageId: row.current_stage_id,
+          phaseStatus: row.phase_status,
+          rejectionCount: 0,
+        },
+        success: true,
+      };
     } catch (error) {
       console.error("Approved stage but failed to queue Wallie", {
         error: getErrorMessage(error, "Approved stage but failed to queue Wallie."),
         sessionId: input.sessionId,
         workspaceId: input.expectedWorkspaceId,
       });
-      return { jobId: null, success: true };
+      return {
+        jobId: null,
+        session: {
+          archivedAt: row.archived_at,
+          currentArtifactVersion: 0,
+          currentStageId: row.current_stage_id,
+          phaseStatus: row.phase_status,
+          rejectionCount: 0,
+        },
+        success: true,
+      };
     }
   }
 
-  return { jobId: null, success: true };
+  return {
+    jobId: null,
+    session: {
+      archivedAt: row.archived_at,
+      currentArtifactVersion: row.phase_status === "approved" ? input.version : 0,
+      currentStageId: row.current_stage_id,
+      phaseStatus: row.phase_status,
+      rejectionCount: 0,
+    },
+    success: true,
+  };
 }
 
 export async function handleRejection(input: {
@@ -784,7 +821,17 @@ export async function handleRejection(input: {
 
   await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
 
-  return { jobId: queued.jobId, success: true };
+  return {
+    jobId: queued.jobId,
+    session: {
+      archivedAt: session.archived_at,
+      currentArtifactVersion: session.current_artifact_version,
+      currentStageId: session.current_stage_id,
+      phaseStatus: "rejected",
+      rejectionCount: newRejectionCount,
+    },
+    success: true,
+  };
 }
 
 // --- Data access helpers ---

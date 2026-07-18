@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -21,6 +21,12 @@ import {
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
 } from "@/features/sessions/detail/realtime";
+import {
+  applySessionMutationPatch,
+  rollbackSessionMutationPatch,
+  runOptimisticMutation,
+  type SessionMutationPatch,
+} from "@/features/sessions/optimistic";
 import {
   isTerminalStage,
   stageIndex,
@@ -176,10 +182,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [stopPending, setStopPending] = useState(false);
-  const [archivePending, setArchivePending] = useState(false);
+  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
 
   // Gate locale/timezone-sensitive timestamps so the absolute "Created" date
   // renders identically on the server and during the first client paint, then
@@ -218,11 +223,15 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const latestArtifact = activeArtifacts[0] ?? null;
   const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
   const isDraftingSelectedStage =
-    selectedStageIsCurrent && session.phaseStatus === "agent_generating" && !session.archivedAt;
+    selectedStageIsCurrent &&
+    (session.phaseStatus === "agent_generating" || stopPending) &&
+    !session.archivedAt;
 
   const canActOnCurrent =
-    selectedStageIsCurrent && session.phaseStatus === "awaiting_review" && !session.archivedAt;
-  const phaseActionBusy = phaseActionPending !== null || isPending;
+    selectedStageIsCurrent &&
+    (session.phaseStatus === "awaiting_review" || phaseActionPending !== null) &&
+    !session.archivedAt;
+  const phaseActionBusy = phaseActionPending !== null;
 
   useEffect(() => {
     setSession(initialData.session);
@@ -327,12 +336,6 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     },
   );
 
-  const refreshSessionFromServer = useEffectEvent(() => {
-    startTransition(() => {
-      router.refresh();
-    });
-  });
-
   useEffect(() => {
     const channel = supabase
       .channel(`session-detail:${session.id}`)
@@ -346,7 +349,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            refreshSessionFromServer();
+            router.replace(workspaceSessionsPath(initialData.workspace.slug));
             return;
           }
 
@@ -363,7 +366,17 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            refreshSessionFromServer();
+            const deleted = payload.old as Pick<
+              Tables<"session_artifacts">,
+              "stage_slug" | "version"
+            >;
+            setSession((current) => ({
+              ...current,
+              artifacts: current.artifacts.filter(
+                (artifact) =>
+                  artifact.stageSlug !== deleted.stage_slug || artifact.version !== deleted.version,
+              ),
+            }));
             return;
           }
 
@@ -380,7 +393,13 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            refreshSessionFromServer();
+            const deleted = payload.old as Pick<Tables<"session_phase_completions">, "stage_slug">;
+            setSession((current) => ({
+              ...current,
+              phaseCompletions: current.phaseCompletions.filter(
+                (completion) => completion.stageSlug !== deleted.stage_slug,
+              ),
+            }));
             return;
           }
 
@@ -395,8 +414,42 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           schema: "public",
           table: "session_pull_requests",
         },
-        () => {
-          refreshSessionFromServer();
+        (payload) => {
+          const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as Pick<
+            Tables<"session_pull_requests">,
+            | "branch_name"
+            | "id"
+            | "is_draft"
+            | "pull_request_number"
+            | "pull_request_state"
+            | "pull_request_url"
+            | "updated_at"
+          >;
+          setSession((current) => {
+            const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
+            if (existing && Date.parse(row.updated_at) <= Date.parse(existing.updatedAt)) {
+              return current;
+            }
+            const pullRequests = current.pullRequests.filter(
+              (pullRequest) => pullRequest.id !== row.id,
+            );
+
+            if (payload.eventType !== "DELETE") {
+              pullRequests.push({
+                branchName: row.branch_name,
+                id: row.id,
+                isDraft: row.is_draft,
+                pullRequestNumber: row.pull_request_number,
+                pullRequestState: row.pull_request_state,
+                pullRequestUrl: row.pull_request_url,
+                repositoryFullName: existing?.repositoryFullName ?? null,
+                repositoryHtmlUrl: existing?.repositoryHtmlUrl ?? null,
+                updatedAt: row.updated_at,
+              });
+            }
+
+            return { ...current, pullRequestCount: pullRequests.length, pullRequests };
+          });
         },
       )
       .subscribe();
@@ -404,7 +457,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [session.id, supabase]);
+  }, [initialData.workspace.slug, router, session.id, supabase]);
 
   async function handlePhaseAction(action: "approve" | "reject") {
     if (action === "reject") {
@@ -417,59 +470,142 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
     setActionError(null);
     setPhaseActionPending(action);
 
-    try {
-      const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
-        body: JSON.stringify({
-          action,
-          feedbackText: action === "reject" ? feedbackDraft.trim() : undefined,
-          version: session.currentArtifactVersion ?? 1,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      });
+    const previousStageSlug = session.currentStageSlug;
+    const previousPatch: SessionMutationPatch = {
+      archivedAt: session.archivedAt,
+      currentArtifactVersion: session.currentArtifactVersion,
+      currentStageId: session.currentStageId,
+      phaseStatus: session.phaseStatus,
+      rejectionCount: session.rejectionCount,
+      updatedAt: session.updatedAt,
+    };
+    const nextStage =
+      action === "approve"
+        ? session.pipeline.stages[stageIndex(session.pipeline, session.currentStageSlug) + 1]
+        : null;
+    const optimisticCompletion = {
+      completedAt: new Date().toISOString(),
+      stageSlug: session.currentStageSlug,
+    };
+    const optimisticPhaseCompletions = [
+      ...session.phaseCompletions.filter(
+        (completion) => completion.stageSlug !== session.currentStageSlug,
+      ),
+      optimisticCompletion,
+    ];
+    if (action === "approve") {
+      previousPatch.phaseCompletions = session.phaseCompletions;
+    }
+    const optimisticPatch: SessionMutationPatch =
+      action === "reject"
+        ? { phaseStatus: "rejected", rejectionCount: session.rejectionCount + 1 }
+        : nextStage
+          ? {
+              currentArtifactVersion: 0,
+              currentStageId: nextStage.id,
+              phaseCompletions: optimisticPhaseCompletions,
+              phaseStatus: "agent_generating",
+              rejectionCount: 0,
+            }
+          : {
+              archivedAt: new Date().toISOString(),
+              phaseCompletions: optimisticPhaseCompletions,
+              phaseStatus: "approved",
+            };
 
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setActionError(body?.error ?? "Action failed.");
-        return;
-      }
+    try {
+      await runOptimisticMutation({
+        optimistic: () => {
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch));
+          if (nextStage) setSelectedStageSlug(nextStage.slug);
+        },
+        mutate: async () => {
+          const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
+            body: JSON.stringify({
+              action,
+              feedbackText: action === "reject" ? feedbackDraft.trim() : undefined,
+              version: session.currentArtifactVersion ?? 1,
+            }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+            session?: SessionMutationPatch;
+          } | null;
+
+          if (!response.ok) throw new Error(body?.error ?? "Action failed.");
+          if (!body?.session) throw new Error("Action response was invalid.");
+          return body.session;
+        },
+        commit: (result) => {
+          setSession((current) => applySessionMutationPatch(current, result));
+        },
+        rollback: () => {
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          );
+          if (nextStage) {
+            setSelectedStageSlug((currentSlug) =>
+              currentSlug === nextStage.slug ? previousStageSlug : currentSlug,
+            );
+          }
+        },
+      });
 
       setFeedbackDraft("");
       setFeedbackOpen(false);
-      startTransition(() => {
-        router.refresh();
-      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Action failed.");
     } finally {
       setPhaseActionPending(null);
     }
   }
 
-  function handleTitleSaved(nextTitle: string) {
-    setSession((currentSession) => ({ ...currentSession, title: nextTitle }));
-    startTransition(() => {
-      router.refresh();
+  function handleTitleChanged(nextTitle: string, updatedAt?: string, expectedTitle?: string) {
+    setSession((currentSession) => {
+      if (expectedTitle !== undefined && currentSession.title !== expectedTitle) {
+        return currentSession;
+      }
+      return applySessionMutationPatch(currentSession, { title: nextTitle, updatedAt });
     });
   }
 
   async function handleStopRun() {
     setActionError(null);
     setStopPending(true);
+    const optimisticPatch: SessionMutationPatch = { phaseStatus: "rejected" };
+    const previousPatch: SessionMutationPatch = {
+      phaseStatus: session.phaseStatus,
+      updatedAt: session.updatedAt,
+    };
 
     try {
-      const response = await fetch(`/api/sessions/${session.id}/cancel`, {
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
+      await runOptimisticMutation({
+        optimistic: () =>
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
+        mutate: async () => {
+          const response = await fetch(`/api/sessions/${session.id}/cancel`, {
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+            phaseStatus?: SessionDetail["phaseStatus"];
+          } | null;
+          if (!response.ok) throw new Error(body?.error ?? "Could not stop the run.");
+          if (!body?.phaseStatus) throw new Error("Stop response was invalid.");
+          return body.phaseStatus;
+        },
+        commit: (phaseStatus) =>
+          setSession((current) => applySessionMutationPatch(current, { phaseStatus })),
+        rollback: () =>
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          ),
       });
-
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        setActionError(body?.error ?? "Could not stop the run.");
-        return;
-      }
-
-      startTransition(() => {
-        router.refresh();
-      });
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not stop the run.");
     } finally {
       setStopPending(false);
     }
@@ -477,38 +613,72 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
   async function handleArchive() {
     setArchiveError(null);
-    setArchivePending(true);
+    setArchivePending("archive");
+    const optimisticPatch: SessionMutationPatch = {
+      archivedAt: new Date().toISOString(),
+      ...(session.phaseStatus === "agent_generating" ? { phaseStatus: "rejected" as const } : {}),
+    };
+    const previousPatch: SessionMutationPatch = {
+      archivedAt: session.archivedAt,
+      phaseStatus: session.phaseStatus,
+      updatedAt: session.updatedAt,
+    };
 
     try {
-      const result = await archiveSessionFromClient({ sessionId: session.id });
-      setArchiveConfirming(false);
-      // Flip the header immediately; router.refresh() + realtime reconcile the
-      // parked phase_status.
-      setSession((current) => ({ ...current, archivedAt: result.archivedAt }));
-      startTransition(() => {
-        router.refresh();
+      await runOptimisticMutation({
+        optimistic: () =>
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
+        mutate: () => archiveSessionFromClient({ sessionId: session.id }),
+        commit: (result) =>
+          setSession((current) =>
+            applySessionMutationPatch(current, {
+              archivedAt: result.archivedAt,
+              phaseStatus: result.phaseStatus,
+            }),
+          ),
+        rollback: () =>
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          ),
       });
+      setArchiveConfirming(false);
     } catch (error) {
       setArchiveError(error instanceof Error ? error.message : "Failed to archive session.");
     } finally {
-      setArchivePending(false);
+      setArchivePending(null);
     }
   }
 
   async function handleUnarchive() {
     setArchiveError(null);
-    setArchivePending(true);
+    setArchivePending("unarchive");
+    const optimisticPatch: SessionMutationPatch = { archivedAt: null };
+    const previousPatch: SessionMutationPatch = {
+      archivedAt: session.archivedAt,
+      updatedAt: session.updatedAt,
+    };
 
     try {
-      const result = await unarchiveSessionFromClient({ sessionId: session.id });
-      setSession((current) => ({ ...current, archivedAt: result.archivedAt }));
-      startTransition(() => {
-        router.refresh();
+      await runOptimisticMutation({
+        optimistic: () =>
+          setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
+        mutate: () => unarchiveSessionFromClient({ sessionId: session.id }),
+        commit: (result) =>
+          setSession((current) =>
+            applySessionMutationPatch(current, {
+              archivedAt: result.archivedAt,
+              phaseStatus: result.phaseStatus,
+            }),
+          ),
+        rollback: () =>
+          setSession((current) =>
+            rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
+          ),
       });
     } catch (error) {
       setArchiveError(error instanceof Error ? error.message : "Failed to unarchive session.");
     } finally {
-      setArchivePending(false);
+      setArchivePending(null);
     }
   }
 
@@ -519,13 +689,13 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         <button
           type="button"
           className="ui-button gap-1.5"
-          disabled={archivePending}
+          disabled={archivePending !== null}
           onClick={() => void handleUnarchive()}
         >
           {archivePending ? (
             <>
               <Spinner />
-              <span>Unarchiving…</span>
+              <span>{archivePending === "archive" ? "Archiving…" : "Unarchiving…"}</span>
             </>
           ) : (
             "Unarchive"
@@ -546,10 +716,10 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           <button
             type="button"
             className="ui-button-danger gap-1.5"
-            disabled={archivePending}
+            disabled={archivePending !== null}
             onClick={() => void handleArchive()}
           >
-            {archivePending ? (
+            {archivePending === "archive" ? (
               <>
                 <Spinner />
                 <span>Archiving…</span>
@@ -561,7 +731,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           <button
             type="button"
             className="ui-button"
-            disabled={archivePending}
+            disabled={archivePending !== null}
             onClick={() => {
               setArchiveConfirming(false);
               setArchiveError(null);
@@ -574,13 +744,23 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         <button
           type="button"
           className="ui-button gap-1.5"
+          disabled={archivePending !== null}
           onClick={() => {
             setArchiveConfirming(true);
             setArchiveError(null);
           }}
         >
-          <ArchiveIcon className="h-3.5 w-3.5" />
-          <span>Archive</span>
+          {archivePending === "unarchive" ? (
+            <>
+              <Spinner />
+              <span>Unarchiving…</span>
+            </>
+          ) : (
+            <>
+              <ArchiveIcon className="h-3.5 w-3.5" />
+              <span>Archive</span>
+            </>
+          )}
         </button>
       )}
       {archiveError ? (
@@ -611,7 +791,7 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         titleAsChild
         title={
           <EditableSessionTitle
-            onTitleSaved={handleTitleSaved}
+            onTitleChanged={handleTitleChanged}
             sessionId={session.id}
             sessionNumber={session.number}
             title={session.title}
@@ -895,12 +1075,12 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 }
 
 function EditableSessionTitle({
-  onTitleSaved,
+  onTitleChanged,
   sessionId,
   sessionNumber,
   title,
 }: {
-  onTitleSaved: (title: string) => void;
+  onTitleChanged: (title: string, updatedAt?: string, expectedTitle?: string) => void;
   sessionId: string;
   sessionNumber: number;
   title: string;
@@ -947,15 +1127,19 @@ function EditableSessionTitle({
 
     setIsSaving(true);
     setError(null);
+    setIsEditing(false);
+    onTitleChanged(normalizedTitle);
 
     try {
       const result = await updateSessionTitleFromClient({
         sessionId,
         title: normalizedTitle,
       });
-      setIsEditing(false);
-      onTitleSaved(result.title);
+      setDraftTitle(result.title);
+      onTitleChanged(result.title, result.updatedAt);
     } catch (errorValue) {
+      onTitleChanged(title, undefined, normalizedTitle);
+      setIsEditing(true);
       setError(
         errorValue instanceof Error ? errorValue.message : "Failed to update session title.",
       );
@@ -1032,11 +1216,20 @@ function EditableSessionTitle({
       <button
         type="button"
         className="ui-icon-button h-8 w-8 shrink-0"
-        aria-label={`Edit title for session #${sessionNumber}`}
-        title="Edit title"
+        aria-label={
+          isSaving
+            ? `Saving title for session #${sessionNumber}`
+            : `Edit title for session #${sessionNumber}`
+        }
+        title={isSaving ? "Saving title" : "Edit title"}
+        disabled={isSaving}
         onClick={startEditing}
       >
-        <PencilIcon className="h-4 w-4" />
+        {isSaving ? (
+          <Spinner className="h-4 w-4" label="Saving title" />
+        ) : (
+          <PencilIcon className="h-4 w-4" />
+        )}
       </button>
     </div>
   );

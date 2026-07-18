@@ -15,11 +15,13 @@ type Params = { params: Promise<{ sessionId: string }> };
  * read sessions visible through workspace_members, so a non-member gets null →
  * 404. Returns the gating NextResponse on any failure, otherwise the row.
  */
-async function resolveSessionForMember(
-  sessionId: string,
-): Promise<
+async function resolveSessionForMember(sessionId: string): Promise<
   | { response: NextResponse; row?: undefined; userId?: undefined }
-  | { response?: undefined; row: { id: string; workspace_id: string }; userId: string }
+  | {
+      response?: undefined;
+      row: { id: string; phase_status: string; workspace_id: string };
+      userId: string;
+    }
 > {
   const supabase = await createSupabaseServerClient();
   const user = await getSupabaseUserOrNull(supabase);
@@ -30,7 +32,7 @@ async function resolveSessionForMember(
 
   const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, workspace_id")
+    .select("id, workspace_id, phase_status")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -67,7 +69,12 @@ export async function POST(_request: Request, { params }: Params) {
     sessionId: resolved.row.id,
   });
 
-  return NextResponse.json({ archivedAt: result.archivedAt, id: result.id });
+  return NextResponse.json({
+    archivedAt: result.archivedAt,
+    id: result.id,
+    phaseStatus:
+      resolved.row.phase_status === "agent_generating" ? "rejected" : resolved.row.phase_status,
+  });
 }
 
 // Unarchive the session, returning it to its prior phase.
@@ -89,5 +96,9 @@ export async function DELETE(_request: Request, { params }: Params) {
   const admin = createSupabaseAdminClient();
   const result = await unarchiveSession(admin, { sessionId: resolved.row.id });
 
-  return NextResponse.json({ archivedAt: result.archivedAt, id: result.id });
+  return NextResponse.json({
+    archivedAt: result.archivedAt,
+    id: result.id,
+    phaseStatus: resolved.row.phase_status,
+  });
 }

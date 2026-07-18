@@ -1,0 +1,121 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  applySessionMutationPatch,
+  rollbackSessionMutationPatch,
+  runOptimisticMutation,
+} from "@/features/sessions/optimistic";
+import type { SessionDetail } from "@/features/sessions/types";
+
+const session: SessionDetail = {
+  archivedAt: null,
+  artifacts: [],
+  createdAt: "2026-07-17T12:00:00.000Z",
+  currentArtifactVersion: 1,
+  currentStageId: "stage-plan",
+  currentStageName: "Plan",
+  currentStagePosition: 0,
+  currentStageSlug: "plan",
+  id: "session-1",
+  linearIssueId: null,
+  linearIssueUrl: null,
+  number: 1,
+  phaseCompletions: [],
+  phaseStatus: "awaiting_review",
+  pipeline: {
+    id: "pipeline-1",
+    isDefault: true,
+    name: "Default",
+    operatingRulesMd: "",
+    stages: [
+      {
+        approverMemberIds: [],
+        description: "",
+        id: "stage-plan",
+        name: "Plan",
+        pipelineId: "pipeline-1",
+        position: 0,
+        promptTemplateMd: "",
+        slug: "plan",
+      },
+      {
+        approverMemberIds: [],
+        description: "",
+        id: "stage-build",
+        name: "Build",
+        pipelineId: "pipeline-1",
+        position: 1,
+        promptTemplateMd: "",
+        slug: "build",
+      },
+    ],
+  },
+  pipelineId: "pipeline-1",
+  promptMd: "Ship it",
+  pullRequestCount: 0,
+  pullRequests: [],
+  rejectionCount: 0,
+  title: "Original",
+  updatedAt: "2026-07-17T12:00:00.000Z",
+  workspaceId: "workspace-1",
+};
+
+describe("optimistic session mutations", () => {
+  it("applies optimistic state before a delayed response resolves", async () => {
+    let resolveResponse!: (value: { title: string }) => void;
+    const response = new Promise<{ title: string }>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const events: string[] = [];
+
+    const mutation = runOptimisticMutation({
+      optimistic: () => events.push("optimistic"),
+      mutate: () => response,
+      commit: ({ title }) => events.push(`commit:${title}`),
+      rollback: () => events.push("rollback"),
+    });
+
+    expect(events).toEqual(["optimistic"]);
+    resolveResponse({ title: "Server title" });
+    await mutation;
+    expect(events).toEqual(["optimistic", "commit:Server title"]);
+  });
+
+  it("rolls back a failed mutation", async () => {
+    const rollback = vi.fn();
+
+    await expect(
+      runOptimisticMutation({
+        optimistic: vi.fn(),
+        mutate: () => Promise.reject(new Error("nope")),
+        commit: vi.fn(),
+        rollback,
+      }),
+    ).rejects.toThrow("nope");
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("does not roll back a field already replaced by newer state", () => {
+    const optimistic = { title: "Optimistic" };
+    const newer = applySessionMutationPatch(session, { title: "Realtime newer" });
+
+    expect(rollbackSessionMutationPatch(newer, optimistic, { title: session.title }).title).toBe(
+      "Realtime newer",
+    );
+  });
+
+  it("resolves stage metadata when an approval advances", () => {
+    const next = applySessionMutationPatch(session, {
+      currentArtifactVersion: 0,
+      currentStageId: "stage-build",
+      phaseStatus: "agent_generating",
+    });
+
+    expect(next).toMatchObject({
+      currentArtifactVersion: 0,
+      currentStageName: "Build",
+      currentStageSlug: "build",
+      phaseStatus: "agent_generating",
+    });
+  });
+});

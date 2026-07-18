@@ -14,6 +14,7 @@ export type CreateSessionInput = {
 };
 
 export type CreateSessionResult = {
+  canonicalUrl: string;
   number: number;
 };
 
@@ -31,6 +32,7 @@ export type UpdateSessionTitleResult = {
 export type SessionArchiveResult = {
   archivedAt: string | null;
   id: string;
+  phaseStatus: "agent_generating" | "approved" | "awaiting_review" | "rejected";
 };
 
 export type SessionRepositoryOptionsResult = {
@@ -88,6 +90,7 @@ export async function createSessionFromClient(
   });
   const responsePayload = (await response.json().catch(() => null)) as {
     error?: string;
+    canonicalUrl?: string;
     number?: number;
   } | null;
 
@@ -95,11 +98,14 @@ export async function createSessionFromClient(
     throw new Error(responsePayload?.error ?? "Failed to create session.");
   }
 
-  if (typeof responsePayload?.number !== "number") {
+  if (
+    typeof responsePayload?.number !== "number" ||
+    typeof responsePayload.canonicalUrl !== "string"
+  ) {
     throw new Error("Session response did not include a session number.");
   }
 
-  return { number: responsePayload.number };
+  return { canonicalUrl: responsePayload.canonicalUrl, number: responsePayload.number };
 }
 
 export async function updateSessionTitleFromClient(
@@ -151,19 +157,21 @@ async function mutateSessionArchive(
     archivedAt?: string | null;
     error?: string;
     id?: string;
+    phaseStatus?: SessionArchiveResult["phaseStatus"];
   } | null;
 
   if (!response.ok) {
     throw new Error(responsePayload?.error ?? fallbackError);
   }
 
-  if (typeof responsePayload?.id !== "string") {
+  if (typeof responsePayload?.id !== "string" || typeof responsePayload.phaseStatus !== "string") {
     throw new Error("Session archive response was invalid.");
   }
 
   return {
     archivedAt: responsePayload.archivedAt ?? null,
     id: responsePayload.id,
+    phaseStatus: responsePayload.phaseStatus,
   };
 }
 

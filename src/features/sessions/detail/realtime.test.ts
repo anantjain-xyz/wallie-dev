@@ -88,6 +88,34 @@ describe("session detail realtime helpers", () => {
     expect(next.title).toBe("Realtime updates v2");
   });
 
+  it("ignores realtime echoes and out-of-order session rows", () => {
+    const row = {
+      archived_at: null,
+      created_at: baseSession.createdAt,
+      current_artifact_version: 0,
+      current_stage_id: "stage-product",
+      id: "sess-1",
+      linear_issue_id: null,
+      linear_issue_url: null,
+      number: 7,
+      phase_status: "agent_generating" as const,
+      pipeline_id: "pipe-1",
+      prompt_md: baseSession.promptMd,
+      rejection_count: 0,
+      title: "Stale title",
+      updated_at: baseSession.updatedAt,
+      workspace_id: "ws-1",
+    };
+
+    expect(mergeSessionRealtimeRow(baseSession, row)).toBe(baseSession);
+    expect(
+      mergeSessionRealtimeRow(baseSession, {
+        ...row,
+        updated_at: "2026-05-21T12:59:59.000Z",
+      }),
+    ).toBe(baseSession);
+  });
+
   it("upserts artifact rows into the session artifact list", () => {
     const next = mergeArtifactRealtimeRow(baseSession, {
       artifact_json: "# Product spec",

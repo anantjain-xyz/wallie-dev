@@ -225,46 +225,56 @@ function SessionRow({
   session: SessionListItem;
   workspaceSlug: string;
 }) {
-  const router = useRouter();
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
   const [displayTitle, setDisplayTitle] = useState(session.title);
   const [draftTitle, setDraftTitle] = useState(session.title);
+  const [archivedAt, setArchivedAt] = useState(session.archivedAt);
+  const [phaseStatus, setPhaseStatus] = useState(session.phaseStatus);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [, startRefreshTransition] = useTransition();
-  const [archivePending, setArchivePending] = useState(false);
+  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const previousSessionTitleRef = useRef(session.title);
 
-  const isArchived = Boolean(session.archivedAt);
-  const archiveActionLabel = isArchived ? "Unarchive" : "Archive";
+  const isArchived = Boolean(archivedAt);
+  const archiveActionLabel = archivePending
+    ? archivePending === "archive"
+      ? "Archive"
+      : "Unarchive"
+    : isArchived
+      ? "Unarchive"
+      : "Archive";
 
   async function toggleArchive() {
     if (archivePending) return;
-    setArchivePending(true);
+    const action = isArchived ? "unarchive" : "archive";
+    const previousArchivedAt = archivedAt;
+    const previousPhaseStatus = phaseStatus;
+    setArchivePending(action);
     setArchiveError(null);
+    setArchivedAt(isArchived ? null : new Date().toISOString());
+    if (!isArchived && phaseStatus === "agent_generating") setPhaseStatus("rejected");
 
     try {
-      if (isArchived) {
-        await unarchiveSessionFromClient({ sessionId: session.id });
-      } else {
-        await archiveSessionFromClient({ sessionId: session.id });
-      }
+      const result = isArchived
+        ? await unarchiveSessionFromClient({ sessionId: session.id })
+        : await archiveSessionFromClient({ sessionId: session.id });
+      setArchivedAt(result.archivedAt);
+      setPhaseStatus(result.phaseStatus);
       setArchiveConfirming(false);
-      startRefreshTransition(() => {
-        router.refresh();
-      });
     } catch (errorValue) {
+      setArchivedAt(previousArchivedAt);
+      setPhaseStatus(previousPhaseStatus);
       setArchiveError(
         errorValue instanceof Error
           ? errorValue.message
           : `Failed to ${archiveActionLabel.toLowerCase()} session.`,
       );
     } finally {
-      setArchivePending(false);
+      setArchivePending(null);
     }
   }
 
@@ -320,6 +330,9 @@ function SessionRow({
 
     setIsSaving(true);
     setError(null);
+    const previousTitle = displayTitle;
+    setDisplayTitle(normalizedTitle);
+    setIsEditing(false);
 
     try {
       const result = await updateSessionTitleFromClient({
@@ -328,13 +341,10 @@ function SessionRow({
       });
       setDisplayTitle(result.title);
       setDraftTitle(result.title);
-      setIsEditing(false);
-      startRefreshTransition(() => {
-        router.refresh();
-      });
     } catch (errorValue) {
-      setDraftTitle(displayTitle);
-      setIsEditing(false);
+      setDisplayTitle(previousTitle);
+      setDraftTitle(normalizedTitle);
+      setIsEditing(true);
       setError(getErrorMessage(errorValue));
     } finally {
       setIsSaving(false);
@@ -418,11 +428,20 @@ function SessionRow({
             <button
               type="button"
               className="ui-icon-button pointer-events-auto relative z-30 h-7 w-7 shrink-0"
-              aria-label={`Edit title for session #${session.number}`}
-              title="Edit title"
+              aria-label={
+                isSaving
+                  ? `Saving title for session #${session.number}`
+                  : `Edit title for session #${session.number}`
+              }
+              title={isSaving ? "Saving title" : "Edit title"}
+              disabled={isSaving}
               onClick={startEditing}
             >
-              <PencilIcon className="h-3.5 w-3.5" />
+              {isSaving ? (
+                <Spinner className="h-3.5 w-3.5" label="Saving title" />
+              ) : (
+                <PencilIcon className="h-3.5 w-3.5" />
+              )}
             </button>
             {archiveConfirming ? (
               <div className="pointer-events-auto relative z-30 flex shrink-0 items-center gap-1">
@@ -431,7 +450,7 @@ function SessionRow({
                   className="ui-icon-button h-7 w-7 text-danger"
                   aria-label={`Confirm ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
                   title={`Confirm ${archiveActionLabel.toLowerCase()}`}
-                  disabled={archivePending}
+                  disabled={archivePending !== null}
                   onClick={() => void toggleArchive()}
                 >
                   {archivePending ? (
@@ -445,7 +464,7 @@ function SessionRow({
                   className="ui-icon-button h-7 w-7"
                   aria-label={`Cancel ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
                   title="Cancel"
-                  disabled={archivePending}
+                  disabled={archivePending !== null}
                   onClick={() => {
                     setArchiveConfirming(false);
                     setArchiveError(null);
@@ -473,10 +492,10 @@ function SessionRow({
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>
-          <SessionPhaseStatusLabel status={session.phaseStatus} />
+          <SessionPhaseStatusLabel status={phaseStatus} />
           <span>·</span>
           <span>updated {relativeTime(session.updatedAt)}</span>
-          {session.archivedAt ? (
+          {archivedAt ? (
             <>
               <span>·</span>
               <span className="text-muted">archived</span>

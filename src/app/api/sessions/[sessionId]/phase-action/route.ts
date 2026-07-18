@@ -102,7 +102,7 @@ export async function POST(request: Request, { params }: Params) {
     if (!result.success) {
       return NextResponse.json({ error: result.error ?? "Approval failed" }, { status: 409 });
     }
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ session: result.session, success: true });
   }
 
   if (body.action === "reject") {
@@ -120,7 +120,7 @@ export async function POST(request: Request, { params }: Params) {
     if (!result.success) {
       return NextResponse.json({ error: result.error ?? "Rejection failed" }, { status: 409 });
     }
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ session: result.session, success: true });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

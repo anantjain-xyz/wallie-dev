@@ -54,5 +54,5 @@ export async function POST(_request: Request, { params }: Params) {
     sessionId: sessionRow.id,
   });
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ phaseStatus: "rejected", success: true });
 }

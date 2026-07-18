@@ -5,6 +5,7 @@ import type {
   SessionPhaseCompletion,
   SessionPhaseStatus,
 } from "@/features/sessions/types";
+import { reconcileSessionMutationPatch } from "@/features/sessions/optimistic";
 
 type SessionRealtimeRow = Pick<
   Tables<"sessions">,
@@ -43,26 +44,26 @@ export function mergeSessionRealtimeRow(
     return session;
   }
 
-  const currentStage = session.pipeline.stages.find((stage) => stage.id === row.current_stage_id);
-
-  return {
-    ...session,
+  const patchedSession = reconcileSessionMutationPatch(session, {
     archivedAt: row.archived_at,
-    createdAt: row.created_at,
     currentArtifactVersion: row.current_artifact_version,
     currentStageId: row.current_stage_id,
-    currentStageName: currentStage?.name ?? session.currentStageName,
-    currentStagePosition: currentStage?.position ?? session.currentStagePosition,
-    currentStageSlug: currentStage?.slug ?? session.currentStageSlug,
-    linearIssueId: row.linear_issue_id,
-    linearIssueUrl: row.linear_issue_url,
-    number: row.number,
     phaseStatus: row.phase_status as SessionPhaseStatus,
-    pipelineId: row.pipeline_id,
-    promptMd: row.prompt_md,
     rejectionCount: row.rejection_count,
     title: row.title,
     updatedAt: row.updated_at,
+  });
+
+  if (patchedSession === session) return session;
+
+  return {
+    ...patchedSession,
+    createdAt: row.created_at,
+    linearIssueId: row.linear_issue_id,
+    linearIssueUrl: row.linear_issue_url,
+    number: row.number,
+    pipelineId: row.pipeline_id,
+    promptMd: row.prompt_md,
     workspaceId: row.workspace_id,
   };
 }
@@ -81,6 +82,15 @@ export function mergeArtifactRealtimeRow(
     stageSlug: row.stage_slug,
     version: row.version,
   };
+  const existingArtifact = session.artifacts.find(
+    (current) => current.stageSlug === artifact.stageSlug && current.version === artifact.version,
+  );
+  if (
+    existingArtifact &&
+    Date.parse(existingArtifact.createdAt) >= Date.parse(artifact.createdAt)
+  ) {
+    return session;
+  }
   const artifacts = session.artifacts.filter(
     (current) => current.stageSlug !== artifact.stageSlug || current.version !== artifact.version,
   );
@@ -105,6 +115,15 @@ export function mergeCompletionRealtimeRow(
     completedAt: row.completed_at,
     stageSlug: row.stage_slug,
   };
+  const existingCompletion = session.phaseCompletions.find(
+    (current) => current.stageSlug === completion.stageSlug,
+  );
+  if (
+    existingCompletion &&
+    Date.parse(existingCompletion.completedAt) >= Date.parse(completion.completedAt)
+  ) {
+    return session;
+  }
   const phaseCompletions = session.phaseCompletions.filter(
     (current) => current.stageSlug !== completion.stageSlug,
   );
