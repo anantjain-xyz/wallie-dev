@@ -352,6 +352,27 @@ describe("optimistic session interactions", () => {
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
   });
 
+  it("keeps archive confirmation copy tied to the pending action", () => {
+    mocked.fetch.mockImplementation(() => new Promise<Response>(() => undefined));
+    render(listView(makeListData(session, "all")));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
+
+    expect(
+      screen.getByText(
+        "It will leave active session views but remain available in the archived filter.",
+        { exact: false },
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("It will return to active session views.", { exact: false }),
+    ).toBeNull();
+  });
+
   it("keeps a newer server title when an older save response arrives late", async () => {
     let releaseResponse!: () => void;
     mocked.fetch.mockImplementation(

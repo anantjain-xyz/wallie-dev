@@ -62,4 +62,23 @@ describe("AccountMenu", () => {
 
     expect(screen.getByRole("button", { name: "Account" })).toHaveTextContent("?");
   });
+
+  it("starts sign-out before the menu can unmount its form", async () => {
+    const requestSubmit = vi
+      .spyOn(HTMLFormElement.prototype, "requestSubmit")
+      .mockImplementation(() => undefined);
+    const user = userEvent.setup();
+
+    render(
+      <OverlayProvider>
+        <AccountMenu email="owner@example.com" />
+      </OverlayProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Account: owner@example.com" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+
+    expect(requestSubmit).toHaveBeenCalledOnce();
+    expect(screen.getByRole("menu", { name: "Account" })).toBeVisible();
+  });
 });

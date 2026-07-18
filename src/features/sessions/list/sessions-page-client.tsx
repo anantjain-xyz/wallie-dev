@@ -528,15 +528,17 @@ function SessionRow({
 
   return (
     <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center">
-      <SessionDetailLink
-        href={detailHref}
-        trackSessionsToDetail
-        className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-      >
-        <span className="sr-only">
-          Open session #{session.number}: {displayTitle}
-        </span>
-      </SessionDetailLink>
+      <Tooltip content={displayTitle}>
+        <SessionDetailLink
+          href={detailHref}
+          trackSessionsToDetail
+          className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        >
+          <span className="sr-only">
+            Open session #{session.number}: {displayTitle}
+          </span>
+        </SessionDetailLink>
+      </Tooltip>
 
       <div className="pointer-events-none relative z-20 flex min-w-0 flex-1 flex-col gap-1">
         {isEditing ? (
@@ -655,7 +657,7 @@ function SessionRow({
       <DestructiveConfirmationDialog
         actionLabel={`${archiveActionLabel} session`}
         description={`${archiveActionLabel} session #${session.number}, “${displayTitle}”? ${
-          isArchived
+          archiveActionLabel === "Unarchive"
             ? "It will return to active session views."
             : "It will leave active session views but remain available in the archived filter."
         }`}

@@ -237,6 +237,9 @@ export function SessionDetailPageClient({
   const createdAtFull = (mounted ? fullDateTimeFormatter : ssrFullDateTimeFormatter).format(
     createdAtDate,
   );
+  const updatedAtFull = (mounted ? fullDateTimeFormatter : ssrFullDateTimeFormatter).format(
+    new Date(session.updatedAt),
+  );
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
   const hasConnectionLinks =
@@ -816,19 +819,22 @@ export function SessionDetailPageClient({
             <span aria-hidden="true">·</span>
           </>
         ) : null}
-        <span aria-label={`Created ${createdAtFull}`} suppressHydrationWarning>
-          Created {createdAtLabel}
-        </span>
+        <Tooltip content={`Created ${createdAtFull}`}>
+          <time dateTime={session.createdAt} suppressHydrationWarning>
+            <span aria-hidden="true">Created {createdAtLabel}</span>
+            <span className="sr-only">Created {createdAtFull}</span>
+          </time>
+        </Tooltip>
         <span aria-hidden="true">·</span>
         {/* Relative time derives from Date.now(), which differs between the
             server render and hydration; suppress the resulting text mismatch
             (the label is approximate by nature). */}
-        <span
-          aria-label={`Updated ${fullDateTimeFormatter.format(new Date(session.updatedAt))}`}
-          suppressHydrationWarning
-        >
-          Updated {relativeTime(session.updatedAt)}
-        </span>
+        <Tooltip content={`Updated ${updatedAtFull}`}>
+          <time dateTime={session.updatedAt} suppressHydrationWarning>
+            <span aria-hidden="true">Updated {relativeTime(session.updatedAt)}</span>
+            <span className="sr-only">Updated {updatedAtFull}</span>
+          </time>
+        </Tooltip>
         {hasConnectionLinks ? (
           <>
             <span aria-hidden="true">·</span>

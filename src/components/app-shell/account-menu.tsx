@@ -1,3 +1,7 @@
+"use client";
+
+import { useRef } from "react";
+
 import { LogoutIcon } from "@/components/shared/icons";
 import {
   DropdownMenu,
@@ -14,6 +18,7 @@ type AccountMenuProps = {
 };
 
 export function AccountMenu({ email }: AccountMenuProps) {
+  const signOutFormRef = useRef<HTMLFormElement>(null);
   const initial = (email?.trim().charAt(0) ?? "").toUpperCase() || "?";
   const triggerLabel = email ? `Account: ${email}` : "Account";
 
@@ -41,9 +46,15 @@ export function AccountMenu({ email }: AccountMenuProps) {
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <form action="/auth/signout" method="post">
-          <DropdownMenuItem asChild>
-            <button className="w-full" type="submit">
+        <form action="/auth/signout" method="post" ref={signOutFormRef}>
+          <DropdownMenuItem
+            asChild
+            onSelect={(event) => {
+              event.preventDefault();
+              signOutFormRef.current?.requestSubmit();
+            }}
+          >
+            <button className="w-full" type="button">
               <LogoutIcon className="h-3.5 w-3.5" />
               Sign out
             </button>
