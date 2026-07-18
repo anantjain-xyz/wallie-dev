@@ -61,7 +61,7 @@ export function SessionConnections({
     <div
       className={cn(
         "flex flex-wrap items-center gap-1.5",
-        compact ? "text-[11px]" : "text-[12px]",
+        compact ? "type-annotation" : "text-xs",
         className,
       )}
     >
@@ -122,7 +122,7 @@ function ConnectionBadge({
   const isInteractive = !!(href || onClick);
   const classes = cn(
     "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-    compact ? "h-5 text-[11px]" : "h-6 text-[12px]",
+    compact ? "h-5 type-annotation" : "h-6 text-xs",
     quiet ? "text-muted hover:text-foreground" : "rounded-full border px-2.5 py-0.5",
     !quiet &&
       (tone === "linked"

@@ -91,7 +91,7 @@ export function DangerZoneSection({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h3 className="text-[14px] font-semibold text-foreground">Delete workspace</h3>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
+              <p className="mt-1 text-xs leading-5 text-muted">
                 Permanently delete{" "}
                 <span className="font-medium text-foreground">{workspaceName}</span> and all of its
                 data. This cannot be undone.
@@ -110,7 +110,7 @@ export function DangerZoneSection({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h3 className="text-[14px] font-semibold text-foreground">Leave workspace</h3>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
+              <p className="mt-1 text-xs leading-5 text-muted">
                 Remove yourself from{" "}
                 <span className="font-medium text-foreground">{workspaceName}</span>. You lose
                 access immediately.

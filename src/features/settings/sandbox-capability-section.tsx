@@ -214,7 +214,7 @@ export function SandboxCapabilitySection({
         </button>
       </div>
       {!vercelSandboxConnected ? (
-        <p className="text-[12px] leading-5 text-warning">
+        <p className="text-xs leading-5 text-warning">
           Connect Vercel Sandbox before running a capability check.
         </p>
       ) : null}
@@ -236,12 +236,10 @@ export function SandboxCapabilitySection({
                 {formatSentenceCaseLabel(check.status)}
               </span>
             </p>
-            <p className="text-[12px] text-muted">
-              {dateFormatter.format(new Date(check.checkedAt))}
-            </p>
+            <p className="text-xs text-muted">{dateFormatter.format(new Date(check.checkedAt))}</p>
           </div>
           {check.errorText ? (
-            <p className="text-[12px] leading-5 text-danger">{check.errorText}</p>
+            <p className="text-xs leading-5 text-danger">{check.errorText}</p>
           ) : null}
           <div className="grid gap-2 md:grid-cols-2">
             {Object.entries(check.capabilities).map(([name, result]) => {
@@ -253,7 +251,7 @@ export function SandboxCapabilitySection({
                   : "border-border bg-surface-muted text-muted";
               return (
                 <div
-                  className={`rounded-[6px] border px-3 py-2 text-[12px] leading-5 ${tone}`}
+                  className={`rounded-[6px] border px-3 py-2 text-xs leading-5 ${tone}`}
                   key={name}
                 >
                   <p className="font-semibold">{name}</p>
