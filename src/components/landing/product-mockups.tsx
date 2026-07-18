@@ -405,9 +405,9 @@ export function SandboxExecutionMockup() {
 
           <div className="space-y-3 rounded-[10px] border border-border bg-[#111827] p-4 font-mono text-[12px] leading-5 text-[#dbeafe]">
             <p>$ pnpm install</p>
-            <p className="text-success">resolved 742 packages in isolated workspace</p>
+            <p className="text-[#4ade80]">resolved 742 packages in isolated workspace</p>
             <p>$ pnpm test -- realtime</p>
-            <p className="text-success">12 tests passed</p>
+            <p className="text-[#4ade80]">12 tests passed</p>
             <p>$ git diff -- src/features/auth/saml.ts</p>
             <p className="text-[#93c5fd]">artifact written: build-output.v3.json</p>
           </div>

@@ -585,7 +585,7 @@
 /* Coarse pointers and narrow layouts keep the dense desktop visual while
    expanding every control to the WCAG 2.2 target minimum. */
 @media (pointer: coarse), (max-width: 767px) {
-  :where(button, input, select, textarea, summary),
+  :where(button, input:not([type="checkbox"]):not([type="radio"]), select, textarea, summary),
   :where(
     .ui-button,
     .ui-button-primary,
