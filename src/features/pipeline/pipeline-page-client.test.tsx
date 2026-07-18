@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseBrowserClient: vi.fn(),
+  refresh: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: mocked.refresh }),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -38,6 +43,7 @@ const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
 const PLAN_STAGE_ID = "20000000-0000-4000-8000-000000000001";
 const BUILD_STAGE_ID = "30000000-0000-4000-8000-000000000001";
+const REVIEW_STAGE_ID = "50000000-0000-4000-8000-000000000001";
 
 function card(number: number, stageId: string): PipelineDashboardCard {
   return {
@@ -137,5 +143,88 @@ describe("PipelinePageClient", () => {
       stageId: PLAN_STAGE_ID,
     });
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
+  });
+
+  it("refreshes unknown realtime lanes and reconciles the authoritative lane metadata", async () => {
+    let sessionsHandler: ((payload: { eventType: string; new: unknown }) => void) | undefined;
+    const channel = {
+      on: vi.fn(),
+      subscribe: vi.fn(),
+    };
+    channel.on.mockImplementation(
+      (
+        _event: string,
+        filter: { table: string },
+        handler: (payload: { eventType: string; new: unknown }) => void,
+      ) => {
+        if (filter.table === "sessions") sessionsHandler = handler;
+        return channel;
+      },
+    );
+    channel.subscribe.mockReturnValue(channel);
+    mocked.createSupabaseBrowserClient.mockReturnValue({
+      channel: () => channel,
+      removeChannel: vi.fn(),
+    });
+
+    const originalData = initialData();
+    const view = render(<PipelinePageClient initialData={originalData} />);
+    await waitFor(() => expect(sessionsHandler).toBeDefined());
+
+    const movedCard = card(1, REVIEW_STAGE_ID);
+    const row = {
+      archived_at: null,
+      created_at: movedCard.createdAt,
+      creator_member_id: null,
+      current_artifact_version: 1,
+      current_stage_id: movedCard.currentStageId,
+      github_repository_id: null,
+      id: movedCard.id,
+      linear_issue_id: movedCard.linearIssueId,
+      linear_issue_url: movedCard.linearIssueUrl,
+      number: movedCard.number,
+      phase_status: movedCard.phaseStatus,
+      pipeline_id: movedCard.pipelineId,
+      prompt_md: "",
+      rejection_count: movedCard.rejectionCount,
+      search_document: null,
+      search_text: null,
+      title: movedCard.title,
+      updated_at: movedCard.updatedAt,
+      workspace_id: movedCard.workspaceId,
+    };
+
+    act(() => {
+      sessionsHandler?.({ eventType: "UPDATE", new: row });
+      sessionsHandler?.({ eventType: "UPDATE", new: row });
+    });
+
+    expect(mocked.refresh).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText("Session 1").length).toBeGreaterThan(0);
+
+    const refreshedData: PipelineDashboardData = {
+      ...originalData,
+      lanes: [
+        { ...originalData.lanes[0]!, cards: [], totalCount: 0 },
+        originalData.lanes[1]!,
+        {
+          cards: [movedCard],
+          cursor: null,
+          description: "Review the work.",
+          id: REVIEW_STAGE_ID,
+          name: "Review",
+          pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+          position: 3,
+          slug: "review",
+          totalCount: 1,
+        },
+      ],
+    };
+
+    view.rerender(<PipelinePageClient initialData={refreshedData} />);
+
+    await waitFor(() => expect(screen.getAllByText("Review").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("Session 1")).toHaveLength(2);
+    expect(screen.getAllByText("Session 3").length).toBeGreaterThan(0);
   });
 });

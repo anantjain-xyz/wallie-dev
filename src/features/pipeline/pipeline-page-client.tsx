@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { appendPipelineBoardLanePage, upsertPipelineRealtimeCard } from "@/features/pipeline/model";
+import {
+  appendPipelineBoardLanePage,
+  reconcilePipelineDashboardLanes,
+  upsertPipelineRealtimeCard,
+} from "@/features/pipeline/model";
 import type {
   PipelineDashboardCard,
   PipelineDashboardData,
@@ -54,7 +59,18 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
   const [lanes, setLanes] = useState<PipelineDashboardLane[]>(initialData.lanes);
   const [loadingLaneId, setLoadingLaneId] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
+  const laneRefreshPending = useRef(false);
+  const invalidatedCardIds = useRef(new Set<string>());
+  const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+
+  useEffect(() => {
+    setLanes((current) =>
+      reconcilePipelineDashboardLanes(current, initialData.lanes, invalidatedCardIds.current),
+    );
+    invalidatedCardIds.current.clear();
+    laneRefreshPending.current = false;
+  }, [initialData.lanes]);
 
   useEffect(() => {
     async function refreshSessionPullRequests(sessionId: string) {
@@ -129,6 +145,18 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
               workspaceId: row.workspace_id,
             };
 
+            const hasTargetLane = prev.some(
+              (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
+            );
+            if (!hasTargetLane) {
+              invalidatedCardIds.current.add(next.id);
+              if (!laneRefreshPending.current) {
+                laneRefreshPending.current = true;
+                router.refresh();
+              }
+              return prev;
+            }
+
             return upsertPipelineRealtimeCard(prev, next, payload.eventType === "INSERT");
           });
         },
@@ -155,7 +183,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [initialData.workspace.id, supabase]);
+  }, [initialData.workspace.id, router, supabase]);
 
   async function loadMore(lane: PipelineDashboardLane) {
     if (!lane.cursor || loadingLaneId) return;

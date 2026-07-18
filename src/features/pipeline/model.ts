@@ -72,6 +72,51 @@ export function appendPipelineBoardLanePage(
   );
 }
 
+function laneKey(lane: Pick<PipelineDashboardLane, "id" | "pipeline">) {
+  return `${lane.pipeline.id}:${lane.id}`;
+}
+
+export function reconcilePipelineDashboardLanes(
+  currentLanes: PipelineDashboardLane[],
+  refreshedLanes: PipelineDashboardLane[],
+  invalidatedCardIds: ReadonlySet<string> = new Set(),
+) {
+  const currentByLane = new Map(currentLanes.map((lane) => [laneKey(lane), lane]));
+  const refreshedCardOwner = new Map(
+    refreshedLanes.flatMap((lane) => lane.cards.map((card) => [card.id, laneKey(lane)] as const)),
+  );
+
+  return refreshedLanes.map((refreshedLane) => {
+    const key = laneKey(refreshedLane);
+    const currentLane = currentByLane.get(key);
+    if (!currentLane) return refreshedLane;
+
+    const cardsById = new Map(
+      currentLane.cards
+        .filter(
+          (card) =>
+            !invalidatedCardIds.has(card.id) &&
+            card.pipelineId === refreshedLane.pipeline.id &&
+            card.currentStageId === refreshedLane.id &&
+            (!refreshedCardOwner.has(card.id) || refreshedCardOwner.get(card.id) === key),
+        )
+        .map((card) => [card.id, card]),
+    );
+    for (const card of refreshedLane.cards) {
+      cardsById.set(card.id, card);
+    }
+
+    return {
+      ...refreshedLane,
+      cards: Array.from(cardsById.values()).sort(comparePipelineDashboardCards),
+      cursor:
+        currentLane.cards.length > PIPELINE_DASHBOARD_PAGE_SIZE
+          ? currentLane.cursor
+          : refreshedLane.cursor,
+    };
+  });
+}
+
 export function upsertPipelineRealtimeCard(
   lanes: PipelineDashboardLane[],
   card: PipelineDashboardCard,

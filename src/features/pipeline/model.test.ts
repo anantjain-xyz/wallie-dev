@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendPipelineBoardLanePage,
   appendPipelineLanePage,
+  reconcilePipelineDashboardLanes,
   upsertPipelineRealtimeCard,
 } from "@/features/pipeline/model";
 import type { PipelineDashboardCard, PipelineDashboardLane } from "@/features/pipeline/types";
@@ -100,6 +101,68 @@ describe("appendPipelineLanePage", () => {
 });
 
 describe("concurrent dashboard updates", () => {
+  it("adds refreshed lane metadata without discarding already loaded cards", () => {
+    const secondCard = card(
+      "00000000-0000-4000-8000-000000000002",
+      "agent_generating",
+      "2026-07-17T02:00:00Z",
+    );
+    const currentLane = lane([
+      card("00000000-0000-4000-8000-000000000001", "agent_generating", "2026-07-17T01:00:00Z"),
+      secondCard,
+    ]);
+    const newStageId = "50000000-0000-4000-8000-000000000001";
+    const refreshedLane = {
+      ...lane([secondCard]),
+      description: "Updated description",
+      totalCount: 2,
+    };
+    const newLane = {
+      ...lane([]),
+      cursor: null,
+      id: newStageId,
+      name: "Review",
+      position: 2,
+      slug: "review",
+      totalCount: 0,
+    };
+
+    const result = reconcilePipelineDashboardLanes([currentLane], [refreshedLane, newLane]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]?.description).toBe("Updated description");
+    expect(result[0]?.cards).toHaveLength(2);
+    expect(result[1]).toEqual(newLane);
+  });
+
+  it("removes an invalidated card from its old lane when refreshed into a new lane", () => {
+    const movedId = "00000000-0000-4000-8000-000000000009";
+    const currentLane = lane([card(movedId, "agent_generating", "2026-07-17T01:00:00Z")]);
+    const newStageId = "50000000-0000-4000-8000-000000000001";
+    const movedCard = {
+      ...card(movedId, "agent_generating", "2026-07-17T02:00:00Z"),
+      currentStageId: newStageId,
+    };
+    const newLane = {
+      ...lane([movedCard]),
+      cursor: null,
+      id: newStageId,
+      name: "Review",
+      position: 2,
+      slug: "review",
+      totalCount: 1,
+    };
+
+    const result = reconcilePipelineDashboardLanes(
+      [currentLane],
+      [{ ...currentLane, cards: [], totalCount: 0 }, newLane],
+      new Set([movedId]),
+    );
+
+    expect(result[0]?.cards).toEqual([]);
+    expect(result[1]?.cards).toEqual([movedCard]);
+  });
+
   it("does not restore a stale load-more card after realtime moved it to another lane", () => {
     const movedId = "00000000-0000-4000-8000-000000000009";
     const buildStageId = "50000000-0000-4000-8000-000000000001";
