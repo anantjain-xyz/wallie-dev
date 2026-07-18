@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useRef, useState } from "react";
 
-import type { FlashMessage } from "@/features/settings/settings-types";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Section } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
 
@@ -17,20 +17,23 @@ type LeaveWorkspaceResponse = {
 
 export function DangerZoneSection({
   canDelete,
-  setFlashMessage,
   workspaceId,
   workspaceName,
 }: {
   canDelete: boolean;
-  setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
   workspaceName: string;
 }) {
-  const [dialog, setDialog] = useState<"delete" | "leave" | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
+  const confirmationInputRef = useRef<HTMLInputElement>(null);
 
   async function deleteWorkspace(confirmation: string) {
+    if (busy) return;
     setBusy(true);
+    setDialogError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}`, {
@@ -44,17 +47,17 @@ export function DangerZoneSection({
       // exists, so a hard load drops any stale client state cleanly.
       window.location.assign(payload.redirectTo);
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not delete this workspace.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Wallie could not delete this workspace.";
+      setDialogError(message);
       setBusy(false);
-      setDialog(null);
     }
   }
 
   async function leaveWorkspace() {
+    if (busy) return;
     setBusy(true);
+    setDialogError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/leave`, {
@@ -64,17 +67,20 @@ export function DangerZoneSection({
 
       window.location.assign(payload.redirectTo);
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Wallie could not remove you from this workspace.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Wallie could not remove you from this workspace.";
+      setDialogError(message);
       setBusy(false);
-      setDialog(null);
     }
   }
+
+  function handleOpenChange(open: boolean) {
+    setDialogOpen(open);
+    setDialogError(null);
+    if (!open) setConfirmation("");
+  }
+
+  const confirmed = confirmation.trim() === workspaceName;
 
   return (
     <Section
@@ -97,14 +103,44 @@ export function DangerZoneSection({
                 data. This cannot be undone.
               </p>
             </div>
-            <button
-              className="ui-button-danger min-h-9 shrink-0"
-              disabled={busy}
-              onClick={() => setDialog("delete")}
-              type="button"
+            <DestructiveConfirmationDialog
+              actionDisabled={!confirmed}
+              actionLabel="Delete workspace"
+              description={
+                <>
+                  This permanently deletes <strong>{workspaceName}</strong> and everything in it —
+                  members, sessions, artifacts, integrations, and secrets. This cannot be undone.
+                </>
+              }
+              errorMessage={dialogError}
+              initialFocusRef={confirmationInputRef}
+              onConfirm={() => void deleteWorkspace(confirmation)}
+              onOpenChange={handleOpenChange}
+              open={dialogOpen}
+              pending={busy}
+              pendingLabel="Deleting…"
+              title={`Delete ${workspaceName}?`}
+              trigger={
+                <button className="ui-button-danger min-h-9 shrink-0" type="button">
+                  Delete workspace
+                </button>
+              }
             >
-              Delete workspace
-            </button>
+              <label className="block space-y-1.5">
+                <span className="text-[13px] font-medium text-foreground">
+                  Type <span className="font-mono">{workspaceName}</span> to confirm
+                </span>
+                <input
+                  ref={confirmationInputRef}
+                  autoComplete="off"
+                  className="ui-input"
+                  disabled={busy}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                  spellCheck={false}
+                  value={confirmation}
+                />
+              </label>
+            </DestructiveConfirmationDialog>
           </div>
         ) : (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -116,174 +152,30 @@ export function DangerZoneSection({
                 access immediately.
               </p>
             </div>
-            <button
-              className="ui-button-danger min-h-9 shrink-0"
-              disabled={busy}
-              onClick={() => setDialog("leave")}
-              type="button"
-            >
-              Leave workspace
-            </button>
+            <DestructiveConfirmationDialog
+              actionLabel="Leave workspace"
+              description={
+                <>
+                  Leaving <strong>{workspaceName}</strong> revokes your access immediately. An admin
+                  can re-invite you later.
+                </>
+              }
+              errorMessage={dialogError}
+              onConfirm={() => void leaveWorkspace()}
+              onOpenChange={handleOpenChange}
+              open={dialogOpen}
+              pending={busy}
+              pendingLabel="Leaving…"
+              title={`Leave ${workspaceName}?`}
+              trigger={
+                <button className="ui-button-danger min-h-9 shrink-0" type="button">
+                  Leave workspace
+                </button>
+              }
+            />
           </div>
         )}
       </div>
-
-      {dialog === "delete" ? (
-        <DeleteWorkspaceDialog
-          busy={busy}
-          onCancel={() => setDialog(null)}
-          onConfirm={(confirmation) => void deleteWorkspace(confirmation)}
-          workspaceName={workspaceName}
-        />
-      ) : null}
-
-      {dialog === "leave" ? (
-        <LeaveWorkspaceDialog
-          busy={busy}
-          onCancel={() => setDialog(null)}
-          onConfirm={() => void leaveWorkspace()}
-          workspaceName={workspaceName}
-        />
-      ) : null}
     </Section>
-  );
-}
-
-function DialogShell({
-  busy,
-  children,
-  descriptionId,
-  onCancel,
-  titleId,
-}: {
-  busy: boolean;
-  children: React.ReactNode;
-  descriptionId: string;
-  onCancel: () => void;
-  titleId: string;
-}) {
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onCancel();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [busy, onCancel]);
-
-  return (
-    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
-      <div
-        aria-describedby={descriptionId}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="ui-panel-elevated relative z-10 mt-[20vh] w-full max-w-md overflow-y-auto overscroll-contain bg-surface p-5 sm:p-6"
-        role="dialog"
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function DeleteWorkspaceDialog({
-  busy,
-  onCancel,
-  onConfirm,
-  workspaceName,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: (confirmation: string) => void;
-  workspaceName: string;
-}) {
-  const titleId = useId();
-  const descriptionId = useId();
-  const inputId = useId();
-  const [confirmation, setConfirmation] = useState("");
-  const confirmed = confirmation.trim() === workspaceName;
-
-  return (
-    <DialogShell busy={busy} descriptionId={descriptionId} onCancel={onCancel} titleId={titleId}>
-      <h2 id={titleId} className="text-lg font-semibold tracking-tight text-foreground">
-        Delete workspace
-      </h2>
-      <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-        This permanently deletes{" "}
-        <span className="font-medium text-foreground">{workspaceName}</span> and everything in it —
-        members, sessions, artifacts, integrations, and secrets. This cannot be undone.
-      </p>
-      <label className="mt-4 block space-y-1.5" htmlFor={inputId}>
-        <span className="text-[13px] font-medium text-foreground">
-          Type <span className="font-mono text-foreground">{workspaceName}</span> to confirm
-        </span>
-        <input
-          autoComplete="off"
-          className="ui-input"
-          disabled={busy}
-          id={inputId}
-          onChange={(event) => setConfirmation(event.target.value)}
-          spellCheck={false}
-          value={confirmation}
-        />
-      </label>
-      <div className="mt-6 flex justify-end gap-2">
-        <button className="ui-button min-h-9" disabled={busy} onClick={onCancel} type="button">
-          Cancel
-        </button>
-        <button
-          className="ui-button-danger min-h-9"
-          disabled={busy || !confirmed}
-          onClick={() => onConfirm(confirmation)}
-          type="button"
-        >
-          {busy ? "Deleting" : "Delete workspace"}
-        </button>
-      </div>
-    </DialogShell>
-  );
-}
-
-function LeaveWorkspaceDialog({
-  busy,
-  onCancel,
-  onConfirm,
-  workspaceName,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-  workspaceName: string;
-}) {
-  const titleId = useId();
-  const descriptionId = useId();
-
-  return (
-    <DialogShell busy={busy} descriptionId={descriptionId} onCancel={onCancel} titleId={titleId}>
-      <h2 id={titleId} className="text-lg font-semibold tracking-tight text-foreground">
-        Leave workspace
-      </h2>
-      <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-        Leave <span className="font-medium text-foreground">{workspaceName}</span>? You lose access
-        immediately. An admin can re-invite you later.
-      </p>
-      <div className="mt-6 flex justify-end gap-2">
-        <button className="ui-button min-h-9" disabled={busy} onClick={onCancel} type="button">
-          Cancel
-        </button>
-        <button
-          className="ui-button-danger min-h-9"
-          disabled={busy}
-          onClick={onConfirm}
-          type="button"
-        >
-          {busy ? "Leaving" : "Leave workspace"}
-        </button>
-      </div>
-    </DialogShell>
   );
 }
