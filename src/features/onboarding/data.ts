@@ -24,7 +24,7 @@ import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/con
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
+import type { Json, Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import {
   type OnboardingSetupHealth,
   WORKSPACE_ONBOARDING_STEPS,
@@ -261,6 +261,65 @@ type LinearRoutingRow = Pick<
   "land_stage_slug" | "rework_stage_slug" | "status_mappings" | "updated_at"
 >;
 
+type OnboardingSnapshotRpcName =
+  | "load_workspace_onboarding_sandbox_checks"
+  | "load_workspace_onboarding_secret_previews";
+
+type OnboardingSnapshotRpcResult = PromiseLike<{
+  data: Json | null;
+  error: unknown;
+}>;
+
+function loadOnboardingSnapshotRows(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  functionName: OnboardingSnapshotRpcName,
+  workspaceId: string,
+) {
+  // These forward-migration RPCs are intentionally not hand-added to generated database.types.ts.
+  const rpc = admin.rpc as unknown as (
+    name: OnboardingSnapshotRpcName,
+    args: { target_workspace_id: string },
+  ) => OnboardingSnapshotRpcResult;
+
+  return rpc(functionName, { target_workspace_id: workspaceId });
+}
+
+function snapshotRows<T>(value: Json | null, source: OnboardingSnapshotRpcName): T[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Onboarding snapshot RPC ${source} returned a non-array payload.`);
+  }
+  return value as T[];
+}
+
+function secretSnapshotRows(value: Json | null): SecretPreviewRow[] {
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    throw new Error(
+      "Onboarding snapshot RPC load_workspace_onboarding_secret_previews returned an invalid payload.",
+    );
+  }
+
+  const secretRows = value.secret_rows;
+  const linearSecret = value.linear_secret;
+  if (!Array.isArray(secretRows)) {
+    throw new Error(
+      "Onboarding snapshot RPC load_workspace_onboarding_secret_previews returned invalid secret rows.",
+    );
+  }
+
+  const rows = secretRows as SecretPreviewRow[];
+  if (!linearSecret || Array.isArray(linearSecret) || typeof linearSecret !== "object") {
+    return rows;
+  }
+
+  const targetedLinearSecret = linearSecret as SecretPreviewRow;
+  const existingIndex = rows.findIndex((row) => row.key === "LINEAR_API_KEY");
+  if (existingIndex < 0) {
+    return [...rows, targetedLinearSecret].sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  return rows.map((row, index) => (index === existingIndex ? targetedLinearSecret : row));
+}
+
 type OnboardingSnapshot = {
   agentConfigRows: AgentConfigRow[];
   claudeCodeCredentials: { updated_at: string } | null;
@@ -335,13 +394,7 @@ async function buildOnboardingSnapshot(
           .order("position", { ascending: true }),
       ),
       timing.segment("snapshot.secrets", () =>
-        admin
-          .from("workspace_secrets")
-          .select(
-            "id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at",
-          )
-          .eq("workspace_id", workspaceId)
-          .order("key", { ascending: true }),
+        loadOnboardingSnapshotRows(admin, "load_workspace_onboarding_secret_previews", workspaceId),
       ),
       timing.segment("snapshot.routing", () =>
         admin
@@ -371,14 +424,7 @@ async function buildOnboardingSnapshot(
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
-        admin
-          .from("sandbox_capability_checks")
-          .select(
-            "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
-          )
-          .eq("workspace_id", workspaceId)
-          .order("checked_at", { ascending: false })
-          .limit(1),
+        loadOnboardingSnapshotRows(admin, "load_workspace_onboarding_sandbox_checks", workspaceId),
       ),
       timing.segment("snapshot.vercel", () =>
         loadVercelSandboxConnectionPreview(admin, workspaceId),
@@ -417,8 +463,11 @@ async function buildOnboardingSnapshot(
       linearRoutingRow: routingResult.data as LinearRoutingRow | null,
       onboardingRow,
       pipelineRow: pipelineResult.data as PipelineRow | null,
-      sandboxRows: (sandboxResult.data ?? []) as SandboxCapabilityCheckRow[],
-      secretRows: (secretResult.data ?? []) as SecretPreviewRow[],
+      sandboxRows: snapshotRows<SandboxCapabilityCheckRow>(
+        sandboxResult.data,
+        "load_workspace_onboarding_sandbox_checks",
+      ),
+      secretRows: secretSnapshotRows(secretResult.data),
       stageRows: (stageResult.data ?? []) as PipelineStageRow[],
       vercelSandboxConnection,
       workspaceMemberRows: (memberResult.data ?? []) as WorkspaceMemberRow[],

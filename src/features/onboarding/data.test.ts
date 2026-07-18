@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
-  admin: { from: vi.fn() },
+  admin: { from: vi.fn(), rpc: vi.fn() },
   github: vi.fn(),
   vercel: vi.fn(),
 }));
@@ -35,16 +35,13 @@ const user = { id: "user-1" };
 
 type QueryResult = { data: unknown; error: null };
 
-function query(result: QueryResult, onStart?: () => void, onLimit?: (count: number) => void) {
+function query(result: QueryResult, onStart?: () => void) {
   onStart?.();
   const promise = Promise.resolve(result);
   const builder = {
     eq: vi.fn(() => builder),
     in: vi.fn(() => builder),
-    limit: vi.fn((count: number) => {
-      onLimit?.(count);
-      return builder;
-    }),
+    limit: vi.fn(() => builder),
     maybeSingle: vi.fn(() => promise),
     order: vi.fn(() => builder),
     select: vi.fn(() => builder),
@@ -99,10 +96,10 @@ function createFixture(options: {
   memberRole?: "member" | "owner";
   memberRows?: unknown[];
   routing?: unknown;
+  sandboxChecks?: unknown[];
   secrets?: unknown[];
 }) {
   const counts = new Map<string, number>();
-  const limits = new Map<string, number>();
   const increment = (table: string) => counts.set(table, (counts.get(table) ?? 0) + 1);
   const memberRow = member(options.memberRole ?? "owner");
 
@@ -113,12 +110,24 @@ function createFixture(options: {
     workspace_onboarding: onboardingRow(),
   };
   const adminRows: Record<string, unknown> = {
-    sandbox_capability_checks: [],
     user_claude_code_credentials: options.claudeCredentials ?? null,
     user_codex_credentials: options.codexCredentials ?? null,
     workspace_agent_config: options.agentConfig ?? [],
     workspace_linear_routing: options.routing ?? null,
-    workspace_secrets: options.secrets ?? [],
+  };
+  const rpcRows: Record<string, unknown> = {
+    load_workspace_onboarding_sandbox_checks: options.sandboxChecks ?? [],
+    load_workspace_onboarding_secret_previews: {
+      linear_secret:
+        options.secrets?.find(
+          (secret) =>
+            typeof secret === "object" &&
+            secret !== null &&
+            "key" in secret &&
+            secret.key === "LINEAR_API_KEY",
+        ) ?? null,
+      secret_rows: options.secrets?.slice(0, 1_000) ?? [],
+    },
   };
 
   const supabase = {
@@ -129,15 +138,16 @@ function createFixture(options: {
   };
   mocked.admin.from.mockImplementation((table: string) => {
     increment(table);
-    return query({ data: adminRows[table], error: null }, undefined, (count) => {
-      limits.set(table, count);
-    });
+    return query({ data: adminRows[table], error: null });
+  });
+  mocked.admin.rpc.mockImplementation((functionName: string) => {
+    increment(functionName);
+    return Promise.resolve({ data: rpcRows[functionName], error: null });
   });
 
   return {
     context: { currentMember: memberRow, supabase, user, workspace },
     counts,
-    limits,
   };
 }
 
@@ -189,18 +199,146 @@ describe("canonical onboarding snapshot", () => {
       "pipelines",
       "pipeline_stages",
       "workspace_members",
-      "workspace_secrets",
       "workspace_linear_routing",
       "workspace_agent_config",
       "user_codex_credentials",
       "user_claude_code_credentials",
-      "sandbox_capability_checks",
+      "load_workspace_onboarding_secret_previews",
+      "load_workspace_onboarding_sandbox_checks",
     ]) {
       expect(fixture.counts.get(table), table).toBe(1);
     }
     expect(mocked.github).toHaveBeenCalledTimes(1);
     expect(mocked.vercel).toHaveBeenCalledTimes(1);
-    expect(fixture.limits.get("sandbox_capability_checks")).toBe(1);
+  });
+
+  it("uses the selected repository's latest bounded sandbox check", async () => {
+    const selectedRepositoryId = "11111111-1111-4111-8111-111111111111";
+    const otherRepositoryId = "22222222-2222-4222-8222-222222222222";
+    const fixture = createFixture({
+      memberRole: "owner",
+      sandboxChecks: [
+        {
+          capabilities: {},
+          checked_at: "2026-07-17T12:05:00.000Z",
+          error_text: null,
+          github_repository_id: otherRepositoryId,
+          id: "check-other",
+          sandbox_provider: "vercel",
+          sandbox_vercel_project_id: "project-other",
+          sandbox_vercel_team_id: "team-other",
+          status: "success",
+        },
+        {
+          capabilities: {},
+          checked_at: "2026-07-17T12:00:00.000Z",
+          error_text: null,
+          github_repository_id: selectedRepositoryId,
+          id: "check-selected",
+          sandbox_provider: "vercel",
+          sandbox_vercel_project_id: "project-selected",
+          sandbox_vercel_team_id: "team-selected",
+          status: "success",
+        },
+      ],
+    });
+    mocked.github.mockResolvedValue({
+      ...freshGithub(),
+      primaryProfile: {
+        buildCommand: null,
+        createdAt: NOW,
+        envKeySuggestions: [],
+        frameworkHints: [],
+        githubRepositoryId: selectedRepositoryId,
+        id: "profile-1",
+        inferenceConfidence: "high",
+        inferenceSources: [],
+        installCommand: null,
+        isPrimary: true,
+        languageHints: [],
+        packageManager: null,
+        setupNotes: "",
+        testCommand: null,
+        updatedAt: NOW,
+        workspaceId: workspace.id,
+      },
+      repositories: [
+        {
+          defaultBranch: "main",
+          defaultProgrammingLanguage: "TypeScript",
+          description: null,
+          fullName: "northwind/app",
+          htmlUrl: "https://github.com/northwind/app",
+          id: selectedRepositoryId,
+          isArchived: false,
+          isPrivate: true,
+          name: "app",
+          onboarding: {
+            conflictReport: [],
+            githubRepositoryId: selectedRepositoryId,
+            installedSkillHash: null,
+            installedSkillVersion: null,
+            lastError: null,
+            setupBranchName: null,
+            setupPrNumber: null,
+            setupPrUrl: null,
+            status: "ready",
+            updatedAt: NOW,
+          },
+          profile: null,
+          repoId: 1,
+        },
+      ],
+    });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result).toMatchObject({
+      data: {
+        setupHealth: {
+          latestSandboxCapabilityCheck: {
+            githubRepositoryId: selectedRepositoryId,
+            id: "check-selected",
+          },
+        },
+      },
+      ok: true,
+    });
+    expect(fixture.counts.get("load_workspace_onboarding_sandbox_checks")).toBe(1);
+  });
+
+  it("keeps the targeted Linear secret beyond a normal PostgREST row cap", async () => {
+    const linearSecret = {
+      created_at: NOW,
+      created_by_member_id: "member-owner",
+      id: "secret-linear",
+      key: "LINEAR_API_KEY",
+      updated_at: NOW,
+      value_preview: "lin_…1234",
+      workspace_id: workspace.id,
+    };
+    const fixture = createFixture({
+      memberRole: "owner",
+      secrets: [
+        ...Array.from({ length: 1_001 }, (_, index) => ({
+          ...linearSecret,
+          id: `secret-${index}`,
+          key: `A_${String(index).padStart(4, "0")}`,
+        })),
+        linearSecret,
+      ],
+    });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result).toMatchObject({
+      data: {
+        linearSecret: { id: "secret-linear" },
+        setupHealth: { linearKey: { status: "present" } },
+      },
+      ok: true,
+    });
+    expect(fixture.counts.get("load_workspace_onboarding_secret_previews")).toBe(1);
   });
 
   it("uses authenticated member access even when the capped display list omits that member", async () => {
@@ -272,8 +410,8 @@ describe("canonical onboarding snapshot", () => {
     await Promise.resolve();
 
     expect(fixture.counts.get("pipelines")).toBe(1);
-    expect(fixture.counts.get("workspace_secrets")).toBe(1);
-    expect(fixture.counts.get("sandbox_capability_checks")).toBe(1);
+    expect(fixture.counts.get("load_workspace_onboarding_secret_previews")).toBe(1);
+    expect(fixture.counts.get("load_workspace_onboarding_sandbox_checks")).toBe(1);
     expect(mocked.vercel).toHaveBeenCalledTimes(1);
 
     resolveGithub?.(freshGithub());
