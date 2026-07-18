@@ -26,6 +26,7 @@ import {
 } from "@/features/sessions/detail/realtime";
 import {
   applySessionMutationPatch,
+  compareSessionTimestamps,
   reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
@@ -346,7 +347,7 @@ export function SessionDetailPageClient({
           >;
           setSession((current) => {
             const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
-            if (existing && Date.parse(row.updated_at) <= Date.parse(existing.updatedAt)) {
+            if (existing && compareSessionTimestamps(row.updated_at, existing.updatedAt) <= 0) {
               return current;
             }
             const pullRequests = current.pullRequests.filter(
@@ -529,18 +530,34 @@ export function SessionDetailPageClient({
             headers: { "Content-Type": "application/json" },
             method: "POST",
           });
-          const body = (await response.json().catch(() => null)) as {
-            error?: string;
-            phaseStatus?: SessionDetail["phaseStatus"];
-            updatedAt?: string;
-          } | null;
+          const body = (await response.json().catch(() => null)) as
+            | (Partial<SessionPhaseMutationResult> & { error?: string })
+            | null;
           if (!response.ok) throw new Error(body?.error ?? "Could not stop the run.");
-          if (!body?.phaseStatus || typeof body.updatedAt !== "string") {
+          if (
+            !body ||
+            typeof body.archivedAt === "undefined" ||
+            typeof body.artifactVersion !== "number" ||
+            typeof body.currentStageId !== "string" ||
+            typeof body.phaseStatus !== "string" ||
+            typeof body.rejectionCount !== "number" ||
+            typeof body.updatedAt !== "string"
+          ) {
             throw new Error("Stop response was invalid.");
           }
-          return { phaseStatus: body.phaseStatus, updatedAt: body.updatedAt };
+          return body as SessionPhaseMutationResult;
         },
-        commit: (result) => setSession((current) => reconcileSessionMutationPatch(current, result)),
+        commit: (result) =>
+          setSession((current) =>
+            reconcileSessionMutationPatch(current, {
+              archivedAt: result.archivedAt,
+              currentArtifactVersion: result.artifactVersion,
+              currentStageId: result.currentStageId,
+              phaseStatus: result.phaseStatus,
+              rejectionCount: result.rejectionCount,
+              updatedAt: result.updatedAt,
+            }),
+          ),
         rollback: () =>
           setSession((current) =>
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
@@ -593,6 +610,7 @@ export function SessionDetailPageClient({
   }
 
   async function handleUnarchive() {
+    if (phaseActionPending !== null || archivePending !== null) return;
     setArchiveError(null);
     setArchivePending("unarchive");
     const optimisticPatch: SessionMutationPatch = { archivedAt: null };
@@ -633,7 +651,7 @@ export function SessionDetailPageClient({
         <button
           type="button"
           className="ui-button gap-1.5"
-          disabled={archivePending !== null}
+          disabled={archivePending !== null || phaseActionPending !== null}
           onClick={() => void handleUnarchive()}
         >
           {archivePending ? (

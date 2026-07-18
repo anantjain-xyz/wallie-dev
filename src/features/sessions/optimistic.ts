@@ -16,6 +16,28 @@ export type SessionMutationPatch = {
   updatedAt?: string;
 };
 
+function fractionalSecondNanoseconds(timestamp: string): number {
+  const fraction = timestamp.match(/\.(\d+)(?:Z|[+-]\d{2}:?\d{2})$/)?.[1] ?? "";
+  return Number(fraction.slice(0, 9).padEnd(9, "0"));
+}
+
+export function compareSessionTimestamps(left: string, right: string): number {
+  const leftMilliseconds = Date.parse(left);
+  const rightMilliseconds = Date.parse(right);
+
+  if (!Number.isFinite(leftMilliseconds) || !Number.isFinite(rightMilliseconds)) {
+    return left.localeCompare(right);
+  }
+
+  if (leftMilliseconds !== rightMilliseconds) {
+    return leftMilliseconds < rightMilliseconds ? -1 : 1;
+  }
+
+  const leftNanoseconds = fractionalSecondNanoseconds(left);
+  const rightNanoseconds = fractionalSecondNanoseconds(right);
+  return Math.sign(leftNanoseconds - rightNanoseconds);
+}
+
 export function applySessionMutationPatch(
   session: SessionDetail,
   patch: SessionMutationPatch,
@@ -60,14 +82,13 @@ export function reconcileSessionMutationPatch(
   session: SessionDetail,
   patch: SessionMutationPatch & { updatedAt: string },
 ): SessionDetail {
-  const patchTimestamp = Date.parse(patch.updatedAt);
-  const sessionTimestamp = Date.parse(session.updatedAt);
+  const timestampOrder = compareSessionTimestamps(patch.updatedAt, session.updatedAt);
 
-  if (patchTimestamp < sessionTimestamp) {
+  if (timestampOrder < 0) {
     return session;
   }
 
-  if (patchTimestamp === sessionTimestamp && !advancesSameTimestampState(session, patch)) {
+  if (timestampOrder === 0 && !advancesSameTimestampState(session, patch)) {
     return session;
   }
 

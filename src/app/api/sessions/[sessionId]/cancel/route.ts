@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import type { SessionPhaseMutationResult } from "@/features/sessions/mutation-contracts";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -56,7 +57,9 @@ export async function POST(_request: Request, { params }: Params) {
 
   const { data: result, error: resultError } = await admin
     .from("sessions")
-    .select("phase_status, updated_at")
+    .select(
+      "id, archived_at, phase_status, current_stage_id, current_artifact_version, rejection_count, updated_at",
+    )
     .eq("id", sessionRow.id)
     .single();
 
@@ -67,9 +70,13 @@ export async function POST(_request: Request, { params }: Params) {
     );
   }
 
-  return NextResponse.json({
+  return NextResponse.json<SessionPhaseMutationResult>({
+    archivedAt: result.archived_at,
+    artifactVersion: result.current_artifact_version,
+    currentStageId: result.current_stage_id,
+    id: result.id,
     phaseStatus: result.phase_status,
-    success: true,
+    rejectionCount: result.rejection_count,
     updatedAt: result.updated_at,
   });
 }

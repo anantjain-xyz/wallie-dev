@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applySessionMutationPatch,
+  compareSessionTimestamps,
   reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
@@ -62,6 +63,24 @@ const session: SessionDetail = {
 };
 
 describe("optimistic session mutations", () => {
+  it("preserves sub-millisecond timestamp ordering", () => {
+    expect(
+      compareSessionTimestamps("2026-07-17T12:00:00.123789Z", "2026-07-17T12:00:00.123456Z"),
+    ).toBeGreaterThan(0);
+    expect(
+      reconcileSessionMutationPatch(
+        { ...session, updatedAt: "2026-07-17T12:00:00.123456Z" },
+        {
+          title: "Microsecond-newer title",
+          updatedAt: "2026-07-17T12:00:00.123789Z",
+        },
+      ),
+    ).toMatchObject({
+      title: "Microsecond-newer title",
+      updatedAt: "2026-07-17T12:00:00.123789Z",
+    });
+  });
+
   it("applies optimistic state before a delayed response resolves", async () => {
     let resolveResponse!: (value: { title: string }) => void;
     const response = new Promise<{ title: string }>((resolve) => {

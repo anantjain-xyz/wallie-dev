@@ -5,7 +5,10 @@ import type {
   SessionPhaseCompletion,
   SessionPhaseStatus,
 } from "@/features/sessions/types";
-import { reconcileSessionMutationPatch } from "@/features/sessions/optimistic";
+import {
+  compareSessionTimestamps,
+  reconcileSessionMutationPatch,
+} from "@/features/sessions/optimistic";
 
 type SessionRealtimeRow = Pick<
   Tables<"sessions">,
@@ -88,7 +91,7 @@ export function mergeArtifactRealtimeRow(
   );
   if (
     existingArtifact &&
-    Date.parse(existingArtifact.createdAt) >= Date.parse(artifact.createdAt)
+    compareSessionTimestamps(existingArtifact.createdAt, artifact.createdAt) >= 0
   ) {
     return session;
   }
@@ -135,7 +138,7 @@ export function mergeCompletionRealtimeRow(
   );
   if (
     existingCompletion &&
-    Date.parse(existingCompletion.completedAt) >= Date.parse(completion.completedAt)
+    compareSessionTimestamps(existingCompletion.completedAt, completion.completedAt) >= 0
   ) {
     return session;
   }

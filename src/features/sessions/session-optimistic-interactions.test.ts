@@ -38,8 +38,12 @@ vi.mock("@/lib/supabase/browser", () => ({
 }));
 
 vi.mock("@/features/sessions/detail/artifact-panel", () => ({
-  ArtifactPanel: ({ isDrafting }: { isDrafting: boolean }) =>
-    createElement("div", null, isDrafting ? "Drafting artifact" : "Artifact"),
+  ArtifactPanel: ({ isDrafting, loadLatest }: { isDrafting: boolean; loadLatest: boolean }) =>
+    createElement(
+      "div",
+      null,
+      isDrafting ? "Drafting artifact" : loadLatest ? "Artifact ready" : "Artifact",
+    ),
 }));
 
 vi.mock("@/features/wallie/session-wallie-panel", () => ({
@@ -206,6 +210,92 @@ describe("optimistic session interactions", () => {
         false,
       ),
     );
+  });
+
+  it("disables optimistic Unarchive while terminal approval is pending", async () => {
+    let releaseResponse!: () => void;
+    mocked.fetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseResponse = () =>
+            resolve(
+              Response.json({
+                archivedAt: "2026-07-17T12:00:00.000Z",
+                artifactVersion: 1,
+                currentStageId: "stage-build",
+                id: session.id,
+                phaseStatus: "approved",
+                rejectionCount: 0,
+                updatedAt: "2026-07-17T12:00:00.000Z",
+              }),
+            );
+        }),
+    );
+    const data = makeDetailData();
+    data.session = {
+      ...data.session,
+      currentStageId: "stage-build",
+      currentStageName: "Build",
+      currentStagePosition: 1,
+      currentStageSlug: "build",
+    };
+
+    render(
+      createElement(SessionDetailPageClient, {
+        initialData: data,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve & archive" }));
+
+    const unarchive = screen.getByRole("button", { name: "Unarchive" }) as HTMLButtonElement;
+    expect(unarchive.disabled).toBe(true);
+    expect(mocked.fetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(unarchive);
+    expect(mocked.fetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => releaseResponse());
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Unarchive" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+  });
+
+  it("reconciles the artifact version when Stop races run completion", async () => {
+    mocked.fetch.mockResolvedValue(
+      Response.json({
+        archivedAt: null,
+        artifactVersion: 2,
+        currentStageId: "stage-plan",
+        id: session.id,
+        phaseStatus: "awaiting_review",
+        rejectionCount: 0,
+        updatedAt: "2026-07-17T12:00:00.000Z",
+      }),
+    );
+    const data = makeDetailData();
+    data.session = {
+      ...data.session,
+      currentArtifactVersion: 0,
+      phaseStatus: "agent_generating",
+    };
+
+    render(
+      createElement(SessionDetailPageClient, {
+        initialData: data,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
+
+    await waitFor(() => expect(screen.getByText("Awaiting review")).toBeTruthy());
+    expect(screen.getByText("Artifact ready")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
   });
 
   it("uses newer archive props when a keyed row survives soft navigation", () => {

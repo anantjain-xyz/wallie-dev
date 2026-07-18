@@ -45,7 +45,12 @@ function buildAdminClient(resultPhaseStatus: string) {
         eq: () => ({
           single: async () => ({
             data: {
+              archived_at: null,
+              current_artifact_version: 2,
+              current_stage_id: "stage-build",
+              id: session.id,
               phase_status: resultPhaseStatus,
+              rejection_count: 1,
               updated_at: "2026-07-17T12:00:00.000Z",
             },
             error: null,
@@ -74,8 +79,12 @@ describe("POST /api/sessions/[sessionId]/cancel", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      archivedAt: null,
+      artifactVersion: 2,
+      currentStageId: "stage-build",
+      id: session.id,
       phaseStatus: "awaiting_review",
-      success: true,
+      rejectionCount: 1,
       updatedAt: "2026-07-17T12:00:00.000Z",
     });
   });
