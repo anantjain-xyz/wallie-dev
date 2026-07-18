@@ -26,6 +26,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "analyze:authenticated-bundle": "node scripts/analyze-authenticated-bundle.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
