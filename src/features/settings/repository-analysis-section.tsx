@@ -2,8 +2,8 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
@@ -18,8 +18,15 @@ import {
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import type {
+  WorkspaceOnboardingConflictResponse,
+  WorkspaceOnboardingMutationDelta,
+  WorkspaceOnboardingMutationErrorResponse,
+  WorkspaceOnboardingUpdatePayload,
+} from "@/lib/onboarding/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
+import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 
 type RepositoryAnalysisSectionProps = {
   data: SettingsPageData;
@@ -50,28 +57,33 @@ function initialProfileDraft(data: SettingsPageData): RepositoryProfileState | n
   return null;
 }
 
-function mergeOnboardingData(
+export function reduceSettingsOnboardingMutationData(
   current: SettingsPageData,
-  onboardingData: WorkspaceOnboardingData,
+  response: WorkspaceOnboardingMutationDelta | WorkspaceOnboardingConflictResponse,
 ): SettingsPageData {
+  const next = reduceOnboardingMutationData(current, response);
   return {
-    ...current,
-    agentConfig: onboardingData.agentConfig,
-    github: onboardingData.github,
-    latestSandboxCapabilityCheck: onboardingData.setupHealth.latestSandboxCapabilityCheck,
-    linearRouting: onboardingData.linearRouting,
-    linearSecret: onboardingData.linearSecret,
-    onboarding: onboardingData.onboarding,
-    pipeline: onboardingData.pipeline,
-    setupHealth: onboardingData.setupHealth,
-    workspaceMembers: onboardingData.workspaceMembers,
-    workspaceSecrets: onboardingData.workspaceSecrets,
+    ...next,
+    latestSandboxCapabilityCheck: next.setupHealth.latestSandboxCapabilityCheck,
+  };
+}
+
+export function buildSettingsRepositorySelectionMutation(
+  onboarding: SettingsPageData["onboarding"],
+  changes: WorkspaceOnboardingUpdatePayload,
+) {
+  return {
+    action: "repository-selection" as const,
+    changes,
+    expectedUpdatedAt: onboarding.updatedAt,
+    step: "repository" as const,
   };
 }
 
 function applySavedRepositoryProfile(
   current: SettingsPageData,
   profile: RepositoryProfileState,
+  latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null,
 ): SettingsPageData {
   const github = {
     ...current.github,
@@ -90,9 +102,11 @@ function applySavedRepositoryProfile(
   return {
     ...current,
     github,
+    latestSandboxCapabilityCheck,
     setupHealth: {
       ...current.setupHealth,
       ...buildRepositorySetupHealth(github, current.onboarding.selectedGithubRepositoryId),
+      latestSandboxCapabilityCheck,
     },
   };
 }
@@ -162,23 +176,28 @@ export function RepositoryAnalysisSection({
     try {
       if (patch) {
         const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding`, {
-          body: JSON.stringify(patch),
+          body: JSON.stringify(buildSettingsRepositorySelectionMutation(data.onboarding, patch)),
           headers: { "content-type": "application/json" },
           method: "PATCH",
         });
         const body = (await response.json().catch(() => null)) as
-          | (WorkspaceOnboardingData & { error?: string })
+          | WorkspaceOnboardingConflictResponse
+          | WorkspaceOnboardingMutationDelta
+          | WorkspaceOnboardingMutationErrorResponse
           | null;
-        if (!response.ok || !body || "error" in body) {
-          throw new Error(body?.error ?? "Repository selection failed.");
+
+        if (body?.kind === "onboarding-conflict") {
+          setData((current) => reduceSettingsOnboardingMutationData(current, body));
+          throw new Error(body.error);
         }
 
-        setData((current) => mergeOnboardingData(current, body));
+        if (!response.ok || body?.kind !== "onboarding-mutation") {
+          throw new Error(body && "error" in body ? body.error : "Repository selection failed.");
+        }
+
+        setData((current) => reduceSettingsOnboardingMutationData(current, body));
         notifySessionRepositoriesChanged(data.workspace.id);
-        const selected = body.github.repositories.find(
-          (candidate) => candidate.id === repository.id,
-        );
-        setProfileDraft(selected?.profile ?? null);
+        setProfileDraft(repository.profile ?? null);
       } else {
         setProfileDraft(repository.profile ?? null);
       }
@@ -263,13 +282,20 @@ export function RepositoryAnalysisSection({
       });
       const body = (await response.json().catch(() => null)) as {
         error?: string;
+        latestSandboxCapabilityCheck?: SandboxCapabilityCheckState | null;
         profile?: RepositoryProfileState;
       } | null;
-      if (!response.ok || !body?.profile) {
+      if (!response.ok || !body?.profile || !("latestSandboxCapabilityCheck" in body)) {
         throw new Error(body?.error ?? "Failed to save repository profile.");
       }
 
-      setData((current) => applySavedRepositoryProfile(current, body.profile!));
+      setData((current) =>
+        applySavedRepositoryProfile(
+          current,
+          body.profile!,
+          body.latestSandboxCapabilityCheck ?? null,
+        ),
+      );
       notifySessionRepositoriesChanged(data.workspace.id);
       setProfileDraft(body.profile);
       setProfileDirty(false);
