@@ -12,6 +12,7 @@ import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provide
 import { PlusIcon, XIcon } from "@/components/shared/icons";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
+import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -52,7 +53,7 @@ import {
   RepositorySetupControls,
   RepositorySetupMessages,
   repositorySetupCanAdvance,
-  RepositorySetupStatusBadge,
+  RepositorySetupStatus,
 } from "@/features/repositories/repository-setup-controls";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
@@ -93,7 +94,6 @@ import type {
   VercelSandboxConnectionPreview,
   VercelSandboxConnectionResponse,
 } from "@/lib/vercel-sandbox/contracts";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -140,14 +140,6 @@ type NewSecretDraftRow = {
   value: string;
 };
 
-const badgeToneClasses: Record<HealthTone, string> = {
-  accent: "ui-badge-neutral",
-  danger: "ui-badge-danger",
-  neutral: "ui-badge-neutral",
-  success: "ui-badge-success",
-  warning: "ui-badge-warning",
-};
-
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   active: "bg-accent-soft text-accent",
   available: "text-muted hover:bg-surface-strong hover:text-foreground",
@@ -156,26 +148,16 @@ const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   skipped: "text-muted hover:bg-surface-strong hover:text-foreground",
 };
 
-function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "h-2 w-2 rounded-full",
-        state === "active" ? "bg-accent" : "bg-muted/60",
-        state === "blocked" && "bg-border-strong",
-      )}
-    />
-  );
-}
+const onboardingStepStatusValues = {
+  active: "running",
+  available: "queued",
+  blocked: "blocked",
+  completed: "complete",
+  skipped: "skipped",
+} satisfies Record<OnboardingStepDisplayState, StatusValue>;
 
-function Badge({ children, tone }: { children: string; tone: HealthTone }) {
-  return (
-    <span className={cn("ui-badge whitespace-nowrap", badgeToneClasses[tone])}>
-      <span className="ui-badge-dot" />
-      {formatSentenceCaseLabel(children)}
-    </span>
-  );
+function OnboardingStepStatus({ state }: { state: OnboardingStepDisplayState }) {
+  return <Status compact value={onboardingStepStatusValues[state]} />;
 }
 
 function SecretValueInput({
@@ -200,22 +182,6 @@ function SecretValueInput({
       type="password"
       value={value}
     />
-  );
-}
-
-function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
-  const toneClassName =
-    tone === "danger"
-      ? "ui-badge-danger"
-      : tone === "success"
-        ? "ui-badge-success"
-        : "ui-badge-neutral";
-
-  return (
-    <span className={cn("ui-badge whitespace-nowrap", toneClassName)}>
-      <span className="ui-badge-dot" />
-      {formatSentenceCaseLabel(children)}
-    </span>
   );
 }
 
@@ -724,9 +690,10 @@ function RuntimeRequirementList({
             <p className="text-xs font-medium text-foreground">{requirement.label}</p>
             <p className="mt-0.5 text-xs leading-5 text-muted">{requirement.detail}</p>
           </div>
-          <Badge tone={requirement.passed ? "success" : "warning"}>
-            {requirement.passed ? "Ready" : "Blocked"}
-          </Badge>
+          <Status
+            label={requirement.passed ? "Ready" : "Blocked"}
+            value={requirement.passed ? "healthy" : "blocked"}
+          />
         </div>
       ))}
     </div>
@@ -835,7 +802,7 @@ export function OnboardingVercelSandboxPanel({
             so sessions can run — the token is encrypted and never returned to the browser.
           </p>
         </div>
-        <Badge tone={statusTone}>{statusLabel}</Badge>
+        <Status label={statusLabel} value={configurationStatusFromTone(statusTone)} />
       </div>
 
       {error ? (
@@ -1439,9 +1406,10 @@ function RuntimeStep({
                       <code className="break-all font-mono text-[13px] font-medium text-foreground">
                         {key}
                       </code>
-                      <Badge tone={secret ? "success" : "neutral"}>
-                        {secret ? secretPreviewLabel(secret) : "Not set"}
-                      </Badge>
+                      <Status
+                        label={secret ? secretPreviewLabel(secret) : "Not set"}
+                        value={secret ? "healthy" : "not_started"}
+                      />
                     </div>
 
                     <SecretValueInput
@@ -1540,11 +1508,14 @@ function RuntimeStep({
   );
 }
 
-function sandboxStatusTone(check: SandboxCapabilityCheckState | null): HealthTone {
-  if (!check) return "neutral";
-  if (check.status === "success") return "success";
-  if (check.status === "error") return "danger";
-  return "accent";
+function sandboxStatusValue(check: SandboxCapabilityCheckState | null): StatusValue {
+  if (!check) return "not_started";
+  const values = {
+    error: "blocked",
+    running: "running",
+    success: "healthy",
+  } satisfies Record<SandboxCapabilityCheckState["status"], StatusValue>;
+  return values[check.status];
 }
 
 function VerifyStep({
@@ -1671,9 +1642,12 @@ function VerifyStep({
                 <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
-                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
-                </Badge>
+                <Status
+                  label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
+                  value={configurationStatusFromTone(
+                    item.statusTone ?? (item.passed ? "success" : "warning"),
+                  )}
+                />
                 {!item.passed && item.step !== "verify" ? (
                   <button
                     className="ui-button"
@@ -1698,27 +1672,27 @@ function VerifyStep({
               Checks run against the selected repository.
             </p>
           </div>
-          <Badge tone={sandboxStatusTone(check)}>{check?.status ?? "No check"}</Badge>
+          <Status label={check ? undefined : "No check"} value={sandboxStatusValue(check)} />
         </div>
         {check?.errorText ? (
           <p className="mt-3 text-xs leading-5 text-danger">{check.errorText}</p>
         ) : null}
         {check ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            {Object.entries(check.capabilities).map(([name, result]) => (
-              <div
-                className={cn(
-                  "rounded-[6px] border px-3 py-2 text-xs leading-5",
-                  result?.ok
-                    ? "border-success/20 bg-success-soft text-success"
-                    : "border-danger/20 bg-danger-soft text-danger",
-                )}
-                key={name}
-              >
-                <p className="font-semibold">{name}</p>
-                <p>{result?.detail ?? "No detail recorded."}</p>
-              </div>
-            ))}
+            {Object.entries(check.capabilities).map(([name, result]) => {
+              const value: StatusValue = result?.ok ? "healthy" : "blocked";
+              return (
+                <div className="rounded-[6px] border border-border px-3 py-2" key={name}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-foreground">{name}</p>
+                    <Status compact value={value} />
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    {result?.detail ?? "No detail recorded."}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         ) : null}
         <div className="mt-4 flex justify-end">
@@ -1820,8 +1794,8 @@ function RepositoryAnalysisStep({
                 >
                   {repository.fullName}
                 </a>
-                {selected ? <Badge tone="accent">Selected</Badge> : null}
-                <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                {selected ? <Status label="Selected" value="approved" /> : null}
+                <RepositorySetupStatus status={repository.onboarding.status} />
               </div>
               <RepositoryMetadataPills repository={repository} />
               {repository.description ? (
@@ -2068,7 +2042,7 @@ function StepRail({
             disabled={!canSelect || !step.isNavigable}
             onClick={() => onSelect(step.id)}
           >
-            <StepStateIcon state={step.displayState} />
+            <OnboardingStepStatus state={step.displayState} />
             <span className="min-w-0 flex-1">
               <span className="block truncate">{step.title}</span>
             </span>
@@ -2125,7 +2099,7 @@ function MobileStepControl({
             disabled={!canSelect || !step.isNavigable}
             onClick={() => onSelect(step.id)}
           >
-            <StepStateIcon state={step.displayState} />
+            <OnboardingStepStatus state={step.displayState} />
             <span className="truncate">{step.shortTitle}</span>
           </button>
         ))}
@@ -2145,7 +2119,10 @@ function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
               <p className="text-xs font-medium text-foreground">{item.label}</p>
               <p className="mt-0.5 truncate type-annotation text-muted">{item.detail}</p>
             </div>
-            <HealthBadge tone={item.tone}>{item.value}</HealthBadge>
+            <Status
+              label={item.value}
+              value={item.value === "Running" ? "running" : configurationStatusFromTone(item.tone)}
+            />
           </div>
         ))}
       </div>
@@ -2689,7 +2666,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!data.canManage ? <Badge tone="neutral">Read only</Badge> : null}
+          {!data.canManage ? <Status label="Read only" value="not_started" /> : null}
           <button
             type="button"
             className="ui-button"

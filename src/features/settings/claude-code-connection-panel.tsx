@@ -2,6 +2,8 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Status } from "@/components/ui/status";
+
 export interface ClaudeCodeConnectionStatus {
   connected: boolean;
   updatedAt?: string | null;
@@ -102,11 +104,14 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
       {status === null ? (
-        <p className="text-[13px] text-muted">Checking connection…</p>
+        <Status label="Checking connection" value="running" />
       ) : status.connected ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
-            <p className="text-[13px] font-medium text-foreground">Anthropic API key</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[13px] font-medium text-foreground">Anthropic API key</p>
+              <Status compact label="Connected" value="healthy" />
+            </div>
             <p className="text-xs text-muted">
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
@@ -121,7 +126,10 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
           </button>
         </div>
       ) : (
-        <p className="text-[13px] text-muted">No Anthropic API key saved yet.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Status compact label="Not connected" value="not_started" />
+          <p className="text-[13px] text-muted">No Anthropic API key saved yet.</p>
+        </div>
       )}
 
       <form className="space-y-3" onSubmit={handleSave}>

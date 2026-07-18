@@ -1,9 +1,9 @@
 "use client";
 
 import { ArchiveIcon, BranchIcon, CodeIcon, GlobeIcon, LockIcon } from "@/components/shared/icons";
+import { Status, type StatusValue } from "@/components/ui/status";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { StatusBadge } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import { CURRENT_WALLIE_SKILL_VERSION } from "@/lib/repo-onboarding/contracts";
 import type {
@@ -88,37 +88,13 @@ export function RepositoryMetadataPills({ repository }: { repository: WorkspaceG
   );
 }
 
-export function repositoryOnboardingLabel(status: RepositoryOnboardingStatus): string {
-  switch (status) {
-    case "pr_open":
-      return "Setup PR open";
-    case "ready":
-      return "Ready";
-    case "conflict":
-      return "Conflict";
-    case "error":
-      return "Error";
-    default:
-      return "Not set up";
-  }
-}
-
-export function repositoryOnboardingBadgeTone(
-  status: RepositoryOnboardingStatus,
-): "success" | "warning" | "danger" | "neutral" | "accent" {
-  switch (status) {
-    case "ready":
-      return "success";
-    case "pr_open":
-      return "accent";
-    case "conflict":
-      return "warning";
-    case "error":
-      return "danger";
-    default:
-      return "neutral";
-  }
-}
+const repositoryOnboardingStatuses = {
+  conflict: { label: "Conflict", value: "needs_attention" },
+  error: { label: "Error", value: "blocked" },
+  not_set_up: { label: "Not set up", value: "not_started" },
+  pr_open: { label: "Setup PR open", value: "awaiting_review" },
+  ready: { label: "Ready", value: "healthy" },
+} satisfies Record<RepositoryOnboardingStatus, { label: string; value: StatusValue }>;
 
 export function repositorySetupCanAdvance(status: RepositoryOnboardingStatus | "placeholder") {
   return status === "pr_open" || status === "ready";
@@ -131,12 +107,9 @@ export function hasCurrentWallieSkills(onboarding: RepositoryOnboardingState): b
   );
 }
 
-export function RepositorySetupStatusBadge({ status }: { status: RepositoryOnboardingStatus }) {
-  return (
-    <StatusBadge tone={repositoryOnboardingBadgeTone(status)}>
-      {repositoryOnboardingLabel(status)}
-    </StatusBadge>
-  );
+export function RepositorySetupStatus({ status }: { status: RepositoryOnboardingStatus }) {
+  const definition = repositoryOnboardingStatuses[status];
+  return <Status label={definition?.label} value={definition?.value as StatusValue} />;
 }
 
 export function mergeRepositoryOnboardingState(

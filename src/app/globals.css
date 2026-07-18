@@ -623,38 +623,24 @@
     @apply inline-flex items-center rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground;
   }
 
-  .ui-badge {
-    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium;
+  .ui-status-progress-value {
+    width: var(--status-progress);
   }
 
-  .ui-badge-success {
-    background: var(--success-soft);
-    color: var(--success);
+  [data-status-simulation="achromatopsia"] {
+    filter: grayscale(1);
   }
 
-  .ui-badge-warning {
-    background: var(--warning-soft);
-    color: var(--warning);
+  [data-status-simulation="deuteranopia"] {
+    filter: url("#status-deuteranopia");
   }
 
-  .ui-badge-danger {
-    background: var(--danger-soft);
-    color: var(--danger);
+  [data-status-simulation="protanopia"] {
+    filter: url("#status-protanopia");
   }
 
-  .ui-badge-neutral {
-    background: var(--surface-muted);
-    color: var(--muted);
-  }
-
-  .ui-badge-accent {
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-
-  .ui-badge-dot {
-    @apply inline-block h-1.5 w-1.5 rounded-full;
-    background: currentColor;
+  [data-status-simulation="tritanopia"] {
+    filter: url("#status-tritanopia");
   }
 
   .settings-anchor-group {
@@ -875,6 +861,36 @@
 
   .issue-textarea:focus {
     @apply border-border bg-surface px-3 py-2;
+  }
+}
+
+@media (forced-colors: active) {
+  .ui-status {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .ui-status[data-tone="attention"],
+  .ui-status[data-tone="progress"] {
+    border-color: Highlight;
+    color: Highlight;
+  }
+
+  .ui-status[data-tone="danger"],
+  .ui-status[data-tone="warning"] {
+    border-style: double;
+    border-width: 3px;
+  }
+
+  .ui-status-progress {
+    border: 1px solid currentColor;
+    background: Canvas;
+  }
+
+  .ui-status-progress-value {
+    background: Highlight;
   }
 }
 

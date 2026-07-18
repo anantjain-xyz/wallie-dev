@@ -384,12 +384,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(noCheckHtml).toMatch(
-      /class="ui-badge whitespace-nowrap ui-badge-neutral"><span class="ui-badge-dot"><\/span>No check/,
-    );
-    expect(errorHtml).toMatch(
-      /class="ui-badge whitespace-nowrap ui-badge-danger"><span class="ui-badge-dot"><\/span>Error/,
-    );
+    expect(noCheckHtml).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*No check/);
+    expect(errorHtml).toMatch(/data-status="blocked" data-tone="danger"[^>]*>.*Error/);
   });
 
   it("renders sandbox health check times as relative copy", () => {
@@ -1157,7 +1153,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('aria-label="New variable name"');
     expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
     expect(html).toContain("Not set");
-    expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
+    expect(html).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*Not set/);
     expect(html).not.toContain("Needs value");
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
@@ -1335,7 +1331,7 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("Runtime readiness");
     expect(html).not.toMatch(
-      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-badge/,
+      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-status/,
     );
   });
 

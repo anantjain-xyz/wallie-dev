@@ -2,6 +2,7 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 
+import { Status } from "@/components/ui/status";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
@@ -13,11 +14,11 @@ import {
   RepositoryMetadataPills,
   RepositorySetupControls,
   RepositorySetupMessages,
-  RepositorySetupStatusBadge,
+  RepositorySetupStatus,
 } from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts";
 
@@ -327,8 +328,8 @@ export function RepositoryAnalysisSection({
                       >
                         {repository.fullName}
                       </a>
-                      {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
-                      <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                      {selected ? <Status label="Selected" value="approved" /> : null}
+                      <RepositorySetupStatus status={repository.onboarding.status} />
                     </div>
                     <RepositoryMetadataPills repository={repository} />
                     {repository.description ? (

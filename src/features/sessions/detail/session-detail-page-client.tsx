@@ -16,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
+import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
 import {
   archiveSessionFromClient,
   unarchiveSessionFromClient,
@@ -36,8 +37,6 @@ import {
   mergeSessionRealtimeRow,
 } from "@/features/sessions/detail/realtime";
 import type { SessionArtifactSummary, SessionPhaseStatus } from "@/features/sessions/types";
-import { StatusChip } from "@/components/shared/status-chip";
-import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
@@ -454,7 +453,7 @@ export function SessionDetailPageClient({
   const headerActions = session.archivedAt ? (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        <StatusChip tone="planned">Archived</StatusChip>
+        <Status value="archived" />
         <button
           type="button"
           className="ui-button gap-1.5"
@@ -616,10 +615,7 @@ export function SessionDetailPageClient({
               </p>
             </div>
             {selectedStageSlug === session.currentStageSlug ? (
-              <SessionPhaseStatusLabel
-                status={session.phaseStatus}
-                className="shrink-0 type-annotation leading-4 sm:text-right"
-              />
+              <Status compact value={sessionPhaseStatusValue(session.phaseStatus)} />
             ) : null}
           </div>
 
@@ -984,19 +980,14 @@ function StageRail({
 }
 
 function StageDot({ entry }: { entry: StageRailEntry }) {
-  let className = "h-2 w-2 rounded-full";
+  let value: StatusValue;
   if (entry.status === "completed") {
-    className = cn(className, "bg-success");
+    value = "complete";
   } else if (entry.status === "upcoming") {
-    className = cn(className, "bg-surface-muted border border-border");
-  } else if (entry.phaseStatus === "rejected") {
-    className = cn(className, "bg-danger");
-  } else if (entry.phaseStatus === "approved") {
-    className = cn(className, "bg-success");
-  } else if (entry.phaseStatus === "agent_generating") {
-    className = cn(className, "bg-accent animate-pulse");
+    value = "upcoming";
   } else {
-    className = cn(className, "bg-accent");
+    value = sessionPhaseStatusValue(entry.phaseStatus ?? "agent_generating");
   }
-  return <span className={className} aria-hidden="true" />;
+
+  return <Status compact value={value} />;
 }

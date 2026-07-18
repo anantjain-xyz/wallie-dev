@@ -1,9 +1,15 @@
 import type { ReactNode } from "react";
 
-import { StatusChip } from "@/components/shared/status-chip";
+import { Status, type StatusValue } from "@/components/ui/status";
 import { cn } from "@/lib/utils";
 
 type PanelTone = "blocked" | "planned" | "ready";
+
+const panelStatusValues = {
+  blocked: "blocked",
+  planned: "upcoming",
+  ready: "healthy",
+} satisfies Record<PanelTone, StatusValue>;
 
 type PlaceholderPanelProps = {
   children?: ReactNode;
@@ -38,7 +44,10 @@ export function PlaceholderPanel({
           <TitleTag className="type-page-title max-w-2xl">{title}</TitleTag>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">{summary}</p>
         </div>
-        <StatusChip tone={tone}>{tone}</StatusChip>
+        <Status
+          label={tone === "planned" ? "Planned" : undefined}
+          value={panelStatusValues[tone]}
+        />
       </header>
 
       {items.length ? (

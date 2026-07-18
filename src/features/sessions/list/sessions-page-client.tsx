@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
 import {
   archiveSessionFromClient,
   unarchiveSessionFromClient,
@@ -16,7 +17,6 @@ import {
   SessionDetailLink,
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
-import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import {
@@ -473,7 +473,7 @@ function SessionRow({
         <div className="flex flex-wrap items-center gap-2 type-annotation text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>
-          <SessionPhaseStatusLabel status={session.phaseStatus} />
+          <Status compact value={sessionPhaseStatusValue(session.phaseStatus)} />
           <span>·</span>
           <span>updated {relativeTime(session.updatedAt)}</span>
           {session.archivedAt ? (

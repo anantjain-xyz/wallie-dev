@@ -2,12 +2,13 @@
 
 import type { Dispatch, SetStateAction } from "react";
 
+import { Status } from "@/components/ui/status";
 import type { PipelineStage } from "@/features/sessions/types";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { LinearRoutingEditor } from "@/features/settings/linear-routing-editor";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type { SettingsPageData } from "@/features/settings/data";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
 type LinearConfigurationSectionProps = {
@@ -32,9 +33,9 @@ export function LinearConfigurationSection({
   workspaceId,
 }: LinearConfigurationSectionProps) {
   const statusBadge = linearSecret ? (
-    <StatusBadge tone="success">Connected</StatusBadge>
+    <Status label="Connected" value="healthy" />
   ) : (
-    <StatusBadge tone="neutral">Not connected</StatusBadge>
+    <Status label="Not connected" value="not_started" />
   );
 
   return (

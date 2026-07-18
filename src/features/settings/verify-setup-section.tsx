@@ -2,11 +2,12 @@
 
 import type { Dispatch, SetStateAction } from "react";
 
+import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
 import { SandboxCapabilitySection } from "@/features/settings/sandbox-capability-section";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import type { WorkspaceOnboardingStep } from "@/lib/onboarding/contracts";
 
 type VerifySetupSectionProps = {
@@ -57,9 +58,12 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
                 <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <StatusBadge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
-                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
-                </StatusBadge>
+                <Status
+                  label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
+                  value={configurationStatusFromTone(
+                    item.statusTone ?? (item.passed ? "success" : "warning"),
+                  )}
+                />
                 {!item.passed && item.step !== "verify" ? (
                   <a className="ui-button" href={checklistItemHref(item)}>
                     Open
