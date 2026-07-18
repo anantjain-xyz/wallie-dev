@@ -112,6 +112,7 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
         updatedAt: null,
       },
       codexConnection: {
+        accountEmail: null,
         checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         credentialType: null,
@@ -527,6 +528,7 @@ describe("Settings integration sections", () => {
           setupHealth: {
             ...base.setupHealth,
             codexConnection: {
+              accountEmail: null,
               checkedAt: "2026-05-16T18:00:01.000Z",
               connected: true,
               credentialType: "codex_access_token",

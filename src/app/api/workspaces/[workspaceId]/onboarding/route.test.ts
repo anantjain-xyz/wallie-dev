@@ -91,6 +91,7 @@ const onboardingData: WorkspaceOnboardingData = {
       },
     },
     codexConnection: {
+      accountEmail: null,
       checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "codex_access_token",

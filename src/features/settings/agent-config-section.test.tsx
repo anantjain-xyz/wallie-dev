@@ -102,4 +102,20 @@ describe("AgentConfigSection batch save", () => {
       text: "Agent configuration contains invalid fields.",
     });
   });
+
+  it("blocks the entire batch when a dirty field is cleared", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderSection();
+
+    await user.clear(screen.getByDisplayValue("gpt-5.5"));
+    const retriesInput = screen.getByDisplayValue("3");
+    await user.clear(retriesInput);
+    await user.type(retriesInput, "4");
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Agent model is required.");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -80,6 +80,26 @@ describe("provider status cache", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("renders a cached ChatGPT account without refetching fresh status", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <CodexConnectionPanel
+        initialStatus={{
+          accountEmail: "owner@example.com",
+          checkedAt: new Date().toISOString(),
+          connected: true,
+          credentialType: "chatgpt_auth_json",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Signed in as owner@example.com")).toBeTruthy();
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("background-revalidates stale server status for each mounted provider", async () => {
     const checkedAt = new Date(Date.now() - PROVIDER_STATUS_STALE_AFTER_MS - 1).toISOString();
     const fetchMock = vi.fn((url: string) =>

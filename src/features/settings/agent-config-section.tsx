@@ -218,7 +218,11 @@ export function AgentConfigSection({
       ? null
       : parseAgentConfigDraft(field.configKey, field.type, draft);
     const validationError =
-      (validation && !validation.ok ? validation.error : null) ??
+      (isDirty && draftIsEmpty
+        ? `${field.label} is required.`
+        : validation && !validation.ok
+          ? validation.error
+          : null) ??
       serverFieldErrors[field.configKey] ??
       null;
     return { field, draft, isDirty, validation, validationError };

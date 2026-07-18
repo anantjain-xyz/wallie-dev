@@ -112,6 +112,7 @@ export type OnboardingSetupHealth = {
     values: Partial<Record<AgentConfigKey, unknown>>;
   };
   codexConnection: {
+    accountEmail: string | null;
     checkedAt: string;
     connected: boolean;
     credentialType: CodexCredentialType | null;

@@ -210,6 +210,7 @@ describe("canonical onboarding snapshot", () => {
     const fixture = createFixture({
       agentConfig: [{ key: "agent_provider", value_json: "codex" }],
       codexCredentials: {
+        account_email: "owner@example.com",
         access_token_expires_at: "2099-01-01T00:00:00.000Z",
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
@@ -243,6 +244,7 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.agentConfig.status).toBe("present");
     expect(result.data.setupHealth.defaultPipeline.status).toBe("ready");
     expect(result.data.setupHealth.codexConnection.status).toBe("connected");
+    expect(result.data.setupHealth.codexConnection.accountEmail).toBe("owner@example.com");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
     expect(result.data.setupHealth.codexConnection.checkedAt).toMatch(/Z$/);
     expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toBe(
@@ -270,6 +272,7 @@ describe("canonical onboarding snapshot", () => {
   it("preserves Codex reconnect metadata in the server setup snapshot", async () => {
     const fixture = createFixture({
       codexCredentials: {
+        account_email: "owner@example.com",
         access_token_expires_at: null,
         auth_reconnect_reason: "Refresh token was rejected.",
         auth_reconnect_required: true,

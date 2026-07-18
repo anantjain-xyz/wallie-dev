@@ -178,6 +178,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         },
       },
       codexConnection: {
+        accountEmail: null,
         checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         credentialType: null,
@@ -1328,6 +1329,7 @@ describe("OnboardingPageClient", () => {
 
   it("blocks Connect Agent completion until the Vercel Sandbox is connected", () => {
     const connectedCodex = {
+      accountEmail: null,
       checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "platform_api_key" as const,
@@ -1586,6 +1588,7 @@ describe("OnboardingPageClient", () => {
           },
           setupHealth: {
             codexConnection: {
+              accountEmail: null,
               checkedAt: "2026-05-16T18:00:01.000Z",
               connected: true,
               credentialType: "codex_access_token",

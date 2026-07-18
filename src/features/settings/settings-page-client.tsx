@@ -161,6 +161,7 @@ function updateCodexConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       codexConnection: {
+        accountEmail: status.accountEmail ?? null,
         checkedAt: status.checkedAt,
         connected: status.connected,
         credentialType: status.credentialType ?? null,
@@ -416,6 +417,7 @@ function SettingsCompletePage({
                 updatedAt: pageData.setupHealth.claudeCodeConnection.updatedAt,
               }}
               initialCodexStatus={{
+                accountEmail: pageData.setupHealth.codexConnection.accountEmail,
                 checkedAt: pageData.setupHealth.codexConnection.checkedAt,
                 connected: pageData.setupHealth.codexConnection.connected,
                 credentialType: pageData.setupHealth.codexConnection.credentialType,

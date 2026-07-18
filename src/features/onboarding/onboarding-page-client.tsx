@@ -371,6 +371,7 @@ function updateCodexConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       codexConnection: {
+        accountEmail: status.accountEmail ?? null,
         checkedAt: status.checkedAt,
         connected: status.connected,
         credentialType: status.credentialType ?? null,
@@ -1395,6 +1396,7 @@ function RuntimeStep({
               updatedAt: data.setupHealth.claudeCodeConnection.updatedAt,
             }}
             initialCodexStatus={{
+              accountEmail: data.setupHealth.codexConnection.accountEmail,
               checkedAt: data.setupHealth.codexConnection.checkedAt,
               connected: data.setupHealth.codexConnection.connected,
               credentialType: data.setupHealth.codexConnection.credentialType,

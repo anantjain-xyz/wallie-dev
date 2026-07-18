@@ -226,6 +226,7 @@ function mapSecretPreview(row: SecretPreviewRow): WorkspaceSecretPreview {
 
 function codexConnectionStatus(
   row: {
+    account_email: string | null;
     access_token_expires_at: string | null;
     auth_reconnect_reason: string | null;
     auth_reconnect_required: boolean;
@@ -236,6 +237,7 @@ function codexConnectionStatus(
 ) {
   if (!row || !isCodexCredentialType(row.credential_type)) {
     return {
+      accountEmail: null,
       checkedAt,
       connected: false,
       credentialType: null,
@@ -252,6 +254,7 @@ function codexConnectionStatus(
     row.credential_type === "chatgpt_auth_json" && row.auth_reconnect_required;
 
   return {
+    accountEmail: row.account_email,
     checkedAt,
     connected: !isExpired && !reconnectRequired,
     credentialType: row.credential_type,
@@ -370,6 +373,7 @@ type OnboardingSnapshot = {
   agentConfigRows: AgentConfigRow[];
   claudeCodeCredentials: { updated_at: string } | null;
   codexCredentials: {
+    account_email: string | null;
     access_token_expires_at: string | null;
     auth_reconnect_reason: string | null;
     auth_reconnect_required: boolean;
@@ -471,7 +475,7 @@ function createOnboardingSnapshot(
           admin
             .from("user_codex_credentials")
             .select(
-              "access_token_expires_at, auth_reconnect_reason, auth_reconnect_required, credential_type, updated_at",
+              "account_email, access_token_expires_at, auth_reconnect_reason, auth_reconnect_required, credential_type, updated_at",
             )
             .eq("user_id", context.user.id)
             .maybeSingle(),
