@@ -352,6 +352,30 @@ async function buildOnboardingSnapshot(
   const workspaceId = context.workspace.id;
 
   return withServerTiming("onboarding.snapshot", { workspaceId }, async (timing) => {
+    const pipelinePromise = timing.segment("snapshot.pipeline", () =>
+      context.supabase
+        .from("pipelines")
+        .select("id, name, is_default, operating_rules_md")
+        .eq("workspace_id", workspaceId)
+        .eq("is_default", true)
+        .maybeSingle(),
+    );
+    const stagePromise = pipelinePromise.then((pipelineResult) => {
+      throwQueryError(pipelineResult.error);
+      const pipelineId = pipelineResult.data?.id ?? "00000000-0000-0000-0000-000000000000";
+
+      return timing.segment("snapshot.stages", () =>
+        context.supabase
+          .from("pipeline_stages")
+          .select(
+            "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
+          )
+          .eq("workspace_id", workspaceId)
+          .eq("pipeline_id", pipelineId)
+          .order("position", { ascending: true }),
+      );
+    });
+
     const [
       onboardingRow,
       github,
@@ -376,23 +400,8 @@ async function buildOnboardingSnapshot(
           rows: result.repositories.length + (result.installation ? 1 : 0),
         }),
       ),
-      timing.segment("snapshot.pipeline", () =>
-        context.supabase
-          .from("pipelines")
-          .select("id, name, is_default, operating_rules_md")
-          .eq("workspace_id", workspaceId)
-          .eq("is_default", true)
-          .maybeSingle(),
-      ),
-      timing.segment("snapshot.stages", () =>
-        context.supabase
-          .from("pipeline_stages")
-          .select(
-            "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
-          )
-          .eq("workspace_id", workspaceId)
-          .order("position", { ascending: true }),
-      ),
+      pipelinePromise,
+      stagePromise,
       timing.segment("snapshot.secrets", () =>
         loadOnboardingSnapshotRows(admin, "load_workspace_onboarding_secret_previews", workspaceId),
       ),

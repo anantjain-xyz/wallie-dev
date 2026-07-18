@@ -35,11 +35,18 @@ const user = { id: "user-1" };
 
 type QueryResult = { data: unknown; error: null };
 
-function query(result: QueryResult, onStart?: () => void) {
+function query(
+  result: QueryResult,
+  onStart?: () => void,
+  onEqual?: (column: string, value: unknown) => void,
+) {
   onStart?.();
   const promise = Promise.resolve(result);
   const builder = {
-    eq: vi.fn(() => builder),
+    eq: vi.fn((column: string, value: unknown) => {
+      onEqual?.(column, value);
+      return builder;
+    }),
     in: vi.fn(() => builder),
     limit: vi.fn(() => builder),
     maybeSingle: vi.fn(() => promise),
@@ -95,17 +102,25 @@ function createFixture(options: {
   codexCredentials?: unknown;
   memberRole?: "member" | "owner";
   memberRows?: unknown[];
+  pipeline?: unknown;
   routing?: unknown;
   sandboxChecks?: unknown[];
   secrets?: unknown[];
+  stageRows?: unknown[];
 }) {
   const counts = new Map<string, number>();
+  const equalFilters = new Map<string, Array<[string, unknown]>>();
   const increment = (table: string) => counts.set(table, (counts.get(table) ?? 0) + 1);
+  const recordEqual = (table: string, column: string, value: unknown) => {
+    const filters = equalFilters.get(table) ?? [];
+    filters.push([column, value]);
+    equalFilters.set(table, filters);
+  };
   const memberRow = member(options.memberRole ?? "owner");
 
   const userRows: Record<string, unknown> = {
-    pipeline_stages: [],
-    pipelines: null,
+    pipeline_stages: options.stageRows ?? [],
+    pipelines: options.pipeline ?? null,
     workspace_members: options.memberRows ?? [memberRow],
     workspace_onboarding: onboardingRow(),
   };
@@ -133,7 +148,9 @@ function createFixture(options: {
   const supabase = {
     from: vi.fn((table: string) => {
       increment(table);
-      return query({ data: userRows[table], error: null });
+      return query({ data: userRows[table], error: null }, undefined, (column, value) =>
+        recordEqual(table, column, value),
+      );
     }),
   };
   mocked.admin.from.mockImplementation((table: string) => {
@@ -148,6 +165,7 @@ function createFixture(options: {
   return {
     context: { currentMember: memberRow, supabase, user, workspace },
     counts,
+    equalFilters,
   };
 }
 
@@ -162,6 +180,12 @@ describe("canonical onboarding snapshot", () => {
   });
 
   it("queries every onboarding source once for an owner and derives partial provider state", async () => {
+    const pipeline = {
+      id: "pipeline-default",
+      is_default: true,
+      name: "Default",
+      operating_rules_md: "",
+    };
     const linearSecret = {
       created_at: NOW,
       created_by_member_id: "member-owner",
@@ -180,7 +204,20 @@ describe("canonical onboarding snapshot", () => {
         updated_at: NOW,
       },
       memberRole: "owner",
+      pipeline,
       secrets: [linearSecret],
+      stageRows: [
+        {
+          approver_member_ids: [],
+          description: null,
+          id: "stage-plan",
+          name: "Plan",
+          pipeline_id: pipeline.id,
+          position: 1,
+          prompt_template_md: "Plan {{session.title}}",
+          slug: "plan",
+        },
+      ],
     });
 
     const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
@@ -191,6 +228,7 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.linearSecret?.valuePreview).toBe("lin_…1234");
     expect(result.data.workspaceSecrets).toHaveLength(1);
     expect(result.data.setupHealth.agentConfig.status).toBe("present");
+    expect(result.data.setupHealth.defaultPipeline.status).toBe("ready");
     expect(result.data.setupHealth.codexConnection.status).toBe("connected");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
 
@@ -307,6 +345,51 @@ describe("canonical onboarding snapshot", () => {
     expect(fixture.counts.get("load_workspace_onboarding_sandbox_checks")).toBe(1);
   });
 
+  it("scopes the stage snapshot to the default pipeline before the row cap", async () => {
+    const pipeline = {
+      id: "pipeline-default",
+      is_default: true,
+      name: "Default",
+      operating_rules_md: "",
+    };
+    const fixture = createFixture({
+      memberRole: "owner",
+      pipeline,
+      stageRows: [
+        {
+          approver_member_ids: [],
+          description: null,
+          id: "stage-plan",
+          name: "Plan",
+          pipeline_id: pipeline.id,
+          position: 1,
+          prompt_template_md: "Plan {{session.title}}",
+          slug: "plan",
+        },
+      ],
+    });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result).toMatchObject({
+      data: {
+        pipeline: {
+          id: pipeline.id,
+          stages: [{ id: "stage-plan" }],
+        },
+        setupHealth: {
+          defaultPipeline: { stageCount: 1, status: "ready" },
+        },
+      },
+      ok: true,
+    });
+    expect(fixture.equalFilters.get("pipeline_stages")).toEqual([
+      ["workspace_id", workspace.id],
+      ["pipeline_id", pipeline.id],
+    ]);
+    expect(fixture.counts.get("pipeline_stages")).toBe(1);
+  });
+
   it("keeps the targeted Linear secret beyond a normal PostgREST row cap", async () => {
     const linearSecret = {
       created_at: NOW,
@@ -394,6 +477,10 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.githubInstallation.status).toBe("missing");
     expect(result.data.setupHealth.codexConnection.status).toBe("missing");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
+    expect(fixture.equalFilters.get("pipeline_stages")).toContainEqual([
+      "pipeline_id",
+      "00000000-0000-0000-0000-000000000000",
+    ]);
   });
 
   it("starts independent snapshot sources before GitHub resolves", async () => {
