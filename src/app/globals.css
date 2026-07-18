@@ -68,6 +68,8 @@
   --shell-scroll-padding: calc(4.5rem + env(safe-area-inset-top));
   --wallie-visual-viewport-center: 50dvh;
   --wallie-visual-viewport-height: 100dvh;
+  --wallie-visual-viewport-offset-top: 0px;
+  --wallie-visual-viewport-bottom-offset: 0px;
   --overlay-motion-duration: 160ms;
   --overlay-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
   --z-overlay-backdrop: 60;
@@ -473,16 +475,19 @@
   .ui-dialog-content {
     position: fixed;
     left: 50%;
-    top: var(--wallie-visual-viewport-center);
+    top: calc(var(--wallie-visual-viewport-offset-top) + var(--overlay-gutter-block-start));
+    bottom: calc(var(--wallie-visual-viewport-bottom-offset) + var(--overlay-gutter-block-end));
     z-index: var(--z-overlay-content);
     width: min(32rem, calc(100vw - (var(--overlay-gutter) * 2)));
+    height: fit-content;
     max-height: calc(
       var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
         var(--overlay-gutter-block-end)
     );
+    margin-block: auto;
     overflow-y: auto;
     overscroll-behavior: contain;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
     border: 1px solid var(--border);
     border-radius: var(--overlay-radius);
     background: var(--surface-overlay);
@@ -608,7 +613,7 @@
   .ui-toast-viewport {
     position: fixed;
     right: var(--overlay-gutter-inline-end);
-    bottom: var(--overlay-gutter-block-end);
+    bottom: calc(var(--wallie-visual-viewport-bottom-offset) + var(--overlay-gutter-block-end));
     z-index: var(--z-toast);
     display: flex;
     width: min(24rem, calc(100vw - (var(--overlay-gutter) * 2)));
@@ -1055,7 +1060,7 @@ html:has([data-precision-console-fixture]) nextjs-portal {
 @keyframes wallie-dialog-enter {
   from {
     opacity: 0;
-    transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+    transform: translate(-50%, 8px) scale(0.98);
   }
 }
 

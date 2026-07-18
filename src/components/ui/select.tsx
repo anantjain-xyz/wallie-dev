@@ -1,10 +1,10 @@
 "use client";
 
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { useId, type ComponentProps, type ReactNode } from "react";
+import { useId, useState, type ComponentProps, type ReactNode } from "react";
 
 import { CheckIcon, ChevronDownIcon } from "@/components/shared/icons";
-import { useOverlayContainer } from "@/components/ui/portal-root";
+import { useModalOverlayContainer, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 const RADIX_EMPTY_VALUE = "__wallie_select_empty_value__";
@@ -57,11 +57,14 @@ export function SelectContent({
   children,
   className,
   collisionPadding = 8,
+  container: containerOverride,
   position = "popper",
   sideOffset = 6,
   ...props
-}: ComponentProps<typeof SelectPrimitive.Content>) {
-  const container = useOverlayContainer();
+}: ComponentProps<typeof SelectPrimitive.Content> & { container?: HTMLElement | null }) {
+  const overlayContainer = useOverlayContainer();
+  const modalContainer = useModalOverlayContainer();
+  const container = containerOverride ?? modalContainer ?? overlayContainer;
 
   if (!container) return null;
 
@@ -108,6 +111,7 @@ export function SelectField({
   value,
 }: SelectFieldProps) {
   const labelId = useId();
+  const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
   const selectOptions = emptyOption ? [emptyOption, ...options] : [...options];
   const selectedOption = selectOptions.find((option) => option.value === value);
   const hasOptionIcons = selectOptions.some((option) => option.icon);
@@ -131,6 +135,7 @@ export function SelectField({
           aria-haspopup="listbox"
           aria-labelledby={labelId}
           className="ui-select-trigger w-full"
+          ref={setTriggerElement}
         >
           <span className="flex min-w-0 items-center gap-2">
             {selectedOption?.icon ? (
@@ -149,7 +154,9 @@ export function SelectField({
             <ChevronDownIcon className="text-muted" />
           </SelectPrimitive.Icon>
         </SelectPrimitive.Trigger>
-        <SelectContent>
+        <SelectContent
+          container={triggerElement?.closest<HTMLElement>('[aria-modal="true"]') ?? undefined}
+        >
           {selectOptions.map((option) => (
             <SelectPrimitive.Item
               className="ui-select-item"
