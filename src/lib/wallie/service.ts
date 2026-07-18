@@ -208,28 +208,59 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
   });
 }
 
-export async function prepareSessionFirstRun(input: { admin?: AdminClient; workspaceId: string }) {
+export type SessionFirstRunPrerequisites = {
+  agentConfig: Awaited<ReturnType<typeof loadWorkspaceAgentConfig>>;
+  missingSecretKeys: string[];
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+};
+
+export async function loadSessionFirstRunPrerequisites(input: {
+  admin?: AdminClient;
+  workspaceId: string;
+}): Promise<SessionFirstRunPrerequisites> {
   const admin = input.admin ?? createSupabaseAdminClient();
   const [agentConfig, missingSecretKeys, vercelSandboxConnection] = await Promise.all([
     loadWorkspaceAgentConfig(admin, input.workspaceId),
     loadMissingSecretKeys(admin, input.workspaceId),
     loadWallieVercelSandboxConnection(admin, input.workspaceId),
   ]);
+
+  return { agentConfig, missingSecretKeys, vercelSandboxConnection };
+}
+
+export function assertSessionFirstRunReady(input: {
+  agentConfig: SessionFirstRunPrerequisites["agentConfig"];
+  missingSecretKeys: string[];
+  repository: WallieSessionRepository | null;
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+}) {
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: false,
-    missingSecretKeys,
-    mode: "project",
-    repository: null,
+    missingSecretKeys: input.missingSecretKeys,
+    mode: inferWallieRunMode(input.repository?.id ?? null),
+    repository: input.repository,
     requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
-    vercelSandboxConnection,
+    vercelSandboxConnection: input.vercelSandboxConnection,
   });
-  const blockingError = toBlockingActionError(blockingReasons, missingSecretKeys);
+  const blockingError = toBlockingActionError(blockingReasons, input.missingSecretKeys);
 
   if (blockingError) {
     throw blockingError;
   }
 
-  return agentConfig;
+  return input.agentConfig;
+}
+
+export async function prepareSessionFirstRun(input: {
+  admin?: AdminClient;
+  repository: WallieSessionRepository | null;
+  workspaceId: string;
+}) {
+  const prerequisites = await loadSessionFirstRunPrerequisites(input);
+  return assertSessionFirstRunReady({
+    ...prerequisites,
+    repository: input.repository,
+  });
 }
 
 export async function createSessionWithFirstJob(input: {

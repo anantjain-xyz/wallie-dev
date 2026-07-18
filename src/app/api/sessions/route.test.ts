@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { WallieActionError } from "@/lib/wallie/service";
+
 const mocked = vi.hoisted(() => ({
+  assertSessionFirstRunReady: vi.fn(),
   createSessionWithFirstJob: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
-  prepareSessionFirstRun: vi.fn(),
+  loadSessionFirstRunPrerequisites: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
 
@@ -11,10 +14,16 @@ vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: mocked.createSupabaseAdminClient,
 }));
 
-vi.mock("@/lib/wallie/service", () => ({
-  createSessionWithFirstJob: mocked.createSessionWithFirstJob,
-  prepareSessionFirstRun: mocked.prepareSessionFirstRun,
-}));
+vi.mock("@/lib/wallie/service", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/wallie/service")>("@/lib/wallie/service");
+  return {
+    WallieActionError: actual.WallieActionError,
+    assertSessionFirstRunReady: mocked.assertSessionFirstRunReady,
+    createSessionWithFirstJob: mocked.createSessionWithFirstJob,
+    loadSessionFirstRunPrerequisites: mocked.loadSessionFirstRunPrerequisites,
+  };
+});
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
@@ -25,6 +34,17 @@ import { POST } from "./route";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
+const ARCHIVED_REPOSITORY_ID = "55555555-5555-4555-8555-555555555555";
+
+type RepositoryRow = {
+  default_branch: string | null;
+  default_programming_language: string | null;
+  full_name: string;
+  html_url: string;
+  id: string;
+  is_archived: boolean;
+  private: boolean;
+};
 
 function makeRequest(body: Record<string, unknown>) {
   return new Request("http://localhost/api/sessions", {
@@ -32,6 +52,18 @@ function makeRequest(body: Record<string, unknown>) {
     headers: { "content-type": "application/json" },
     method: "POST",
   });
+}
+
+function makeRepository(id: string, isArchived = false): RepositoryRow {
+  return {
+    default_branch: "main",
+    default_programming_language: "TypeScript",
+    full_name: `acme/${id.slice(0, 8)}`,
+    html_url: `https://github.com/acme/${id.slice(0, 8)}`,
+    id,
+    is_archived: isArchived,
+    private: false,
+  };
 }
 
 function buildSupabaseMock(
@@ -54,13 +86,13 @@ function buildSupabaseMock(
 
 function buildAdminMock(
   opts: {
-    firstRepositoryId?: string | null;
+    firstRepository?: RepositoryRow | null;
     primaryRepositoryId?: string | null;
-    repositoriesById?: Record<string, boolean>;
+    repositoriesById?: Record<string, RepositoryRow>;
   } = {},
 ) {
   const repositoriesById = opts.repositoriesById ?? {};
-  const firstRepositoryId = opts.firstRepositoryId ?? null;
+  const firstRepository = opts.firstRepository ?? null;
 
   return {
     from(table: string) {
@@ -105,19 +137,23 @@ function buildAdminMock(
             return builder;
           },
           maybeSingle: async () => {
-            if (!scopedToWorkspace || !scopedToActive) {
+            if (!scopedToWorkspace) {
               return { data: null, error: null };
             }
 
             if (selectedId) {
-              return {
-                data: repositoriesById[selectedId] ? { id: selectedId } : null,
-                error: null,
-              };
+              const repository = repositoriesById[selectedId] ?? null;
+              if (!repository) {
+                return { data: null, error: null };
+              }
+              if (scopedToActive && repository.is_archived) {
+                return { data: null, error: null };
+              }
+              return { data: repository, error: null };
             }
 
-            if (limited && firstRepositoryId) {
-              return { data: { id: firstRepositoryId }, error: null };
+            if (limited && scopedToActive && firstRepository && !firstRepository.is_archived) {
+              return { data: firstRepository, error: null };
             }
 
             return { data: null, error: null };
@@ -151,11 +187,23 @@ describe("POST /api/sessions", () => {
     setupAccess();
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
-        firstRepositoryId: REPOSITORY_ID,
-        repositoriesById: { [REPOSITORY_ID]: true },
+        firstRepository: makeRepository(REPOSITORY_ID),
+        repositoriesById: { [REPOSITORY_ID]: makeRepository(REPOSITORY_ID) },
       }),
     );
-    mocked.prepareSessionFirstRun.mockResolvedValue({ model: "gpt-5.5", provider: "codex" });
+    mocked.loadSessionFirstRunPrerequisites.mockResolvedValue({
+      agentConfig: { model: "gpt-5.5", provider: "codex" },
+      missingSecretKeys: [],
+      vercelSandboxConnection: {
+        connected: true,
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+      },
+    });
+    mocked.assertSessionFirstRunReady.mockImplementation(({ agentConfig }) => agentConfig);
     mocked.createSessionWithFirstJob.mockResolvedValue({
       jobId: "job-1",
       number: 7,
@@ -181,6 +229,11 @@ describe("POST /api/sessions", () => {
       number: 7,
       processScheduled: true,
     });
+    expect(mocked.assertSessionFirstRunReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: expect.objectContaining({ id: REPOSITORY_ID, isArchived: false }),
+      }),
+    );
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledTimes(1);
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -212,14 +265,14 @@ describe("POST /api/sessions", () => {
   });
 
   it("prefers the primary workspace repository", async () => {
-    const secondRepositoryId = "55555555-5555-4555-8555-555555555555";
+    const secondRepositoryId = "66666666-6666-4666-8666-666666666666";
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
-        firstRepositoryId: REPOSITORY_ID,
+        firstRepository: makeRepository(REPOSITORY_ID),
         primaryRepositoryId: secondRepositoryId,
         repositoriesById: {
-          [REPOSITORY_ID]: true,
-          [secondRepositoryId]: true,
+          [REPOSITORY_ID]: makeRepository(REPOSITORY_ID),
+          [secondRepositoryId]: makeRepository(secondRepositoryId),
         },
       }),
     );
@@ -234,13 +287,49 @@ describe("POST /api/sessions", () => {
   it("rejects unavailable or cross-workspace repositories before mutation", async () => {
     const response = await POST(
       makeRequest({
-        githubRepositoryId: "66666666-6666-4666-8666-666666666666",
+        githubRepositoryId: "77777777-7777-4777-8777-777777777777",
         promptMd: "Add SSO",
         workspaceId: WORKSPACE_ID,
       }),
     );
 
     expect(response.status).toBe(400);
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it("blocks create when the configured repository is archived and no active fallback exists", async () => {
+    mocked.createSupabaseAdminClient.mockReturnValue(
+      buildAdminMock({
+        firstRepository: null,
+        primaryRepositoryId: ARCHIVED_REPOSITORY_ID,
+        repositoriesById: {
+          [ARCHIVED_REPOSITORY_ID]: makeRepository(ARCHIVED_REPOSITORY_ID, true),
+        },
+      }),
+    );
+    mocked.assertSessionFirstRunReady.mockImplementation(() => {
+      throw new WallieActionError({
+        code: "repository_archived",
+        message: "Wallie cannot start a run against an archived repository.",
+        statusCode: 422,
+      });
+    });
+
+    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      code: "repository_archived",
+      error: "Wallie cannot start a run against an archived repository.",
+    });
+    expect(mocked.assertSessionFirstRunReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: expect.objectContaining({
+          id: ARCHIVED_REPOSITORY_ID,
+          isArchived: true,
+        }),
+      }),
+    );
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 

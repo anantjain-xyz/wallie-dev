@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Tables } from "@/lib/supabase/database.types";
 import {
+  assertSessionFirstRunReady,
   claimQueuedJobCandidate,
   createSessionWithFirstJob,
   enqueueWallieRun,
@@ -99,6 +100,32 @@ describe("wallie service helpers", () => {
       sessionId: "session-1",
       workspaceSlug: "acme",
     });
+  });
+
+  it("blocks first-run prep when the resolved repository is archived", () => {
+    expect(() =>
+      assertSessionFirstRunReady({
+        agentConfig: { model: "gpt-5.5", provider: "codex" },
+        missingSecretKeys: [],
+        repository: {
+          defaultBranch: "main",
+          defaultProgrammingLanguage: "TypeScript",
+          fullName: "acme/archived",
+          htmlUrl: "https://github.com/acme/archived",
+          id: "repo-archived",
+          isArchived: true,
+          isPrivate: false,
+        },
+        vercelSandboxConnection: {
+          connected: true,
+          lastValidationError: null,
+          projectId: "prj_123",
+          projectName: "wallie-sandboxes",
+          status: "connected",
+          teamId: "team_123",
+        },
+      }),
+    ).toThrow(/archived repository/i);
   });
 
   it("claims the first candidate that wins the race", async () => {
