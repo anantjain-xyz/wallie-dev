@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 
-import { LogoutIcon } from "@/components/shared/icons";
+import { LogoutIcon } from "@/components/shared/icons/logout-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,

@@ -10,7 +10,8 @@ import type {
   BatchUpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
-import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { PlusIcon } from "@/components/shared/icons/plus-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";

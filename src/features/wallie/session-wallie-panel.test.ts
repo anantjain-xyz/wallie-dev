@@ -103,6 +103,21 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Codex session completed");
   });
 
+  it("contains only collapsed inactive run history groups", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionWalliePanel, {
+        initialData: data({
+          runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
+        }),
+        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
+        supabase: {} as SupabaseClient<Database>,
+        workspaceSlug: "acme",
+      }),
+    );
+
+    expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
+  });
+
   it("allows retry only when the run is retryable", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {

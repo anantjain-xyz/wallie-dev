@@ -127,6 +127,18 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toContain("box-shadow: inset 0 0 0 2px var(--focus-ring-contrast);");
   });
 
+  it("bounds off-screen rendering and reveals interactive contained content", () => {
+    expect(stylesheet).toMatch(/\.settings-contained-section\s*\{[^}]*content-visibility: auto;/u);
+    expect(stylesheet).toMatch(/\.session-list-row\s*\{[^}]*content-visibility: auto;/u);
+    expect(stylesheet).toMatch(/\.run-history-group\s*\{[^}]*content-visibility: auto;/u);
+    expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 680px;");
+    expect(stylesheet).toContain("contain-intrinsic-size: auto 0 auto 116px;");
+    expect(stylesheet).toMatch(/:focus-within,[\s\S]*content-visibility: visible;/u);
+    expect(stylesheet).toMatch(
+      /\.content-visibility-interacting\s*\{[^}]*content-visibility: visible;/u,
+    );
+  });
+
   it.each([".ui-menu-item", ".ui-select-item"])(
     "keeps the primary outline and inset contrast layer on %s",
     (selector) => {

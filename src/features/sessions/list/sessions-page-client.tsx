@@ -30,7 +30,10 @@ import {
   type SessionListItem,
   type SessionListQueryState,
 } from "@/features/sessions/types";
-import { CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { PencilIcon } from "@/components/shared/icons/pencil-icon";
+import { SearchIcon } from "@/components/shared/icons/search-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -522,7 +525,13 @@ function SessionRow({
   }
 
   return (
-    <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center">
+    <li
+      className={cn(
+        "session-list-row group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center",
+        (isEditing || archiveConfirming || archivePending !== null || error || archiveError) &&
+          "content-visibility-interacting",
+      )}
+    >
       <Tooltip content={displayTitle}>
         <SessionDetailLink
           href={detailHref}

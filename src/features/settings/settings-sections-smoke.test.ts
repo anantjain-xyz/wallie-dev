@@ -427,6 +427,7 @@ describe("Settings integration sections", () => {
     );
 
     const groupHeadings = ["Integrations", "Pipeline", "Advanced", "Workspace"];
+    expect((html.match(/settings-contained-section(?:\s|&quot;|\")/g) ?? []).length).toBe(11);
     let lastGroupIndex = -1;
     for (const heading of groupHeadings) {
       const index = html.indexOf(`>${heading}</p>`);
