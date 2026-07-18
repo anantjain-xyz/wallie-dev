@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
-import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import type { SessionReviewData } from "@/features/sessions/detail/data";
 import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import type { SessionSummary } from "@/features/sessions/types";
@@ -73,66 +73,47 @@ const session: SessionSummary = {
   workspaceId: "workspace-1",
 };
 
-function makeDetailData(): SessionDetailPageData {
+function makeDetailData(): SessionReviewData {
   return {
-    currentMember: null,
-    members: [],
-    memberIndex: new Map(),
+    creatorDisplayName: null,
     session: {
-      ...session,
+      archivedAt: session.archivedAt,
       artifacts: [],
+      createdAt: session.createdAt,
+      currentArtifactVersion: session.currentArtifactVersion,
+      currentStageId: session.currentStageId,
+      currentStageSlug: session.currentStageSlug,
+      id: session.id,
+      linearIssueId: session.linearIssueId,
+      linearIssueUrl: session.linearIssueUrl,
+      number: session.number,
       phaseCompletions: [],
+      phaseStatus: session.phaseStatus,
       pipeline: {
-        id: "pipeline-1",
-        isDefault: true,
-        name: "Default",
-        operatingRulesMd: "",
         stages: [
           {
-            approverMemberIds: [],
             description: "Plan",
             id: "stage-plan",
             name: "Plan",
-            pipelineId: "pipeline-1",
             position: 0,
-            promptTemplateMd: "",
             slug: "plan",
           },
           {
-            approverMemberIds: [],
             description: "Build",
             id: "stage-build",
             name: "Build",
-            pipelineId: "pipeline-1",
             position: 1,
-            promptTemplateMd: "",
             slug: "build",
           },
         ],
       },
+      promptMd: session.promptMd,
+      pullRequests: [],
+      rejectionCount: session.rejectionCount,
+      title: session.title,
+      updatedAt: session.updatedAt,
     },
-    sessionCreator: null,
-    sessionGithubRepositoryId: null,
-    wallie: {
-      blockingReasons: [],
-      canEnqueue: false,
-      loadedMessageRunIds: [],
-      missingSecretKeys: [],
-      mode: "code",
-      repository: null,
-      requiredSecretKeys: [],
-      requiresVercelSandbox: false,
-      runs: [],
-      vercelSandboxConnection: {
-        connected: false,
-        lastValidationError: null,
-        projectId: null,
-        projectName: null,
-        status: "missing",
-        teamId: null,
-      },
-    },
-    workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
+    workspaceSlug: "acme",
   };
 }
 
@@ -190,6 +171,7 @@ describe("optimistic session interactions", () => {
 
     render(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: makeDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -235,13 +217,12 @@ describe("optimistic session interactions", () => {
     data.session = {
       ...data.session,
       currentStageId: "stage-build",
-      currentStageName: "Build",
-      currentStagePosition: 1,
       currentStageSlug: "build",
     };
 
     render(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -285,6 +266,7 @@ describe("optimistic session interactions", () => {
 
     render(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,

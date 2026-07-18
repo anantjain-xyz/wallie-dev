@@ -1,8 +1,24 @@
-import type {
-  SessionDetail,
-  SessionPhaseCompletion,
-  SessionPhaseStatus,
-} from "@/features/sessions/types";
+import type { SessionPhaseCompletion, SessionPhaseStatus } from "@/features/sessions/types";
+
+type OptimisticSession = {
+  archivedAt: string | null;
+  currentArtifactVersion: number | null;
+  currentStageId: string;
+  currentStageSlug: string;
+  phaseCompletions: SessionPhaseCompletion[];
+  phaseStatus: SessionPhaseStatus;
+  pipeline: {
+    stages: Array<{
+      id: string;
+      name: string;
+      position: number;
+      slug: string;
+    }>;
+  };
+  rejectionCount?: number;
+  title: string;
+  updatedAt: string;
+};
 
 export type SessionMutationPatch = {
   archivedAt?: string | null;
@@ -38,10 +54,10 @@ export function compareSessionTimestamps(left: string, right: string): number {
   return Math.sign(leftNanoseconds - rightNanoseconds);
 }
 
-export function applySessionMutationPatch(
-  session: SessionDetail,
+export function applySessionMutationPatch<Session extends OptimisticSession>(
+  session: Session,
   patch: SessionMutationPatch,
-): SessionDetail {
+): Session {
   const currentStage = patch.currentStageId
     ? session.pipeline.stages.find((stage) => stage.id === patch.currentStageId)
     : null;
@@ -65,9 +81,13 @@ export function applySessionMutationPatch(
     ...(patch.currentStageId !== undefined ? { currentStageId: patch.currentStageId } : {}),
     ...(currentStage
       ? {
-          currentStageName: currentStage.name,
-          currentStagePosition: currentStage.position,
           currentStageSlug: currentStage.slug,
+          ...(Object.hasOwn(session, "currentStageName")
+            ? { currentStageName: currentStage.name }
+            : {}),
+          ...(Object.hasOwn(session, "currentStagePosition")
+            ? { currentStagePosition: currentStage.position }
+            : {}),
         }
       : {}),
     ...(patch.phaseStatus !== undefined ? { phaseStatus: patch.phaseStatus } : {}),
@@ -75,13 +95,13 @@ export function applySessionMutationPatch(
     ...(patch.title !== undefined ? { title: patch.title } : {}),
     ...(patch.updatedAt !== undefined ? { updatedAt: patch.updatedAt } : {}),
     phaseCompletions,
-  };
+  } as Session;
 }
 
-export function reconcileSessionMutationPatch(
-  session: SessionDetail,
+export function reconcileSessionMutationPatch<Session extends OptimisticSession>(
+  session: Session,
   patch: SessionMutationPatch & { updatedAt: string },
-): SessionDetail {
+): Session {
   const timestampOrder = compareSessionTimestamps(patch.updatedAt, session.updatedAt);
 
   if (timestampOrder < 0) {
@@ -95,7 +115,10 @@ export function reconcileSessionMutationPatch(
   return applySessionMutationPatch(session, patch);
 }
 
-function advancesSameTimestampState(session: SessionDetail, patch: SessionMutationPatch): boolean {
+function advancesSameTimestampState(
+  session: OptimisticSession,
+  patch: SessionMutationPatch,
+): boolean {
   if (patch.currentStageId && patch.currentStageId !== session.currentStageId) {
     const currentPosition = session.pipeline.stages.find(
       (stage) => stage.id === session.currentStageId,
@@ -120,22 +143,27 @@ function advancesSameTimestampState(session: SessionDetail, patch: SessionMutati
     return true;
   }
 
-  if (patch.rejectionCount !== undefined && patch.rejectionCount > session.rejectionCount) {
+  if (
+    patch.rejectionCount !== undefined &&
+    session.rejectionCount !== undefined &&
+    patch.rejectionCount > session.rejectionCount
+  ) {
     return true;
   }
 
   return patch.archivedAt !== undefined && patch.archivedAt !== null && !session.archivedAt;
 }
 
-export function rollbackSessionMutationPatch(
-  session: SessionDetail,
+export function rollbackSessionMutationPatch<Session extends OptimisticSession>(
+  session: Session,
   optimisticPatch: SessionMutationPatch,
   previousPatch: SessionMutationPatch,
-): SessionDetail {
+): Session {
   const rollbackPatch: SessionMutationPatch = {};
+  const sessionFields = session as OptimisticSession & Record<string, unknown>;
 
   for (const key of Object.keys(previousPatch) as (keyof SessionMutationPatch)[]) {
-    if (session[key as keyof SessionDetail] === optimisticPatch[key]) {
+    if (sessionFields[key] === optimisticPatch[key]) {
       Object.assign(rollbackPatch, { [key]: previousPatch[key] });
     }
   }

@@ -1,7 +1,7 @@
 import type { Tables } from "@/lib/supabase/database.types";
+import type { SessionReviewSession } from "@/features/sessions/detail/data";
 import type {
   SessionArtifactSummary,
-  SessionDetail,
   SessionPhaseCompletion,
   SessionPhaseStatus,
 } from "@/features/sessions/types";
@@ -21,12 +21,10 @@ type SessionRealtimeRow = Pick<
   | "linear_issue_url"
   | "number"
   | "phase_status"
-  | "pipeline_id"
   | "prompt_md"
   | "rejection_count"
   | "title"
   | "updated_at"
-  | "workspace_id"
 >;
 
 type ArtifactRealtimeRow = Pick<
@@ -40,13 +38,14 @@ type CompletionRealtimeRow = Pick<
 >;
 
 export function mergeSessionRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: SessionRealtimeRow,
-): SessionDetail {
+): SessionReviewSession {
   if (row.id !== session.id) {
     return session;
   }
 
+  const currentStage = session.pipeline.stages.find((stage) => stage.id === row.current_stage_id);
   const patchedSession = reconcileSessionMutationPatch(session, {
     archivedAt: row.archived_at,
     currentArtifactVersion: row.current_artifact_version,
@@ -62,19 +61,18 @@ export function mergeSessionRealtimeRow(
   return {
     ...patchedSession,
     createdAt: row.created_at,
+    currentStageSlug: currentStage?.slug ?? patchedSession.currentStageSlug,
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: row.number,
-    pipelineId: row.pipeline_id,
     promptMd: row.prompt_md,
-    workspaceId: row.workspace_id,
   };
 }
 
 export function mergeArtifactRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: ArtifactRealtimeRow,
-): SessionDetail {
+): SessionReviewSession {
   if (row.session_id !== session.id) {
     return session;
   }
@@ -108,10 +106,10 @@ export function mergeArtifactRealtimeRow(
 }
 
 export function removeArtifactRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: Pick<Tables<"session_artifacts">, "id"> &
     Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>,
-): SessionDetail {
+): SessionReviewSession {
   const artifacts = session.artifacts.filter((artifact) => {
     if (artifact.id) return artifact.id !== row.id;
     return artifact.stageSlug !== row.stage_slug || artifact.version !== row.version;
@@ -121,9 +119,9 @@ export function removeArtifactRealtimeRow(
 }
 
 export function mergeCompletionRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: CompletionRealtimeRow,
-): SessionDetail {
+): SessionReviewSession {
   if (row.session_id !== session.id) {
     return session;
   }
@@ -155,10 +153,10 @@ export function mergeCompletionRealtimeRow(
 }
 
 export function removeCompletionRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: Pick<Tables<"session_phase_completions">, "id"> &
     Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>,
-): SessionDetail {
+): SessionReviewSession {
   const phaseCompletions = session.phaseCompletions.filter((completion) => {
     if (completion.id) return completion.id !== row.id;
     return completion.stageSlug !== row.stage_slug;

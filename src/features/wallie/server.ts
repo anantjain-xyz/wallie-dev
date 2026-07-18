@@ -9,7 +9,11 @@ import type {
   WallieSessionRepository,
   WallieVercelSandboxConnectionStatus,
 } from "@/features/wallie/types";
-import type { WorkspaceMember } from "@/features/workspace-members/types";
+import {
+  buildWorkspaceMemberIndex,
+  mapWorkspaceMemberRow,
+} from "@/features/workspace-members/model";
+import type { WorkspaceMemberRow } from "@/features/workspace-members/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 
@@ -17,7 +21,6 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient
 
 export async function loadWallieSessionData(input: {
   session: { githubRepositoryId: string | null; id: string };
-  memberIndex: ReadonlyMap<string, WorkspaceMember>;
   repository: WallieSessionRepository | null;
   supabase: SupabaseServerClient;
   workspaceId: string;
@@ -28,6 +31,10 @@ export async function loadWallieSessionData(input: {
     .select(runSelect)
     .eq("session_id", input.session.id)
     .order("created_at", { ascending: false });
+  const memberRowsPromise = input.supabase
+    .from("workspace_members")
+    .select(memberSelect)
+    .eq("workspace_id", input.workspaceId);
   const secretRowsPromise =
     WALLIE_REQUIRED_SECRET_KEYS.length > 0
       ? admin
@@ -38,16 +45,22 @@ export async function loadWallieSessionData(input: {
       : Promise.resolve({ data: [], error: null });
   const [
     { data: runRows, error: runError },
+    { data: memberRows, error: memberError },
     { data: secretRows, error: secretError },
     vercelSandboxConnection,
   ] = await Promise.all([
     runRowsPromise,
+    memberRowsPromise,
     secretRowsPromise,
     loadWallieVercelSandboxConnection(admin, input.workspaceId),
   ]);
 
   if (runError) {
     throw runError;
+  }
+
+  if (memberError) {
+    throw memberError;
   }
 
   if (secretError) {
@@ -58,11 +71,12 @@ export async function loadWallieSessionData(input: {
   const missingSecretKeys = [...WALLIE_REQUIRED_SECRET_KEYS].filter(
     (secretKey) => !availableSecretKeys.has(secretKey),
   );
+  const members = ((memberRows ?? []) as WorkspaceMemberRow[]).map(mapWorkspaceMemberRow);
 
   return buildWallieSessionData({
     sessionGithubRepositoryId: input.session.githubRepositoryId,
     loadedMessageRunIds: [],
-    memberIndex: input.memberIndex,
+    memberIndex: buildWorkspaceMemberIndex(members),
     messages: [],
     missingSecretKeys,
     repository: input.repository,
@@ -117,3 +131,4 @@ async function loadWallieVercelSandboxConnection(
 
 const runSelect =
   "id, created_at, finished_at, model_name, model_provider, run_type, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id";
+const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";

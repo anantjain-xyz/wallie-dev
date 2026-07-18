@@ -1,36 +1,97 @@
 import "server-only";
 
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-import type { WorkspaceSummary } from "@/lib/auth";
-import { loadSessionWorkspaceContext } from "@/features/sessions/server";
-import type { SessionDetail } from "@/features/sessions/types";
-import { loadWallieSessionData } from "@/features/wallie/server";
-import type { WallieSessionData, WallieSessionRepository } from "@/features/wallie/types";
-import type { WorkspaceMember } from "@/features/workspace-members/types";
+import type { SessionConnectionPullRequest } from "@/features/sessions/components/session-connections";
+import type {
+  SessionArtifactSummary,
+  SessionPhaseCompletion,
+  SessionPhaseStatus,
+} from "@/features/sessions/types";
+import type { WallieSessionRepository } from "@/features/wallie/types";
+import { loginPath, onboardingWorkspacePath, workspaceSessionDetailPath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   approximatePayloadSizeBytes,
   type ServerTimingCollector,
   withServerTiming,
 } from "@/lib/server-timing";
 
-export type SessionDetailPageData = {
-  currentMember: WorkspaceMember | null;
-  members: WorkspaceMember[];
-  memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  session: SessionDetail;
+/**
+ * Seeded session #18 was 10,603 bytes at the detail RPC before member and
+ * activity data were added to the client boundary. Keep the critical review
+ * contract below 4.5 KiB on that seed (a 57% reduction from the RPC alone).
+ */
+export const SESSION_REVIEW_PAYLOAD_TARGET_BYTES = 4_500;
+
+export type SessionReviewStage = {
+  description: string;
+  id: string;
+  name: string;
+  position: number;
+  slug: string;
+};
+
+export type SessionReviewPipeline = {
+  stages: SessionReviewStage[];
+};
+
+export type SessionReviewSession = {
+  archivedAt: string | null;
+  artifacts: SessionArtifactSummary[];
+  createdAt: string;
+  currentArtifactVersion: number | null;
+  currentStageId: string;
+  currentStageSlug: string;
+  id: string;
+  linearIssueId: string | null;
+  linearIssueUrl: string | null;
+  number: number;
+  phaseCompletions: SessionPhaseCompletion[];
+  phaseStatus: SessionPhaseStatus;
+  pipeline: SessionReviewPipeline;
+  promptMd: string;
+  pullRequests: SessionConnectionPullRequest[];
+  /** Client-only reconciliation metadata populated by mutation/realtime responses. */
+  rejectionCount?: number;
+  title: string;
+  updatedAt: string;
+};
+
+/** The only session-detail data serialized into the critical client surface. */
+export type SessionReviewData = {
+  creatorDisplayName: string | null;
+  session: SessionReviewSession;
+  workspaceSlug: string;
+};
+
+export type SessionActivityContext = {
+  repository: WallieSessionRepository | null;
   sessionGithubRepositoryId: string | null;
-  sessionCreator: WorkspaceMember | null;
-  wallie: WallieSessionData;
-  workspace: WorkspaceSummary;
+  sessionId: string;
+  workspaceId: string;
+};
+
+export type SessionDetailPageData = {
+  activityContext: SessionActivityContext;
+  review: SessionReviewData;
 };
 
 type SessionDetailRpcPayload = {
-  creatorMemberId?: string | null;
-  repository?: WallieSessionRepository | null;
-  session?: SessionDetail;
-  sessionGithubRepositoryId?: string | null;
+  activity: SessionActivityContext;
+  creatorDisplayName: string | null;
+  session: SessionReviewSession;
+  workspaceSlug: string;
 };
+
+type SessionDetailRpcAccessMiss = {
+  access: {
+    hasAnyWorkspace: boolean;
+  };
+};
+
+type SessionDetailRpcResult = SessionDetailRpcAccessMiss | SessionDetailRpcPayload;
 
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
@@ -42,7 +103,7 @@ export async function loadSessionDetailPageData(
   }
 
   return withServerTiming(
-    "sessions.detail",
+    "sessions.detail.review",
     {
       sessionNumber,
       workspaceSlug,
@@ -56,78 +117,110 @@ async function loadSessionDetailPageDataWithTiming(
   sessionNumber: number,
   timing: ServerTimingCollector,
 ): Promise<SessionDetailPageData> {
-  const context = await timing.segment(
-    "workspace-member-context",
-    () => loadSessionWorkspaceContext(workspaceSlug),
-    (resolvedContext) => ({
-      members: resolvedContext.members.length,
-      payloadBytes: approximatePayloadSizeBytes({
-        currentMember: resolvedContext.currentMember,
-        members: resolvedContext.members,
-        workspace: resolvedContext.workspace,
+  const supabase = await createSupabaseServerClient();
+  const [user, { data: rpcData, error: rpcError }] = await Promise.all([
+    timing.segment(
+      "auth.get-user",
+      () => getSupabaseUserOrNull(supabase),
+      (resolvedUser) => ({ rows: resolvedUser ? 1 : 0 }),
+    ),
+    timing.segment(
+      "session-detail-rpc",
+      () =>
+        supabase.rpc("get_session_detail_page", {
+          target_session_number: sessionNumber,
+          target_workspace_slug: workspaceSlug,
+        }),
+      (result) => ({
+        payloadBytes: approximatePayloadSizeBytes(result.data),
+        rows: result.data ? 1 : 0,
       }),
-      rows: 1,
-    }),
-  );
+    ),
+  ]);
 
-  const { data: rpcData, error: rpcError } = await timing.segment(
-    "session-detail-rpc",
-    () =>
-      context.supabase.rpc("get_session_detail_page", {
-        target_session_number: sessionNumber,
-        target_workspace_slug: workspaceSlug,
-      }),
-    (result) => ({
-      payloadBytes: approximatePayloadSizeBytes(result.data),
-      rows: result.data ? 1 : 0,
-    }),
-  );
+  if (!user) {
+    redirect(loginPath(workspaceSessionDetailPath(workspaceSlug, sessionNumber)));
+  }
 
   if (rpcError) throw rpcError;
   if (!rpcData) notFound();
 
-  const payload = rpcData as SessionDetailRpcPayload;
-  if (!payload.session) notFound();
+  const payload = rpcData as SessionDetailRpcResult;
+  if ("access" in payload) {
+    if (!payload.access.hasAnyWorkspace) {
+      redirect(onboardingWorkspacePath());
+    }
 
-  const sessionGithubRepositoryId = payload.sessionGithubRepositoryId ?? null;
-  const repository = payload.repository ?? null;
-  const wallie = await timing.segment(
-    "wallie-summary",
-    () =>
-      loadWallieSessionData({
-        memberIndex: context.memberIndex,
-        repository,
-        session: { githubRepositoryId: sessionGithubRepositoryId, id: payload.session!.id },
-        supabase: context.supabase,
-        workspaceId: context.workspace.id,
-      }),
-    (wallieData) => ({
-      blockingReasons: wallieData.blockingReasons.length,
-      missingSecrets: wallieData.missingSecretKeys.length,
-      payloadBytes: approximatePayloadSizeBytes({
-        blockingReasons: wallieData.blockingReasons,
-        loadedMessageRunIds: wallieData.loadedMessageRunIds,
-        missingSecretKeys: wallieData.missingSecretKeys,
-        repository: wallieData.repository,
-        runs: wallieData.runs,
-        vercelSandboxConnection: wallieData.vercelSandboxConnection,
-      }),
-      runs: wallieData.runs.length,
-    }),
-  );
+    notFound();
+  }
 
-  const sessionCreator = payload.creatorMemberId
-    ? (context.memberIndex.get(payload.creatorMemberId) ?? null)
-    : null;
+  if (!payload.session || !payload.activity) notFound();
+
+  const review = serializeSessionReviewData(payload);
+
+  await timing.segment("review-contract", () => review, {
+    payloadBytes: approximatePayloadSizeBytes(review),
+    targetBytes: SESSION_REVIEW_PAYLOAD_TARGET_BYTES,
+  });
 
   return {
-    currentMember: context.currentMember,
-    memberIndex: context.memberIndex,
-    members: context.members,
-    session: payload.session,
-    sessionGithubRepositoryId,
-    sessionCreator,
-    wallie,
-    workspace: context.workspace,
+    activityContext: {
+      repository: payload.activity.repository,
+      sessionGithubRepositoryId: payload.activity.sessionGithubRepositoryId,
+      sessionId: payload.activity.sessionId,
+      workspaceId: payload.activity.workspaceId,
+    },
+    review,
+  };
+}
+
+/**
+ * Build every client-bound object explicitly. This deliberately avoids row or
+ * RPC payload spreads so a database field cannot silently re-expand the RSC
+ * contract.
+ */
+export function serializeSessionReviewData(payload: SessionDetailRpcPayload): SessionReviewData {
+  return {
+    creatorDisplayName: payload.creatorDisplayName,
+    session: {
+      archivedAt: payload.session.archivedAt,
+      artifacts: payload.session.artifacts.map((artifact) => ({
+        createdAt: artifact.createdAt,
+        payload: artifact.payload,
+        stageSlug: artifact.stageSlug,
+        version: artifact.version,
+      })),
+      createdAt: payload.session.createdAt,
+      currentArtifactVersion: payload.session.currentArtifactVersion,
+      currentStageId: payload.session.currentStageId,
+      currentStageSlug: payload.session.currentStageSlug,
+      id: payload.session.id,
+      linearIssueId: payload.session.linearIssueId,
+      linearIssueUrl: payload.session.linearIssueUrl,
+      number: payload.session.number,
+      phaseCompletions: payload.session.phaseCompletions.map((completion) => ({
+        completedAt: completion.completedAt,
+        stageSlug: completion.stageSlug,
+      })),
+      phaseStatus: payload.session.phaseStatus,
+      pipeline: {
+        stages: payload.session.pipeline.stages.map((stage) => ({
+          description: stage.description,
+          id: stage.id,
+          name: stage.name,
+          position: stage.position,
+          slug: stage.slug,
+        })),
+      },
+      promptMd: payload.session.promptMd,
+      pullRequests: payload.session.pullRequests.map((pullRequest) => ({
+        id: pullRequest.id,
+        pullRequestNumber: pullRequest.pullRequestNumber,
+        pullRequestUrl: pullRequest.pullRequestUrl,
+      })),
+      title: payload.session.title,
+      updatedAt: payload.session.updatedAt,
+    },
+    workspaceSlug: payload.workspaceSlug,
   };
 }

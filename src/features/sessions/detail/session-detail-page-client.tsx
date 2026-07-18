@@ -15,7 +15,13 @@ import {
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
-import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
+import type {
+  SessionReviewData,
+  SessionReviewPipeline,
+  SessionReviewSession,
+  SessionReviewStage,
+} from "@/features/sessions/detail/data";
 import type { SessionPhaseMutationResult } from "@/features/sessions/mutation-contracts";
 import {
   mergeArtifactRealtimeRow,
@@ -32,28 +38,17 @@ import {
   runOptimisticMutation,
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
-import {
-  isTerminalStage,
-  stageIndex,
-  type PipelineStage,
-  type SessionArtifactSummary,
-  type SessionDetail,
-  type SessionPhaseStatus,
-} from "@/features/sessions/types";
+import type { SessionArtifactSummary, SessionPhaseStatus } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
-import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
-import {
-  getWorkspaceMemberDisplayName,
-  type WorkspaceMember,
-} from "@/features/workspace-members/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
-  initialData: SessionDetailPageData;
+  activity: ReactNode;
+  initialData: SessionReviewData;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
 };
@@ -103,8 +98,8 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function CreatorAvatar({ member }: { member: WorkspaceMember }) {
-  const initial = getWorkspaceMemberDisplayName(member).trim().charAt(0).toUpperCase() || "?";
+function CreatorAvatar({ displayName }: { displayName: string }) {
+  const initial = displayName.trim().charAt(0).toUpperCase() || "?";
   return (
     <span
       aria-hidden="true"
@@ -116,13 +111,22 @@ function CreatorAvatar({ member }: { member: WorkspaceMember }) {
 }
 
 type StageRailEntry = {
-  stage: PipelineStage;
+  stage: SessionReviewStage;
   status: "completed" | "current" | "upcoming";
   phaseStatus: SessionPhaseStatus | null;
   completedAt: string | null;
 };
 
-function buildStageRail(session: SessionDetail): StageRailEntry[] {
+function stageIndex(pipeline: SessionReviewPipeline, stageSlug: string): number {
+  return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
+}
+
+function isTerminalStage(pipeline: SessionReviewPipeline, stageSlug: string): boolean {
+  const terminalStage = pipeline.stages[pipeline.stages.length - 1];
+  return terminalStage?.slug === stageSlug;
+}
+
+function buildStageRail(session: SessionReviewSession): StageRailEntry[] {
   const completionIndex = new Map(
     session.phaseCompletions.map((c) => [c.stageSlug, c.completedAt]),
   );
@@ -155,6 +159,7 @@ function buildStageRail(session: SessionDetail): StageRailEntry[] {
 }
 
 export function SessionDetailPageClient({
+  activity,
   initialData,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
@@ -162,7 +167,7 @@ export function SessionDetailPageClient({
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
-  const sessionCreator = initialData.sessionCreator;
+  const creatorDisplayName = initialData.creatorDisplayName;
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
@@ -174,6 +179,7 @@ export function SessionDetailPageClient({
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
 
   // Gate locale/timezone-sensitive timestamps so the absolute "Created" date
   // renders identically on the server and during the first client paint, then
@@ -281,7 +287,7 @@ export function SessionDetailPageClient({
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            router.replace(workspaceSessionsPath(initialData.workspace.slug));
+            router.replace(workspaceSessionsPath(initialData.workspaceSlug));
             return;
           }
 
@@ -337,38 +343,42 @@ export function SessionDetailPageClient({
         (payload) => {
           const row = (payload.eventType === "DELETE" ? payload.old : payload.new) as Pick<
             Tables<"session_pull_requests">,
-            | "branch_name"
-            | "id"
-            | "is_draft"
-            | "pull_request_number"
-            | "pull_request_state"
-            | "pull_request_url"
-            | "updated_at"
+            "id" | "pull_request_number" | "pull_request_url" | "updated_at"
           >;
           setSession((current) => {
             const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
-            if (existing && compareSessionTimestamps(row.updated_at, existing.updatedAt) <= 0) {
-              return current;
-            }
             const pullRequests = current.pullRequests.filter(
               (pullRequest) => pullRequest.id !== row.id,
             );
 
-            if (payload.eventType !== "DELETE") {
-              pullRequests.push({
-                branchName: row.branch_name,
-                id: row.id,
-                isDraft: row.is_draft,
-                pullRequestNumber: row.pull_request_number,
-                pullRequestState: row.pull_request_state,
-                pullRequestUrl: row.pull_request_url,
-                repositoryFullName: existing?.repositoryFullName ?? null,
-                repositoryHtmlUrl: existing?.repositoryHtmlUrl ?? null,
-                updatedAt: row.updated_at,
-              });
+            if (payload.eventType === "DELETE") {
+              pullRequestUpdatedAtRef.current.delete(row.id);
+              return existing ? { ...current, pullRequests } : current;
             }
 
-            return { ...current, pullRequestCount: pullRequests.length, pullRequests };
+            const previousUpdatedAt = pullRequestUpdatedAtRef.current.get(row.id);
+            if (
+              previousUpdatedAt &&
+              compareSessionTimestamps(row.updated_at, previousUpdatedAt) <= 0
+            ) {
+              return current;
+            }
+
+            pullRequestUpdatedAtRef.current.set(row.id, row.updated_at);
+            if (
+              existing?.pullRequestNumber === row.pull_request_number &&
+              existing.pullRequestUrl === row.pull_request_url
+            ) {
+              return current;
+            }
+
+            pullRequests.push({
+              id: row.id,
+              pullRequestNumber: row.pull_request_number,
+              pullRequestUrl: row.pull_request_url,
+            });
+
+            return { ...current, pullRequests };
           });
         },
       )
@@ -377,7 +387,7 @@ export function SessionDetailPageClient({
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [initialData.workspace.slug, router, session.id, supabase]);
+  }, [initialData.workspaceSlug, router, session.id, supabase]);
 
   async function handlePhaseAction(action: "approve" | "reject") {
     if (action === "reject") {
@@ -396,7 +406,7 @@ export function SessionDetailPageClient({
       currentArtifactVersion: session.currentArtifactVersion,
       currentStageId: session.currentStageId,
       phaseStatus: session.phaseStatus,
-      rejectionCount: session.rejectionCount,
+      rejectionCount: session.rejectionCount ?? 0,
       updatedAt: session.updatedAt,
     };
     const nextStage =
@@ -418,7 +428,7 @@ export function SessionDetailPageClient({
     }
     const optimisticPatch: SessionMutationPatch =
       action === "reject"
-        ? { phaseStatus: "rejected", rejectionCount: session.rejectionCount + 1 }
+        ? { phaseStatus: "rejected", rejectionCount: (session.rejectionCount ?? 0) + 1 }
         : nextStage
           ? {
               currentArtifactVersion: 0,
@@ -739,7 +749,7 @@ export function SessionDetailPageClient({
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             <Link
-              href={workspaceSessionsPath(initialData.workspace.slug)}
+              href={workspaceSessionsPath(initialData.workspaceSlug)}
               className="hover:text-foreground"
             >
               ← Sessions
@@ -763,13 +773,11 @@ export function SessionDetailPageClient({
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
-        {sessionCreator ? (
+        {creatorDisplayName ? (
           <>
             <span className="inline-flex items-center gap-1.5">
-              <CreatorAvatar member={sessionCreator} />
-              <span className="text-foreground">
-                {getWorkspaceMemberDisplayName(sessionCreator)}
-              </span>
+              <CreatorAvatar displayName={creatorDisplayName} />
+              <span className="text-foreground">{creatorDisplayName}</span>
             </span>
             <span aria-hidden="true">·</span>
           </>
@@ -793,7 +801,6 @@ export function SessionDetailPageClient({
             <SessionConnections
               linearIssueId={session.linearIssueId}
               linearIssueUrl={session.linearIssueUrl}
-              pullRequestCount={session.pullRequestCount}
               pullRequests={session.pullRequests}
             />
           </>
@@ -976,17 +983,9 @@ export function SessionDetailPageClient({
         <section className="rounded-[8px] border border-border bg-surface p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Run activity</h2>
           <div className="mt-3">
-            <SessionWalliePanel
-              initialData={initialData.wallie}
-              session={{
-                archivedAt: session.archivedAt,
-                id: session.id,
-                workspaceId: session.workspaceId,
-              }}
-              memberIndex={initialData.memberIndex}
-              supabase={supabase}
-              workspaceSlug={initialData.workspace.slug}
-            />
+            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+              {activity}
+            </SessionActivityArchivedAtProvider>
           </div>
         </section>
       </div>

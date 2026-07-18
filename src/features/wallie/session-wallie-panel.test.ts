@@ -87,7 +87,6 @@ describe("SessionWalliePanel", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data(),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -108,7 +107,6 @@ describe("SessionWalliePanel", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data({ runs: [run({ canRetry: true, status: "error" })] }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -122,7 +120,6 @@ describe("SessionWalliePanel", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data({ runs: [run({ canRetry: true, status: "error" })] }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: {
           archivedAt: "2026-06-07T12:00:00.000Z",
           id: "sess-1",
@@ -152,7 +149,6 @@ describe("SessionWalliePanel", () => {
             teamId: null,
           },
         }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -176,7 +172,6 @@ describe("SessionWalliePanel", () => {
             }),
           ],
         }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -202,7 +197,6 @@ describe("SessionWalliePanel", () => {
             }),
           ],
         }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -223,7 +217,6 @@ describe("SessionWalliePanel", () => {
         initialData: data({
           runs: [run({ messages: [], status: "success" })],
         }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -253,7 +246,6 @@ describe("SessionWalliePanel", () => {
             }),
           ],
         }),
-        memberIndex: new Map([[baseMember.id, baseMember]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",
@@ -281,7 +273,6 @@ describe("SessionWalliePanel", () => {
             }),
           ],
         }),
-        memberIndex: new Map([[memberWithoutName.id, memberWithoutName]]),
         session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
         supabase: {} as SupabaseClient<Database>,
         workspaceSlug: "acme",

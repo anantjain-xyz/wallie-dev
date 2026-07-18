@@ -19,6 +19,7 @@ import {
 } from "@/features/wallie/data";
 import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceSettingsPath } from "@/lib/routes";
@@ -38,8 +39,7 @@ export type WalliePanelSession = {
 type SessionWalliePanelProps = {
   initialData: WallieSessionData;
   session: WalliePanelSession;
-  memberIndex: ReadonlyMap<string, WorkspaceMember>;
-  supabase: SupabaseClient<Database>;
+  supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
 };
 
@@ -158,10 +158,12 @@ function formatRequestedBy(run: WallieRun) {
 export function SessionWalliePanel({
   initialData,
   session,
-  memberIndex,
-  supabase,
+  supabase: injectedSupabase,
   workspaceSlug,
 }: SessionWalliePanelProps) {
+  const [supabase] = useState<SupabaseClient<Database>>(
+    () => injectedSupabase ?? createSupabaseBrowserClient(),
+  );
   const [runs, setRuns] = useState(initialData.runs);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
@@ -171,6 +173,17 @@ export function SessionWalliePanel({
   const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
     () => new Set(initialData.loadedMessageRunIds),
   );
+  const memberIndex = useMemo(() => {
+    const nextIndex = new Map<string, WorkspaceMember>();
+
+    for (const run of initialData.runs) {
+      if (run.requestedByMember) {
+        nextIndex.set(run.requestedByMember.id, run.requestedByMember);
+      }
+    }
+
+    return nextIndex;
+  }, [initialData.runs]);
   const runIdsKey = useMemo(
     () =>
       runs

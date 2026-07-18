@@ -65,6 +65,9 @@ describe("AuthEntryPanel", () => {
     expect(countMatches(html, 'inputMode="numeric"')).toBe(6);
     expect(countMatches(html, 'pattern="[0-9]*"')).toBe(6);
     expect(countMatches(html, 'maxLength="1"')).toBe(6);
+    expect(html).toContain("email-code-form space-y-2");
+    expect(html).toContain("email-code-grid grid gap-1");
+    expect(countMatches(html, "h-11 min-w-11")).toBe(6);
     expect(html).toContain('autoComplete="one-time-code"');
     expect(countMatches(html, 'autoComplete="off"')).toBe(5);
     expect(html).not.toContain("Send magic link");

@@ -127,3 +127,18 @@ export function SettingsLoadingSkeleton() {
     </div>
   );
 }
+
+export function SettingsDeferredSectionsSkeleton() {
+  return (
+    <>
+      {sectionSkeletons.slice(1).map((section, index) => (
+        <SettingsSectionSkeleton
+          key={index}
+          rows={section.rows}
+          tone={section.tone}
+          withAvatar={section.withAvatar}
+        />
+      ))}
+    </>
+  );
+}

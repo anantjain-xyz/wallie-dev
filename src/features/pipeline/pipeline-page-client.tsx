@@ -464,7 +464,6 @@ function PipelineCard({
           quiet
           linearIssueId={card.linearIssueId}
           linearIssueUrl={card.linearIssueUrl}
-          pullRequestCount={pullRequests.length}
           pullRequests={pullRequests}
         />
 

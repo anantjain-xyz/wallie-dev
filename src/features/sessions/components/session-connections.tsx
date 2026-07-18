@@ -17,7 +17,6 @@ type SessionConnectionsProps = {
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   onRequestLinkLinear?: () => void;
-  pullRequestCount: number;
   pullRequests?: SessionConnectionPullRequest[];
   quiet?: boolean;
 };
