@@ -1566,7 +1566,14 @@ describe("handleApproval", () => {
   it("keeps approval successful when automatic enqueue fails after the stage RPC commits", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const rpc = vi.fn().mockResolvedValue({
-      data: [{ id: "sess-1", archived_at: null, phase_status: "agent_generating" }],
+      data: [
+        {
+          archived_at: null,
+          current_stage_id: "stage-design",
+          id: "sess-1",
+          phase_status: "agent_generating",
+        },
+      ],
       error: null,
     });
     const enqueueError = {
@@ -1646,7 +1653,17 @@ describe("handleApproval", () => {
       version: 1,
     });
 
-    expect(result).toEqual({ jobId: null, success: true });
+    expect(result).toEqual({
+      jobId: null,
+      session: {
+        archivedAt: null,
+        currentArtifactVersion: 0,
+        currentStageId: "stage-design",
+        phaseStatus: "agent_generating",
+        rejectionCount: 0,
+      },
+      success: true,
+    });
     expect(consoleError).toHaveBeenCalledWith(
       "Approved stage but failed to queue Wallie",
       expect.objectContaining({

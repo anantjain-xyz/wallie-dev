@@ -47,7 +47,7 @@ function makeRequest(method: "DELETE" | "POST") {
 function buildSupabaseMock(
   opts: {
     sessionError?: { message: string } | null;
-    sessionRow?: { id: string; workspace_id: string } | null;
+    sessionRow?: { id: string; phase_status: string; workspace_id: string } | null;
   } = {},
 ) {
   return {
@@ -61,7 +61,11 @@ function buildSupabaseMock(
             maybeSingle: async () => ({
               data:
                 opts.sessionRow === undefined
-                  ? { id: SESSION_ID, workspace_id: WORKSPACE_ID }
+                  ? {
+                      id: SESSION_ID,
+                      phase_status: "agent_generating",
+                      workspace_id: WORKSPACE_ID,
+                    }
                   : opts.sessionRow,
               error: opts.sessionError ?? null,
             }),
@@ -82,8 +86,15 @@ describe("/api/sessions/[sessionId]/archive", () => {
     mocked.archiveSession.mockResolvedValue({
       archivedAt: "2026-06-07T12:00:00.000Z",
       id: SESSION_ID,
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:01.000Z",
     });
-    mocked.unarchiveSession.mockResolvedValue({ archivedAt: null, id: SESSION_ID });
+    mocked.unarchiveSession.mockResolvedValue({
+      archivedAt: null,
+      id: SESSION_ID,
+      phaseStatus: "awaiting_review",
+      updatedAt: "2026-06-07T12:01:00.000Z",
+    });
   });
 
   it("archives the session and echoes its archived_at", async () => {
@@ -93,6 +104,8 @@ describe("/api/sessions/[sessionId]/archive", () => {
     await expect(response.json()).resolves.toEqual({
       archivedAt: "2026-06-07T12:00:00.000Z",
       id: SESSION_ID,
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:01.000Z",
     });
     expect(mocked.archiveSession).toHaveBeenCalledWith(
       {},
@@ -105,7 +118,12 @@ describe("/api/sessions/[sessionId]/archive", () => {
     const response = await DELETE(makeRequest("DELETE"), routeContext());
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ archivedAt: null, id: SESSION_ID });
+    await expect(response.json()).resolves.toEqual({
+      archivedAt: null,
+      id: SESSION_ID,
+      phaseStatus: "awaiting_review",
+      updatedAt: "2026-06-07T12:01:00.000Z",
+    });
     expect(mocked.unarchiveSession).toHaveBeenCalledWith({}, { sessionId: SESSION_ID });
   });
 

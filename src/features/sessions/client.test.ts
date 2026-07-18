@@ -38,7 +38,10 @@ describe("createSessionFromClient", () => {
   });
 
   it("posts the normalized create-session payload and returns the session number", async () => {
-    const fetchMock = mockFetch({ body: { number: 42 }, ok: true });
+    const fetchMock = mockFetch({
+      body: { canonicalUrl: "/w/acme/sessions/42", number: 42 },
+      ok: true,
+    });
 
     const result = await createSessionFromClient({
       githubRepositoryId: `  ${REPOSITORY_ID}  `,
@@ -48,7 +51,7 @@ describe("createSessionFromClient", () => {
       workspaceId: WORKSPACE_ID,
     });
 
-    expect(result).toEqual({ number: 42 });
+    expect(result).toEqual({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions", {
       body: JSON.stringify({
         githubRepositoryId: REPOSITORY_ID,

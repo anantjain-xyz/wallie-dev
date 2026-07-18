@@ -79,10 +79,19 @@ function buildSupabase(
                 single: async () => ({
                   data: columns.includes("current_artifact_version")
                     ? {
+                        archived_at: null,
                         current_artifact_version: 1,
+                        currentStage: {
+                          description: "Product work",
+                          id: "stage-product",
+                          name: "Product",
+                          position: 0,
+                          slug: "product",
+                        },
                         current_stage_id: "stage-product",
                         id: "sess-1",
                         phase_status: "rejected",
+                        rejection_count: 2,
                         updated_at: UPDATED_AT,
                       }
                     : null,
@@ -172,10 +181,19 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      archivedAt: null,
       artifactVersion: 1,
+      currentStage: {
+        description: "Product work",
+        id: "stage-product",
+        name: "Product",
+        position: 0,
+        slug: "product",
+      },
       currentStageId: "stage-product",
       id: "sess-1",
       phaseStatus: "rejected",
+      rejectionCount: 2,
       updatedAt: UPDATED_AT,
     });
     expect(mocked.handleRejection).toHaveBeenCalledWith({

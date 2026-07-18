@@ -32,6 +32,18 @@ type SessionsPageClientProps = {
   initialData: SessionListPageData;
 };
 
+type ListCommittedMutation =
+  | {
+      kind: "archive";
+      result: {
+        archivedAt: string | null;
+        id: string;
+        phaseStatus: SessionListItem["phaseStatus"];
+        updatedAt: string;
+      };
+    }
+  | { kind: "title"; result: { id: string; title: string; updatedAt: string } };
+
 function buildHref(
   base: string,
   state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope">,
@@ -65,11 +77,66 @@ const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
+export function commitListTitle(
+  sessions: readonly SessionListItem[],
+  result: { id: string; title: string; updatedAt: string },
+) {
+  return sessions
+    .map((session) =>
+      session.id === result.id && result.updatedAt >= session.updatedAt
+        ? { ...session, title: result.title, updatedAt: result.updatedAt }
+        : session,
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export function commitListArchive(
+  sessions: readonly SessionListItem[],
+  scope: SessionFilterKey,
+  result: {
+    archivedAt: string | null;
+    id: string;
+    phaseStatus: SessionListItem["phaseStatus"];
+    updatedAt: string;
+  },
+) {
+  return sessions
+    .map((session) =>
+      session.id === result.id && result.updatedAt >= session.updatedAt
+        ? {
+            ...session,
+            archivedAt: result.archivedAt,
+            phaseStatus: result.phaseStatus,
+            updatedAt: result.updatedAt,
+          }
+        : session,
+    )
+    .filter(
+      (session) =>
+        (scope !== "active" || !session.archivedAt) &&
+        (scope !== "archived" || Boolean(session.archivedAt)),
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export function reconcileListMutations(
+  sessions: readonly SessionListItem[],
+  scope: SessionFilterKey,
+  mutations: readonly ListCommittedMutation[],
+) {
+  return [...mutations]
+    .sort((left, right) => left.result.updatedAt.localeCompare(right.result.updatedAt))
+    .reduce<
+      SessionListItem[]
+    >((current, mutation) => (mutation.kind === "title" ? commitListTitle(current, mutation.result) : commitListArchive(current, scope, mutation.result)), [...sessions]);
+}
+
 export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const shouldRestoreSearchFocusRef = useRef(false);
+  const [committedMutations, setCommittedMutations] = useState<ListCommittedMutation[]>([]);
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -108,7 +175,28 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
     updateQueryState({ query: "" });
   }
 
-  const sessions = initialData.sessions;
+  const sessions = useMemo(
+    () =>
+      reconcileListMutations(
+        initialData.sessions,
+        initialData.queryState.scope,
+        committedMutations,
+      ),
+    [committedMutations, initialData.queryState.scope, initialData.sessions],
+  );
+
+  function handleTitleCommitted(result: { id: string; title: string; updatedAt: string }) {
+    setCommittedMutations((current) => [...current, { kind: "title", result }]);
+  }
+
+  function handleArchiveCommitted(result: {
+    archivedAt: string | null;
+    id: string;
+    phaseStatus: SessionListItem["phaseStatus"];
+    updatedAt: string;
+  }) {
+    setCommittedMutations((current) => [...current, { kind: "archive", result }]);
+  }
   // Build the stage filter chips from whatever stages appear in the loaded
   // sessions. This keeps the chip set in sync with workspaces that have
   // edited their pipeline; we don't need to know the workspace's pipeline
@@ -234,7 +322,14 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
         <SessionDetailLinkPrefetchBoundary>
           <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
             {sessions.map((session) => (
-              <SessionRow key={session.id} session={session} workspaceSlug={workspaceSlug} />
+              <SessionRow
+                key={session.id}
+                onArchiveCommitted={handleArchiveCommitted}
+                onTitleCommitted={handleTitleCommitted}
+                scope={initialData.queryState.scope}
+                session={session}
+                workspaceSlug={workspaceSlug}
+              />
             ))}
           </ul>
         </SessionDetailLinkPrefetchBoundary>
@@ -258,44 +353,68 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 }
 
 function SessionRow({
+  onArchiveCommitted,
+  onTitleCommitted,
+  scope,
   session,
   workspaceSlug,
 }: {
+  onArchiveCommitted: (result: {
+    archivedAt: string | null;
+    id: string;
+    phaseStatus: SessionListItem["phaseStatus"];
+    updatedAt: string;
+  }) => void;
+  onTitleCommitted: (result: { id: string; title: string; updatedAt: string }) => void;
+  scope: SessionFilterKey;
   session: SessionListItem;
   workspaceSlug: string;
 }) {
-  const router = useRouter();
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
   const [displayTitle, setDisplayTitle] = useState(session.title);
   const [draftTitle, setDraftTitle] = useState(session.title);
+  const [optimisticArchive, setOptimisticArchive] = useState<{
+    archivedAt: string | null;
+    phaseStatus: SessionListItem["phaseStatus"];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [, startRefreshTransition] = useTransition();
-  const [archivePending, setArchivePending] = useState(false);
+  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+  const latestSessionRef = useRef(session);
   const previousSessionTitleRef = useRef(session.title);
+  latestSessionRef.current = session;
 
-  const isArchived = Boolean(session.archivedAt);
-  const archiveActionLabel = isArchived ? "Unarchive" : "Archive";
+  const archivedAt = optimisticArchive ? optimisticArchive.archivedAt : session.archivedAt;
+  const phaseStatus = optimisticArchive ? optimisticArchive.phaseStatus : session.phaseStatus;
+  const isArchived = Boolean(archivedAt);
+  const archiveActionLabel = archivePending
+    ? archivePending === "archive"
+      ? "Archive"
+      : "Unarchive"
+    : isArchived
+      ? "Unarchive"
+      : "Archive";
 
   async function toggleArchive() {
     if (archivePending) return;
-    setArchivePending(true);
+    const action = isArchived ? "unarchive" : "archive";
+    setArchivePending(action);
     setArchiveError(null);
+    setOptimisticArchive({
+      archivedAt: isArchived ? null : new Date().toISOString(),
+      phaseStatus: !isArchived && phaseStatus === "agent_generating" ? "rejected" : phaseStatus,
+    });
 
     try {
-      if (isArchived) {
-        await unarchiveSessionFromClient({ sessionId: session.id });
-      } else {
-        await archiveSessionFromClient({ sessionId: session.id });
-      }
+      const result = isArchived
+        ? await unarchiveSessionFromClient({ sessionId: session.id })
+        : await archiveSessionFromClient({ sessionId: session.id });
       setArchiveConfirming(false);
-      startRefreshTransition(() => {
-        router.refresh();
-      });
+      onArchiveCommitted(result);
     } catch (errorValue) {
       setArchiveError(
         errorValue instanceof Error
@@ -303,7 +422,8 @@ function SessionRow({
           : `Failed to ${archiveActionLabel.toLowerCase()} session.`,
       );
     } finally {
-      setArchivePending(false);
+      setOptimisticArchive(null);
+      setArchivePending(null);
     }
   }
 
@@ -359,21 +479,28 @@ function SessionRow({
 
     setIsSaving(true);
     setError(null);
+    const previousTitle = displayTitle;
+    const titleAtMutationStart = latestSessionRef.current.title;
+    setDisplayTitle(normalizedTitle);
+    setIsEditing(false);
 
     try {
       const result = await updateSessionTitleFromClient({
         sessionId: session.id,
         title: normalizedTitle,
       });
-      setDisplayTitle(result.title);
-      setDraftTitle(result.title);
-      setIsEditing(false);
-      startRefreshTransition(() => {
-        router.refresh();
-      });
+      const latestSession = latestSessionRef.current;
+      const committedTitle =
+        result.updatedAt >= latestSession.updatedAt || latestSession.title === titleAtMutationStart
+          ? result.title
+          : latestSession.title;
+      setDisplayTitle(committedTitle);
+      setDraftTitle(committedTitle);
+      onTitleCommitted(result);
     } catch (errorValue) {
-      setDraftTitle(displayTitle);
-      setIsEditing(false);
+      setDisplayTitle(previousTitle);
+      setDraftTitle(normalizedTitle);
+      setIsEditing(true);
       setError(getErrorMessage(errorValue));
     } finally {
       setIsSaving(false);
@@ -383,6 +510,13 @@ function SessionRow({
   function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void saveTitle();
+  }
+
+  const hiddenFromCurrentScope =
+    (scope === "active" && Boolean(archivedAt)) || (scope === "archived" && !archivedAt);
+
+  if (hiddenFromCurrentScope) {
+    return null;
   }
 
   return (
@@ -457,11 +591,20 @@ function SessionRow({
             <button
               type="button"
               className="ui-icon-button pointer-events-auto relative z-30 h-7 w-7 shrink-0"
-              aria-label={`Edit title for session #${session.number}`}
-              title="Edit title"
+              aria-label={
+                isSaving
+                  ? `Saving title for session #${session.number}`
+                  : `Edit title for session #${session.number}`
+              }
+              title={isSaving ? "Saving title" : "Edit title"}
+              disabled={isSaving}
               onClick={startEditing}
             >
-              <PencilIcon className="h-3.5 w-3.5" />
+              {isSaving ? (
+                <Spinner className="h-3.5 w-3.5" label="Saving title" />
+              ) : (
+                <PencilIcon className="h-3.5 w-3.5" />
+              )}
             </button>
             {archiveConfirming ? (
               <div className="pointer-events-auto relative z-30 flex shrink-0 items-center gap-1">
@@ -470,7 +613,7 @@ function SessionRow({
                   className="ui-icon-button h-7 w-7 text-danger"
                   aria-label={`Confirm ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
                   title={`Confirm ${archiveActionLabel.toLowerCase()}`}
-                  disabled={archivePending}
+                  disabled={archivePending !== null}
                   onClick={() => void toggleArchive()}
                 >
                   {archivePending ? (
@@ -484,7 +627,7 @@ function SessionRow({
                   className="ui-icon-button h-7 w-7"
                   aria-label={`Cancel ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
                   title="Cancel"
-                  disabled={archivePending}
+                  disabled={archivePending !== null}
                   onClick={() => {
                     setArchiveConfirming(false);
                     setArchiveError(null);
@@ -512,10 +655,10 @@ function SessionRow({
         <div className="flex flex-wrap items-center gap-2 type-annotation text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>
-          <SessionPhaseStatusLabel status={session.phaseStatus} />
+          <SessionPhaseStatusLabel status={phaseStatus} />
           <span>·</span>
           <span>updated {relativeTime(session.updatedAt)}</span>
-          {session.archivedAt ? (
+          {archivedAt ? (
             <>
               <span>·</span>
               <span className="text-muted">archived</span>
