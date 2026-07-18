@@ -4,7 +4,7 @@ import Image from "next/image";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
@@ -45,15 +45,19 @@ export function preloadCreateSessionDialogOnce(
   });
 }
 
-export function CreateSessionDialogLoading() {
+const CreateSessionLoadingCloseContext = createContext<(() => void) | null>(null);
+
+export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void } = {}) {
+  const closeFromShell = useContext(CreateSessionLoadingCloseContext);
+
   return (
-    <Dialog defaultOpen>
-      <DialogContent
-        description="The session form is loading."
-        dismissible={false}
-        hideCloseButton
-        title="Start a new session"
-      >
+    <Dialog
+      defaultOpen
+      onOpenChange={(open) => {
+        if (!open) (onClose ?? closeFromShell)?.();
+      }}
+    >
+      <DialogContent description="The session form is loading." title="Start a new session">
         <div aria-busy="true" aria-live="polite" role="status">
           <div className="h-40 animate-pulse rounded bg-surface-muted" />
           <p className="mt-4 text-sm text-muted">Loading session form…</p>
@@ -64,7 +68,7 @@ export function CreateSessionDialogLoading() {
 }
 
 const CreateSessionDialog = dynamic(loadCreateSessionDialog, {
-  loading: CreateSessionDialogLoading,
+  loading: () => <CreateSessionDialogLoading />,
   ssr: false,
 });
 
@@ -231,13 +235,15 @@ export function ShellHeader({
       </header>
 
       {createOpen ? (
-        <CreateSessionDialog
-          defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
-          open
-          onClose={handleCreateClose}
-          workspaceId={workspace.id}
-          workspaceSlug={workspace.slug}
-        />
+        <CreateSessionLoadingCloseContext.Provider value={handleCreateClose}>
+          <CreateSessionDialog
+            defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
+            open
+            onClose={handleCreateClose}
+            workspaceId={workspace.id}
+            workspaceSlug={workspace.slug}
+          />
+        </CreateSessionLoadingCloseContext.Provider>
       ) : null}
     </>
   );

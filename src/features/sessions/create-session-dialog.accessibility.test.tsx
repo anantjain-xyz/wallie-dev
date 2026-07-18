@@ -68,6 +68,24 @@ describe("CreateSessionDialog accessibility", () => {
     expect(loadingStatus).toHaveTextContent("Loading session form…");
   });
 
+  it("dismisses the lazy loading state with Escape and closes the parent flow", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialogLoading onClose={onClose} />
+      </OverlayProvider>,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "Start a new session" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("labels, focuses, traps, locks, and keyboard-dismisses the shared Dialog", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
