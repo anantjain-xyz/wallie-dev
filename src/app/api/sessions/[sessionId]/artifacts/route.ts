@@ -74,7 +74,7 @@ export async function GET(request: Request, context: RouteContext) {
   if (latest || version) {
     let bodyQuery = supabase
       .from("session_artifacts")
-      .select("artifact_json, created_at, stage_slug, version")
+      .select("artifact_json, created_at, id, stage_slug, version")
       .eq("session_id", parsedParams.data.sessionId)
       .eq("stage_slug", stage)
       .order("version", { ascending: false });
@@ -95,6 +95,7 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({
       artifact: {
         createdAt: artifactRow.created_at,
+        id: artifactRow.id,
         payload,
         sanitizedHtml: typeof payload === "string" ? await renderMarkdownToHtml(payload) : null,
         stageSlug: artifactRow.stage_slug,
@@ -105,7 +106,7 @@ export async function GET(request: Request, context: RouteContext) {
 
   const { data: artifactRows, error: artifactError } = await supabase
     .from("session_artifacts")
-    .select("created_at, stage_slug, version")
+    .select("created_at, id, stage_slug, version")
     .eq("session_id", parsedParams.data.sessionId)
     .eq("stage_slug", stage)
     .order("version", { ascending: false });
@@ -117,6 +118,7 @@ export async function GET(request: Request, context: RouteContext) {
   return NextResponse.json({
     artifacts: (artifactRows ?? []).map((row) => ({
       createdAt: row.created_at,
+      id: row.id,
       stageSlug: row.stage_slug,
       version: row.version,
     })),
