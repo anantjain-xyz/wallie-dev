@@ -113,8 +113,12 @@ function formatElapsed(startValue: string, endMs: number) {
   return `${seconds}s`;
 }
 
-function nextElapsedUpdateDelay(nowMs: number) {
-  return 1000 - (nowMs % 1000);
+function nextElapsedUpdateDelay(startValue: string, nowMs: number) {
+  const startMs = timestampMs(startValue);
+  if (startMs === null) return null;
+
+  const elapsedMs = Math.max(0, nowMs - startMs);
+  return 1000 - (elapsedMs % 1000);
 }
 
 export function TimeDisplay({
@@ -141,7 +145,7 @@ export function TimeDisplay({
         variant === "relative"
           ? nextRelativeUpdateDelay(value, nowMs)
           : variant === "elapsed" && active && !endValue
-            ? nextElapsedUpdateDelay(nowMs)
+            ? nextElapsedUpdateDelay(value, nowMs)
             : null;
 
       if (delay !== null) {
