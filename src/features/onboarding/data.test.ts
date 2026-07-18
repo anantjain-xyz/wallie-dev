@@ -35,13 +35,16 @@ const user = { id: "user-1" };
 
 type QueryResult = { data: unknown; error: null };
 
-function query(result: QueryResult, onStart?: () => void) {
+function query(result: QueryResult, onStart?: () => void, onLimit?: (count: number) => void) {
   onStart?.();
   const promise = Promise.resolve(result);
   const builder = {
     eq: vi.fn(() => builder),
     in: vi.fn(() => builder),
-    limit: vi.fn(() => builder),
+    limit: vi.fn((count: number) => {
+      onLimit?.(count);
+      return builder;
+    }),
     maybeSingle: vi.fn(() => promise),
     order: vi.fn(() => builder),
     select: vi.fn(() => builder),
@@ -94,17 +97,19 @@ function createFixture(options: {
   claudeCredentials?: unknown;
   codexCredentials?: unknown;
   memberRole?: "member" | "owner";
+  memberRows?: unknown[];
   routing?: unknown;
   secrets?: unknown[];
 }) {
   const counts = new Map<string, number>();
+  const limits = new Map<string, number>();
   const increment = (table: string) => counts.set(table, (counts.get(table) ?? 0) + 1);
   const memberRow = member(options.memberRole ?? "owner");
 
   const userRows: Record<string, unknown> = {
     pipeline_stages: [],
     pipelines: null,
-    workspace_members: [memberRow],
+    workspace_members: options.memberRows ?? [memberRow],
     workspace_onboarding: onboardingRow(),
   };
   const adminRows: Record<string, unknown> = {
@@ -124,12 +129,15 @@ function createFixture(options: {
   };
   mocked.admin.from.mockImplementation((table: string) => {
     increment(table);
-    return query({ data: adminRows[table], error: null });
+    return query({ data: adminRows[table], error: null }, undefined, (count) => {
+      limits.set(table, count);
+    });
   });
 
   return {
-    context: { supabase, user, workspace },
+    context: { currentMember: memberRow, supabase, user, workspace },
     counts,
+    limits,
   };
 }
 
@@ -192,6 +200,31 @@ describe("canonical onboarding snapshot", () => {
     }
     expect(mocked.github).toHaveBeenCalledTimes(1);
     expect(mocked.vercel).toHaveBeenCalledTimes(1);
+    expect(fixture.limits.get("sandbox_capability_checks")).toBe(1);
+  });
+
+  it("uses authenticated member access even when the capped display list omits that member", async () => {
+    const fixture = createFixture({
+      memberRole: "member",
+      memberRows: [
+        {
+          ...member("owner"),
+          user_id: "another-user",
+        },
+      ],
+    });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result).toMatchObject({
+      data: {
+        canManage: false,
+        currentMember: { id: "member-member", role: "member" },
+        workspaceMembers: [{ id: "member-owner" }],
+      },
+      ok: true,
+    });
+    expect(fixture.counts.get("workspace_members")).toBe(1);
   });
 
   it("preserves fresh workspace and missing-credential semantics for a member", async () => {

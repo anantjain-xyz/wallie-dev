@@ -237,10 +237,8 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
 
 type OnboardingSnapshotContext = Pick<
   AuthenticatedWorkspaceContext,
-  "supabase" | "user" | "workspace"
-> & {
-  currentMember?: WorkspaceAccessContext["currentMember"];
-};
+  "currentMember" | "supabase" | "user" | "workspace"
+>;
 
 type PipelineRow = Pick<Tables<"pipelines">, "id" | "is_default" | "name" | "operating_rules_md">;
 type PipelineStageRow = Pick<
@@ -379,7 +377,8 @@ async function buildOnboardingSnapshot(
             "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
           )
           .eq("workspace_id", workspaceId)
-          .order("checked_at", { ascending: false }),
+          .order("checked_at", { ascending: false })
+          .limit(1),
       ),
       timing.segment("snapshot.vercel", () =>
         loadVercelSandboxConnectionPreview(admin, workspaceId),
@@ -548,13 +547,8 @@ function deriveSetupHealth(
   };
 }
 
-function currentMemberFromSnapshot(
-  context: OnboardingSnapshotContext,
-  snapshot: OnboardingSnapshot,
-) {
-  const member =
-    context.currentMember ??
-    snapshot.workspaceMemberRows.find((row) => row.user_id === context.user.id);
+function currentMemberFromSnapshot(context: OnboardingSnapshotContext) {
+  const member = context.currentMember;
   if (!member || !member.is_active || member.kind !== "human") return null;
   return member;
 }
@@ -566,7 +560,7 @@ async function buildWorkspaceOnboardingData(
   const snapshot = options?.requestCached
     ? await loadOnboardingSnapshot(context.workspace.id, context)
     : await buildOnboardingSnapshot(context, { onboardingRow: options?.onboardingRow });
-  const currentMember = currentMemberFromSnapshot(context, snapshot);
+  const currentMember = currentMemberFromSnapshot(context);
   if (!currentMember) return null;
 
   const onboarding = mapOnboardingRow(snapshot.onboardingRow);
