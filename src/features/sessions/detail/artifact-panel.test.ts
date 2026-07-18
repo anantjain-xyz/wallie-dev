@@ -218,4 +218,66 @@ describe("ArtifactPanel", () => {
     expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
     expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain("version=2");
   });
+
+  it("keeps a loaded prior-stage artifact cached when initial props omit it", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Planned",
+          sanitizedHtml: "<h1>Planned</h1>",
+          stageSlug: "plan",
+          version: 1,
+        },
+      }),
+    );
+    const view = renderPanel({
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+      latestArtifact: null,
+      stageSlug: "plan",
+    });
+
+    expect(await screen.findByText("Planned")).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: null,
+        loadLatest: false,
+        sessionId: SESSION_ID,
+        stageSlug: "land",
+      }),
+    );
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: null,
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+
+    expect(await screen.findByText("Planned")).toBeTruthy();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps raw Markdown available when formatted rendering fails", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({ error: "Formatting unavailable" }, 500),
+    );
+    renderPanel({ initialFormattedArtifact: null, initialFormattedArtifactKey: null });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Formatting unavailable");
+    fireEvent.click(screen.getByRole("tab", { name: "raw" }));
+    expect(screen.getByText("# Latest")).toBeTruthy();
+  });
 });

@@ -170,7 +170,7 @@ function ArtifactPanelStage({
         metadataCache.set(currentStageKey, nextMetadata);
         queueMicrotask(() => setMetadata(nextMetadata));
       }
-    } else if (previousLatestVersion !== undefined) {
+    } else if (previousLatestVersion !== undefined && !loadLatest) {
       queueMicrotask(() => {
         setLatestBody(null);
         setLatestLoading(false);
@@ -185,6 +185,7 @@ function ArtifactPanelStage({
     currentStageKey,
     latestArtifact,
     latestVersionCache,
+    loadLatest,
     metadataCache,
     sessionId,
     stageSlug,
@@ -228,7 +229,7 @@ function ArtifactPanelStage({
     bodyController.current = controller;
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
-      setLatestBody(null);
+      setLatestBody(body);
       setLatestLoading(true);
       setLatestError(null);
     });
@@ -466,7 +467,7 @@ function ArtifactPanelStage({
               onRetry={() => setLatestRetry((value) => value + 1)}
             />
           ) : null}
-          {latestLoading && !latestBody ? <ProgressHint text="Loading the artifact." /> : null}
+          {latestLoading ? <ProgressHint text="Loading the artifact." /> : null}
           {latestBody ? (
             <ArtifactBodyView
               artifact={latestBody}
