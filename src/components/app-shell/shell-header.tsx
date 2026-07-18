@@ -19,6 +19,7 @@ import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } fro
 import {
   finishInteraction,
   interactionRouteTemplateForPath,
+  isUnmodifiedPrimaryClick,
   startInteraction,
 } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
@@ -186,8 +187,12 @@ export function ShellHeader({
           href={item.href}
           aria-current={active ? "page" : undefined}
           className={cn("ui-top-nav-tab", className, active && "ui-top-nav-tab-active")}
-          onClick={() => {
-            if (pathname === pipelineHref && item.href.endsWith("/sessions")) {
+          onClick={(event) => {
+            if (
+              isUnmodifiedPrimaryClick(event) &&
+              pathname === pipelineHref &&
+              item.href.endsWith("/sessions")
+            ) {
               startInteraction(
                 "pipeline_to_sessions",
                 "/w/[workspaceSlug]",

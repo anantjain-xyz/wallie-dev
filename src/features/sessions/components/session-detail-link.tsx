@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { startInteraction } from "@/lib/telemetry/interaction-rum";
+import { isUnmodifiedPrimaryClick, startInteraction } from "@/lib/telemetry/interaction-rum";
 
 type Prefetch = (href: string) => void;
 
@@ -79,7 +79,7 @@ export function SessionDetailLink({
       prefetch={false}
       onClick={(event) => {
         onClick?.(event);
-        if (!event.defaultPrevented && trackSessionsToDetail) {
+        if (!event.defaultPrevented && trackSessionsToDetail && isUnmodifiedPrimaryClick(event)) {
           startInteraction(
             "sessions_to_detail",
             "/w/[workspaceSlug]/sessions",

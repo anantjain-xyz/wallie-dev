@@ -35,6 +35,14 @@ export type InteractionPayload = Readonly<{
   route_to: RouteTemplate;
 }>;
 
+type NavigationClick = Readonly<{
+  altKey: boolean;
+  button: number;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}>;
+
 type PendingInteraction = Readonly<{
   routeFrom: RouteTemplate;
   routeTo: RouteTemplate;
@@ -42,6 +50,10 @@ type PendingInteraction = Readonly<{
 }>;
 
 const pendingInteractions = new Map<InteractionAction, PendingInteraction>();
+
+export function isUnmodifiedPrimaryClick(event: NavigationClick) {
+  return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+}
 
 export function classifyDevice(width: number): DeviceClass {
   if (width < 768) return "mobile";

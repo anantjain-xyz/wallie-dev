@@ -9,6 +9,7 @@ import {
   chooseSessionSample,
   interactionRouteTemplateForPath,
   interactionActions,
+  isUnmodifiedPrimaryClick,
 } from "@/lib/telemetry/interaction-rum";
 
 function memoryStorage() {
@@ -20,6 +21,24 @@ function memoryStorage() {
 }
 
 describe("interaction RUM", () => {
+  it("starts navigation timing only for unmodified primary clicks", () => {
+    const primaryClick = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+    };
+
+    expect(isUnmodifiedPrimaryClick(primaryClick)).toBe(true);
+    expect(isUnmodifiedPrimaryClick({ ...primaryClick, button: 1 })).toBe(false);
+    expect(isUnmodifiedPrimaryClick({ ...primaryClick, button: 2 })).toBe(false);
+    expect(isUnmodifiedPrimaryClick({ ...primaryClick, altKey: true })).toBe(false);
+    expect(isUnmodifiedPrimaryClick({ ...primaryClick, ctrlKey: true })).toBe(false);
+    expect(isUnmodifiedPrimaryClick({ ...primaryClick, metaKey: true })).toBe(false);
+    expect(isUnmodifiedPrimaryClick({ ...primaryClick, shiftKey: true })).toBe(false);
+  });
+
   it("uses one stable ten-percent choice for the browser session", () => {
     const sampledStorage = memoryStorage();
     const sampledRandom = vi.fn(() => 0.099);
