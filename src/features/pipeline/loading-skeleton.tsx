@@ -1,6 +1,5 @@
 import { SkeletonBlock } from "@/components/ui/skeleton";
 
-const laneCardCounts = [3, 2, 3];
 const cardTitleWidths = ["w-10/12", "w-8/12", "w-11/12"];
 
 function PipelineCardSkeleton({ index }: { index: number }) {
@@ -36,9 +35,7 @@ function PipelineLaneSkeleton({ index }: { index: number }) {
       </header>
 
       <div className="flex flex-1 flex-col gap-2">
-        {Array.from({ length: laneCardCounts[index % laneCardCounts.length] }, (_, cardIndex) => (
-          <PipelineCardSkeleton key={cardIndex} index={cardIndex} />
-        ))}
+        <PipelineCardSkeleton index={index} />
       </div>
     </section>
   );
@@ -60,9 +57,7 @@ export function PipelineLoadingSkeleton() {
 
         <div aria-hidden="true" className="px-4 pb-10 sm:px-8 md:hidden">
           <div className="space-y-6">
-            {Array.from({ length: 3 }, (_, index) => (
-              <PipelineLaneSkeleton key={index} index={index} />
-            ))}
+            <PipelineLaneSkeleton index={0} />
           </div>
         </div>
 
