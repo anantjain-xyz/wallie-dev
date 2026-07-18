@@ -25,11 +25,8 @@ export function AppShell({
   const navItems = getWorkspaceNavItems(workspace.slug);
 
   return (
-    // Keep the workspace shell out of the document scroll flow. Settings anchors
-    // scroll the nested <main>; a fixed shell prevents scrollIntoView from also
-    // moving the root document and exposing blank space below the viewport.
-    <div className="fixed inset-x-0 top-0 h-[100dvh] min-h-[100svh] overflow-hidden bg-canvas">
-      <div className="flex h-full min-w-0 flex-col bg-sheet">
+    <div className="min-h-[100svh] min-w-0 bg-canvas" data-app-shell="">
+      <div className="flex min-h-[100svh] min-w-0 flex-col bg-sheet">
         <ShellHeader
           navItems={navItems}
           onboarding={onboarding}
@@ -38,7 +35,7 @@ export function AppShell({
           workspace={workspace}
           workspaceAvatarUrl={workspaceAvatarUrl}
         />
-        <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
+        <main id="main-content" className="min-w-0 flex-1 pb-[env(safe-area-inset-bottom)]">
           {children}
         </main>
       </div>

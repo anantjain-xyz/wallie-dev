@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { createPortal } from "react-dom";
 
 import { XIcon } from "@/components/shared/icons";
-import { useAnnouncementContainer } from "@/components/ui/portal-root";
+import { useAnnouncementContainer, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 export type ToastPriority = "polite" | "assertive";
@@ -34,7 +34,8 @@ export function useToast() {
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const container = useAnnouncementContainer();
+  const announcementContainer = useAnnouncementContainer();
+  const overlayContainer = useOverlayContainer();
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
   const pushToast = useCallback((toast: ToastInput) => {
     const id = ++toastId;
@@ -46,12 +47,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext value={context}>
       <ToastPrimitive.Provider
-        announcerContainer={container ?? undefined}
+        announcerContainer={announcementContainer ?? undefined}
         duration={5000}
         swipeDirection="right"
       >
         {children}
-        {container
+        {overlayContainer
           ? createPortal(
               <>
                 {toasts.map((toast) => (
@@ -86,7 +87,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 ))}
                 <ToastPrimitive.Viewport aria-label="Notifications" className="ui-toast-viewport" />
               </>,
-              container,
+              overlayContainer,
             )
           : null}
       </ToastPrimitive.Provider>

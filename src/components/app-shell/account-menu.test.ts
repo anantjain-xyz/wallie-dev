@@ -1,8 +1,16 @@
+// @vitest-environment jsdom
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
+import { OverlayProvider } from "@/components/ui/overlay-provider";
+
+afterEach(cleanup);
 
 describe("AccountMenu", () => {
   it("exposes the signed-in email on a collapsed menu trigger", () => {
@@ -23,5 +31,25 @@ describe("AccountMenu", () => {
 
     expect(html).toContain('aria-label="Account"');
     expect(html).toContain(">?<");
+  });
+
+  it("opens its menu in the shared overlay root and restores trigger focus", async () => {
+    const user = userEvent.setup();
+    render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(AccountMenu, { email: "owner@example.com" }),
+      ),
+    );
+
+    const trigger = screen.getByRole("button", { name: "Account: owner@example.com" });
+    await user.click(trigger);
+    const menu = await screen.findByRole("menu", { name: "Account" });
+    expect(document.querySelector("[data-wallie-overlay-root]")).toContainElement(menu);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveFocus();
   });
 });

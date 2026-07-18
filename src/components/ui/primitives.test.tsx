@@ -293,6 +293,30 @@ describe("accessible overlay primitives", () => {
     expect(onValueChange).toHaveBeenCalledWith("");
   });
 
+  it("uses the shared overlay root for a select opened inside a modal", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <Dialog defaultOpen>
+        <DialogContent title="Configure runtime">
+          <SelectField
+            label="Agent provider"
+            onValueChange={() => undefined}
+            options={[{ label: "Codex", value: "codex" }]}
+            value="codex"
+          />
+        </DialogContent>
+      </Dialog>,
+    );
+
+    await user.click(await screen.findByRole("combobox", { name: "Agent provider" }));
+    const listbox = await screen.findByRole("listbox");
+    const overlayRoot = document.querySelector("[data-wallie-overlay-root]");
+    expect(document.querySelectorAll("[data-wallie-overlay-root]")).toHaveLength(1);
+    expect(overlayRoot).toContainElement(screen.getByRole("dialog", { hidden: true }));
+    expect(overlayRoot).toContainElement(listbox);
+  });
+
   it("reveals supplementary tooltip content on keyboard focus without title attributes", async () => {
     const user = userEvent.setup();
 
@@ -448,6 +472,8 @@ describe("accessible overlay primitives", () => {
       expect(region).toHaveTextContent("Failed while modal open");
       return region;
     });
+    const toast = screen.getByText("Failed while modal open").closest(".ui-toast");
+    expect(overlayRoot).toContainElement(toast as HTMLElement);
     expect(announcementRoot).toContainElement(toastAnnouncement as HTMLElement);
     expect(toastAnnouncement?.closest("[aria-hidden='true']")).toBeNull();
   });
@@ -477,7 +503,7 @@ describe("accessible overlay primitives", () => {
     expect(screen.getByRole("listbox")).toHaveClass("ui-select-content");
   });
 
-  it("keeps SelectField content inside an existing custom modal", async () => {
+  it("routes SelectField content from a custom modal through the shared overlay root", async () => {
     const user = userEvent.setup();
     renderWithOverlays(
       <div aria-label="Legacy modal" aria-modal="true" role="dialog">
@@ -491,7 +517,10 @@ describe("accessible overlay primitives", () => {
     );
 
     await user.click(screen.getByRole("combobox", { name: "Repository" }));
-    const modal = screen.getByRole("dialog", { name: "Legacy modal" });
-    expect(modal).toContainElement(await screen.findByRole("listbox"));
+    const overlayRoot = document.querySelector("[data-wallie-overlay-root]");
+    const listbox = await screen.findByRole("listbox");
+    expect(overlayRoot).toContainElement(listbox);
+    const modal = document.querySelector("[role='dialog'][aria-label='Legacy modal']");
+    expect(modal).not.toContainElement(listbox);
   });
 });

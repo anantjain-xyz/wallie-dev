@@ -1100,6 +1100,7 @@ function EditableSessionTitle({
           <input
             ref={editInputRef}
             aria-label={`Session #${sessionNumber} title`}
+            aria-describedby={error ? `session-${sessionNumber}-title-error` : undefined}
             className="ui-input h-11 min-w-0 flex-1 px-3 py-1.5 text-[20px] font-semibold sm:text-[22px]"
             disabled={isSaving}
             value={draftTitle}
@@ -1145,7 +1146,11 @@ function EditableSessionTitle({
           </div>
         </div>
         {error ? (
-          <p className="text-xs leading-4 text-danger" role="alert">
+          <p
+            className="text-xs leading-4 text-danger"
+            id={`session-${sessionNumber}-title-error`}
+            role="alert"
+          >
             {error}
           </p>
         ) : null}
