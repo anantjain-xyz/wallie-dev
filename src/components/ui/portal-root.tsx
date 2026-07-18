@@ -4,12 +4,27 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 
 const OverlayContainerContext = createContext<HTMLElement | null>(null);
 const AnnouncementContainerContext = createContext<HTMLElement | null>(null);
+const ModalOverlayContainerContext = createContext<HTMLElement | null>(null);
 
 export const OVERLAY_ROOT_ID = "wallie-overlay-root";
 export const ANNOUNCEMENT_ROOT_ID = "wallie-announcement-root";
 
 export function useOverlayContainer() {
   return useContext(OverlayContainerContext);
+}
+
+export function useModalOverlayContainer() {
+  return useContext(ModalOverlayContainerContext);
+}
+
+export function ModalOverlayContainerProvider({
+  children,
+  container,
+}: {
+  children: ReactNode;
+  container: HTMLElement | null;
+}) {
+  return <ModalOverlayContainerContext value={container}>{children}</ModalOverlayContainerContext>;
 }
 
 /**

@@ -4,6 +4,8 @@ import { useEffect } from "react";
 
 const VIEWPORT_CENTER_PROPERTY = "--wallie-visual-viewport-center";
 const VIEWPORT_HEIGHT_PROPERTY = "--wallie-visual-viewport-height";
+const VIEWPORT_OFFSET_TOP_PROPERTY = "--wallie-visual-viewport-offset-top";
+const VIEWPORT_BOTTOM_OFFSET_PROPERTY = "--wallie-visual-viewport-bottom-offset";
 const FOCUS_GUTTER = 16;
 
 function isTextEntryControl(element: Element | null): element is HTMLElement {
@@ -40,9 +42,11 @@ function keepFocusedContentVisible(viewport: VisualViewport) {
   const focused = document.activeElement;
   if (!isTextEntryControl(focused)) return;
 
-  const rects = [focused, ...describedElements(focused)].map((element) =>
-    element.getBoundingClientRect(),
-  );
+  const focusedRect = focused.getBoundingClientRect();
+  const rects = [
+    focusedRect,
+    ...describedElements(focused).map((element) => element.getBoundingClientRect()),
+  ];
   const contentTop = Math.min(...rects.map((rect) => rect.top));
   const contentBottom = Math.max(...rects.map((rect) => rect.bottom));
   const stickyHeaderBottom =
@@ -59,11 +63,21 @@ function keepFocusedContentVisible(viewport: VisualViewport) {
     (scrollContainerRect?.bottom ?? Number.POSITIVE_INFINITY) - FOCUS_GUTTER,
   );
   const scrollTarget = scrollContainer ?? window;
+  const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+  const contentHeight = contentBottom - contentTop;
+  const focusedHeight = focusedRect.bottom - focusedRect.top;
+  const prioritizedTop = contentHeight > visibleHeight ? focusedRect.top : contentTop;
+  const prioritizedBottom = contentHeight > visibleHeight ? focusedRect.bottom : contentBottom;
+  const prioritizedHeight = prioritizedBottom - prioritizedTop;
 
-  if (contentBottom > visibleBottom) {
-    scrollTarget.scrollBy({ behavior: "instant", top: contentBottom - visibleBottom });
-  } else if (contentTop < visibleTop) {
-    scrollTarget.scrollBy({ behavior: "instant", top: contentTop - visibleTop });
+  if (prioritizedHeight > visibleHeight || focusedHeight > visibleHeight) {
+    if (prioritizedTop !== visibleTop) {
+      scrollTarget.scrollBy({ behavior: "instant", top: prioritizedTop - visibleTop });
+    }
+  } else if (prioritizedBottom > visibleBottom) {
+    scrollTarget.scrollBy({ behavior: "instant", top: prioritizedBottom - visibleBottom });
+  } else if (prioritizedTop < visibleTop) {
+    scrollTarget.scrollBy({ behavior: "instant", top: prioritizedTop - visibleTop });
   }
 }
 
@@ -83,6 +97,11 @@ export function ViewportCoordinator() {
           `${activeViewport.offsetTop + activeViewport.height / 2}px`,
         );
         root.style.setProperty(VIEWPORT_HEIGHT_PROPERTY, `${activeViewport.height}px`);
+        root.style.setProperty(VIEWPORT_OFFSET_TOP_PROPERTY, `${activeViewport.offsetTop}px`);
+        root.style.setProperty(
+          VIEWPORT_BOTTOM_OFFSET_PROPERTY,
+          `${Math.max(0, window.innerHeight - activeViewport.offsetTop - activeViewport.height)}px`,
+        );
         keepFocusedContentVisible(activeViewport);
       });
     }
@@ -120,6 +139,8 @@ export function ViewportCoordinator() {
       activeViewport.removeEventListener("scroll", syncViewport);
       document.documentElement.style.removeProperty(VIEWPORT_CENTER_PROPERTY);
       document.documentElement.style.removeProperty(VIEWPORT_HEIGHT_PROPERTY);
+      document.documentElement.style.removeProperty(VIEWPORT_OFFSET_TOP_PROPERTY);
+      document.documentElement.style.removeProperty(VIEWPORT_BOTTOM_OFFSET_PROPERTY);
     };
   }, []);
 
