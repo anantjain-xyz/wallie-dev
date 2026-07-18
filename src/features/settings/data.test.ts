@@ -107,26 +107,15 @@ function buildSupabase(input: {
   } | null;
   usageResult: Promise<{ data: unknown; error: unknown }>;
 }) {
-  const memberMaybeSingle = vi.fn(async () => ({ data: input.member, error: null }));
-  const memberQuery = {
-    eq() {
-      return this;
-    },
-    maybeSingle: memberMaybeSingle,
-    select() {
-      return this;
-    },
-  };
   const usageMaybeSingle = vi.fn(() => input.usageResult);
   const supabase = {
     from: vi.fn((table: string) => {
-      if (table !== "workspace_members") throw new Error(`Unexpected table: ${table}`);
-      return memberQuery;
+      throw new Error(`Unexpected duplicate Settings query: ${table}`);
     }),
     rpc: vi.fn(() => ({ maybeSingle: usageMaybeSingle })),
   };
 
-  return { memberMaybeSingle, supabase, usageMaybeSingle };
+  return { currentMember: input.member, supabase, usageMaybeSingle };
 }
 
 function buildAdmin(invitationResult: Promise<{ data: unknown[]; error: unknown }>) {
@@ -157,13 +146,18 @@ describe("loadSettingsPageData", () => {
     const setupResult = deferred<ReturnType<typeof onboardingData>>();
     const usageResult = deferred<{ data: unknown; error: unknown }>();
     const invitationResult = deferred<{ data: unknown[]; error: unknown }>();
-    const { memberMaybeSingle, supabase } = buildSupabase({
+    const { currentMember, supabase } = buildSupabase({
       member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
       usageResult: usageResult.promise,
     });
     const admin = buildAdmin(invitationResult.promise);
 
-    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
     mocked.createSupabaseAdminClient.mockReturnValue(admin);
     mocked.createWorkspaceOnboardingSnapshot.mockReturnValue({
       data: setupResult.promise,
@@ -196,7 +190,7 @@ describe("loadSettingsPageData", () => {
     expect(usageSettled).toBe(false);
     expect(invitationsSettled).toBe(false);
     expect(mocked.loadAuthenticatedWorkspaceContext).toHaveBeenCalledTimes(1);
-    expect(memberMaybeSingle).toHaveBeenCalledTimes(1);
+    expect(supabase.from).not.toHaveBeenCalled();
     expect(mocked.createWorkspaceOnboardingSnapshot).toHaveBeenCalledTimes(1);
     expect(mocked.createWorkspaceOnboardingSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({ currentMember: expect.any(Object), supabase, user, workspace }),
@@ -227,7 +221,7 @@ describe("loadSettingsPageData", () => {
   });
 
   it("preserves member visibility by skipping privileged invitation loading", async () => {
-    const { supabase } = buildSupabase({
+    const { currentMember, supabase } = buildSupabase({
       member: { id: "member-1", is_active: true, kind: "human", role: "member" },
       usageResult: Promise.resolve({
         data: {
@@ -239,7 +233,12 @@ describe("loadSettingsPageData", () => {
         error: null,
       }),
     });
-    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
     mocked.createWorkspaceOnboardingSnapshot.mockReturnValue({
       data: Promise.resolve(onboardingData("member")),
       github: Promise.resolve(github),
@@ -255,11 +254,16 @@ describe("loadSettingsPageData", () => {
   it("observes below-fold failures before the above-fold section resolves", async () => {
     const githubResult = deferred<typeof github>();
     const usageResult = deferred<{ data: unknown; error: unknown }>();
-    const { supabase } = buildSupabase({
+    const { currentMember, supabase } = buildSupabase({
       member: { id: "member-1", is_active: true, kind: "human", role: "member" },
       usageResult: usageResult.promise,
     });
-    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
     mocked.createWorkspaceOnboardingSnapshot.mockReturnValue({
       data: Promise.resolve(onboardingData("member")),
       github: githubResult.promise,
@@ -283,11 +287,16 @@ describe("loadSettingsPageData", () => {
   });
 
   it("rejects inactive memberships before starting setup or below-fold queries", async () => {
-    const { supabase } = buildSupabase({
+    const { currentMember, supabase } = buildSupabase({
       member: { id: "member-1", is_active: false, kind: "human", role: "member" },
       usageResult: Promise.resolve({ data: null, error: null }),
     });
-    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
 
     await expect(loadSettingsPageData(workspace.slug)).rejects.toThrow("not-found");
     expect(mocked.createWorkspaceOnboardingSnapshot).not.toHaveBeenCalled();

@@ -15,8 +15,7 @@ export function PageContainer({ children, className }: PageContainerProps) {
   );
 }
 
-export const PAGE_HEADER_TITLE_CLASS =
-  "break-words text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]";
+export const PAGE_HEADER_TITLE_CLASS = "type-page-title break-words";
 
 type PageHeaderProps = {
   actions?: ReactNode;
@@ -52,17 +51,15 @@ export function PageHeader({
           <div
             className={
               eyebrowAsPlain
-                ? "text-[12px] font-medium text-muted"
-                : "text-[12px] font-medium uppercase tracking-[0.08em] text-muted"
+                ? "type-label text-muted"
+                : "type-label uppercase tracking-[0.08em] text-muted"
             }
           >
             {eyebrow}
           </div>
         ) : null}
         {titleAsChild ? title : <h1 className={PAGE_HEADER_TITLE_CLASS}>{title}</h1>}
-        {description ? (
-          <p className="max-w-2xl text-[14px] leading-6 text-muted">{description}</p>
-        ) : null}
+        {description ? <p className="type-body max-w-2xl text-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
@@ -92,8 +89,8 @@ export function PageSection({
     <section id={anchorId} className={cn("scroll-mt-8", className)}>
       <header className="settings-section-header mb-6">
         <div className="min-w-0 space-y-1">
-          <h2 className="text-[18px] font-semibold tracking-tight text-foreground">{title}</h2>
-          {tagline ? <p className="text-[13px] leading-5 text-muted">{tagline}</p> : null}
+          <h2 className="type-section-title">{title}</h2>
+          {tagline ? <p className="type-secondary text-muted">{tagline}</p> : null}
         </div>
         {statusBadge || actions ? (
           <div className="flex shrink-0 items-center gap-2">

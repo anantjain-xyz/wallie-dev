@@ -211,7 +211,7 @@ function BrowserFrame({ children, title }: { children: ReactNode; title: string 
           <span className="h-2.5 w-2.5 rounded-full bg-warning/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-success/70" />
         </div>
-        <p className="text-[11px] font-medium text-muted">{title}</p>
+        <p className="type-annotation font-medium text-muted">{title}</p>
         <div className="h-2.5 w-[46px]" aria-hidden="true" />
       </div>
       {children}
@@ -236,7 +236,7 @@ function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTi
 
   return (
     <aside className="border-r border-border pr-4 max-md:hidden">
-      <p className="mb-4 text-[11px] font-semibold uppercase text-muted">Setup</p>
+      <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup</p>
       <ol className="space-y-1">
         {onboardingStepTitles.map((title, index) => {
           const state =
@@ -244,7 +244,7 @@ function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTi
           return (
             <li
               key={title}
-              className={`flex items-center gap-2 rounded-[6px] px-3 py-2 text-[12px] font-medium ${
+              className={`flex items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-medium ${
                 state === "active"
                   ? "bg-accent-soft text-accent"
                   : state === "completed"
@@ -274,18 +274,18 @@ function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTi
 function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
   return (
     <aside className="border-l border-border pl-4 max-md:hidden">
-      <p className="mb-4 text-[11px] font-semibold uppercase text-muted">Setup health</p>
+      <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup health</p>
       <div className="space-y-3">
         {rows.map((row) => (
           <div key={row.label} className="rounded-[8px] border border-border bg-surface p-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[12px] font-medium text-foreground">{row.label}</p>
+              <p className="text-xs font-medium text-foreground">{row.label}</p>
               <span
                 className={`h-2 w-2 rounded-full ${toneDotClassName(row.tone)}`}
                 aria-hidden="true"
               />
             </div>
-            <p className="mt-1 text-[11px] text-muted">{row.detail}</p>
+            <p className="mt-1 type-annotation text-muted">{row.detail}</p>
           </div>
         ))}
       </div>
@@ -308,10 +308,10 @@ export function HeroWorkspaceMockup() {
             />
             <div>
               <p className="text-[13px] font-semibold text-foreground">Wallie</p>
-              <p className="text-[11px] text-muted">Acme Corp</p>
+              <p className="type-annotation text-muted">Acme Corp</p>
             </div>
           </div>
-          <nav className="space-y-1 text-[12px] font-medium">
+          <nav className="space-y-1 text-xs font-medium">
             {["Pipeline", "Sessions", "Settings"].map((item, index) => (
               <div
                 key={item}
@@ -330,10 +330,10 @@ export function HeroWorkspaceMockup() {
         <div className="min-w-0">
           <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
             <div>
-              <p className="text-[12px] text-muted">Default pipeline</p>
+              <p className="text-xs text-muted">Default pipeline</p>
               <h2 className="text-[20px] font-semibold text-foreground">Sessions</h2>
             </div>
-            <div className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-medium text-muted">
+            <div className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted">
               Realtime sync active
             </div>
           </header>
@@ -348,11 +348,11 @@ export function HeroWorkspaceMockup() {
                   <div className="mb-3 flex items-start justify-between gap-2">
                     <div>
                       <h3 className="text-[13px] font-semibold text-foreground">{stage.name}</h3>
-                      <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted">
+                      <p className="mt-1 line-clamp-2 type-annotation leading-4 text-muted">
                         {stage.description}
                       </p>
                     </div>
-                    <span className="font-mono text-[11px] text-muted">{stage.count}</span>
+                    <span className="font-mono type-annotation text-muted">{stage.count}</span>
                   </div>
                   <div className="space-y-2">
                     {stage.items.map((item) => (
@@ -361,11 +361,11 @@ export function HeroWorkspaceMockup() {
                         className="rounded-[8px] border border-border bg-surface p-3 shadow-[0_1px_2px_rgba(0,0,0,0.035)]"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <p className="text-[12px] font-medium leading-5 text-foreground">
+                          <p className="text-xs font-medium leading-5 text-foreground">
                             {item.title}
                           </p>
                           <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${statusClasses(item.status)}`}
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClasses(item.status)}`}
                           >
                             {statusLabel(item.status)}
                           </span>
@@ -393,17 +393,17 @@ export function SandboxExecutionMockup() {
         <div className="border-r border-border p-5 max-md:border-b max-md:border-r-0">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[12px] text-muted">Build stage</p>
+              <p className="text-xs text-muted">Build stage</p>
               <h3 className="text-[18px] font-semibold text-foreground">
                 SAML SSO for enterprise workspaces
               </h3>
             </div>
-            <span className="rounded-full bg-accent-soft px-3 py-1 text-[12px] font-medium text-accent">
+            <span className="rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent">
               Running in sandbox
             </span>
           </div>
 
-          <div className="space-y-3 rounded-[10px] border border-border bg-[#111827] p-4 font-mono text-[12px] leading-5 text-[#dbeafe]">
+          <div className="space-y-3 rounded-[10px] border border-border bg-[#111827] p-4 font-mono text-xs leading-5 text-[#dbeafe]">
             <p>$ pnpm install</p>
             <p className="text-success">resolved 742 packages in isolated workspace</p>
             <p>$ pnpm test -- realtime</p>
@@ -418,15 +418,15 @@ export function SandboxExecutionMockup() {
                 key={item.label}
                 className="rounded-[8px] border border-border bg-surface-strong p-3"
               >
-                <p className="text-[10px] font-semibold uppercase text-muted">{item.label}</p>
-                <p className="mt-1 truncate font-mono text-[12px] text-foreground">{item.value}</p>
+                <p className="type-annotation font-semibold uppercase text-muted">{item.label}</p>
+                <p className="mt-1 truncate font-mono text-xs text-foreground">{item.value}</p>
               </div>
             ))}
           </div>
         </div>
 
         <aside className="bg-surface-strong p-5">
-          <p className="text-[12px] font-semibold text-foreground">Team activity</p>
+          <p className="text-xs font-semibold text-foreground">Team activity</p>
           <div className="mt-4 space-y-4">
             {[
               ["Wallie", "Started a Vercel Sandbox for Build."],
@@ -435,12 +435,12 @@ export function SandboxExecutionMockup() {
               ["Jordan", "Reviewing the latest artifact."],
             ].map(([actor, text]) => (
               <div key={text} className="flex gap-3">
-                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-[10px] font-semibold text-muted">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface type-annotation font-semibold text-muted">
                   {actor.slice(0, 2).toUpperCase()}
                 </span>
                 <div>
-                  <p className="text-[12px] font-medium text-foreground">{actor}</p>
-                  <p className="text-[12px] leading-5 text-muted">{text}</p>
+                  <p className="text-xs font-medium text-foreground">{actor}</p>
+                  <p className="text-xs leading-5 text-muted">{text}</p>
                 </div>
               </div>
             ))}
@@ -460,7 +460,7 @@ export function ApprovalGatesMockup() {
         <div className="min-w-0 px-5 max-md:px-0">
           <div className="mb-5">
             <h3 className="text-[18px] font-semibold text-foreground">Review pipeline</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Review the default phase pipeline before sessions start.
             </p>
           </div>
@@ -468,17 +468,17 @@ export function ApprovalGatesMockup() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-end gap-3">
               <label className="block min-w-[190px] flex-1 space-y-1.5">
-                <span className="text-[12px] font-medium text-foreground">Pipeline name</span>
-                <div className="ui-input h-9 px-3 py-2 text-[12px]">Default</div>
+                <span className="text-xs font-medium text-foreground">Pipeline name</span>
+                <div className="ui-input h-9 px-3 py-2 text-xs">Default</div>
               </label>
-              <div className="rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-[12px] text-foreground">
+              <div className="rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-xs text-foreground">
                 Template variables
               </div>
             </div>
 
             <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-foreground">Operating rules</span>
-              <div className="ui-textarea min-h-[76px] overflow-hidden font-mono text-[11px] leading-5 text-muted">
+              <span className="text-xs font-medium text-foreground">Operating rules</span>
+              <div className="ui-textarea min-h-[76px] overflow-hidden font-mono type-annotation leading-5 text-muted">
                 Stay in scope. Sync before coding. Validate every acceptance criterion and report
                 honestly.
               </div>
@@ -490,52 +490,47 @@ export function ApprovalGatesMockup() {
                   key={stage.slug}
                   className="relative rounded-[10px] border border-border bg-surface p-4"
                 >
-                  <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted text-[11px] font-semibold text-muted">
+                  <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted type-annotation font-semibold text-muted">
                     {index + 1}
                   </div>
                   <div className="space-y-3 pl-9">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 flex-1 gap-2">
-                        <div className="ui-input h-9 min-w-0 flex-1 px-3 py-2 text-[12px] font-medium">
+                        <div className="ui-input h-9 min-w-0 flex-1 px-3 py-2 text-xs font-medium">
                           {stage.name}
                         </div>
-                        <div className="ui-input h-9 w-[96px] px-3 py-2 font-mono text-[11px]">
+                        <div className="ui-input h-9 w-[96px] px-3 py-2 font-mono type-annotation">
                           {stage.slug}
                         </div>
                       </div>
-                      <div className="flex shrink-0 gap-1 text-[12px] text-muted">
+                      <div className="flex shrink-0 gap-1 text-xs text-muted">
                         <span className="ui-icon-button h-8 w-8">↑</span>
                         <span className="ui-icon-button h-8 w-8">↓</span>
                       </div>
                     </div>
 
-                    <div className="ui-input h-9 truncate px-3 py-2 text-[12px] text-muted">
+                    <div className="ui-input h-9 truncate px-3 py-2 text-xs text-muted">
                       {stage.description}
                     </div>
 
                     <div>
-                      <p className="mb-1.5 text-[12px] font-medium text-foreground">
-                        Prompt template
-                      </p>
-                      <div className="ui-textarea min-h-[58px] overflow-hidden font-mono text-[11px] leading-5 text-muted">
+                      <p className="mb-1.5 text-xs font-medium text-foreground">Prompt template</p>
+                      <div className="ui-textarea min-h-[58px] overflow-hidden font-mono type-annotation leading-5 text-muted">
                         {stage.prompt}
                       </div>
                     </div>
 
-                    <p className="text-[11px] text-muted">Approvers: {stage.approvers} ▸</p>
+                    <p className="type-annotation text-muted">Approvers: {stage.approvers} ▸</p>
                   </div>
                 </li>
               ))}
             </ol>
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-              <button className="ui-button pointer-events-none h-8 text-[12px]" type="button">
+              <button className="ui-button pointer-events-none h-8 text-xs" type="button">
                 + Add stage
               </button>
-              <button
-                className="ui-button-primary pointer-events-none h-8 text-[12px]"
-                type="button"
-              >
+              <button className="ui-button-primary pointer-events-none h-8 text-xs" type="button">
                 Save pipeline
               </button>
             </div>
@@ -557,7 +552,7 @@ export function RuntimeChoiceMockup() {
         <div className="min-w-0 px-5 max-md:px-0">
           <div className="mb-5">
             <h3 className="text-[18px] font-semibold text-foreground">Connect Agent</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Check coding-agent and sandbox runtime readiness.
             </p>
           </div>
@@ -567,11 +562,11 @@ export function RuntimeChoiceMockup() {
               <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <h4 className="text-[14px] font-semibold text-foreground">Agent config</h4>
-                  <p className="mt-1 text-[12px] leading-5 text-muted">
+                  <p className="mt-1 text-xs leading-5 text-muted">
                     Unset fields use Wallie&apos;s recommended defaults until saved.
                   </p>
                 </div>
-                <button className="ui-button pointer-events-none h-8 text-[12px]" type="button">
+                <button className="ui-button pointer-events-none h-8 text-xs" type="button">
                   Apply recommended defaults
                 </button>
               </div>
@@ -579,21 +574,18 @@ export function RuntimeChoiceMockup() {
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {agentConfigRows.map((row) => (
                   <div key={row.label} className="space-y-1.5">
-                    <p className="text-[12px] font-medium text-muted">{row.label}</p>
-                    <div className="ui-input h-9 truncate px-3 py-2 font-mono text-[12px]">
+                    <p className="text-xs font-medium text-muted">{row.label}</p>
+                    <div className="ui-input h-9 truncate px-3 py-2 font-mono text-xs">
                       {row.value}
                     </div>
-                    <p className="text-[11px] leading-4 text-muted">{row.detail}</p>
+                    <p className="type-annotation leading-4 text-muted">{row.detail}</p>
                   </div>
                 ))}
               </div>
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-                <p className="text-[12px] leading-5 text-muted">No unsaved changes.</p>
-                <button
-                  className="ui-button-primary pointer-events-none h-8 text-[12px]"
-                  type="button"
-                >
+                <p className="text-xs leading-5 text-muted">No unsaved changes.</p>
+                <button className="ui-button-primary pointer-events-none h-8 text-xs" type="button">
                   Save config
                 </button>
               </div>
@@ -601,7 +593,7 @@ export function RuntimeChoiceMockup() {
               <div className="mt-4 border-t border-border pt-4">
                 <div className="mb-3 min-w-0">
                   <h4 className="text-[14px] font-semibold text-foreground">Provider access</h4>
-                  <p className="mt-1 text-[12px] leading-5 text-muted">
+                  <p className="mt-1 text-xs leading-5 text-muted">
                     Sessions run with the Codex credential saved by the session creator.
                   </p>
                 </div>
@@ -612,14 +604,14 @@ export function RuntimeChoiceMockup() {
                       className="rounded-[8px] border border-border bg-surface p-3"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-[12px] font-medium text-foreground">{row.label}</p>
+                        <p className="text-xs font-medium text-foreground">{row.label}</p>
                         <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${toneBadgeClassName(row.tone)}`}
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneBadgeClassName(row.tone)}`}
                         >
                           {row.value}
                         </span>
                       </div>
-                      <p className="mt-1 text-[11px] leading-4 text-muted">{row.detail}</p>
+                      <p className="mt-1 type-annotation leading-4 text-muted">{row.detail}</p>
                     </div>
                   ))}
                 </div>
@@ -631,7 +623,7 @@ export function RuntimeChoiceMockup() {
                 <h4 className="text-[14px] font-semibold text-foreground">
                   Repository environment variables
                 </h4>
-                <p className="mt-1 text-[12px] leading-5 text-muted">
+                <p className="mt-1 text-xs leading-5 text-muted">
                   Detected keys and saved workspace secrets are editable from this list.
                 </p>
               </div>
@@ -641,11 +633,9 @@ export function RuntimeChoiceMockup() {
                     key={row.key}
                     className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
                   >
-                    <code className="font-mono text-[12px] font-medium text-foreground">
-                      {row.key}
-                    </code>
+                    <code className="font-mono text-xs font-medium text-foreground">{row.key}</code>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                         row.status === "Stored"
                           ? "bg-success-soft text-success"
                           : "bg-surface-muted text-muted"
@@ -657,13 +647,10 @@ export function RuntimeChoiceMockup() {
                 ))}
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4">
-                <button className="ui-button pointer-events-none h-8 text-[12px]" type="button">
+                <button className="ui-button pointer-events-none h-8 text-xs" type="button">
                   + Add variable
                 </button>
-                <button
-                  className="ui-button-primary pointer-events-none h-8 text-[12px]"
-                  type="button"
-                >
+                <button className="ui-button-primary pointer-events-none h-8 text-xs" type="button">
                   Save config
                 </button>
               </div>
@@ -671,7 +658,7 @@ export function RuntimeChoiceMockup() {
 
             <section className="rounded-[6px] border border-border bg-surface p-4">
               <h4 className="text-[14px] font-semibold text-foreground">Runtime readiness</h4>
-              <p className="mt-1 text-[12px] leading-5 text-muted">
+              <p className="mt-1 text-xs leading-5 text-muted">
                 Provider-specific requirements must pass before this step can complete.
               </p>
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -681,14 +668,14 @@ export function RuntimeChoiceMockup() {
                     className="rounded-[8px] border border-border bg-surface p-3"
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-[12px] font-medium text-foreground">{row.label}</p>
+                      <p className="text-xs font-medium text-foreground">{row.label}</p>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${toneBadgeClassName(row.tone)}`}
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneBadgeClassName(row.tone)}`}
                       >
                         {row.value}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] leading-4 text-muted">{row.detail}</p>
+                    <p className="mt-1 type-annotation leading-4 text-muted">{row.detail}</p>
                   </div>
                 ))}
               </div>

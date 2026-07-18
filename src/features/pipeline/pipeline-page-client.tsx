@@ -1,12 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  appendPipelineBoardLanePage,
+  reconcilePipelineDashboardLanes,
+  upsertPipelineRealtimeCard,
+} from "@/features/pipeline/model";
 import type {
   PipelineDashboardCard,
   PipelineDashboardData,
+  PipelineDashboardLane,
+  PipelineDashboardLanePage,
   PipelineDashboardPullRequest,
-} from "@/features/pipeline/data";
+} from "@/features/pipeline/types";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import {
   SessionDetailLink,
@@ -24,7 +32,6 @@ type PipelinePageClientProps = {
   initialData: PipelineDashboardData;
 };
 
-const OTHER_LANE = { name: "Other", slug: "__other__" };
 const LANE_WIDTH_PX = 260;
 
 function relativeTime(iso: string): string {
@@ -49,25 +56,27 @@ export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
 }
 
 function PipelinePageContent({ initialData }: PipelinePageClientProps) {
-  const [cards, setCards] = useState<PipelineDashboardCard[]>(initialData.cards);
+  const [lanes, setLanes] = useState<PipelineDashboardLane[]>(initialData.lanes);
+  const [loadingLaneId, setLoadingLaneId] = useState<string | null>(null);
+  const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
+  const laneRefreshPending = useRef(false);
+  const invalidatedCardIds = useRef(new Set<string>());
+  const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 
-  // Index of stage_id → slug, built once from the default-pipeline payload.
-  // Realtime updates carry stage IDs; we resolve them locally so we don't
-  // round-trip per change.
-  const stageIdToSlug = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const stage of initialData.defaultPipelineStages) {
-      map.set(stage.id, stage.slug);
-    }
-    return map;
-  }, [initialData.defaultPipelineStages]);
+  useEffect(() => {
+    setLanes((current) =>
+      reconcilePipelineDashboardLanes(current, initialData.lanes, invalidatedCardIds.current),
+    );
+    invalidatedCardIds.current.clear();
+    laneRefreshPending.current = false;
+  }, [initialData.lanes]);
 
   useEffect(() => {
     async function refreshSessionPullRequests(sessionId: string) {
       const { data, error } = await supabase
         .from("session_pull_requests")
-        .select("id, is_draft, pull_request_number, pull_request_state, pull_request_url")
+        .select("id, pull_request_number, pull_request_url")
         .eq("workspace_id", initialData.workspace.id)
         .eq("session_id", sessionId)
         .not("pull_request_url", "is", null)
@@ -79,15 +88,17 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
 
       const pullRequests: PipelineDashboardPullRequest[] = (data ?? []).map((row) => ({
         id: row.id,
-        isDraft: row.is_draft,
         pullRequestNumber: row.pull_request_number,
-        pullRequestState: row.pull_request_state,
         pullRequestUrl: row.pull_request_url,
-        repositoryFullName: null,
       }));
 
-      setCards((prev) =>
-        prev.map((card) => (card.id === sessionId ? { ...card, pullRequests } : card)),
+      setLanes((prev) =>
+        prev.map((lane) => ({
+          ...lane,
+          cards: lane.cards.map((card) =>
+            card.id === sessionId ? { ...card, pullRequests } : card,
+          ),
+        })),
       );
     }
 
@@ -105,49 +116,48 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
           if (payload.eventType === "DELETE") {
             const oldId = (payload.old as { id?: string } | null)?.id;
             if (!oldId) return;
-            setCards((prev) => prev.filter((card) => card.id !== oldId));
+            setLanes((prev) => removeLoadedCard(prev, oldId));
             return;
           }
 
           const row = payload.new as Tables<"sessions">;
 
           if (row.archived_at) {
-            setCards((prev) => prev.filter((card) => card.id !== row.id));
+            setLanes((prev) => removeLoadedCard(prev, row.id));
             return;
           }
 
-          setCards((prev) => {
-            const idx = prev.findIndex((card) => card.id === row.id);
-            const existing = idx === -1 ? null : prev[idx]!;
-            // When the session's stage changes (approval advanced it), we
-            // must re-resolve the slug from current_stage_id — keeping the
-            // existing slug would leave the card in the old lane until a
-            // full reload. If the stage didn't change, the cached slug is
-            // fine (and is the only way we'd know the slug for sessions
-            // pinned to a non-default stage).
-            const stageChanged = !existing || existing.currentStageId !== row.current_stage_id;
-            const slug = stageChanged
-              ? (stageIdToSlug.get(row.current_stage_id) ?? "unknown")
-              : existing.currentStageSlug;
+          setLanes((prev) => {
+            const existing = prev.flatMap((lane) => lane.cards).find((card) => card.id === row.id);
             const next: PipelineDashboardCard = {
               createdAt: row.created_at,
               currentStageId: row.current_stage_id,
-              currentStageSlug: slug,
               id: row.id,
               linearIssueId: row.linear_issue_id,
               linearIssueUrl: row.linear_issue_url,
               number: row.number,
               phaseStatus: row.phase_status as SessionPhaseStatus,
+              pipelineId: row.pipeline_id,
               rejectionCount: row.rejection_count,
               pullRequests: existing?.pullRequests ?? [],
               title: row.title,
               updatedAt: row.updated_at,
               workspaceId: row.workspace_id,
             };
-            if (idx === -1) return [next, ...prev];
-            const copy = prev.slice();
-            copy[idx] = next;
-            return copy;
+
+            const hasTargetLane = prev.some(
+              (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
+            );
+            if (!hasTargetLane) {
+              invalidatedCardIds.current.add(next.id);
+              if (!laneRefreshPending.current) {
+                laneRefreshPending.current = true;
+                router.refresh();
+              }
+              return prev;
+            }
+
+            return upsertPipelineRealtimeCard(prev, next, payload.eventType === "INSERT");
           });
         },
       )
@@ -173,58 +183,66 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [initialData.workspace.id, stageIdToSlug, supabase]);
+  }, [initialData.workspace.id, router, supabase]);
 
-  // Lanes: every default stage gets a column, plus an "Other" column for
-  // sessions whose stage doesn't appear in the default (e.g. an admin renamed
-  // a stage while the session was in flight).
-  const lanes = useMemo(() => {
-    const knownSlugs = new Set(initialData.defaultPipelineStages.map((s) => s.slug));
-    const order: { slug: string; name: string; description: string }[] =
-      initialData.defaultPipelineStages.map((s) => ({
-        description: s.description,
-        name: s.name,
-        slug: s.slug,
+  async function loadMore(lane: PipelineDashboardLane) {
+    if (!lane.cursor || loadingLaneId) return;
+
+    setLoadingLaneId(lane.id);
+    setLaneErrors((prev) => ({ ...prev, [lane.id]: "" }));
+
+    try {
+      const response = await fetch(
+        `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
+        {
+          body: JSON.stringify({
+            cursor: lane.cursor,
+            pipelineId: lane.pipeline.id,
+            seenIds: lane.cards.map((card) => card.id),
+            stageId: lane.id,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      const payload = (await response.json()) as {
+        error?: string;
+        lane?: PipelineDashboardLanePage;
+      };
+
+      if (!response.ok || !payload.lane) {
+        throw new Error(payload.error ?? "Failed to load more sessions.");
+      }
+
+      setLanes((prev) => appendPipelineBoardLanePage(prev, payload.lane!));
+    } catch (error) {
+      setLaneErrors((prev) => ({
+        ...prev,
+        [lane.id]: error instanceof Error ? error.message : "Failed to load more sessions.",
       }));
-    const buckets = new Map<string, PipelineDashboardCard[]>();
-    for (const lane of order) buckets.set(lane.slug, []);
-    let hasOther = false;
-    for (const card of cards) {
-      const target = knownSlugs.has(card.currentStageSlug)
-        ? card.currentStageSlug
-        : OTHER_LANE.slug;
-      if (!knownSlugs.has(card.currentStageSlug)) hasOther = true;
-      const list = buckets.get(target) ?? [];
-      if (!buckets.has(target)) buckets.set(target, list);
-      list.push(card);
+    } finally {
+      setLoadingLaneId(null);
     }
-    if (hasOther) {
-      order.push({ description: "Sessions on a non-default stage.", ...OTHER_LANE });
-    }
-    for (const list of buckets.values()) {
-      list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    }
-    return { buckets, order };
-  }, [cards, initialData.defaultPipelineStages]);
-  const boardWidthPx = lanes.order.length * LANE_WIDTH_PX;
+  }
+
+  const boardWidthPx = lanes.length * LANE_WIDTH_PX;
   const boardContainerWidth = `${boardWidthPx || LANE_WIDTH_PX}px`;
+  const hasAnySession = lanes.some((lane) => lane.totalCount > 0);
 
   return (
     <div className="min-h-full bg-surface">
       <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
         <div className="mx-auto w-full" style={{ maxWidth: boardContainerWidth }}>
           <div className="max-w-2xl space-y-2">
-            <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
-              Pipeline
-            </h1>
-            <p className="text-[14px] leading-6 text-muted">
+            <h1 className="type-page-title">Pipeline</h1>
+            <p className="type-body text-muted">
               Sessions move through these stages in order, gated by approval at each step.
             </p>
           </div>
         </div>
       </header>
 
-      {cards.length === 0 ? (
+      {!hasAnySession ? (
         <div className="px-4 pb-12 sm:px-8">
           <div className="mx-auto max-w-2xl">
             <SessionsZeroState
@@ -238,12 +256,11 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
         <>
           <div className="px-4 pb-10 md:hidden">
             <div className="space-y-6">
-              {lanes.order.map((lane) => {
-                const items = lanes.buckets.get(lane.slug) ?? [];
-
+              {lanes.map((lane) => {
+                const items = lane.cards;
                 return (
                   <section
-                    key={lane.slug}
+                    key={`${lane.pipeline.id}:${lane.id}`}
                     className="border-t border-border/70 pt-4 first:border-t-0"
                   >
                     <header className="mb-3">
@@ -251,16 +268,21 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                         <h2 className="truncate text-[15px] font-semibold text-foreground">
                           {lane.name}
                         </h2>
-                        <span className="font-mono text-[11px] tabular-nums text-muted">
-                          {items.length}
+                        <span className="font-mono type-annotation tabular-nums text-muted">
+                          {lane.totalCount}
                         </span>
                       </div>
-                      <p className="mt-1 text-[12px] leading-5 text-muted">{lane.description}</p>
+                      {!lane.pipeline.isDefault ? (
+                        <p className="mt-1 type-annotation font-medium text-muted">
+                          {lane.pipeline.name}
+                        </p>
+                      ) : null}
+                      <p className="mt-1 text-xs leading-5 text-muted">{lane.description}</p>
                     </header>
 
                     <div className="space-y-2">
                       {items.length === 0 ? (
-                        <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-[12px] text-muted">
+                        <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-xs text-muted">
                           No sessions
                         </p>
                       ) : null}
@@ -272,6 +294,13 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                           workspaceSlug={initialData.workspace.slug}
                         />
                       ))}
+
+                      <PipelineLanePagination
+                        error={laneErrors[lane.id]}
+                        isLoading={loadingLaneId === lane.id}
+                        lane={lane}
+                        onLoadMore={loadMore}
+                      />
                     </div>
                   </section>
                 );
@@ -281,11 +310,11 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
 
           <div className="hidden overflow-x-auto overscroll-x-contain px-6 pb-12 sm:px-8 md:block">
             <div className="mx-auto flex" style={{ width: boardContainerWidth }}>
-              {lanes.order.map((lane) => {
-                const items = lanes.buckets.get(lane.slug) ?? [];
+              {lanes.map((lane) => {
+                const items = lane.cards;
                 return (
                   <section
-                    key={lane.slug}
+                    key={`${lane.pipeline.id}:${lane.id}`}
                     className="flex min-h-[calc(100vh-230px)] w-[260px] shrink-0 flex-col border-l border-border/70 px-3 first:border-l-0 first:pl-0 last:pr-0"
                   >
                     <header className="pb-3">
@@ -293,12 +322,17 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                         <h2 className="truncate text-[14px] font-semibold text-foreground">
                           {lane.name}
                         </h2>
-                        <span className="font-mono text-[11px] tabular-nums text-muted">
-                          {items.length}
+                        <span className="font-mono type-annotation tabular-nums text-muted">
+                          {lane.totalCount}
                         </span>
                       </div>
                       <div className="min-w-0">
-                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted">
+                        {!lane.pipeline.isDefault ? (
+                          <p className="mt-1 truncate type-annotation font-medium text-muted">
+                            {lane.pipeline.name}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 line-clamp-2 type-annotation leading-4 text-muted">
                           {lane.description}
                         </p>
                       </div>
@@ -306,7 +340,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
 
                     <div className="flex flex-1 flex-col gap-2">
                       {items.length === 0 ? (
-                        <p className="py-8 text-[12px] text-muted">No sessions</p>
+                        <p className="py-8 text-xs text-muted">No sessions</p>
                       ) : null}
 
                       {items.map((card) => (
@@ -316,6 +350,13 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                           workspaceSlug={initialData.workspace.slug}
                         />
                       ))}
+
+                      <PipelineLanePagination
+                        error={laneErrors[lane.id]}
+                        isLoading={loadingLaneId === lane.id}
+                        lane={lane}
+                        onLoadMore={loadMore}
+                      />
                     </div>
                   </section>
                 );
@@ -324,6 +365,54 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function removeLoadedCard(lanes: PipelineDashboardLane[], cardId: string) {
+  return lanes.map((lane) => {
+    const containsCard = lane.cards.some((card) => card.id === cardId);
+    if (!containsCard) return lane;
+
+    return {
+      ...lane,
+      cards: lane.cards.filter((card) => card.id !== cardId),
+      totalCount: Math.max(0, lane.totalCount - 1),
+    };
+  });
+}
+
+function PipelineLanePagination({
+  error,
+  isLoading,
+  lane,
+  onLoadMore,
+}: {
+  error: string | undefined;
+  isLoading: boolean;
+  lane: PipelineDashboardLane;
+  onLoadMore: (lane: PipelineDashboardLane) => Promise<void>;
+}) {
+  if (!lane.cursor && !error) return null;
+
+  return (
+    <div className="pt-1">
+      {error ? (
+        <p className="mb-2 text-xs leading-4 text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {lane.cursor ? (
+        <button
+          aria-label={`Load more ${lane.name} sessions`}
+          className="ui-button w-full"
+          disabled={isLoading}
+          onClick={() => void onLoadMore(lane)}
+          type="button"
+        >
+          {isLoading ? "Loading…" : `Load more (${lane.cards.length} of ${lane.totalCount})`}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -364,11 +453,11 @@ function PipelineCard({
         </h3>
         <SessionPhaseStatusLabel
           status={card.phaseStatus}
-          className="mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4"
+          className="mt-[3px] max-w-[72px] shrink-0 text-right text-xs font-medium leading-4"
         />
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 type-annotation text-muted">
         <SessionConnections
           className="relative z-20"
           compact

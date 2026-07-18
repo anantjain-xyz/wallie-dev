@@ -11,14 +11,11 @@ import { describeRateLimits } from "@/lib/rate-limit";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
 import {
   mapWorkspaceInvitationRow,
   type WorkspaceInvitation,
   type WorkspaceInvitationRow,
 } from "@/lib/workspace-invitations/contracts";
-
-const currentMemberSelect = "id, role, is_active, kind";
 
 export type AgentConfigMap = WorkspaceOnboardingData["agentConfig"];
 
@@ -155,36 +152,14 @@ export async function loadSettingsPageData(workspaceSlug: string): Promise<Setti
         workspaceId: context.workspace.id,
       }),
     );
-    const { supabase, user, workspace } = authenticatedContext;
-
-    const { data: currentMember, error: currentMemberError } = await timing.segment(
-      "current-member",
-      () =>
-        supabase
-          .from("workspace_members")
-          .select(currentMemberSelect)
-          .eq("workspace_id", workspace.id)
-          .eq("user_id", user.id)
-          .maybeSingle(),
-      (result) => ({ rows: result.data ? 1 : 0 }),
-    );
-
-    if (currentMemberError) {
-      throw currentMemberError;
-    }
+    const { currentMember, supabase, workspace } = authenticatedContext;
 
     if (!currentMember || !currentMember.is_active || currentMember.kind !== "human") {
       notFound();
     }
 
     const canManage = currentMember.role === "owner" || currentMember.role === "admin";
-    const accessContext: WorkspaceAccessContext = {
-      currentMember,
-      supabase,
-      user,
-      workspace,
-    };
-    const onboardingSnapshot = createWorkspaceOnboardingSnapshot(accessContext);
+    const onboardingSnapshot = createWorkspaceOnboardingSnapshot(authenticatedContext);
     const workspaceSummary = {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),

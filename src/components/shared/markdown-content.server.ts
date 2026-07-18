@@ -19,17 +19,17 @@ const classesByTag: Record<string, string> = {
   a: "text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent",
   blockquote: "my-3 border-l-2 border-border pl-3 text-muted italic",
   em: "italic",
-  h1: "mt-5 mb-2 text-[16px] font-semibold text-foreground first:mt-0",
-  h2: "mt-4 mb-2 text-[14px] font-semibold text-foreground first:mt-0",
-  h3: "mt-3 mb-1.5 text-[13px] font-semibold text-foreground first:mt-0",
-  h4: "mt-3 mb-1.5 text-[12px] font-semibold text-foreground first:mt-0",
+  h1: "artifact-heading-1",
+  h2: "artifact-heading-2",
+  h3: "artifact-heading-3",
+  h4: "artifact-heading-4",
   hr: "my-4 border-border",
   li: "leading-6",
   ol: "my-2 list-decimal space-y-1 pl-5 first:mt-0 last:mb-0",
   p: "my-2 leading-6 text-foreground first:mt-0 last:mb-0",
-  pre: "my-3 overflow-auto rounded-[4px] border border-border bg-background p-3 text-[12px] leading-5 first:mt-0 last:mb-0",
+  pre: "artifact-pre first:mt-0 last:mb-0",
   strong: "font-semibold text-foreground",
-  table: "w-full border-collapse text-left text-[12px]",
+  table: "w-full border-collapse text-left text-[13px]",
   td: "border border-border px-2 py-1 align-top",
   th: "border border-border bg-surface-muted px-2 py-1 font-semibold",
   ul: "my-2 list-disc space-y-1 pl-5 first:mt-0 last:mb-0",
@@ -64,11 +64,7 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
       ? node.properties.className.filter((value): value is string => typeof value === "string")
       : [];
     node.properties.className =
-      parent?.tagName === "pre"
-        ? ["font-mono", ...inherited]
-        : classNames(
-            "rounded-[3px] bg-surface-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground",
-          );
+      parent?.tagName === "pre" ? ["artifact-code-block", ...inherited] : ["artifact-inline-code"];
   }
 
   // Preserve the existing click-only image policy: no untrusted remote resource
@@ -118,5 +114,5 @@ export async function renderMarkdownToHtml(markdown: string): Promise<string> {
     .use(rehypeStringify)
     .process(markdown);
 
-  return `<div class="text-[13px] text-foreground max-h-[480px] overflow-auto">${String(rendered)}</div>`;
+  return `<div class="artifact-content max-h-[480px] overflow-auto">${String(rendered)}</div>`;
 }

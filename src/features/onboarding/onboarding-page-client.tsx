@@ -10,6 +10,7 @@ import type {
 } from "@/app/api/agent-config/route";
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -720,8 +721,8 @@ function RuntimeRequirementList({
           key={requirement.id}
         >
           <div className="min-w-0">
-            <p className="text-[12px] font-medium text-foreground">{requirement.label}</p>
-            <p className="mt-0.5 text-[12px] leading-5 text-muted">{requirement.detail}</p>
+            <p className="text-xs font-medium text-foreground">{requirement.label}</p>
+            <p className="mt-0.5 text-xs leading-5 text-muted">{requirement.detail}</p>
           </div>
           <Badge tone={requirement.passed ? "success" : "warning"}>
             {requirement.passed ? "Ready" : "Blocked"}
@@ -732,7 +733,7 @@ function RuntimeRequirementList({
   );
 }
 
-function OnboardingVercelSandboxPanel({
+export function OnboardingVercelSandboxPanel({
   canManage,
   connection,
   disabled,
@@ -749,6 +750,8 @@ function OnboardingVercelSandboxPanel({
   const [teamId, setTeamId] = useState(connection?.teamId ?? "");
   const [projectId, setProjectId] = useState(connection?.projectId ?? "");
   const [busyAction, setBusyAction] = useState<"disconnect" | "save" | null>(null);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const busy = disabled || busyAction !== null;
@@ -795,13 +798,8 @@ function OnboardingVercelSandboxPanel({
 
   async function handleDisconnect() {
     if (!canManage || busy) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm("Disconnect Vercel Sandbox for this workspace?")
-    ) {
-      return;
-    }
     setBusyAction("disconnect");
+    setDisconnectError(null);
     setError(null);
     setMessage(null);
 
@@ -815,10 +813,13 @@ function OnboardingVercelSandboxPanel({
       if (!response.ok || !body) {
         throw new Error(body?.error ?? "Vercel Sandbox disconnect failed.");
       }
+      setDisconnectOpen(false);
       onConnectionChange(body.connection);
       setMessage("Vercel Sandbox disconnected.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Vercel Sandbox disconnect failed.");
+      const message =
+        caught instanceof Error ? caught.message : "Vercel Sandbox disconnect failed.";
+      setDisconnectError(message);
     } finally {
       setBusyAction(null);
     }
@@ -829,7 +830,7 @@ function OnboardingVercelSandboxPanel({
       <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-foreground">Vercel Sandbox</h3>
-          <p className="mt-1 text-[12px] leading-5 text-muted">
+          <p className="mt-1 text-xs leading-5 text-muted">
             Wallie runs every session inside this workspace&apos;s Vercel project. Connect it here
             so sessions can run — the token is encrypted and never returned to the browser.
           </p>
@@ -856,17 +857,17 @@ function OnboardingVercelSandboxPanel({
 
       <div className="mt-4 flex flex-col gap-1">
         {connection ? (
-          <p className="text-[12px] leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted">
             {connection.projectName ?? connection.projectId} on {connection.teamId}
             {connection.tokenPreview ? ` · ${connection.tokenPreview}` : ""}
           </p>
         ) : (
-          <p className="text-[12px] leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted">
             Connect a Vercel project before running Wallie sessions.
           </p>
         )}
         {connection?.lastValidationError ? (
-          <p className="text-[12px] leading-5 text-danger">{connection.lastValidationError}</p>
+          <p className="text-xs leading-5 text-danger">{connection.lastValidationError}</p>
         ) : null}
       </div>
 
@@ -874,7 +875,7 @@ function OnboardingVercelSandboxPanel({
         <>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block space-y-1.5 sm:col-span-2">
-              <span className="text-[12px] font-medium text-muted">Vercel token</span>
+              <span className="text-xs font-medium text-muted">Vercel token</span>
               <input
                 autoComplete="off"
                 className="ui-input"
@@ -887,7 +888,7 @@ function OnboardingVercelSandboxPanel({
               />
             </label>
             <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-muted">Team id</span>
+              <span className="text-xs font-medium text-muted">Team id</span>
               <input
                 autoComplete="off"
                 className="ui-input"
@@ -899,7 +900,7 @@ function OnboardingVercelSandboxPanel({
               />
             </label>
             <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-muted">Project id</span>
+              <span className="text-xs font-medium text-muted">Project id</span>
               <input
                 autoComplete="off"
                 className="ui-input"
@@ -913,14 +914,30 @@ function OnboardingVercelSandboxPanel({
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
             {connection ? (
-              <button
-                className="ui-button-danger"
-                disabled={busy}
-                onClick={() => void handleDisconnect()}
-                type="button"
-              >
-                {busyAction === "disconnect" ? "Disconnecting…" : "Disconnect"}
-              </button>
+              <DestructiveConfirmationDialog
+                actionLabel="Disconnect Vercel Sandbox"
+                description={`Disconnecting ${connection.projectName ?? connection.projectId} prevents this workspace from starting new sandbox runs until another Vercel connection is saved.`}
+                errorMessage={disconnectError}
+                onConfirm={() => void handleDisconnect()}
+                onOpenChange={(open) => {
+                  setDisconnectOpen(open);
+                  setDisconnectError(null);
+                }}
+                open={disconnectOpen}
+                pending={busyAction === "disconnect"}
+                pendingLabel="Disconnecting…"
+                title={`Disconnect ${connection.projectName ?? connection.projectId}?`}
+                trigger={
+                  <button
+                    aria-label="Disconnect Vercel Sandbox"
+                    className="ui-button-danger"
+                    disabled={busy}
+                    type="button"
+                  >
+                    Disconnect
+                  </button>
+                }
+              />
             ) : null}
             <button
               className="ui-button-primary"
@@ -1266,7 +1283,7 @@ function RuntimeStep({
         <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Agent config</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Unset fields use Wallie&apos;s recommended defaults until saved.
             </p>
           </div>
@@ -1293,7 +1310,7 @@ function RuntimeStep({
                 />
               ) : (
                 <label className="block space-y-1.5">
-                  <span className="text-[12px] font-medium text-muted">{status.field.label}</span>
+                  <span className="text-xs font-medium text-muted">{status.field.label}</span>
                   <input
                     autoComplete="off"
                     className="ui-input"
@@ -1308,11 +1325,11 @@ function RuntimeStep({
                 </label>
               )}
               {status.validationError ? (
-                <p className="text-[12px] leading-5 text-danger" role="alert">
+                <p className="text-xs leading-5 text-danger" role="alert">
                   {status.validationError}
                 </p>
               ) : (
-                <p className="text-[12px] leading-5 text-muted">{status.field.description}</p>
+                <p className="text-xs leading-5 text-muted">{status.field.description}</p>
               )}
             </div>
           ))}
@@ -1331,7 +1348,7 @@ function RuntimeStep({
                 />
               ) : (
                 <label className="block space-y-1.5">
-                  <span className="text-[12px] font-medium text-muted">{status.field.label}</span>
+                  <span className="text-xs font-medium text-muted">{status.field.label}</span>
                   <input
                     autoComplete="off"
                     className="ui-input"
@@ -1346,18 +1363,18 @@ function RuntimeStep({
                 </label>
               )}
               {status.validationError ? (
-                <p className="text-[12px] leading-5 text-danger" role="alert">
+                <p className="text-xs leading-5 text-danger" role="alert">
                   {status.validationError}
                 </p>
               ) : (
-                <p className="text-[12px] leading-5 text-muted">{status.field.description}</p>
+                <p className="text-xs leading-5 text-muted">{status.field.description}</p>
               )}
             </div>
           ))}
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-          <div className="min-w-0 text-[12px] leading-5 text-muted">
+          <div className="min-w-0 text-xs leading-5 text-muted">
             {hasUnsavedDrafts
               ? "Save agent config before completing Runtime."
               : "No unsaved changes."}
@@ -1402,7 +1419,7 @@ function RuntimeStep({
             <h3 className="text-[14px] font-semibold text-foreground">
               Repository environment variables
             </h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Detected keys and saved workspace secrets are editable from this list.
             </p>
           </div>
@@ -1491,7 +1508,7 @@ function RuntimeStep({
             </button>
             <div className="flex items-center gap-3">
               {hasPartialNewSecretDraft ? (
-                <span className="text-[12px] text-muted">Finish each added row before saving.</span>
+                <span className="text-xs text-muted">Finish each added row before saving.</span>
               ) : null}
               <button
                 className="ui-button-primary"
@@ -1510,7 +1527,7 @@ function RuntimeStep({
         <div>
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Runtime readiness</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Provider-specific requirements must pass before this step can complete.
             </p>
           </div>
@@ -1637,7 +1654,7 @@ function VerifyStep({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Readiness checklist</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Resolve blockers in their owning setup step, then complete onboarding.
             </p>
           </div>
@@ -1650,8 +1667,8 @@ function VerifyStep({
               key={item.id}
             >
               <div className="min-w-0">
-                <p className="text-[12px] font-medium text-foreground">{item.label}</p>
-                <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
+                <p className="text-xs font-medium text-foreground">{item.label}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
@@ -1677,21 +1694,21 @@ function VerifyStep({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Checks run against the selected repository.
             </p>
           </div>
           <Badge tone={sandboxStatusTone(check)}>{check?.status ?? "No check"}</Badge>
         </div>
         {check?.errorText ? (
-          <p className="mt-3 text-[12px] leading-5 text-danger">{check.errorText}</p>
+          <p className="mt-3 text-xs leading-5 text-danger">{check.errorText}</p>
         ) : null}
         {check ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {Object.entries(check.capabilities).map(([name, result]) => (
               <div
                 className={cn(
-                  "rounded-[6px] border px-3 py-2 text-[12px] leading-5",
+                  "rounded-[6px] border px-3 py-2 text-xs leading-5",
                   result?.ok
                     ? "border-success/20 bg-success-soft text-success"
                     : "border-danger/20 bg-danger-soft text-danger",
@@ -2101,7 +2118,7 @@ function MobileStepControl({
             type="button"
             aria-current={step.displayState === "active" ? "step" : undefined}
             className={cn(
-              "inline-flex h-9 min-w-[112px] snap-start items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-[12px] font-medium",
+              "inline-flex h-9 min-w-[112px] snap-start items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-xs font-medium",
               railStateClasses[step.displayState],
               (!canSelect || !step.isNavigable) && "cursor-not-allowed",
             )}
@@ -2125,8 +2142,8 @@ function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
         {setupHealthItems(health).map((item) => (
           <div key={item.label} className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[12px] font-medium text-foreground">{item.label}</p>
-              <p className="mt-0.5 truncate text-[11px] text-muted">{item.detail}</p>
+              <p className="text-xs font-medium text-foreground">{item.label}</p>
+              <p className="mt-0.5 truncate type-annotation text-muted">{item.detail}</p>
             </div>
             <HealthBadge tone={item.tone}>{item.value}</HealthBadge>
           </div>
@@ -2666,9 +2683,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     <div className="flex min-h-[100svh] flex-col bg-surface text-foreground">
       <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10">
         <div className="min-w-0 space-y-2">
-          <h1 className="text-[28px] font-semibold tracking-tight text-foreground">
-            Set up {data.workspace.name}
-          </h1>
+          <h1 className="type-page-title">Set up {data.workspace.name}</h1>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">
             Finish the required connections before starting sessions.
           </p>
@@ -2701,9 +2716,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         <section className="min-w-0">
           <div className="settings-section-header mb-6">
             <div className="min-w-0">
-              <h2 className="text-[18px] font-semibold tracking-tight text-foreground">
-                {activeStep.title}
-              </h2>
+              <h2 className="type-section-title">{activeStep.title}</h2>
               <p className="mt-1 max-w-2xl text-[13px] leading-5 text-muted">
                 {activeStep.description}
               </p>
