@@ -12,6 +12,10 @@ import {
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
+import {
+  SessionDetailLink,
+  SessionDetailLinkPrefetchBoundary,
+} from "@/features/sessions/components/session-detail-link";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import type { SessionListPageData } from "@/features/sessions/list/data";
@@ -188,11 +192,13 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
           </div>
         )
       ) : (
-        <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
-          {sessions.map((session) => (
-            <SessionRow key={session.id} session={session} workspaceSlug={workspaceSlug} />
-          ))}
-        </ul>
+        <SessionDetailLinkPrefetchBoundary>
+          <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
+            {sessions.map((session) => (
+              <SessionRow key={session.id} session={session} workspaceSlug={workspaceSlug} />
+            ))}
+          </ul>
+        </SessionDetailLinkPrefetchBoundary>
       )}
 
       {initialData.hasMore && initialData.nextCursor ? (
@@ -342,14 +348,14 @@ function SessionRow({
 
   return (
     <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-surface-strong sm:px-5 md:flex-row md:items-center">
-      <Link
+      <SessionDetailLink
         href={detailHref}
         className="absolute inset-0 z-10 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
         <span className="sr-only">
           Open session #{session.number}: {displayTitle}
         </span>
-      </Link>
+      </SessionDetailLink>
 
       <div className="pointer-events-none relative z-20 flex min-w-0 flex-1 flex-col gap-1">
         {isEditing ? (
