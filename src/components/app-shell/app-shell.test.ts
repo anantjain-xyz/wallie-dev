@@ -7,9 +7,9 @@ describe("AppShell", () => {
   it("pins the workspace shell to the viewport so nested page anchors cannot scroll the document", () => {
     const element = AppShell({
       children: "Settings",
-      defaultSessionGithubRepositoryId: null,
       onboarding: null,
       viewerEmail: "owner@example.com",
+      viewerId: "user-1",
       workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
       workspaceAvatarUrl: null,
     }) as ReactElement<{ className: string }>;

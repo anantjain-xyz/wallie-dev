@@ -1,23 +1,24 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { SelectField } from "@/components/ui/select";
+import { createSessionFromClient } from "@/features/sessions/client";
 import {
-  createSessionFromClient,
-  loadSessionRepositoryOptionsFromClient,
-} from "@/features/sessions/client";
-import {
-  deriveSessionTitleFromPrompt,
-  type SessionRepositoryOption,
-} from "@/features/sessions/types";
+  preloadSessionRepositories as preloadSessionRepositoryCache,
+  retrySessionRepositories,
+  useSessionRepositories,
+  type SessionRepositoryCacheKey,
+  type SessionRepositorySnapshot,
+} from "@/features/sessions/session-repository-cache";
+import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
 import { workspaceSessionDetailPath } from "@/lib/routes";
 
 type CreateSessionDialogProps = {
-  defaultGithubRepositoryId: string | null;
   onClose: () => void;
   open: boolean;
+  userId: string;
   workspaceId: string;
   workspaceSlug: string;
 };
@@ -37,6 +38,18 @@ export function getLinearUrlError(value: string) {
   return "Must be a linear.app URL.";
 }
 
+export function preloadSessionRepositories(input: SessionRepositoryCacheKey) {
+  return preloadSessionRepositoryCache(input);
+}
+
+export function isCreateSessionSubmitDisabled(input: {
+  hasRepositoryResult: boolean;
+  isSubmitting: boolean;
+  prompt: string;
+}) {
+  return input.isSubmitting || !input.prompt.trim() || !input.hasRepositoryResult;
+}
+
 // When `open` is false the body does not mount, so all of its local state is
 // reset automatically on reopen. This avoids a reset effect (which the
 // react-hooks/set-state-in-effect lint rule forbids).
@@ -48,8 +61,8 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 }
 
 function CreateSessionDialogBody({
-  defaultGithubRepositoryId,
   onClose,
+  userId,
   workspaceId,
   workspaceSlug,
 }: CreateSessionDialogProps) {
@@ -59,54 +72,13 @@ function CreateSessionDialogBody({
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [linearUrl, setLinearUrl] = useState("");
-  const [repositoryOptions, setRepositoryOptions] = useState<SessionRepositoryOption[]>([]);
-  const [repositoryLoadError, setRepositoryLoadError] = useState<string | null>(null);
-  const [repositoryLoading, setRepositoryLoading] = useState(true);
-  const [githubRepositoryId, setGithubRepositoryId] = useState(defaultGithubRepositoryId ?? "");
+  const [githubRepositoryId, setGithubRepositoryId] = useState("");
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    let canceled = false;
-
-    async function loadRepositories() {
-      setRepositoryLoading(true);
-      setRepositoryLoadError(null);
-
-      try {
-        const result = await loadSessionRepositoryOptionsFromClient({ workspaceId });
-        if (canceled) return;
-
-        setRepositoryOptions(result.repositoryOptions);
-        setGithubRepositoryId((currentRepositoryId) => {
-          if (
-            currentRepositoryId &&
-            result.repositoryOptions.some((repository) => repository.id === currentRepositoryId)
-          ) {
-            return currentRepositoryId;
-          }
-
-          return result.defaultGithubRepositoryId ?? result.repositoryOptions[0]?.id ?? "";
-        });
-      } catch (error) {
-        if (canceled) return;
-        setRepositoryLoadError(
-          error instanceof Error ? error.message : "Failed to load repositories.",
-        );
-      } finally {
-        if (!canceled) {
-          setRepositoryLoading(false);
-        }
-      }
-    }
-
-    void loadRepositories();
-
-    return () => {
-      canceled = true;
-    };
-  }, [workspaceId]);
+  const repositoryCacheKey = { userId, workspaceId };
+  const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
+  const repositoryOptions = repositorySnapshot.data?.repositoryOptions ?? [];
 
   function handleLinearBlur() {
     setLinearError(getLinearUrlError(linearUrl));
@@ -117,6 +89,7 @@ function CreateSessionDialogBody({
     label: repository.fullName,
     value: repository.id,
   }));
+  const defaultGithubRepositoryId = repositorySnapshot.data?.defaultGithubRepositoryId ?? null;
   const defaultRepositoryAvailable = repositoryOptions.some(
     (repository) => repository.id === defaultGithubRepositoryId,
   );
@@ -133,6 +106,11 @@ function CreateSessionDialogBody({
     event.preventDefault();
 
     if (isSubmitting) {
+      return;
+    }
+
+    if (!repositorySnapshot.data) {
+      setErrorMessage("Wait for repositories to finish loading before starting a session.");
       return;
     }
 
@@ -233,22 +211,13 @@ function CreateSessionDialogBody({
             />
           </div>
 
-          {repositoryOptions.length > 0 ? (
-            <SelectField
-              label="Repository"
-              options={repositorySelectOptions}
-              onValueChange={setGithubRepositoryId}
-              value={selectedGithubRepositoryId}
-            />
-          ) : repositoryLoading ? (
-            <div className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted">
-              Loading repositories...
-            </div>
-          ) : repositoryLoadError ? (
-            <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning">
-              {repositoryLoadError}
-            </div>
-          ) : null}
+          <RepositoryField
+            cacheKey={repositoryCacheKey}
+            onValueChange={setGithubRepositoryId}
+            options={repositorySelectOptions}
+            selectedGithubRepositoryId={selectedGithubRepositoryId}
+            snapshot={repositorySnapshot}
+          />
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
@@ -285,7 +254,11 @@ function CreateSessionDialogBody({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !prompt.trim()}
+              disabled={isCreateSessionSubmitDisabled({
+                hasRepositoryResult: repositorySnapshot.data !== null,
+                isSubmitting,
+                prompt,
+              })}
               className="ui-button-primary"
             >
               {isSubmitting ? "Starting…" : "Start session"}
@@ -293,6 +266,103 @@ function CreateSessionDialogBody({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+type RepositoryFieldProps = {
+  cacheKey: SessionRepositoryCacheKey;
+  onValueChange: (value: string) => void;
+  options: Array<{ label: string; value: string }>;
+  selectedGithubRepositoryId: string;
+  snapshot: SessionRepositorySnapshot;
+};
+
+export function RepositoryField({
+  cacheKey,
+  onValueChange,
+  options,
+  selectedGithubRepositoryId,
+  snapshot,
+}: RepositoryFieldProps) {
+  function retry() {
+    void retrySessionRepositories(cacheKey).catch(() => undefined);
+  }
+
+  if (!snapshot.data && snapshot.isLoading) {
+    return (
+      <div
+        aria-busy="true"
+        aria-live="polite"
+        className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted"
+        role="status"
+      >
+        Loading repositories…
+      </div>
+    );
+  }
+
+  if (!snapshot.data && snapshot.error) {
+    return (
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+        role="alert"
+      >
+        <span>{snapshot.error}</span>
+        <button className="ui-button min-h-8" onClick={retry} type="button">
+          Retry repositories
+        </button>
+      </div>
+    );
+  }
+
+  if (!snapshot.data) {
+    return (
+      <div aria-live="polite" className="text-[12px] text-muted" role="status">
+        Preparing repository options…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {options.length > 0 ? (
+        <SelectField
+          label="Repository"
+          options={options}
+          onValueChange={onValueChange}
+          value={selectedGithubRepositoryId}
+        />
+      ) : (
+        <div
+          aria-live="polite"
+          className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted"
+          role="status"
+        >
+          No repositories are available. This session will start without one.
+        </div>
+      )}
+
+      {snapshot.isStale ? (
+        <div
+          aria-live="polite"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+          role={snapshot.error ? "alert" : "status"}
+        >
+          <span>
+            {snapshot.isRefreshing
+              ? "Refreshing repository options…"
+              : snapshot.error
+                ? `Repository options may be out of date. ${snapshot.error}`
+                : "Repository options may be out of date."}
+          </span>
+          {!snapshot.isRefreshing ? (
+            <button className="ui-button min-h-8" onClick={retry} type="button">
+              Refresh repositories
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

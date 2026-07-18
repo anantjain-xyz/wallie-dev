@@ -9,6 +9,7 @@ import type {
   GitHubRepositorySyncResponse,
 } from "@/features/github/contracts";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
+import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { ConfigState, dateFormatter, interactiveLinkClass } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -179,6 +180,7 @@ export function GitHubConnectionPanel({
         primaryProfile: nextPrimaryProfile,
         repositories: nextRepositories,
       });
+      notifySessionRepositoriesChanged(workspaceId);
     },
     setFlashMessage,
     successText: "GitHub repositories refreshed.",

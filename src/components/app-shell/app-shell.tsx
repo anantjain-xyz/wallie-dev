@@ -7,18 +7,18 @@ import { getWorkspaceNavItems } from "@/lib/routes";
 
 type AppShellProps = {
   children: ReactNode;
-  defaultSessionGithubRepositoryId: string | null;
   onboarding: OnboardingResumeState | null;
   viewerEmail: string | null;
+  viewerId: string;
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
 };
 
 export function AppShell({
   children,
-  defaultSessionGithubRepositoryId,
   onboarding,
   viewerEmail,
+  viewerId,
   workspace,
   workspaceAvatarUrl,
 }: AppShellProps) {
@@ -31,10 +31,10 @@ export function AppShell({
     <div className="fixed inset-x-0 top-0 h-[100dvh] min-h-[100svh] overflow-hidden bg-background">
       <div className="flex h-full min-w-0 flex-col bg-surface">
         <ShellHeader
-          defaultSessionGithubRepositoryId={defaultSessionGithubRepositoryId}
           navItems={navItems}
           onboarding={onboarding}
           viewerEmail={viewerEmail}
+          viewerId={viewerId}
           workspace={workspace}
           workspaceAvatarUrl={workspaceAvatarUrl}
         />
