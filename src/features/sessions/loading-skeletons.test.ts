@@ -35,7 +35,8 @@ describe("SessionsListLoadingSkeleton", () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('aria-label="Loading sessions"');
     expect(html).toContain("divide-y divide-border");
-    expect((html.match(/animate-pulse/g) ?? []).length).toBeGreaterThan(20);
+    expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
+    expect((html.match(/<li/g) ?? []).length).toBe(3);
     expectNoFocusableFakeControls(html);
   });
 });

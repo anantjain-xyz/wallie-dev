@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, use, useState, type SetStateAction } from "react";
+import { Suspense, use, useState, type ReactNode, type SetStateAction } from "react";
 
 import type { AgentConfigEntry } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
@@ -76,6 +76,24 @@ const LEGACY_ANCHOR_REDIRECTS: Record<string, string> = {
   "linear-routing": "linear",
   secrets: "runtime",
 };
+
+function ContainedSettingsSection({
+  children,
+  size = "default",
+}: {
+  children: ReactNode;
+  size?: "compact" | "default" | "large";
+}) {
+  return (
+    <div
+      className={`settings-contained-section ${
+        size === "default" ? "" : `settings-contained-section-${size}`
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
 
 function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]) {
   switch (searchState.githubStatus) {
@@ -358,189 +376,215 @@ function SettingsCompletePage({
                 workspaceId={pageData.workspace.id}
               />
             )}
-            <RepositoryAnalysisSection
-              data={pageData}
-              setData={setData}
-              setFlashMessage={setFlashMessage}
-            />
-
-            <VercelSandboxConnectionSection
-              canManage={isManager}
-              connection={pageData.vercelSandboxConnection}
-              onConnectionChange={(connection) =>
-                setData((currentData) => updateVercelConnectionInData(currentData, connection))
-              }
-              setFlashMessage={setFlashMessage}
-              workspaceId={pageData.workspace.id}
-            />
-
-            <LinearConfigurationSection
-              canManage={isManager}
-              isLoadingSecrets={false}
-              linearSecret={linearSecret}
-              onRoutingSaved={(routing) =>
-                setData((currentData) => applyLinearRoutingToSettingsData(currentData, routing))
-              }
-              routing={pageData.linearRouting}
-              setSecrets={setSecrets}
-              stages={pageData.pipeline?.stages ?? []}
-              workspaceId={pageData.workspace.id}
-            />
-
-            <AgentConfigSection
-              anchorId="runtime"
-              canManage={isManager}
-              codexConnectFlash={searchState.codexStatus}
-              extraContent={
-                <div className="space-y-4 border-t border-border pt-6">
-                  <div className="min-w-0">
-                    <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
-                    <p className="mt-1 text-xs leading-5 text-muted">
-                      Secret values never come back to the client. Wallie shows preview-only rows
-                      and writes encrypted values through route handlers.
-                    </p>
-                  </div>
-                  <WorkspaceSecretsPanel
-                    canManage={isManager}
-                    isLoadingSecrets={false}
-                    secrets={secrets}
-                    setFlashMessage={setFlashMessage}
-                    setSecrets={setSecrets}
-                    workspaceId={pageData.workspace.id}
-                  />
-                </div>
-              }
-              initialAgentConfig={pageData.agentConfig}
-              initialClaudeCodeStatus={{
-                checkedAt: pageData.setupHealth.claudeCodeConnection.checkedAt,
-                connected: pageData.setupHealth.claudeCodeConnection.connected,
-                updatedAt: pageData.setupHealth.claudeCodeConnection.updatedAt,
-              }}
-              initialCodexStatus={{
-                accountEmail: pageData.setupHealth.codexConnection.accountEmail,
-                checkedAt: pageData.setupHealth.codexConnection.checkedAt,
-                connected: pageData.setupHealth.codexConnection.connected,
-                credentialType: pageData.setupHealth.codexConnection.credentialType,
-                expired: pageData.setupHealth.codexConnection.status === "expired",
-                expiresAt: pageData.setupHealth.codexConnection.expiresAt,
-                reconnectReason: pageData.setupHealth.codexConnection.reconnectReason,
-                reconnectRequired: pageData.setupHealth.codexConnection.reconnectRequired,
-                updatedAt: pageData.setupHealth.codexConnection.updatedAt,
-              }}
-              onAgentConfigSaved={(entries) =>
-                setData((currentData) => updateAgentConfigInData(currentData, entries))
-              }
-              onClaudeCodeStatusChange={(status) =>
-                setData((currentData) => updateClaudeCodeConnectionInData(currentData, status))
-              }
-              onCodexStatusChange={(status) =>
-                setData((currentData) => updateCodexConnectionInData(currentData, status))
-              }
-              setFlashMessage={setFlashMessage}
-              tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
-              title="Agent"
-              vercelSandboxConnection={pageData.vercelSandboxConnection}
-              workspaceId={pageData.workspace.id}
-            />
-
-            <Section
-              anchorId="pipeline"
-              tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
-              title="Pipeline"
-            >
-              <PipelineEditor
-                canManage={isManager}
-                pipeline={pageData.pipeline}
-                workspaceId={pageData.workspace.id}
-                workspaceMembers={pageData.workspaceMembers}
+            <ContainedSettingsSection>
+              <RepositoryAnalysisSection
+                data={pageData}
+                setData={setData}
+                setFlashMessage={setFlashMessage}
               />
-            </Section>
+            </ContainedSettingsSection>
 
-            <VerifySetupSection
-              data={pageData}
-              setData={setData}
-              setFlashMessage={setFlashMessage}
-            />
-
-            <Section
-              anchorId="usage"
-              tagline="Aggregate token usage and costs across all agent runs in this workspace."
-              title="Usage"
-            >
-              {streamedUsage ? (
-                <Suspense fallback={<p className="text-sm text-muted">Loading usage…</p>}>
-                  <StreamedUsageSummary usage={streamedUsage} />
-                </Suspense>
-              ) : (
-                <UsageSummary usage={pageData.usage} />
-              )}
-              <MaintenancePanel
+            <ContainedSettingsSection>
+              <VercelSandboxConnectionSection
                 canManage={isManager}
+                connection={pageData.vercelSandboxConnection}
+                onConnectionChange={(connection) =>
+                  setData((currentData) => updateVercelConnectionInData(currentData, connection))
+                }
                 setFlashMessage={setFlashMessage}
                 workspaceId={pageData.workspace.id}
               />
-            </Section>
+            </ContainedSettingsSection>
 
-            <Section
-              anchorId="rate-limits"
-              tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls. Excess requests return 429 with a Retry-After header."
-              title="Rate limits"
-            >
-              <ul className="ui-sheet divide-y divide-border">
-                {pageData.rateLimits.map((limit) => (
-                  <li
-                    key={limit.endpoint}
-                    className="flex flex-col gap-1.5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="space-y-1">
-                      <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
-                      <p className="text-xs leading-5 text-muted">{limit.description}</p>
+            <ContainedSettingsSection size="large">
+              <LinearConfigurationSection
+                canManage={isManager}
+                isLoadingSecrets={false}
+                linearSecret={linearSecret}
+                onRoutingSaved={(routing) =>
+                  setData((currentData) => applyLinearRoutingToSettingsData(currentData, routing))
+                }
+                routing={pageData.linearRouting}
+                setSecrets={setSecrets}
+                stages={pageData.pipeline?.stages ?? []}
+                workspaceId={pageData.workspace.id}
+              />
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection size="large">
+              <AgentConfigSection
+                anchorId="runtime"
+                canManage={isManager}
+                codexConnectFlash={searchState.codexStatus}
+                extraContent={
+                  <div className="space-y-4 border-t border-border pt-6">
+                    <div className="min-w-0">
+                      <h3 className="text-[14px] font-semibold text-foreground">
+                        Workspace secrets
+                      </h3>
+                      <p className="mt-1 text-xs leading-5 text-muted">
+                        Secret values never come back to the client. Wallie shows preview-only rows
+                        and writes encrypted values through route handlers.
+                      </p>
                     </div>
-                    <span className="shrink-0 font-mono type-annotation text-muted">
-                      {limit.max} req / {Math.round(limit.windowMs / 1000)}s
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </Section>
+                    <WorkspaceSecretsPanel
+                      canManage={isManager}
+                      isLoadingSecrets={false}
+                      secrets={secrets}
+                      setFlashMessage={setFlashMessage}
+                      setSecrets={setSecrets}
+                      workspaceId={pageData.workspace.id}
+                    />
+                  </div>
+                }
+                initialAgentConfig={pageData.agentConfig}
+                initialClaudeCodeStatus={{
+                  checkedAt: pageData.setupHealth.claudeCodeConnection.checkedAt,
+                  connected: pageData.setupHealth.claudeCodeConnection.connected,
+                  updatedAt: pageData.setupHealth.claudeCodeConnection.updatedAt,
+                }}
+                initialCodexStatus={{
+                  accountEmail: pageData.setupHealth.codexConnection.accountEmail,
+                  checkedAt: pageData.setupHealth.codexConnection.checkedAt,
+                  connected: pageData.setupHealth.codexConnection.connected,
+                  credentialType: pageData.setupHealth.codexConnection.credentialType,
+                  expired: pageData.setupHealth.codexConnection.status === "expired",
+                  expiresAt: pageData.setupHealth.codexConnection.expiresAt,
+                  reconnectReason: pageData.setupHealth.codexConnection.reconnectReason,
+                  reconnectRequired: pageData.setupHealth.codexConnection.reconnectRequired,
+                  updatedAt: pageData.setupHealth.codexConnection.updatedAt,
+                }}
+                onAgentConfigSaved={(entries) =>
+                  setData((currentData) => updateAgentConfigInData(currentData, entries))
+                }
+                onClaudeCodeStatusChange={(status) =>
+                  setData((currentData) => updateClaudeCodeConnectionInData(currentData, status))
+                }
+                onCodexStatusChange={(status) =>
+                  setData((currentData) => updateCodexConnectionInData(currentData, status))
+                }
+                setFlashMessage={setFlashMessage}
+                tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
+                title="Agent"
+                vercelSandboxConnection={pageData.vercelSandboxConnection}
+                workspaceId={pageData.workspace.id}
+              />
+            </ContainedSettingsSection>
 
-            <WorkspaceAvatarSection
-              canManage={isManager}
-              onWorkspaceNameChange={(name) =>
-                setData((currentData) => ({
-                  ...currentData,
-                  workspace: { ...currentData.workspace, name },
-                }))
-              }
-              setFlashMessage={setFlashMessage}
-              workspace={pageData.workspace}
-            />
-            {streamedWorkspaceInvitations ? (
-              <Suspense fallback={<WorkspaceMembersLoadingFallback />}>
-                <StreamedWorkspaceMembersSection
+            <ContainedSettingsSection size="large">
+              <Section
+                anchorId="pipeline"
+                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
+                title="Pipeline"
+              >
+                <PipelineEditor
                   canManage={isManager}
-                  currentMemberId={pageData.currentMember.id}
-                  setFlashMessage={setFlashMessage}
+                  pipeline={pageData.pipeline}
                   workspaceId={pageData.workspace.id}
-                  workspaceInvitations={streamedWorkspaceInvitations}
                   workspaceMembers={pageData.workspaceMembers}
                 />
-              </Suspense>
-            ) : (
-              <WorkspaceMembersSection
-                canManage={isManager}
-                currentMemberId={pageData.currentMember.id}
-                initialInvitations={pageData.workspaceInvitations}
+              </Section>
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection>
+              <VerifySetupSection
+                data={pageData}
+                setData={setData}
                 setFlashMessage={setFlashMessage}
-                workspaceId={pageData.workspace.id}
-                workspaceMembers={pageData.workspaceMembers}
               />
-            )}
-            <DangerZoneSection
-              canDelete={isOwner}
-              workspaceId={pageData.workspace.id}
-              workspaceName={pageData.workspace.name}
-            />
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection size="compact">
+              <Section
+                anchorId="usage"
+                tagline="Aggregate token usage and costs across all agent runs in this workspace."
+                title="Usage"
+              >
+                {streamedUsage ? (
+                  <Suspense fallback={<p className="text-sm text-muted">Loading usage…</p>}>
+                    <StreamedUsageSummary usage={streamedUsage} />
+                  </Suspense>
+                ) : (
+                  <UsageSummary usage={pageData.usage} />
+                )}
+                <MaintenancePanel
+                  canManage={isManager}
+                  setFlashMessage={setFlashMessage}
+                  workspaceId={pageData.workspace.id}
+                />
+              </Section>
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection size="compact">
+              <Section
+                anchorId="rate-limits"
+                tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls. Excess requests return 429 with a Retry-After header."
+                title="Rate limits"
+              >
+                <ul className="ui-sheet divide-y divide-border">
+                  {pageData.rateLimits.map((limit) => (
+                    <li
+                      key={limit.endpoint}
+                      className="flex flex-col gap-1.5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="space-y-1">
+                        <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
+                        <p className="text-xs leading-5 text-muted">{limit.description}</p>
+                      </div>
+                      <span className="shrink-0 font-mono type-annotation text-muted">
+                        {limit.max} req / {Math.round(limit.windowMs / 1000)}s
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection>
+              <WorkspaceAvatarSection
+                canManage={isManager}
+                onWorkspaceNameChange={(name) =>
+                  setData((currentData) => ({
+                    ...currentData,
+                    workspace: { ...currentData.workspace, name },
+                  }))
+                }
+                setFlashMessage={setFlashMessage}
+                workspace={pageData.workspace}
+              />
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection>
+              {streamedWorkspaceInvitations ? (
+                <Suspense fallback={<WorkspaceMembersLoadingFallback />}>
+                  <StreamedWorkspaceMembersSection
+                    canManage={isManager}
+                    currentMemberId={pageData.currentMember.id}
+                    setFlashMessage={setFlashMessage}
+                    workspaceId={pageData.workspace.id}
+                    workspaceInvitations={streamedWorkspaceInvitations}
+                    workspaceMembers={pageData.workspaceMembers}
+                  />
+                </Suspense>
+              ) : (
+                <WorkspaceMembersSection
+                  canManage={isManager}
+                  currentMemberId={pageData.currentMember.id}
+                  initialInvitations={pageData.workspaceInvitations}
+                  setFlashMessage={setFlashMessage}
+                  workspaceId={pageData.workspace.id}
+                  workspaceMembers={pageData.workspaceMembers}
+                />
+              )}
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection size="compact">
+              <DangerZoneSection
+                canDelete={isOwner}
+                workspaceId={pageData.workspace.id}
+                workspaceName={pageData.workspace.name}
+              />
+            </ContainedSettingsSection>
           </div>
         </div>
       </div>

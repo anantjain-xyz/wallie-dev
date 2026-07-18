@@ -40,6 +40,7 @@
     "test:e2e:onboarding": "pnpm build && playwright test e2e/onboarding-mutation-requests.spec.ts",
     "test:e2e:session-prefetch": "pnpm build && playwright test e2e/session-detail-prefetch.spec.ts",
     "test:benchmark:interaction": "pnpm build && playwright test e2e/interaction-rum.benchmark.spec.ts --repeat-each=2",
+    "test:benchmark:content-visibility": "pnpm build && playwright test e2e/content-visibility.benchmark.spec.ts",
     "test:watch": "vitest",
     "db:types": "SUPABASE_TELEMETRY_DISABLED=1 supabase gen types typescript --local > src/lib/supabase/database.types.ts && prettier --write src/lib/supabase/database.types.ts",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
