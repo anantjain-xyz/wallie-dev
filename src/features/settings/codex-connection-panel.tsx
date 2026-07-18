@@ -64,7 +64,7 @@ export function ChatGptSubscriptionControls({
   return (
     <div className="space-y-3">
       {blocked ? (
-        <p className="text-[12px] leading-5 text-warning">
+        <p className="text-xs leading-5 text-warning">
           Connect{" "}
           <a className="underline underline-offset-2" href={vercelConnectionHref}>
             Vercel Sandbox
@@ -88,7 +88,7 @@ export function ChatGptSubscriptionControls({
 
       {deviceFlow ? (
         <div className="space-y-2 rounded-[6px] border border-border bg-surface p-3">
-          <p className="text-[12px] font-medium text-foreground">
+          <p className="text-xs font-medium text-foreground">
             {deviceFlow.status === "starting"
               ? "Waiting for sign-in code…"
               : deviceFlow.status === "prompted"
@@ -104,7 +104,7 @@ export function ChatGptSubscriptionControls({
           ) : null}
           {deviceFlow.verificationUri ? (
             <a
-              className="text-[12px] text-link underline underline-offset-2"
+              className="text-xs text-link underline underline-offset-2"
               href={deviceFlow.verificationUri}
               rel="noreferrer"
               target="_blank"
@@ -114,7 +114,7 @@ export function ChatGptSubscriptionControls({
           ) : null}
           <div>
             <button
-              className="text-[12px] font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className="text-xs font-medium text-danger underline-offset-2 transition-colors hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isBusy}
               onClick={onCancel}
               type="button"
@@ -405,7 +405,7 @@ export function CodexConnectionPanel({
           </p>
           <button
             type="button"
-            className="text-[12px] text-muted underline-offset-2 transition-colors hover:text-danger hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+            className="text-xs text-muted underline-offset-2 transition-colors hover:text-danger hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             disabled={isBusy}
             onClick={handleDisconnect}
           >
@@ -419,7 +419,7 @@ export function CodexConnectionPanel({
           <div className="inline-flex flex-wrap rounded-[6px] border border-border bg-surface p-1">
             {CREDENTIAL_TYPES.map((type) => (
               <button
-                className={`rounded-[5px] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                className={`rounded-[5px] px-3 py-1.5 text-xs font-medium transition-colors ${
                   credentialType === type
                     ? "bg-surface-strong text-foreground"
                     : "text-muted hover:text-foreground"
@@ -446,7 +446,7 @@ export function CodexConnectionPanel({
           ) : (
             <form className="space-y-3" onSubmit={handleSave}>
               <label className="block space-y-1.5">
-                <span className="text-[12px] font-medium text-foreground">
+                <span className="text-xs font-medium text-foreground">
                   {codexCredentialTypeLabel(credentialType)}
                 </span>
                 <input
@@ -465,7 +465,7 @@ export function CodexConnectionPanel({
 
               {credentialType === "codex_access_token" ? (
                 <label className="block max-w-[220px] space-y-1.5">
-                  <span className="text-[12px] font-medium text-foreground">Expiration date</span>
+                  <span className="text-xs font-medium text-foreground">Expiration date</span>
                   <input
                     className="ui-input"
                     disabled={isBusy}
@@ -477,7 +477,7 @@ export function CodexConnectionPanel({
               ) : null}
 
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[12px] leading-5 text-muted">
+                <p className="text-xs leading-5 text-muted">
                   {credentialType === "codex_access_token" ? (
                     <a
                       className="underline underline-offset-2"

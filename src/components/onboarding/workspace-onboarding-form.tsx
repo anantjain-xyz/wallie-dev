@@ -95,7 +95,7 @@ export function WorkspaceOnboardingForm() {
       <label className="block space-y-1.5" htmlFor="workspace-slug">
         <span className="flex items-center justify-between gap-3">
           <span className="text-[13px] font-medium text-foreground">URL slug</span>
-          <span aria-hidden="true" className="text-[12px] text-muted">
+          <span aria-hidden="true" className="text-xs text-muted">
             Optional
           </span>
         </span>

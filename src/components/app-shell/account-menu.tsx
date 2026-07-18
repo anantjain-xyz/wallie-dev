@@ -49,7 +49,7 @@ export function AccountMenu({ email }: AccountMenuProps) {
       >
         <span
           aria-hidden="true"
-          className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-strong text-[11px] font-semibold text-foreground"
+          className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-strong type-annotation font-semibold text-foreground"
         >
           {initial}
         </span>
@@ -62,7 +62,7 @@ export function AccountMenu({ email }: AccountMenuProps) {
           className="absolute right-0 top-full z-30 mt-1 min-w-56 overflow-hidden rounded-[8px] border border-border bg-surface py-1 [box-shadow:var(--shadow-elevated)]"
         >
           <div className="px-3 py-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
+            <p className="type-annotation font-medium uppercase tracking-wide text-muted">
               Signed in as
             </p>
             <p className="mt-0.5 truncate text-sm text-foreground" title={email ?? undefined}>

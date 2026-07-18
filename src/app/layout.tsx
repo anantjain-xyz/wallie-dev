@@ -1,9 +1,29 @@
 import type { Metadata, Viewport } from "next";
+import { IBM_Plex_Mono, Inter } from "next/font/google";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
 import "./globals.css";
+
+const inter = Inter({
+  adjustFontFallback: true,
+  axes: ["opsz"],
+  display: "swap",
+  fallback: ["Arial"],
+  subsets: ["latin"],
+  variable: "--font-inter",
+  weight: "variable",
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  adjustFontFallback: true,
+  display: "swap",
+  fallback: ["Courier New"],
+  subsets: ["latin"],
+  variable: "--font-ibm-plex-mono",
+  weight: ["400", "500", "600", "700"],
+});
 
 const themeBootstrapScript = `
 (() => {
@@ -85,7 +105,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${inter.variable} ${ibmPlexMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         <OverlayProvider>

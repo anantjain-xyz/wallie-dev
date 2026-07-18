@@ -54,7 +54,7 @@ export function AuthEntryPanel({
           <div
             aria-live="polite"
             role="status"
-            className="mb-4 rounded-[6px] border border-border bg-accent-soft px-3 py-2 text-[12px] leading-5 text-foreground"
+            className="mb-4 rounded-[6px] border border-border bg-accent-soft px-3 py-2 text-xs leading-5 text-foreground"
           >
             {statusMessage}
           </div>
@@ -64,7 +64,7 @@ export function AuthEntryPanel({
           <div
             aria-live="polite"
             role="status"
-            className="mb-4 rounded-[6px] border bg-danger-soft px-3 py-2 text-[12px] leading-5 text-danger"
+            className="mb-4 rounded-[6px] border bg-danger-soft px-3 py-2 text-xs leading-5 text-danger"
             style={{ borderColor: "color-mix(in srgb, var(--danger) 22%, white)" }}
           >
             {errorMessage}
@@ -75,7 +75,7 @@ export function AuthEntryPanel({
 
         {showEmailCodeForm ? (
           <div>
-            <p id="email-code-heading" className="mb-3 text-[12px] font-medium text-muted">
+            <p id="email-code-heading" className="mb-3 text-xs font-medium text-muted">
               Enter 6-digit code emailed to you
             </p>
             <form
@@ -92,7 +92,7 @@ export function AuthEntryPanel({
             </form>
             <Link
               href={requestAnotherCodeHref}
-              className="mt-3 inline-flex w-full items-center justify-center text-[12px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              className="mt-3 inline-flex w-full items-center justify-center text-xs font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               Request another code
             </Link>
@@ -101,7 +101,7 @@ export function AuthEntryPanel({
 
         {isLocalDev() && (
           <details className="mt-4 border-t border-border pt-3">
-            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-muted transition-colors hover:text-foreground">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 type-annotation font-medium uppercase tracking-[0.18em] text-muted transition-colors hover:text-foreground">
               <span aria-hidden="true">›</span>
               Dev password
             </summary>

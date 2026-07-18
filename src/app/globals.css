@@ -70,9 +70,6 @@
   --z-overlay-content: 70;
   --z-toast: 80;
   --z-tooltip: 90;
-  --font-inter:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-ibm-plex-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 :root[data-theme="dark"] {
@@ -163,8 +160,16 @@
     font-feature-settings:
       "cv05" 1,
       "cv10" 1;
-    letter-spacing: -0.011em;
     text-rendering: optimizeLegibility;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono,
+  .tabular-nums {
+    letter-spacing: normal;
   }
 
   a {
@@ -191,6 +196,146 @@
 }
 
 @layer components {
+  /* Semantic type roles. Prefer these over one-off text sizes in product UI. */
+  .type-display {
+    color: var(--foreground);
+    font-size: 2rem;
+    font-weight: 650;
+    letter-spacing: -0.03em;
+    line-height: 2.5rem;
+    text-wrap: balance;
+  }
+
+  .type-page-title {
+    color: var(--foreground);
+    font-size: 1.75rem;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 2.25rem;
+    text-wrap: balance;
+  }
+
+  .type-section-title {
+    color: var(--foreground);
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.625rem;
+  }
+
+  .type-body {
+    font-size: 0.875rem;
+    line-height: 1.375rem;
+  }
+
+  .type-secondary {
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+  }
+
+  .type-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1rem;
+  }
+
+  .type-code {
+    font-family: var(--font-ibm-plex-mono);
+    font-size: 0.8125rem;
+    letter-spacing: normal;
+    line-height: 1.25rem;
+  }
+
+  /* Reserved for non-essential metadata, counters, and annotations. */
+  .type-annotation {
+    font-size: 0.6875rem;
+    line-height: 1rem;
+  }
+
+  .artifact-content {
+    width: 100%;
+    max-width: 75ch;
+    color: var(--foreground);
+    font-size: 0.9375rem;
+    line-height: 1.5rem;
+    overflow-wrap: break-word;
+  }
+
+  .artifact-heading-1,
+  .artifact-heading-2,
+  .artifact-heading-3,
+  .artifact-heading-4 {
+    color: var(--foreground);
+    font-weight: 650;
+    text-wrap: balance;
+  }
+
+  .artifact-heading-1 {
+    margin-block: 2rem 0.75rem;
+    font-size: 1.75rem;
+    letter-spacing: -0.025em;
+    line-height: 2.25rem;
+  }
+
+  .artifact-heading-2 {
+    margin-block: 1.75rem 0.625rem;
+    font-size: 1.375rem;
+    letter-spacing: -0.018em;
+    line-height: 1.875rem;
+  }
+
+  .artifact-heading-3 {
+    margin-block: 1.5rem 0.5rem;
+    font-size: 1.125rem;
+    letter-spacing: -0.012em;
+    line-height: 1.625rem;
+  }
+
+  .artifact-heading-4 {
+    margin-block: 1.25rem 0.5rem;
+    font-size: 1rem;
+    letter-spacing: -0.008em;
+    line-height: 1.5rem;
+  }
+
+  .artifact-heading-1:first-child,
+  .artifact-heading-2:first-child,
+  .artifact-heading-3:first-child,
+  .artifact-heading-4:first-child {
+    margin-top: 0;
+  }
+
+  .artifact-inline-code {
+    border-radius: 3px;
+    background: var(--surface-muted);
+    padding: 0.125rem 0.25rem;
+    color: var(--foreground);
+    font-family: var(--font-ibm-plex-mono);
+    font-size: 0.875em;
+    letter-spacing: normal;
+    overflow-wrap: anywhere;
+    white-space: break-spaces;
+  }
+
+  .artifact-pre {
+    max-width: 100%;
+    margin-block: 1rem;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--background);
+    padding: 0.875rem;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+    overscroll-behavior-inline: contain;
+    white-space: pre;
+  }
+
+  .artifact-code-block {
+    font-family: var(--font-ibm-plex-mono);
+    letter-spacing: normal;
+  }
+
   .ui-panel {
     @apply rounded-[8px] border border-border bg-surface;
     box-shadow: var(--shadow-ambient);
@@ -210,7 +355,7 @@
   }
 
   .ui-label {
-    @apply text-[11px] font-medium text-muted;
+    @apply text-xs font-medium text-muted;
   }
 
   .ui-input,
@@ -475,11 +620,11 @@
   }
 
   .ui-pill {
-    @apply inline-flex items-center rounded-full border border-border bg-surface-muted px-2.5 py-1 text-[11px] font-medium text-foreground;
+    @apply inline-flex items-center rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground;
   }
 
   .ui-badge {
-    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium;
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium;
   }
 
   .ui-badge-success {
@@ -513,7 +658,7 @@
   }
 
   .settings-anchor-group {
-    @apply px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted;
+    @apply px-3 pb-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-muted;
   }
 
   .settings-anchor {
@@ -544,7 +689,7 @@
   }
 
   .ui-tab {
-    @apply inline-flex cursor-pointer items-center rounded-full border border-transparent px-2.5 py-1 text-[12px] font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
+    @apply inline-flex cursor-pointer items-center rounded-full border border-transparent px-2.5 py-1 text-xs font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
   }
 
   .ui-tab:hover {
@@ -606,7 +751,7 @@
   }
 
   .ui-list-pill {
-    @apply inline-flex h-7 items-center gap-1.5 rounded-full border border-border px-3 text-[12px] font-medium;
+    @apply inline-flex h-7 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium;
     background: var(--list-pill-background);
     color: var(--list-pill-foreground);
   }
@@ -704,7 +849,7 @@
   }
 
   .sidebar-action-btn {
-    @apply inline-flex h-8 shrink-0 cursor-pointer items-center rounded-[5px] border border-border bg-surface px-2 text-[12px] font-medium text-muted transition-[color,background-color,border-color,transform] duration-100;
+    @apply inline-flex h-8 shrink-0 cursor-pointer items-center rounded-[5px] border border-border bg-surface px-2 text-xs font-medium text-muted transition-[color,background-color,border-color,transform] duration-100;
   }
 
   .sidebar-action-btn:hover {

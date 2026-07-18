@@ -195,7 +195,7 @@ export function LinearRoutingControls({
         </div>
 
         <div className="space-y-2">
-          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)] gap-x-16 text-[11px] font-semibold uppercase text-muted md:grid">
+          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)] gap-x-16 type-annotation font-semibold uppercase text-muted md:grid">
             <span>Linear status names</span>
             <span>Wallie action</span>
           </div>
@@ -207,7 +207,7 @@ export function LinearRoutingControls({
                 key={key}
               >
                 <label className="block min-w-0 space-y-1.5">
-                  <span className="block text-[12px] font-semibold uppercase text-muted md:hidden">
+                  <span className="block text-xs font-semibold uppercase text-muted md:hidden">
                     Linear status names
                   </span>
                   <span className="block text-[13px] font-medium text-foreground">
@@ -223,7 +223,7 @@ export function LinearRoutingControls({
                 </label>
 
                 <div className="min-w-0 md:relative">
-                  <div className="flex items-center gap-2 text-[12px] font-semibold uppercase text-muted md:hidden">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase text-muted md:hidden">
                     <span>Wallie action</span>
                     <span aria-hidden="true" className="text-[13px] font-medium normal-case">
                       →

@@ -99,7 +99,7 @@ export function PipelineEditor({
         </div>
       ) : null}
       {savedAt && !error ? (
-        <p className="text-[12px] text-muted">
+        <p className="text-xs text-muted">
           Saved at {savedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
         </p>
       ) : null}

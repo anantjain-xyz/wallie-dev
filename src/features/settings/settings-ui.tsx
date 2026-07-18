@@ -110,7 +110,7 @@ function formatTokens(count: number): string {
 function UsageCell({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1 px-5 py-4">
-      <span className="text-[12px] font-medium text-muted">{label}</span>
+      <span className="text-xs font-medium text-muted">{label}</span>
       <span className="text-[20px] font-semibold tracking-tight text-foreground">{value}</span>
     </div>
   );

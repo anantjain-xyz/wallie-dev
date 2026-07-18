@@ -262,7 +262,7 @@ export function GitHubConnectionPanel({
               githubInstallation.targetType.slice(1).toLowerCase()}{" "}
             <span className="font-mono">{githubInstallation.targetName}</span>
           </p>
-          <p className="text-[12px] leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted">
             Installation #{githubInstallation.installationId} · last synced{" "}
             {dateFormatter.format(new Date(githubInstallation.updatedAt))}
           </p>
