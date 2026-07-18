@@ -26,6 +26,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "analyze:authenticated-bundle": "node scripts/analyze-authenticated-bundle.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -35,6 +36,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:session-prefetch": "pnpm build && playwright test e2e/session-detail-prefetch.spec.ts",
     "test:watch": "vitest",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts"
@@ -62,6 +64,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^20",
