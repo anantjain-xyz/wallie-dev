@@ -1,18 +1,13 @@
 "use client";
 
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type FocusEvent,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import * as SelectPrimitive from "@radix-ui/react-select";
+import { useCallback, useId, useState, type ComponentProps, type ReactNode } from "react";
 
 import { CheckIcon, ChevronDownIcon } from "@/components/shared/icons";
+import { useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
+
+const RADIX_EMPTY_VALUE = "__wallie_select_empty_value__";
 
 export type SelectOption = {
   icon?: ReactNode;
@@ -31,6 +26,79 @@ export type SelectFieldProps = {
   value: string;
 };
 
+export const Select = SelectPrimitive.Root;
+
+export function SelectTrigger({
+  accessibleLabel,
+  children,
+  className,
+  ...props
+}: ComponentProps<typeof SelectPrimitive.Trigger> & { accessibleLabel: string }) {
+  return (
+    <SelectPrimitive.Trigger
+      aria-label={accessibleLabel}
+      aria-haspopup="listbox"
+      className={cn("ui-select-trigger", className)}
+      {...props}
+    >
+      {children ?? (
+        <span className="min-w-0 truncate">
+          <SelectPrimitive.Value />
+        </span>
+      )}
+      <SelectPrimitive.Icon asChild>
+        <ChevronDownIcon className="text-muted" />
+      </SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
+  );
+}
+
+export function SelectContent({
+  children,
+  className,
+  collisionPadding = 8,
+  portalContainer,
+  position = "popper",
+  sideOffset = 6,
+  ...props
+}: ComponentProps<typeof SelectPrimitive.Content> & { portalContainer?: HTMLElement | null }) {
+  const overlayContainer = useOverlayContainer();
+  const container = portalContainer ?? overlayContainer;
+
+  if (!container) return null;
+
+  return (
+    <SelectPrimitive.Portal container={container}>
+      <SelectPrimitive.Content
+        className={cn("ui-select-content", className)}
+        collisionPadding={collisionPadding}
+        position={position}
+        sideOffset={sideOffset}
+        {...props}
+      >
+        <SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport>
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  );
+}
+
+export function SelectItem({
+  children,
+  className,
+  ...props
+}: ComponentProps<typeof SelectPrimitive.Item>) {
+  return (
+    <SelectPrimitive.Item className={cn("ui-select-item", className)} {...props}>
+      <SelectPrimitive.ItemIndicator className="absolute left-2.5">
+        <CheckIcon />
+      </SelectPrimitive.ItemIndicator>
+      <SelectPrimitive.ItemText asChild>
+        <span className="min-w-0 truncate">{children}</span>
+      </SelectPrimitive.ItemText>
+    </SelectPrimitive.Item>
+  );
+}
+
 export function SelectField({
   className,
   disabled = false,
@@ -41,192 +109,77 @@ export function SelectField({
   options,
   value,
 }: SelectFieldProps) {
-  const buttonId = useId();
-  const listboxId = useId();
-  const selectedValueId = useId();
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const selectOptions = useMemo(
-    () => (emptyOption ? [emptyOption, ...options] : [...options]),
-    [emptyOption, options],
-  );
-  const selectedOptionIndex = selectOptions.findIndex((option) => option.value === value);
-  const selectedIndex = selectedOptionIndex >= 0 ? selectedOptionIndex : 0;
-  const selectedOption =
-    selectedOptionIndex >= 0
-      ? selectOptions[selectedOptionIndex]
-      : {
-          label: value || fallbackLabel || emptyOption?.label || "None",
-          value,
-        };
-  const activeOptionId =
-    isOpen && selectOptions[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined;
+  const labelId = useId();
+  const [modalContainer, setModalContainer] = useState<HTMLElement | null>(null);
+  const setFieldNode = useCallback((node: HTMLDivElement | null) => {
+    setModalContainer(node?.closest<HTMLElement>('[aria-modal="true"]') ?? null);
+  }, []);
+  const selectOptions = emptyOption ? [emptyOption, ...options] : [...options];
+  const selectedOption = selectOptions.find((option) => option.value === value);
   const hasOptionIcons = selectOptions.some((option) => option.icon);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [isOpen]);
-
-  function openMenu(nextActiveIndex = selectedIndex) {
-    if (disabled || selectOptions.length === 0) return;
-    setActiveIndex(nextActiveIndex);
-    setIsOpen(true);
-  }
-
-  function selectValue(nextValue: string) {
-    onValueChange(nextValue);
-    setIsOpen(false);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (disabled || selectOptions.length === 0) return;
-
-    switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault();
-        if (!isOpen) {
-          openMenu(selectedIndex);
-          return;
-        }
-        setActiveIndex((current) => (current + 1) % selectOptions.length);
-        break;
-      case "ArrowUp":
-        event.preventDefault();
-        if (!isOpen) {
-          openMenu(selectedIndex);
-          return;
-        }
-        setActiveIndex((current) => (current - 1 + selectOptions.length) % selectOptions.length);
-        break;
-      case "Enter":
-      case " ":
-        event.preventDefault();
-        if (!isOpen) {
-          openMenu(selectedIndex);
-          return;
-        }
-        selectValue(selectOptions[activeIndex]?.value ?? selectedOption.value);
-        break;
-      case "Escape":
-        if (isOpen) {
-          event.preventDefault();
-          setIsOpen(false);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  function handleBlur(event: FocusEvent<HTMLDivElement>) {
-    const nextFocusedElement = event.relatedTarget;
-
-    if (
-      !(nextFocusedElement instanceof Node) ||
-      !event.currentTarget.contains(nextFocusedElement)
-    ) {
-      setIsOpen(false);
-    }
-  }
+  const radixValue = value === "" ? RADIX_EMPTY_VALUE : value;
+  const selectedLabel =
+    selectedOption?.label ?? (value || fallbackLabel || emptyOption?.label || "None");
 
   return (
-    <div
-      className={cn("relative block space-y-1.5", className)}
-      onBlur={handleBlur}
-      ref={containerRef}
-    >
-      <span className="text-[13px] font-medium text-foreground" id={buttonId}>
+    <div className={cn("block space-y-1.5", className)} ref={setFieldNode}>
+      <span className="text-[13px] font-medium text-foreground" id={labelId}>
         {label}
       </span>
-      <button
-        aria-activedescendant={activeOptionId}
-        aria-controls={isOpen ? listboxId : undefined}
-        aria-expanded={isOpen}
-        aria-haspopup="listbox"
-        aria-labelledby={`${buttonId} ${selectedValueId}`}
-        className={cn(
-          "flex min-h-10 w-full items-center justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2.5 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150",
-          "focus-visible:border-accent/40 focus-visible:ring-4 focus-visible:ring-accent/10",
-          disabled
-            ? "cursor-not-allowed opacity-60"
-            : "cursor-pointer hover:border-border-strong hover:bg-surface-strong",
-        )}
+      <SelectPrimitive.Root
         disabled={disabled}
-        onClick={() => (isOpen ? setIsOpen(false) : openMenu(selectedIndex))}
-        onKeyDown={handleKeyDown}
-        role="combobox"
-        type="button"
+        onValueChange={(nextValue) =>
+          onValueChange(nextValue === RADIX_EMPTY_VALUE ? "" : nextValue)
+        }
+        value={radixValue}
       >
-        <span className="flex min-w-0 items-center gap-2" id={selectedValueId}>
-          {selectedOption.icon ? (
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
-              {selectedOption.icon}
-            </span>
-          ) : null}
-          <span className="min-w-0 truncate">{selectedOption.label}</span>
-        </span>
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted">
-          <ChevronDownIcon
-            className={cn("h-4 w-4 transition-transform duration-150", isOpen ? "rotate-180" : "")}
-          />
-        </span>
-      </button>
-
-      {isOpen ? (
-        <div
-          className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-[8px] border border-border bg-surface py-1 [box-shadow:var(--shadow-elevated)]"
-          id={listboxId}
-          role="listbox"
+        <SelectPrimitive.Trigger
+          aria-haspopup="listbox"
+          aria-labelledby={labelId}
+          className="ui-select-trigger w-full"
         >
-          {selectOptions.map((option, index) => {
-            const isSelected = option.value === value;
-            const isActive = index === activeIndex;
-            const optionId = `${listboxId}-option-${index}`;
-
-            return (
-              <button
-                aria-selected={isSelected}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-[color,background-color] duration-100",
-                  isActive ? "bg-surface-muted text-foreground" : "text-foreground",
-                  isSelected ? "font-semibold" : "font-medium",
-                )}
-                id={optionId}
-                key={option.value}
-                onClick={() => selectValue(option.value)}
-                onMouseEnter={() => setActiveIndex(index)}
-                role="option"
-                tabIndex={-1}
-                type="button"
+          <span className="flex min-w-0 items-center gap-2">
+            {selectedOption?.icon ? (
+              <span
+                aria-hidden="true"
+                className="flex h-5 w-5 shrink-0 items-center justify-center"
               >
-                <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center text-muted">
-                  {isSelected ? <CheckIcon className="h-4 w-4" /> : null}
+                {selectedOption.icon}
+              </span>
+            ) : null}
+            <span className="min-w-0 truncate">
+              <SelectPrimitive.Value>{selectedLabel}</SelectPrimitive.Value>
+            </span>
+          </span>
+          <SelectPrimitive.Icon asChild>
+            <ChevronDownIcon className="text-muted" />
+          </SelectPrimitive.Icon>
+        </SelectPrimitive.Trigger>
+        <SelectContent portalContainer={modalContainer}>
+          {selectOptions.map((option) => (
+            <SelectPrimitive.Item
+              className="ui-select-item"
+              key={option.value}
+              value={option.value === "" ? RADIX_EMPTY_VALUE : option.value}
+            >
+              <SelectPrimitive.ItemIndicator className="absolute left-2.5">
+                <CheckIcon />
+              </SelectPrimitive.ItemIndicator>
+              {hasOptionIcons ? (
+                <span
+                  aria-hidden="true"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center"
+                >
+                  {option.icon}
                 </span>
-                {hasOptionIcons ? (
-                  <span
-                    aria-hidden="true"
-                    className="flex h-5 w-5 shrink-0 items-center justify-center text-foreground"
-                  >
-                    {option.icon}
-                  </span>
-                ) : null}
+              ) : null}
+              <SelectPrimitive.ItemText asChild>
                 <span className="min-w-0 truncate">{option.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+              </SelectPrimitive.ItemText>
+            </SelectPrimitive.Item>
+          ))}
+        </SelectContent>
+      </SelectPrimitive.Root>
     </div>
   );
 }

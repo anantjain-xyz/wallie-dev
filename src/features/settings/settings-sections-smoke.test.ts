@@ -261,7 +261,7 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Sessions run with the Codex credential saved by the session creator");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
-    expect(html).not.toContain("<select");
+    expect(html).toContain('<select aria-hidden="true"');
     expect(html).not.toContain("Connect yours below");
   });
 
@@ -1025,6 +1025,6 @@ describe("Settings integration sections", () => {
     expect(html).toContain("acme/repo-a");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
-    expect(html).not.toContain("<select");
+    expect(html).toContain('<select aria-hidden="true"');
   });
 });

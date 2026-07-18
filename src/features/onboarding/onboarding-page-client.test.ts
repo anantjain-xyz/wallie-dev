@@ -1163,7 +1163,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Server env");
     expect(html).not.toContain("Workspace secrets");
     expect(html).not.toContain("Runtime checks the current user");
-    expect(html).not.toContain("<select");
+    expect(html).toContain('<select aria-hidden="true"');
     expect(html).not.toContain('value="NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("truncate font-mono");
   });

@@ -81,7 +81,7 @@ describe("Linear routing editor", () => {
     expect(html).toContain("→");
     expect(html).toContain('role="combobox"');
     expect(html).toContain('aria-haspopup="listbox"');
-    expect(html).not.toContain("<select");
+    expect(html).toContain('<select aria-hidden="true"');
     expect(html).toContain("Restart at build stage");
     expect(html).toContain("Route to land stage");
     expect(html).toContain("Save routing");
