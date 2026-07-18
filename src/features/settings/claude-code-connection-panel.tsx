@@ -2,6 +2,8 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status } from "@/components/ui/status";
 
 export interface ClaudeCodeConnectionStatus {
@@ -116,14 +118,11 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
           </div>
-          <button
-            type="button"
-            className="ui-button-danger"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            {isBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          <ActionMenu disabled={isBusy} label="Claude Code credential actions">
+            <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+              Disconnect
+            </DropdownMenuItem>
+          </ActionMenu>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">

@@ -102,7 +102,7 @@ describe("SessionDetailPageClient", () => {
 
     expect(html).toContain("Editable Session");
     expect(html).toContain('aria-label="Edit title for session #7"');
-    expect(html).toContain('title="Edit title"');
+    expect(html).not.toContain('title="Edit title"');
     expect(html).not.toContain('aria-label="Session #7 title"');
   });
 

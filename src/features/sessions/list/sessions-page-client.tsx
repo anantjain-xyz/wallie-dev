@@ -5,8 +5,12 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { CommandBar, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   archiveSessionFromClient,
   unarchiveSessionFromClient,
@@ -24,7 +28,7 @@ import {
   type SessionListItem,
   type SessionListQueryState,
 } from "@/features/sessions/types";
-import { ArchiveIcon, CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
+import { CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -383,6 +387,7 @@ function SessionRow({
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const latestSessionRef = useRef(session);
   const previousSessionTitleRef = useRef(session.title);
@@ -553,103 +558,60 @@ function SessionRow({
                 }}
               />
               <div className="flex items-center gap-1">
-                <button
-                  type="submit"
-                  className="ui-icon-button h-8 w-8 text-accent"
-                  aria-label={`Save title for session #${session.number}`}
-                  title="Save title"
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <Spinner className="h-3.5 w-3.5" label="Saving title" />
-                  ) : (
-                    <CheckIcon className="h-3.5 w-3.5" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="ui-icon-button h-8 w-8"
-                  aria-label={`Cancel title edit for session #${session.number}`}
-                  title="Cancel title edit"
-                  disabled={isSaving}
-                  onClick={cancelEditing}
-                >
-                  <XIcon className="h-3.5 w-3.5" />
-                </button>
+                <Tooltip content="Save title">
+                  <button
+                    type="submit"
+                    className="ui-icon-button h-8 w-8 text-accent"
+                    aria-label={`Save title for session #${session.number}`}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <Spinner className="h-3.5 w-3.5" label="Saving title" />
+                    ) : (
+                      <CheckIcon className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </Tooltip>
+                <Tooltip content="Cancel title edit">
+                  <button
+                    type="button"
+                    className="ui-icon-button h-8 w-8"
+                    aria-label={`Cancel title edit for session #${session.number}`}
+                    disabled={isSaving}
+                    onClick={cancelEditing}
+                  >
+                    <XIcon className="h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
               </div>
             </div>
           </form>
         ) : (
           <div className="flex min-w-0 items-start gap-2 md:items-center">
             <span className="font-mono type-annotation text-muted">#{session.number}</span>
-            <span
-              className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate"
-              title={displayTitle}
-            >
+            <span className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate">
               {displayTitle}
             </span>
-            <button
-              type="button"
-              className="ui-icon-button pointer-events-auto relative z-30 h-7 w-7 shrink-0"
-              aria-label={
-                isSaving
-                  ? `Saving title for session #${session.number}`
-                  : `Edit title for session #${session.number}`
-              }
-              title={isSaving ? "Saving title" : "Edit title"}
-              disabled={isSaving}
-              onClick={startEditing}
+            <ActionMenu
+              className="pointer-events-auto relative z-30 h-7 w-7 shrink-0"
+              disabled={isSaving || archivePending !== null}
+              label={`Actions for session #${session.number}`}
+              ref={actionMenuTriggerRef}
             >
-              {isSaving ? (
-                <Spinner className="h-3.5 w-3.5" label="Saving title" />
-              ) : (
+              <DropdownMenuItem onSelect={startEditing}>
                 <PencilIcon className="h-3.5 w-3.5" />
-              )}
-            </button>
-            {archiveConfirming ? (
-              <div className="pointer-events-auto relative z-30 flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  className="ui-icon-button h-7 w-7 text-danger"
-                  aria-label={`Confirm ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
-                  title={`Confirm ${archiveActionLabel.toLowerCase()}`}
-                  disabled={archivePending !== null}
-                  onClick={() => void toggleArchive()}
-                >
-                  {archivePending ? (
-                    <Spinner className="h-3.5 w-3.5" label={`${archiveActionLabel} session`} />
-                  ) : (
-                    <CheckIcon className="h-3.5 w-3.5" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="ui-icon-button h-7 w-7"
-                  aria-label={`Cancel ${archiveActionLabel.toLowerCase()} for session #${session.number}`}
-                  title="Cancel"
-                  disabled={archivePending !== null}
-                  onClick={() => {
-                    setArchiveConfirming(false);
-                    setArchiveError(null);
-                  }}
-                >
-                  <XIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="ui-icon-button pointer-events-auto relative z-30 h-7 w-7 shrink-0"
-                aria-label={`${archiveActionLabel} session #${session.number}`}
-                title={archiveActionLabel}
-                onClick={() => {
+                Edit title
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-danger"
+                onSelect={() => {
                   setArchiveConfirming(true);
                   setArchiveError(null);
                 }}
               >
-                <ArchiveIcon className="h-3.5 w-3.5" />
-              </button>
-            )}
+                {archiveActionLabel} session
+              </DropdownMenuItem>
+            </ActionMenu>
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 type-annotation text-muted">
@@ -686,6 +648,26 @@ function SessionRow({
           pullRequests={session.pullRequests}
         />
       </div>
+
+      <DestructiveConfirmationDialog
+        actionLabel={`${archiveActionLabel} session`}
+        description={`${archiveActionLabel} session #${session.number}, “${displayTitle}”? ${
+          isArchived
+            ? "It will return to active session views."
+            : "It will leave active session views but remain available in the archived filter."
+        }`}
+        errorMessage={archiveError}
+        onConfirm={() => void toggleArchive()}
+        onOpenChange={(open) => {
+          setArchiveConfirming(open);
+          if (!open) setArchiveError(null);
+        }}
+        open={archiveConfirming}
+        pending={archivePending !== null}
+        pendingLabel={`${archiveActionLabel === "Archive" ? "Archiving" : "Unarchiving"}…`}
+        restoreFocusRef={actionMenuTriggerRef}
+        title={`${archiveActionLabel} session #${session.number}?`}
+      />
     </li>
   );
 }

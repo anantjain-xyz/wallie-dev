@@ -201,7 +201,6 @@ export function ShellHeader({
             <Link
               href={pipelineHref}
               className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
-              title={workspace.name}
             >
               <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
               <span className="min-w-0 truncate text-[15px] font-medium text-foreground">

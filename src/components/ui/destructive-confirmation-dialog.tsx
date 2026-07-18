@@ -25,7 +25,7 @@ type DestructiveConfirmationDialogProps = {
   pendingLabel: string;
   restoreFocusRef?: RefObject<HTMLElement | null>;
   title: ReactNode;
-  trigger: ReactNode;
+  trigger?: ReactNode;
 };
 
 export function DestructiveConfirmationDialog({
@@ -52,7 +52,7 @@ export function DestructiveConfirmationDialog({
         if (!pending) onOpenChange(nextOpen);
       }}
     >
-      <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>
+      {trigger ? <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger> : null}
       <AlertDialogContent
         aria-busy={pending || undefined}
         className="max-w-md"

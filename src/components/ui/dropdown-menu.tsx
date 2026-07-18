@@ -1,7 +1,7 @@
 "use client";
 
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
-import type { ComponentProps } from "react";
+import { useRef, type ComponentProps } from "react";
 
 import { CheckIcon, ChevronDownIcon } from "@/components/shared/icons";
 import { useOverlayContainer } from "@/components/ui/portal-root";
@@ -25,10 +25,12 @@ export function DropdownMenuContent({
   className,
   collisionPadding = 8,
   label,
+  onFocus,
   sideOffset = 6,
   ...props
 }: DropdownMenuContentProps) {
   const container = useOverlayContainer();
+  const contentRef = useRef<HTMLDivElement>(null);
 
   if (!container) return null;
 
@@ -40,6 +42,15 @@ export function DropdownMenuContent({
         align={align}
         className={cn("ui-menu-content", className)}
         collisionPadding={collisionPadding}
+        onFocus={(event) => {
+          onFocus?.(event);
+          if (event.defaultPrevented || event.target !== event.currentTarget) return;
+
+          contentRef.current
+            ?.querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])')
+            ?.focus();
+        }}
+        ref={contentRef}
         sideOffset={sideOffset}
         {...props}
       />

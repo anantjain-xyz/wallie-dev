@@ -2,6 +2,8 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status, type StatusValue } from "@/components/ui/status";
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
@@ -431,14 +433,11 @@ export function CodexConnectionPanel({
             <span className="text-muted">·</span>
             <span className="truncate text-muted">{statusSecondary(status)}</span>
           </div>
-          <button
-            type="button"
-            className="text-xs text-muted underline-offset-2 transition-colors hover:text-danger hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            {isBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          <ActionMenu disabled={isBusy} label="Codex credential actions">
+            <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+              Disconnect
+            </DropdownMenuItem>
+          </ActionMenu>
         </div>
       ) : null}
 

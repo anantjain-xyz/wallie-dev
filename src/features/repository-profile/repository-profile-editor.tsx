@@ -20,7 +20,6 @@ function ProfileHint({ kind, value }: { kind: ProfileHintKind; value: string }) 
       aria-label={label}
       className="flex gap-1 border-0 py-0"
       label={profileHintLabel[kind]}
-      title={label}
       value={value}
     />
   );

@@ -9,6 +9,7 @@ import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
 import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   archiveSessionFromClient,
   isSessionPhaseMutationResult,
@@ -809,7 +810,7 @@ export function SessionDetailPageClient({
             <span aria-hidden="true">·</span>
           </>
         ) : null}
-        <span title={createdAtFull} suppressHydrationWarning>
+        <span aria-label={`Created ${createdAtFull}`} suppressHydrationWarning>
           Created {createdAtLabel}
         </span>
         <span aria-hidden="true">·</span>
@@ -817,7 +818,7 @@ export function SessionDetailPageClient({
             server render and hydration; suppress the resulting text mismatch
             (the label is approximate by nature). */}
         <span
-          title={fullDateTimeFormatter.format(new Date(session.updatedAt))}
+          aria-label={`Updated ${fullDateTimeFormatter.format(new Date(session.updatedAt))}`}
           suppressHydrationWarning
         >
           Updated {relativeTime(session.updatedAt)}
@@ -1118,30 +1119,32 @@ function EditableSessionTitle({
             }}
           />
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className="ui-icon-button h-9 w-9 text-accent"
-              aria-label={`Save title for session #${sessionNumber}`}
-              title="Save title"
-              disabled={isSaving}
-              onClick={() => void saveTitle()}
-            >
-              {isSaving ? (
-                <Spinner className="h-4 w-4" label="Saving title" />
-              ) : (
-                <CheckIcon className="h-4 w-4" />
-              )}
-            </button>
-            <button
-              type="button"
-              className="ui-icon-button h-9 w-9"
-              aria-label={`Cancel title edit for session #${sessionNumber}`}
-              title="Cancel title edit"
-              disabled={isSaving}
-              onClick={cancelEditing}
-            >
-              <XIcon className="h-4 w-4" />
-            </button>
+            <Tooltip content="Save title">
+              <button
+                type="button"
+                className="ui-icon-button h-9 w-9 text-accent"
+                aria-label={`Save title for session #${sessionNumber}`}
+                disabled={isSaving}
+                onClick={() => void saveTitle()}
+              >
+                {isSaving ? (
+                  <Spinner className="h-4 w-4" label="Saving title" />
+                ) : (
+                  <CheckIcon className="h-4 w-4" />
+                )}
+              </button>
+            </Tooltip>
+            <Tooltip content="Cancel title edit">
+              <button
+                type="button"
+                className="ui-icon-button h-9 w-9"
+                aria-label={`Cancel title edit for session #${sessionNumber}`}
+                disabled={isSaving}
+                onClick={cancelEditing}
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+            </Tooltip>
           </div>
         </div>
         {error ? (
@@ -1156,24 +1159,25 @@ function EditableSessionTitle({
   return (
     <div className="flex items-center gap-2">
       <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>{title}</h1>
-      <button
-        type="button"
-        className="ui-icon-button h-8 w-8 shrink-0"
-        aria-label={
-          isSaving
-            ? `Saving title for session #${sessionNumber}`
-            : `Edit title for session #${sessionNumber}`
-        }
-        title={isSaving ? "Saving title" : "Edit title"}
-        disabled={isSaving}
-        onClick={startEditing}
-      >
-        {isSaving ? (
-          <Spinner className="h-4 w-4" label="Saving title" />
-        ) : (
-          <PencilIcon className="h-4 w-4" />
-        )}
-      </button>
+      <Tooltip content={isSaving ? "Saving title" : "Edit title"}>
+        <button
+          type="button"
+          className="ui-icon-button h-8 w-8 shrink-0"
+          aria-label={
+            isSaving
+              ? `Saving title for session #${sessionNumber}`
+              : `Edit title for session #${sessionNumber}`
+          }
+          disabled={isSaving}
+          onClick={startEditing}
+        >
+          {isSaving ? (
+            <Spinner className="h-4 w-4" label="Saving title" />
+          ) : (
+            <PencilIcon className="h-4 w-4" />
+          )}
+        </button>
+      </Tooltip>
     </div>
   );
 }

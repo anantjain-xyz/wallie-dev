@@ -83,7 +83,7 @@ describe("ShellHeader", () => {
 
     expect(html).toContain('aria-label="Switch to dark mode"');
     expect(html).toContain('aria-pressed="false"');
-    expect(html).toContain('title="Switch to dark mode"');
+    expect(html).not.toContain('title="Switch to dark mode"');
   });
 
   it("shows the workspace identity beside the Wallie wordmark", () => {
