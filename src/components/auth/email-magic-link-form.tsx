@@ -30,7 +30,8 @@ export function EmailMagicLinkForm({
       feedback={errorMessage ? { kind: "error", message: errorMessage } : null}
       pendingLabel="Sending secure sign-in email…"
       submitClassName={
-        submitClassName ?? (isInline ? "ui-button-primary shrink-0" : "ui-button-primary w-full")
+        submitClassName ??
+        (isInline ? "ui-button-primary min-h-11 shrink-0" : "ui-button-primary min-h-11 w-full")
       }
       submitLabel={errorMessage ? "Try sending again" : submitLabel}
     >

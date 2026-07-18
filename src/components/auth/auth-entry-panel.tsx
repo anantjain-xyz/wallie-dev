@@ -71,9 +71,9 @@ export function AuthEntryPanel({
       <div className="ui-sheet p-4 sm:p-6">
         {!showEmailCodeForm ? (
           <div>
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
               <p className="text-sm font-medium text-foreground">Sign in with email</p>
-              <span className="rounded-full bg-accent-soft px-2 py-1 text-xs font-medium text-accent">
+              <span className="max-w-full rounded-full bg-accent-soft px-1.5 py-1 text-center type-annotation font-medium text-accent">
                 Recommended
               </span>
             </div>
@@ -117,8 +117,7 @@ export function AuthEntryPanel({
             className="mt-5 border-t border-border pt-4"
             open={errorCode === "password_auth_failed" ? true : undefined}
           >
-            <summary className="inline-flex min-h-11 w-full cursor-pointer list-none items-center justify-center gap-1.5 rounded-[6px] text-xs font-medium uppercase tracking-[0.14em] text-muted transition-colors hover:text-foreground">
-              <span aria-hidden="true">›</span>
+            <summary className="inline-flex min-h-11 w-full cursor-pointer list-none items-center justify-center rounded-[6px] px-1 text-center text-xs font-medium uppercase leading-5 tracking-[0.14em] text-muted transition-colors hover:text-foreground">
               Development alternative
             </summary>
             <AuthForm
@@ -130,7 +129,7 @@ export function AuthEntryPanel({
                   : null
               }
               pendingLabel="Signing in…"
-              submitClassName="ui-button w-full"
+              submitClassName="ui-button min-h-11 w-full"
               submitLabel={
                 errorCode === "password_auth_failed"
                   ? "Try password again"

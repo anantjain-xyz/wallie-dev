@@ -50,9 +50,12 @@ describe("AuthEntryPanel", () => {
     expect(html).toContain("Continue to your workspace and review active sessions.");
     expect(html).toContain("Sign in with email");
     expect(html).toContain("Recommended");
+    expect(html).toContain("flex flex-wrap items-start");
+    expect(html).toContain("max-w-full rounded-full");
     expect(html).toContain("Work email");
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('inputMode="email"');
+    expect(html).toContain("ui-button-primary min-h-11 w-full");
     expect(html).toContain("Visit the home page");
   });
 
@@ -73,6 +76,7 @@ describe("AuthEntryPanel", () => {
     expect(html).toContain("Check your email");
     expect(html).toContain("Verification code");
     expect(html).toContain("Continue with code");
+    expect(html).toContain("ui-button-primary min-h-11 w-full");
     expect(html).toContain("Request a new email");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
@@ -152,6 +156,7 @@ describe("AuthEntryPanel", () => {
     expect(html).toContain("Developer email");
     expect(html).toContain("Developer password");
     expect(html).toContain("Try password again");
+    expect(html).toContain("ui-button min-h-11 w-full");
     expect(html).toContain("<details");
     expect(html).toContain('open=""');
     expect(countMatches(html, 'role="alert"')).toBe(1);

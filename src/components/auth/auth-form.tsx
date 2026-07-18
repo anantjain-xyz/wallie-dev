@@ -26,7 +26,7 @@ export function AuthForm({
   feedback,
   method = "post",
   pendingLabel,
-  submitClassName = "ui-button-primary w-full",
+  submitClassName = "ui-button-primary min-h-11 w-full",
   submitLabel,
 }: AuthFormProps) {
   const [pending, setPending] = useState(false);
