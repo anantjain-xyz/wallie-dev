@@ -105,6 +105,7 @@ describe("SessionsPageClient", () => {
     );
 
     expect(html).toContain('href="/w/acme/sessions/7"');
+    expect(html).toContain("session-list-row");
     expect(html).toContain("Open session #7: Editable Session");
     expect(html).toContain('aria-label="Actions for session #7"');
     expect(html).not.toContain('title="Edit title"');

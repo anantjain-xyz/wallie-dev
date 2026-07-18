@@ -631,7 +631,11 @@ const WallieRunCard = memo(function WallieRunCard({
   const runDetailsId = `wallie-run-details-${run.id}`;
 
   return (
-    <article aria-busy={run.isActive} className="py-5" data-run-id={run.id}>
+    <article
+      aria-busy={run.isActive}
+      className={cn("py-5", !isExpanded && !run.isActive && "run-history-group")}
+      data-run-id={run.id}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <button
           aria-controls={runDetailsId}

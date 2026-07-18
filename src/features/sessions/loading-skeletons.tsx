@@ -112,7 +112,7 @@ export function SessionsListLoadingSkeleton() {
         </div>
 
         <ul aria-hidden="true" className="ui-sheet divide-y divide-border overflow-hidden">
-          {Array.from({ length: 7 }, (_, index) => (
+          {Array.from({ length: 3 }, (_, index) => (
             <SessionRowSkeleton key={index} index={index} />
           ))}
         </ul>
