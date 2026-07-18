@@ -1,181 +1,228 @@
 import "server-only";
 
-import { mapOnboardingResumeState, type OnboardingResumeState } from "@/features/onboarding/flow";
-import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import { z } from "zod";
+
+import { mapOnboardingResumeState } from "@/features/onboarding/flow";
 import type {
-  PipelineStage,
-  SessionPhaseStatus,
-  SessionPullRequest,
-} from "@/features/sessions/types";
+  PipelineDashboardData,
+  PipelineDashboardLane,
+  PipelineDashboardLanePage,
+} from "@/features/pipeline/types";
+import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
+import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
+import type { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export type PipelineDashboardPullRequest = Pick<
-  SessionPullRequest,
-  | "id"
-  | "isDraft"
-  | "pullRequestNumber"
-  | "pullRequestState"
-  | "pullRequestUrl"
-  | "repositoryFullName"
->;
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
-export type PipelineDashboardCard = {
-  createdAt: string;
-  currentStageId: string;
-  currentStageSlug: string;
+type PipelineDashboardCursor = {
+  attentionRank: number;
   id: string;
-  linearIssueId: string | null;
-  linearIssueUrl: string | null;
-  number: number;
-  phaseStatus: SessionPhaseStatus;
-  pullRequests?: PipelineDashboardPullRequest[];
-  rejectionCount: number;
-  title: string;
+  pipelineId: string;
+  snapshotAt: string;
+  stageId: string;
   updatedAt: string;
-  workspaceId: string;
 };
 
-export type PipelineDashboardData = {
-  cards: PipelineDashboardCard[];
-  defaultPipelineStages: PipelineStage[];
-  onboarding: OnboardingResumeState | null;
-  workspace: { id: string; name: string; slug: string };
+type PipelineDashboardRpcArgs = {
+  cursor_attention_rank?: number;
+  cursor_id?: string;
+  cursor_snapshot_at?: string;
+  cursor_updated_at?: string;
+  page_limit: number;
+  target_pipeline_id?: string;
+  target_stage_id?: string;
+  target_workspace_id: string;
 };
+
+type PipelineDashboardRpcCursor = {
+  attentionRank: number;
+  id: string;
+  pipelineId: string;
+  snapshotAt: string;
+  stageId: string;
+  updatedAt: string;
+};
+
+type PipelineDashboardRpcLane = Omit<PipelineDashboardLane, "cursor"> & {
+  cursor: PipelineDashboardRpcCursor | null;
+};
+
+type PipelineDashboardRpcPayload = {
+  lanes?: PipelineDashboardRpcLane[];
+};
+
+type PipelineDashboardRpcResult = PromiseLike<{
+  data: unknown;
+  error: { message: string } | null;
+}>;
+
+const cursorSchema = z.object({
+  attentionRank: z.number().int().min(0).max(1),
+  id: z.string().uuid(),
+  pipelineId: z.string().uuid(),
+  snapshotAt: z.string().datetime({ offset: true }),
+  stageId: z.string().uuid(),
+  updatedAt: z.string().datetime({ offset: true }),
+});
+
+function encodeCursor(cursor: PipelineDashboardRpcCursor | null) {
+  if (!cursor) return null;
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+export function decodePipelineDashboardCursor(raw: string | null): PipelineDashboardCursor | null {
+  if (!raw) return null;
+
+  try {
+    return cursorSchema.parse(JSON.parse(Buffer.from(raw, "base64url").toString("utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLane(lane: PipelineDashboardRpcLane): PipelineDashboardLane {
+  return {
+    cards: Array.isArray(lane.cards) ? lane.cards.slice(0, PIPELINE_DASHBOARD_PAGE_SIZE) : [],
+    cursor: encodeCursor(lane.cursor),
+    description: lane.description,
+    id: lane.id,
+    name: lane.name,
+    pipeline: lane.pipeline,
+    position: lane.position,
+    slug: lane.slug,
+    totalCount: lane.totalCount,
+  };
+}
+
+export function normalizePipelineDashboardRpcPayload(payload: unknown) {
+  const rpcPayload = (payload ?? {}) as PipelineDashboardRpcPayload;
+  return {
+    lanes: (rpcPayload.lanes ?? []).map(normalizeLane),
+  };
+}
+
+async function queryPipelineDashboard(
+  supabase: SupabaseServerClient,
+  args: PipelineDashboardRpcArgs,
+) {
+  const rpc = supabase.rpc as unknown as (
+    name: "get_pipeline_dashboard_page",
+    args: PipelineDashboardRpcArgs,
+  ) => PipelineDashboardRpcResult;
+
+  return rpc("get_pipeline_dashboard_page", args);
+}
+
+export async function loadPipelineDashboardLanePage({
+  cursor,
+  pipelineId,
+  stageId,
+  supabase,
+  workspaceId,
+}: {
+  cursor: PipelineDashboardCursor;
+  pipelineId: string;
+  stageId: string;
+  supabase: SupabaseServerClient;
+  workspaceId: string;
+}): Promise<PipelineDashboardLanePage | null> {
+  const { data, error } = await queryPipelineDashboard(supabase, {
+    cursor_attention_rank: cursor.attentionRank,
+    cursor_id: cursor.id,
+    cursor_snapshot_at: cursor.snapshotAt,
+    cursor_updated_at: cursor.updatedAt,
+    page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
+    target_pipeline_id: pipelineId,
+    target_stage_id: stageId,
+    target_workspace_id: workspaceId,
+  });
+
+  if (error) throw error;
+
+  const lane = normalizePipelineDashboardRpcPayload(data).lanes[0];
+  if (!lane) return null;
+
+  return {
+    cards: lane.cards,
+    cursor: lane.cursor,
+    id: lane.id,
+    pipeline: lane.pipeline,
+    totalCount: lane.totalCount,
+  };
+}
 
 export async function loadPipelineDashboardData(
   workspaceSlug: string,
 ): Promise<PipelineDashboardData> {
-  const { supabase, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
+  return withServerTiming(
+    "pipeline.dashboard",
+    { pageSize: PIPELINE_DASHBOARD_PAGE_SIZE, queryCount: 2, workspaceSlug },
+    async (timing) => {
+      const { supabase, workspace } = await timing.segment(
+        "auth-workspace-context",
+        () => loadAuthenticatedWorkspaceContext(workspaceSlug),
+        (context) => ({ rows: 1, workspaceId: context.workspace.id }),
+      );
 
-  const { data: onboardingRow, error: onboardingError } = await supabase
-    .from("workspace_onboarding")
-    .select("current_step, status")
-    .eq("workspace_id", workspace.id)
-    .maybeSingle();
-  if (onboardingError) throw onboardingError;
+      const [onboardingResult, dashboardResult] = await Promise.all([
+        timing.segment(
+          "pipeline.onboarding",
+          () =>
+            supabase
+              .from("workspace_onboarding")
+              .select("current_step, status")
+              .eq("workspace_id", workspace.id)
+              .maybeSingle(),
+          (result) => ({
+            payloadBytes: approximatePayloadSizeBytes(result.data),
+            rows: result.data ? 1 : 0,
+          }),
+        ),
+        timing.segment(
+          "pipeline.page-rpc",
+          () =>
+            queryPipelineDashboard(supabase, {
+              page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
+              target_workspace_id: workspace.id,
+            }),
+          (result) => ({
+            payloadBytes: approximatePayloadSizeBytes(result.data),
+            rows: normalizePipelineDashboardRpcPayload(result.data).lanes.reduce(
+              (count, lane) => count + lane.cards.length,
+              0,
+            ),
+          }),
+        ),
+      ]);
 
-  // Pull the default pipeline so the dashboard knows which lanes to render.
-  // Sessions whose current stage isn't in the default pipeline (e.g. the
-  // pipeline was edited mid-flight) fall under an "Other" lane in the UI.
-  const { data: pipelineRow, error: pipelineError } = await supabase
-    .from("pipelines")
-    .select("id")
-    .eq("workspace_id", workspace.id)
-    .eq("is_default", true)
-    .maybeSingle();
-  if (pipelineError) throw pipelineError;
+      if (onboardingResult.error) throw onboardingResult.error;
+      if (dashboardResult.error) throw dashboardResult.error;
 
-  let defaultPipelineStages: PipelineStage[] = [];
-  if (pipelineRow) {
-    const { data: stageRows, error: stagesError } = await supabase
-      .from("pipeline_stages")
-      .select(
-        "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
-      )
-      .eq("pipeline_id", pipelineRow.id)
-      .order("position", { ascending: true });
-    if (stagesError) throw stagesError;
-    defaultPipelineStages = (stageRows ?? []).map((s) => ({
-      approverMemberIds: s.approver_member_ids ?? [],
-      description: s.description,
-      id: s.id,
-      name: s.name,
-      pipelineId: s.pipeline_id,
-      position: s.position,
-      promptTemplateMd: s.prompt_template_md,
-      slug: s.slug,
-    }));
-  }
+      const dashboard = normalizePipelineDashboardRpcPayload(dashboardResult.data);
+      const result: PipelineDashboardData = {
+        lanes: dashboard.lanes,
+        onboarding: mapOnboardingResumeState(onboardingResult.data),
+        workspace: {
+          id: workspace.id,
+          name: workspace.name,
+          slug: workspace.slug,
+        },
+      };
 
-  // Load sessions with their stage joined for slug rendering.
-  const { data, error } = await supabase
-    .from("sessions")
-    .select(
-      `
-        id,
-        created_at,
-        updated_at,
-        linear_issue_id,
-        linear_issue_url,
-        number,
-        current_stage_id,
-        phase_status,
-        rejection_count,
-        title,
-        workspace_id,
-        archived_at
-      `,
-    )
-    .eq("workspace_id", workspace.id)
-    .is("archived_at", null)
-    .order("updated_at", { ascending: false });
-
-  if (error) {
-    throw error;
-  }
-
-  const rows = data ?? [];
-  const sessionIds = rows.map((row) => row.id);
-  const stageIds = Array.from(new Set(rows.map((r) => r.current_stage_id))).filter(Boolean);
-  const stageSlugMap = new Map<string, string>();
-  if (stageIds.length > 0) {
-    const { data: stageRows, error: stageError } = await supabase
-      .from("pipeline_stages")
-      .select("id, slug")
-      .in("id", stageIds);
-    if (stageError) throw stageError;
-    for (const s of stageRows ?? []) {
-      stageSlugMap.set(s.id, s.slug);
-    }
-  }
-
-  const pullRequestsBySession = new Map<string, PipelineDashboardPullRequest[]>();
-  if (sessionIds.length > 0) {
-    const { data: prRows, error: prError } = await supabase
-      .from("session_pull_requests")
-      .select("id, session_id, is_draft, pull_request_number, pull_request_state, pull_request_url")
-      .eq("workspace_id", workspace.id)
-      .in("session_id", sessionIds)
-      .not("pull_request_url", "is", null)
-      .order("created_at", { ascending: false });
-
-    if (prError) {
-      throw prError;
-    }
-
-    for (const row of prRows ?? []) {
-      const list = pullRequestsBySession.get(row.session_id) ?? [];
-      list.push({
-        id: row.id,
-        isDraft: row.is_draft,
-        pullRequestNumber: row.pull_request_number,
-        pullRequestState: row.pull_request_state,
-        pullRequestUrl: row.pull_request_url,
-        repositoryFullName: null,
+      await timing.segment("pipeline.rsc-payload", () => result, {
+        payloadBytes: approximatePayloadSizeBytes(result),
+        rows: result.lanes.reduce((count, lane) => count + lane.cards.length, 0),
       });
-      pullRequestsBySession.set(row.session_id, list);
-    }
-  }
 
-  const cards: PipelineDashboardCard[] = rows.map((row) => ({
-    createdAt: row.created_at,
-    currentStageId: row.current_stage_id,
-    currentStageSlug: stageSlugMap.get(row.current_stage_id) ?? "unknown",
-    id: row.id,
-    linearIssueId: row.linear_issue_id,
-    linearIssueUrl: row.linear_issue_url,
-    number: row.number,
-    phaseStatus: row.phase_status as SessionPhaseStatus,
-    pullRequests: pullRequestsBySession.get(row.id) ?? [],
-    rejectionCount: row.rejection_count,
-    title: row.title,
-    updatedAt: row.updated_at,
-    workspaceId: row.workspace_id,
-  }));
-
-  return {
-    cards,
-    defaultPipelineStages,
-    onboarding: mapOnboardingResumeState(onboardingRow),
-    workspace,
-  };
+      return result;
+    },
+  );
 }
+
+export type {
+  PipelineDashboardCard,
+  PipelineDashboardData,
+  PipelineDashboardLane,
+  PipelineDashboardLanePage,
+} from "@/features/pipeline/types";

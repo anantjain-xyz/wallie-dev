@@ -8,12 +8,7 @@ import { cn } from "@/lib/utils";
 
 export type SessionConnectionPullRequest = Pick<
   SessionPullRequest,
-  | "id"
-  | "isDraft"
-  | "pullRequestNumber"
-  | "pullRequestState"
-  | "pullRequestUrl"
-  | "repositoryFullName"
+  "id" | "pullRequestNumber" | "pullRequestUrl"
 >;
 
 type SessionConnectionsProps = {
