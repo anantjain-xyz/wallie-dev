@@ -39,7 +39,7 @@ export function ActionButtonLabel({
         aria-hidden="true"
         className="invisible col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5"
       >
-        <Spinner />
+        <Spinner className="animate-none" />
         {pendingLabel}
       </span>
       <span className="col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5">

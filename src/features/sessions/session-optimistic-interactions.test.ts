@@ -381,9 +381,11 @@ describe("optimistic session interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Archive session #1" }));
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
     expect(screen.getByText("No sessions match these filters")).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    expect(screen.getByText("Archiving session #1…", { exact: true })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 
     await act(async () => releaseArchive());
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
     await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy());
   });

@@ -227,57 +227,57 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
     setArchiveHidden(session.id, true);
     const archivePromise = archiveSessionFromClient({ sessionId: session.id });
 
-    const archiveToastId = pushToast({
-      action: {
-        altText: `Undo archive for session #${session.number}`,
-        label: "Undo",
-        onClick: () => {
-          void (async () => {
-            try {
-              await archivePromise;
-            } catch {
-              return;
-            }
-
-            try {
-              const result = await unarchiveSessionFromClient({ sessionId: session.id });
-              handleArchiveCommitted(result);
-              setArchiveHidden(session.id, false);
-              archiveInFlightRef.current.delete(session.id);
-              pushToast({
-                priority: "polite",
-                title: `Archive undone for session #${session.number}.`,
-                tone: "success",
-              });
-            } catch (errorValue) {
-              pushToast({
-                description:
-                  errorValue instanceof Error
-                    ? errorValue.message
-                    : "The session remains archived.",
-                priority: "assertive",
-                title: `Could not undo archive for session #${session.number}.`,
-                tone: "danger",
-              });
-            }
-          })();
-        },
-      },
-      duration: 7000,
+    const pendingToastId = pushToast({
+      duration: Number.POSITIVE_INFINITY,
       priority: "polite",
-      title: `Session #${session.number} archived.`,
-      tone: "success",
+      title: `Archiving session #${session.number}…`,
     });
 
     void archivePromise
       .then((result) => {
         handleArchiveCommitted(result);
         archiveInFlightRef.current.delete(session.id);
+        dismissToast(pendingToastId);
+        pushToast({
+          action: {
+            altText: `Undo archive for session #${session.number}`,
+            label: "Undo",
+            onClick: () => {
+              void (async () => {
+                try {
+                  const undoResult = await unarchiveSessionFromClient({ sessionId: session.id });
+                  handleArchiveCommitted(undoResult);
+                  setArchiveHidden(session.id, false);
+                  archiveInFlightRef.current.delete(session.id);
+                  pushToast({
+                    priority: "polite",
+                    title: `Archive undone for session #${session.number}.`,
+                    tone: "success",
+                  });
+                } catch (errorValue) {
+                  pushToast({
+                    description:
+                      errorValue instanceof Error
+                        ? errorValue.message
+                        : "The session remains archived.",
+                    priority: "assertive",
+                    title: `Could not undo archive for session #${session.number}.`,
+                    tone: "danger",
+                  });
+                }
+              })();
+            },
+          },
+          duration: 7000,
+          priority: "polite",
+          title: `Session #${session.number} archived.`,
+          tone: "success",
+        });
       })
       .catch((errorValue) => {
         archiveInFlightRef.current.delete(session.id);
         setArchiveHidden(session.id, false);
-        dismissToast(archiveToastId);
+        dismissToast(pendingToastId);
         pushToast({
           description:
             errorValue instanceof Error ? errorValue.message : "The session was restored.",

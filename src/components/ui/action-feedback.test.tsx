@@ -24,6 +24,8 @@ describe("shared action feedback", () => {
     const reserved = screen.getByText("Saving changes…");
     expect(reserved).toHaveAttribute("aria-hidden", "true");
     expect(reserved).toHaveClass("invisible");
+    expect(reserved.querySelector(".animate-none")).toBeTruthy();
+    expect(reserved.querySelector(".animate-spin")).toBeNull();
 
     view.rerender(
       <button type="button">
@@ -31,6 +33,7 @@ describe("shared action feedback", () => {
       </button>,
     );
     expect(screen.getByRole("button", { name: "Saving changes…" })).toBeTruthy();
+    expect(screen.getByRole("button").querySelectorAll(".animate-spin")).toHaveLength(1);
   });
 
   it("waits a frame before showing route progress and clears after the URL changes", () => {
