@@ -2,7 +2,10 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Spinner } from "@/components/shared/spinner";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status, type StatusValue } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
@@ -463,18 +466,22 @@ export function CodexConnectionPanel({
             <span className="text-muted">·</span>
             <span className="truncate text-muted">{statusSecondary(status)}</span>
           </div>
-          <button
-            type="button"
-            className="text-xs text-muted underline-offset-2 transition-colors hover:text-danger hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            <ActionButtonLabel
-              idle="Disconnect"
-              pending={pendingAction === "disconnect"}
-              pendingLabel="Disconnecting…"
-            />
-          </button>
+          {pendingAction === "disconnect" ? (
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 text-xs text-muted"
+              role="status"
+            >
+              <Spinner />
+              Disconnecting…
+            </span>
+          ) : (
+            <ActionMenu disabled={isBusy} label="Codex credential actions">
+              <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+                Disconnect
+              </DropdownMenuItem>
+            </ActionMenu>
+          )}
         </div>
       ) : null}
 

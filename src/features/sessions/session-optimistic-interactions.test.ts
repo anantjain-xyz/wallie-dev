@@ -132,8 +132,18 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
   };
 }
 
+function listView(initialData: SessionListPageData) {
+  return createElement(OverlayProvider, null, createElement(SessionsPageClient, { initialData }));
+}
+
 describe("optimistic session interactions", () => {
   beforeEach(() => {
+    class ResizeObserverStub {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
     vi.stubGlobal("fetch", mocked.fetch);
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -303,14 +313,12 @@ describe("optimistic session interactions", () => {
   });
 
   it("uses newer archive props when a keyed row survives soft navigation", () => {
-    const view = render(
-      createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
-    );
+    const view = render(listView(makeListData(session, "all")));
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
 
     view.rerender(
-      createElement(SessionsPageClient, {
-        initialData: makeListData(
+      listView(
+        makeListData(
           {
             ...session,
             archivedAt: "2026-07-17T12:00:00.000Z",
@@ -319,7 +327,7 @@ describe("optimistic session interactions", () => {
           },
           "archived",
         ),
-      }),
+      ),
     );
 
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
@@ -333,13 +341,12 @@ describe("optimistic session interactions", () => {
       archivedAt: "2026-07-17T12:00:00.000Z",
       updatedAt: "2026-07-17T12:00:00.000Z",
     };
-    render(
-      createElement(SessionsPageClient, {
-        initialData: makeListData(archived, "archived"),
-      }),
-    );
+    render(listView(makeListData(archived, "archived")));
 
-    fireEvent.click(screen.getByRole("button", { name: "Unarchive session #1" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unarchive session" }));
 
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
   });
@@ -378,7 +385,10 @@ describe("optimistic session interactions", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Archive session #1" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
     expect(screen.getByText("No sessions match these filters")).toBeTruthy();
     expect(screen.getByText("Archiving session #1…", { exact: true })).toBeTruthy();
@@ -408,7 +418,10 @@ describe("optimistic session interactions", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Archive session #1" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
     await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(1));
 
     view.rerender(
@@ -479,6 +492,82 @@ describe("optimistic session interactions", () => {
     expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
   });
 
+  it("guards a list Undo that survives navigation against a newer archive", async () => {
+    const firstArchivedAt = "2026-07-17T12:00:00.000Z";
+    const newerArchivedAt = "2026-07-17T14:00:00.000Z";
+    mocked.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: firstArchivedAt,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: firstArchivedAt,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: null,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: "2026-07-17T13:00:00.000Z",
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: newerArchivedAt,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: newerArchivedAt,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: newerArchivedAt,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: newerArchivedAt,
+        }),
+      );
+
+    const view = render(listView(makeListData(session, "all")));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    await screen.findByRole("button", { name: "Undo" });
+
+    const detailData = makeDetailData();
+    detailData.session.archivedAt = firstArchivedAt;
+    detailData.session.updatedAt = firstArchivedAt;
+    view.rerender(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: detailData,
+          initialFormattedArtifact: null,
+          initialFormattedArtifactKey: null,
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Unarchive" }));
+    await screen.findByRole("button", { name: "Archive" });
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(3));
+
+    const undoButtons = await screen.findAllByRole("button", { name: "Undo" });
+    fireEvent.click(undoButtons[0]!);
+    await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(4));
+
+    expect(mocked.fetch.mock.calls[3]?.[1]).toMatchObject({
+      body: JSON.stringify({ expectedArchivedAt: firstArchivedAt }),
+      method: "DELETE",
+    });
+    expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+  });
+
   it("keeps a newer server title when an older save response arrives late", async () => {
     let releaseResponse!: () => void;
     mocked.fetch.mockImplementation(
@@ -494,19 +583,20 @@ describe("optimistic session interactions", () => {
             );
         }),
     );
-    const view = render(
-      createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
-    );
+    const view = render(listView(makeListData(session, "all")));
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit title for session #1" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit title" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session #1 title" }), {
       target: { value: "Older saved title" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save title for session #1" }));
 
     view.rerender(
-      createElement(SessionsPageClient, {
-        initialData: makeListData(
+      listView(
+        makeListData(
           {
             ...session,
             title: "Newer server title",
@@ -514,7 +604,7 @@ describe("optimistic session interactions", () => {
           },
           "all",
         ),
-      }),
+      ),
     );
 
     await waitFor(() =>

@@ -17,6 +17,7 @@ import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -1456,16 +1457,17 @@ function RuntimeStep({
                       spellCheck={false}
                       value={row.key}
                     />
-                    <button
-                      aria-label="Remove variable row"
-                      className="ui-button h-10 w-10 shrink-0 !px-0 !py-0"
-                      disabled={busyAction !== null}
-                      onClick={() => handleRemoveNewSecretRow(row.id)}
-                      title="Remove row"
-                      type="button"
-                    >
-                      <XIcon className="h-4 w-4" />
-                    </button>
+                    <Tooltip content="Remove row">
+                      <button
+                        aria-label="Remove variable row"
+                        className="ui-button h-10 w-10 shrink-0 !px-0 !py-0"
+                        disabled={busyAction !== null}
+                        onClick={() => handleRemoveNewSecretRow(row.id)}
+                        type="button"
+                      >
+                        <XIcon className="h-4 w-4" />
+                      </button>
+                    </Tooltip>
                   </div>
                   <SecretValueInput
                     ariaLabel="New variable value"

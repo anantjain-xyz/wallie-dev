@@ -78,8 +78,20 @@ export async function POST(_request: Request, { params }: Params) {
 }
 
 // Unarchive the session, returning it to its prior phase.
-export async function DELETE(_request: Request, { params }: Params) {
+export async function DELETE(request: Request, { params }: Params) {
   const { sessionId } = await params;
+  const body = (await request.json().catch(() => null)) as {
+    expectedArchivedAt?: unknown;
+  } | null;
+  if (
+    body?.expectedArchivedAt !== undefined &&
+    (typeof body.expectedArchivedAt !== "string" || body.expectedArchivedAt.length === 0)
+  ) {
+    return NextResponse.json(
+      { error: "Expected archive version must be a string." },
+      { status: 400 },
+    );
+  }
   const resolved = await resolveSessionForMember(sessionId);
   if (resolved.response) {
     return resolved.response;
@@ -94,7 +106,12 @@ export async function DELETE(_request: Request, { params }: Params) {
   }
 
   const admin = createSupabaseAdminClient();
-  const result = await unarchiveSession(admin, { sessionId: resolved.row.id });
+  const result = await unarchiveSession(admin, {
+    ...(typeof body?.expectedArchivedAt === "string"
+      ? { expectedArchivedAt: body.expectedArchivedAt }
+      : {}),
+    sessionId: resolved.row.id,
+  });
 
   return NextResponse.json({
     archivedAt: result.archivedAt,

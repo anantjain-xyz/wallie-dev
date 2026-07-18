@@ -2,7 +2,10 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Spinner } from "@/components/shared/spinner";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 
@@ -127,18 +130,22 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
           </div>
-          <button
-            type="button"
-            className="ui-button-danger"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            <ActionButtonLabel
-              idle="Disconnect"
-              pending={pendingAction === "disconnect"}
-              pendingLabel="Disconnecting…"
-            />
-          </button>
+          {pendingAction === "disconnect" ? (
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 text-xs text-muted"
+              role="status"
+            >
+              <Spinner />
+              Disconnecting…
+            </span>
+          ) : (
+            <ActionMenu disabled={isBusy} label="Claude Code credential actions">
+              <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+                Disconnect
+              </DropdownMenuItem>
+            </ActionMenu>
+          )}
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">

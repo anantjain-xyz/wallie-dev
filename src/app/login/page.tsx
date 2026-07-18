@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 
@@ -11,6 +12,12 @@ import { readFirstValue } from "@/lib/utils";
 
 type LoginPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export const metadata: Metadata = {
+  title: {
+    absolute: "Sign in · Wallie",
+  },
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
