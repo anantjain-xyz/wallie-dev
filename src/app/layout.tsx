@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
 import "./globals.css";
@@ -87,10 +88,12 @@ export default function RootLayout({
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full font-sans">
         <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
-        <a href="#main-content" className="ui-skip-link">
-          Skip to main content
-        </a>
-        {children}
+        <OverlayProvider>
+          <a href="#main-content" className="ui-skip-link">
+            Skip to main content
+          </a>
+          {children}
+        </OverlayProvider>
       </body>
     </html>
   );
