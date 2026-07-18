@@ -446,7 +446,7 @@ export function SessionWalliePanel({
       ) : null}
 
       {initialData.requiredSecretKeys.length > 0 ? (
-        <div className="ui-subpanel p-4">
+        <div className="border-y border-border p-4">
           <p className="ui-label">Required secrets</p>
           <p className="mt-2 text-sm text-foreground">
             {initialData.requiredSecretKeys.join(", ")}
@@ -469,7 +469,7 @@ export function SessionWalliePanel({
       {isArchived ? (
         <div
           aria-live="polite"
-          className="rounded-[6px] border border-border bg-surface-muted p-5 text-sm leading-7 text-muted"
+          className="rounded-[6px] border border-border bg-control-muted p-5 text-sm leading-7 text-muted"
           role="status"
         >
           This session is archived. Unarchive it to run Wallie again.
@@ -492,9 +492,9 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      <div className="space-y-4">
+      <div className="divide-y divide-border border-y border-border">
         {runs.length === 0 ? (
-          <div className="ui-subpanel p-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
+          <div className="py-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
         ) : (
           runs.map((run) => {
             const isExpanded = expandedRunIds.has(run.id);
@@ -503,7 +503,7 @@ export function SessionWalliePanel({
             const runIsBusy = run.isActive;
 
             return (
-              <article key={run.id} aria-busy={runIsBusy} className="ui-subpanel p-5">
+              <article key={run.id} aria-busy={runIsBusy} className="py-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <button
                     aria-controls={runDetailsId}
@@ -524,12 +524,20 @@ export function SessionWalliePanel({
                     }
                     type="button"
                   >
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                       <Status value={agentRunStatusValue(run.status)} />
-                      <span className="ui-pill">{formatStageRunLabel(run)}</span>
-                      <span className="ui-pill font-mono text-muted">
-                        {run.modelProvider}/{run.modelName}
-                      </span>
+                      <dl className="flex flex-wrap gap-x-3 gap-y-1 type-annotation text-muted">
+                        <div className="flex gap-1">
+                          <dt>Stage</dt>
+                          <dd className="text-foreground">{formatStageRunLabel(run)}</dd>
+                        </div>
+                        <div className="flex gap-1">
+                          <dt>Model</dt>
+                          <dd className="font-mono text-foreground">
+                            {run.modelProvider}/{run.modelName}
+                          </dd>
+                        </div>
+                      </dl>
                     </div>
 
                     <p className="mt-3 text-sm font-semibold text-foreground">
@@ -581,7 +589,7 @@ export function SessionWalliePanel({
                               "rounded-[6px] border px-4 py-4 text-sm leading-7",
                               message.kind === "error"
                                 ? "border-danger/20 bg-danger-soft text-danger"
-                                : "border-border bg-surface-muted text-foreground",
+                                : "border-border bg-control-muted text-foreground",
                             )}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
@@ -595,7 +603,7 @@ export function SessionWalliePanel({
                     {run.messages.length === 0 && !runIsBusy && !loadedMessageRunIds.has(run.id) ? (
                       <div
                         aria-live="polite"
-                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
+                        className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
                         role="status"
                       >
                         Loading run messages...
@@ -604,7 +612,7 @@ export function SessionWalliePanel({
                     {run.messages.length === 0 && !runIsBusy && loadedMessageRunIds.has(run.id) ? (
                       <div
                         aria-live="polite"
-                        className="ui-muted-panel px-4 py-4 text-sm text-muted"
+                        className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
                         role="status"
                       >
                         No persisted messages were recorded for this run.
@@ -627,7 +635,7 @@ function RunProgressRow() {
     <div
       aria-busy
       aria-live="polite"
-      className="ui-muted-panel px-4 py-4 text-sm text-muted"
+      className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
       role="status"
     >
       <span className="flex items-center gap-2">

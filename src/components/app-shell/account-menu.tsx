@@ -49,7 +49,7 @@ export function AccountMenu({ email }: AccountMenuProps) {
       >
         <span
           aria-hidden="true"
-          className="flex h-5 w-5 items-center justify-center rounded-full bg-surface-strong type-annotation font-semibold text-foreground"
+          className="flex h-5 w-5 items-center justify-center rounded-full bg-control-hover type-annotation font-semibold text-foreground"
         >
           {initial}
         </span>
@@ -59,7 +59,7 @@ export function AccountMenu({ email }: AccountMenuProps) {
         <div
           role="menu"
           aria-label="Account"
-          className="absolute right-0 top-full z-30 mt-1 min-w-56 overflow-hidden rounded-[8px] border border-border bg-surface py-1 [box-shadow:var(--shadow-elevated)]"
+          className="absolute right-0 top-full z-30 mt-1 min-w-56 overflow-hidden rounded-[10px] border border-border bg-overlay py-1 [box-shadow:var(--shadow-elevated)]"
         >
           <div className="px-3 py-2">
             <p className="type-annotation font-medium uppercase tracking-wide text-muted">
@@ -74,7 +74,7 @@ export function AccountMenu({ email }: AccountMenuProps) {
             <button
               type="submit"
               role="menuitem"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-[background-color] duration-100 hover:bg-surface-muted"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition-[background-color] duration-100 hover:bg-control-muted"
             >
               <LogoutIcon className="h-3.5 w-3.5" />
               Sign out

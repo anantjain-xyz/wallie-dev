@@ -73,7 +73,7 @@ const markdownComponents: Components = {
   ),
   td: ({ children }) => <td className="border border-border px-2 py-1 align-top">{children}</td>,
   th: ({ children }) => (
-    <th className="border border-border bg-surface-muted px-2 py-1 font-semibold">{children}</th>
+    <th className="border border-border bg-control-muted px-2 py-1 font-semibold">{children}</th>
   ),
   ul: ({ children }) => (
     <ul className="my-2 list-disc space-y-1 pl-5 first:mt-0 last:mb-0">{children}</ul>

@@ -92,7 +92,7 @@ export function DangerZoneSection({
       }
       title="Danger zone"
     >
-      <div className="space-y-4 rounded-[10px] border border-danger/30 bg-danger-soft/40 p-5">
+      <div className="space-y-4 rounded-[6px] border border-danger/30 bg-danger-soft/40 p-5">
         {canDelete ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">

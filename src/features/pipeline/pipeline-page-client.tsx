@@ -26,6 +26,7 @@ import { type SessionPhaseStatus } from "@/features/sessions/types";
 import { workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { Tables } from "@/lib/supabase/database.types";
+import { cn } from "@/lib/utils";
 
 type PipelinePageClientProps = {
   initialData: PipelineDashboardData;
@@ -229,7 +230,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
   const hasAnySession = lanes.some((lane) => lane.totalCount > 0);
 
   return (
-    <div className="min-h-full bg-surface">
+    <div className="min-h-full bg-canvas">
       <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
         <div className="mx-auto w-full" style={{ maxWidth: boardContainerWidth }}>
           <div className="max-w-2xl space-y-2">
@@ -281,7 +282,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
 
                     <div className="space-y-2">
                       {items.length === 0 ? (
-                        <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-xs text-muted">
+                        <p className="rounded-[6px] border border-dashed border-border px-4 py-5 text-xs text-muted">
                           No sessions
                         </p>
                       ) : null}
@@ -427,11 +428,23 @@ function PipelineCard({
   const sessionHref = workspaceSessionDetailPath(workspaceSlug, card.number);
 
   return (
-    <article className="relative rounded-[8px] border border-border/80 bg-surface p-3 transition-colors duration-150 hover:bg-surface-strong">
+    <article
+      className={cn(
+        "ui-sheet relative border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover",
+        // Awaiting review is the call to action — give it the loudest treatment
+        // (accent border + left bar + faint accent wash) so reviewers can scan
+        // the board for work that needs them.
+        card.phaseStatus === "awaiting_review" &&
+          "border-accent/40 border-l-2 border-l-accent bg-accent-soft hover:bg-accent-soft",
+        // Changes requested is a routine part of the loop, so use a thin warning
+        // edge while the typed status carries the explicit text and icon.
+        card.phaseStatus === "rejected" && "border-l-2 border-l-danger/40",
+      )}
+    >
       <SessionDetailLink
         href={sessionHref}
         aria-label={`Open session ${card.title}`}
-        className="absolute inset-0 z-10 rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
       />
       <div className="flex min-w-0 items-start justify-between gap-3">
         <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">

@@ -23,10 +23,21 @@ export type SessionTitleMutationResult = {
   updatedAt: string;
 };
 
+export type SessionMutationStage = {
+  description: string;
+  id: string;
+  name: string;
+  position: number;
+  slug: string;
+};
+
 export type SessionPhaseMutationResult = {
+  archivedAt: string | null;
   artifactVersion: number;
   currentStageId: string;
+  currentStage: SessionMutationStage;
   id: string;
   phaseStatus: SessionPhaseStatus;
+  rejectionCount: number;
   updatedAt: string;
 };

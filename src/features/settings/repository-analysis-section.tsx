@@ -11,7 +11,7 @@ import { notifySessionRepositoriesChanged } from "@/features/sessions/session-re
 import {
   mergeRepositoryOnboardingState,
   hasCurrentWallieSkills,
-  RepositoryMetadataPills,
+  RepositoryMetadata,
   RepositorySetupControls,
   RepositorySetupMessages,
   RepositorySetupStatus,
@@ -296,11 +296,11 @@ export function RepositoryAnalysisSection({
     >
       <div className="space-y-5">
         {selectableRepositories.length === 0 ? (
-          <p className="rounded-[6px] border border-border bg-surface p-4 text-[13px] leading-6 text-muted">
+          <p className="rounded-[6px] border border-border bg-sheet p-4 text-[13px] leading-6 text-muted">
             Connect GitHub and sync repositories before analyzing repository setup.
           </p>
         ) : (
-          <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+          <ul className="divide-y divide-border rounded-[6px] border border-border bg-sheet">
             {selectableRepositories.map((repository) => {
               const selected = selectedRepositoryId === repository.id;
               const showProfileEditor = selected && Boolean(profileDraft);
@@ -331,7 +331,7 @@ export function RepositoryAnalysisSection({
                       {selected ? <Status label="Selected" value="approved" /> : null}
                       <RepositorySetupStatus status={repository.onboarding.status} />
                     </div>
-                    <RepositoryMetadataPills repository={repository} />
+                    <RepositoryMetadata repository={repository} />
                     {repository.description ? (
                       <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
                     ) : null}
@@ -385,7 +385,7 @@ export function RepositoryAnalysisSection({
                       profile={profileDraft}
                     />
                   ) : selected && profileAction === "analyzing" ? (
-                    <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
+                    <div className="rounded-[6px] border border-border bg-sheet px-3 py-2 text-[13px] text-muted">
                       Analyzing repository…
                     </div>
                   ) : null}

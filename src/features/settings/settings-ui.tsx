@@ -65,7 +65,7 @@ export function AvatarFallback({ name }: { name: string }) {
   const initial = name.trim().charAt(0).toUpperCase() || "W";
 
   return (
-    <div className="flex h-16 w-16 items-center justify-center rounded-[10px] border border-border bg-surface-strong text-xl font-semibold text-foreground">
+    <div className="flex h-16 w-16 items-center justify-center rounded-[6px] border border-border bg-control-hover text-xl font-semibold text-foreground">
       {initial}
     </div>
   );
@@ -88,7 +88,7 @@ function UsageCell({ label, value }: { label: string; value: string }) {
 
 export function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
   return (
-    <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface sm:grid-cols-4 sm:divide-y-0">
+    <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
       <UsageCell label="Total runs" value={String(usage.totalRuns)} />
       <UsageCell label="Input tokens" value={formatTokens(usage.totalInputTokens)} />
       <UsageCell label="Output tokens" value={formatTokens(usage.totalOutputTokens)} />

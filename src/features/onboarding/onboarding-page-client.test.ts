@@ -1151,7 +1151,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
     expect(html).toContain("Add variable");
     expect(html).not.toContain('aria-label="New variable name"');
-    expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
+    expect(html).not.toContain("border-t border-border bg-control-hover px-4 py-4");
     expect(html).toContain("Not set");
     expect(html).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*Not set/);
     expect(html).not.toContain("Needs value");

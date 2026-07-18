@@ -108,7 +108,7 @@ export function VercelSandboxConnectionSection({
       title="Vercel Sandbox"
     >
       <div className="space-y-6">
-        <div className="flex flex-col gap-3 rounded-[8px] border border-border bg-surface px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-[13px] font-medium text-foreground">Vercel Sandbox</p>

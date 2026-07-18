@@ -23,9 +23,15 @@
   --indigo-300: #a5b4fc;
   --indigo-600: #4f46e5;
 
-  --canvas: var(--neutral-75);
-  --sheet: var(--neutral-0);
-  --raised: var(--neutral-50);
+  /* Precision Console surface contract: canvas → sheet → overlay.
+     Content uses 6px radius; floating overlays use 10px and are the only
+     surfaces allowed to cast --shadow-elevated. */
+  --surface-canvas: var(--neutral-75);
+  --surface-sheet: var(--neutral-0);
+  --surface-overlay: var(--neutral-0);
+  /* Interaction fills communicate state, never elevation. */
+  --control-hover: var(--neutral-50);
+  --control-muted: var(--neutral-100);
   --text-primary: var(--neutral-900);
   --text-secondary: var(--neutral-600);
   --border: var(--neutral-500);
@@ -39,30 +45,22 @@
   --success: #176b45;
   --success-soft: #e7f5ee;
 
-  /* Compatibility aliases keep the Tailwind utility surface stable. */
-  --background: var(--canvas);
+  --content-radius: 6px;
+  --overlay-radius: 10px;
   --foreground: var(--text-primary);
-  --surface: var(--sheet);
-  --surface-strong: var(--raised);
-  --surface-muted: var(--neutral-100);
   --border-strong: var(--text-secondary);
   --muted: var(--text-secondary);
   --accent: var(--primary);
   --accent-foreground: var(--primary-foreground);
   --accent-soft: var(--primary-soft);
-  --shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-elevated: 0 1px 1px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
-  --shadow-control: 0 1px 1px rgba(16, 24, 40, 0.02);
   --focus-ring: var(--primary);
-  --focus-ring-contrast: var(--sheet);
+  --focus-ring-contrast: var(--surface-sheet);
   --focus-ring-soft: var(--primary-soft);
   --subtle-hover: rgba(47, 45, 40, 0.04);
   --sidebar-hover: rgba(0, 0, 0, 0.035);
   --dropdown-item-foreground: var(--text-secondary);
-  --list-pill-background: var(--surface-muted);
-  --list-pill-foreground: var(--text-secondary);
   --overlay-backdrop: rgba(14, 17, 23, 0.46);
-  --overlay-radius: 10px;
   --overlay-gutter: 16px;
   --overlay-motion-duration: 160ms;
   --overlay-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
@@ -74,9 +72,11 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --canvas: var(--neutral-950);
-  --sheet: var(--neutral-900);
-  --raised: var(--neutral-800);
+  --surface-canvas: var(--neutral-950);
+  --surface-sheet: var(--neutral-900);
+  --surface-overlay: var(--neutral-800);
+  --control-hover: var(--neutral-800);
+  --control-muted: var(--neutral-750);
   --text-primary: var(--neutral-50);
   --text-secondary: var(--neutral-300);
   --border: var(--neutral-500);
@@ -90,43 +90,33 @@
   --success: #62d6a3;
   --success-soft: #1c392d;
 
-  --background: var(--canvas);
   --foreground: var(--text-primary);
-  --surface: var(--sheet);
-  --surface-strong: var(--raised);
-  --surface-muted: var(--neutral-750);
   --border-strong: var(--text-secondary);
   --muted: var(--text-secondary);
   --accent: var(--primary);
   --accent-foreground: var(--primary-foreground);
   --accent-soft: var(--primary-soft);
-  --shadow-ambient: 0 1px 2px rgba(0, 0, 0, 0.28);
   --shadow-elevated: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.34);
-  --shadow-control: 0 1px 1px rgba(0, 0, 0, 0.22);
   --focus-ring: var(--primary);
-  --focus-ring-contrast: var(--sheet);
+  --focus-ring-contrast: var(--surface-sheet);
   --focus-ring-soft: var(--primary-soft);
   --subtle-hover: rgba(255, 255, 255, 0.06);
   --sidebar-hover: rgba(255, 255, 255, 0.055);
   --dropdown-item-foreground: var(--text-secondary);
-  --list-pill-background: var(--surface-muted);
-  --list-pill-foreground: var(--text-secondary);
   --overlay-backdrop: rgba(4, 6, 10, 0.72);
 }
 
 @theme inline {
-  --color-canvas: var(--canvas);
-  --color-sheet: var(--sheet);
-  --color-raised: var(--raised);
+  --color-canvas: var(--surface-canvas);
+  --color-sheet: var(--surface-sheet);
+  --color-overlay: var(--surface-overlay);
+  --color-control-hover: var(--control-hover);
+  --color-control-muted: var(--control-muted);
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-surface: var(--surface);
-  --color-surface-strong: var(--surface-strong);
-  --color-surface-muted: var(--surface-muted);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-muted: var(--muted);
@@ -149,13 +139,13 @@
   }
 
   html {
-    background: var(--background);
+    background: var(--surface-canvas);
     -webkit-tap-highlight-color: var(--accent-soft);
   }
 
   body {
     min-height: 100vh;
-    background: var(--background);
+    background: var(--surface-canvas);
     color: var(--foreground);
     font-feature-settings:
       "cv05" 1,
@@ -307,7 +297,7 @@
 
   .artifact-inline-code {
     border-radius: 3px;
-    background: var(--surface-muted);
+    background: var(--control-muted);
     padding: 0.125rem 0.25rem;
     color: var(--foreground);
     font-family: var(--font-ibm-plex-mono);
@@ -323,7 +313,7 @@
     overflow-x: auto;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--background);
+    background: var(--surface-canvas);
     padding: 0.875rem;
     font-size: 0.8125rem;
     line-height: 1.25rem;
@@ -336,22 +326,29 @@
     letter-spacing: normal;
   }
 
-  .ui-panel {
-    @apply rounded-[8px] border border-border bg-surface;
-    box-shadow: var(--shadow-ambient);
+  /* Routine grouping is flat: a sheet plus rules and spacing. */
+  .ui-sheet {
+    @apply rounded-[6px] border border-border bg-sheet;
   }
 
-  .ui-panel-elevated {
-    @apply rounded-[8px] border border-border bg-surface;
-    box-shadow: var(--shadow-elevated);
+  .ui-command-bar {
+    @apply flex flex-wrap items-center gap-3 border-y border-border py-3;
   }
 
-  .ui-subpanel {
-    @apply rounded-[6px] border border-border bg-surface-strong;
+  .ui-metadata-list {
+    @apply grid gap-x-6 gap-y-2 text-[13px] sm:grid-cols-2;
   }
 
-  .ui-muted-panel {
-    @apply rounded-[6px] border border-border bg-surface-muted;
+  .ui-metadata-item {
+    @apply grid min-w-0 grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)] items-baseline gap-3 border-b border-border/70 py-2;
+  }
+
+  .ui-metadata-term {
+    @apply text-xs font-medium text-muted;
+  }
+
+  .ui-metadata-value {
+    @apply min-w-0 break-words text-foreground;
   }
 
   .ui-label {
@@ -361,8 +358,7 @@
   .ui-input,
   .ui-select,
   .ui-textarea {
-    @apply border-border w-full rounded-[6px] border bg-surface px-3 py-2.5 text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150;
-    box-shadow: var(--shadow-control);
+    @apply border-border w-full rounded-[6px] border bg-sheet px-3 py-2.5 text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150;
   }
 
   .ui-textarea {
@@ -384,19 +380,18 @@
   .ui-button-primary,
   .ui-button-danger {
     @apply inline-flex cursor-pointer items-center justify-center rounded-[6px] border px-3 py-2 text-[13px] font-medium transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 disabled:cursor-not-allowed disabled:opacity-60;
-    box-shadow: var(--shadow-control);
   }
 
   .ui-button {
-    @apply border-border bg-surface text-foreground;
+    @apply border-border bg-sheet text-foreground;
   }
 
   .ui-button:hover {
-    @apply border-border-strong bg-surface-strong;
+    @apply border-border-strong bg-control-hover;
   }
 
   .ui-button:active:not(:disabled) {
-    @apply bg-surface-muted;
+    @apply bg-control-muted;
   }
 
   .ui-button-primary {
@@ -416,13 +411,13 @@
   }
 
   .ui-button-danger {
-    border-color: color-mix(in srgb, var(--danger) 26%, var(--surface));
+    border-color: color-mix(in srgb, var(--danger) 26%, var(--surface-sheet));
     background: var(--danger-soft);
     color: var(--danger);
   }
 
   .ui-button-danger:hover {
-    background: color-mix(in srgb, var(--danger-soft) 88%, var(--surface));
+    background: color-mix(in srgb, var(--danger-soft) 88%, var(--surface-sheet));
   }
 
   .ui-button-danger:active:not(:disabled) {
@@ -430,7 +425,7 @@
   }
 
   .ui-dropdown {
-    @apply absolute top-full z-50 mt-1 min-w-[180px] rounded-[10px] border border-border bg-surface py-1;
+    @apply absolute top-full z-50 mt-1 min-w-[180px] rounded-[10px] border border-border bg-overlay py-1;
     box-shadow: var(--shadow-elevated);
   }
 
@@ -445,7 +440,7 @@
   }
 
   .ui-dropdown-item:active {
-    background: var(--surface-muted);
+    background: var(--control-muted);
   }
 
   .ui-overlay-backdrop {
@@ -468,7 +463,7 @@
     transform: translate(-50%, -50%);
     border: 1px solid var(--border);
     border-radius: var(--overlay-radius);
-    background: var(--surface);
+    background: var(--surface-overlay);
     padding: 1.25rem;
     color: var(--foreground);
     box-shadow: var(--shadow-elevated);
@@ -489,12 +484,12 @@
 
   .ui-dialog-close,
   .ui-toast-close {
-    @apply inline-flex h-8 w-8 items-center justify-center rounded-full text-muted outline-none transition-[color,background-color,transform] hover:bg-surface-muted hover:text-foreground;
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-[6px] text-muted outline-none transition-[color,background-color,transform] hover:bg-control-muted hover:text-foreground;
   }
 
   .ui-dialog-close:active:not(:disabled),
   .ui-toast-close:active:not(:disabled) {
-    background: var(--surface-strong);
+    background: var(--control-hover);
   }
 
   .ui-dialog-close {
@@ -509,8 +504,8 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     border: 1px solid var(--border);
-    border-radius: calc(var(--overlay-radius) - 2px);
-    background: var(--surface);
+    border-radius: var(--overlay-radius);
+    background: var(--surface-overlay);
     color: var(--foreground);
     box-shadow: var(--shadow-elevated);
     animation: wallie-popover-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
@@ -538,7 +533,7 @@
 
   .ui-menu-item:active,
   .ui-select-item:active {
-    background: var(--surface-muted);
+    background: var(--control-muted);
   }
 
   .ui-menu-item[data-disabled],
@@ -547,20 +542,19 @@
   }
 
   .ui-select-trigger {
-    @apply flex min-h-10 items-center justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2.5 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 disabled:cursor-not-allowed disabled:opacity-60;
-    box-shadow: var(--shadow-control);
+    @apply flex min-h-10 items-center justify-between gap-3 rounded-[6px] border border-border bg-sheet px-3 py-2.5 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .ui-select-trigger:hover {
-    @apply border-border-strong bg-surface-strong;
+    @apply border-border-strong bg-control-hover;
   }
 
   .ui-select-trigger:active:not(:disabled) {
-    background: var(--surface-muted);
+    background: var(--control-muted);
   }
 
   .ui-select-trigger:focus-visible {
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-sheet));
     box-shadow: 0 0 0 4px var(--focus-ring-soft);
   }
 
@@ -578,9 +572,10 @@
     z-index: var(--z-tooltip);
     max-width: min(18rem, calc(100vw - (var(--overlay-gutter) * 2)));
     border-radius: 6px;
-    background: var(--foreground);
+    border: 1px solid var(--border);
+    background: var(--surface-overlay);
     padding: 0.375rem 0.5rem;
-    color: var(--surface);
+    color: var(--foreground);
     font-size: 0.75rem;
     line-height: 1.25rem;
     box-shadow: var(--shadow-elevated);
@@ -605,7 +600,7 @@
   }
 
   .ui-toast {
-    @apply grid grid-cols-[1fr_auto] items-start gap-3 border border-border bg-surface p-4 text-foreground;
+    @apply grid grid-cols-[1fr_auto] items-start gap-3 border border-border bg-overlay p-4 text-foreground;
     border-radius: var(--overlay-radius);
     box-shadow: var(--shadow-elevated);
     animation: wallie-toast-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
@@ -619,8 +614,9 @@
     border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
   }
 
-  .ui-pill {
-    @apply inline-flex items-center rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground;
+  /* Fully rounded treatment is reserved for product status. */
+  .ui-status {
+    @apply rounded-full;
   }
 
   .ui-status-progress-value {
@@ -689,7 +685,7 @@
   }
 
   .settings-anchor:active {
-    background: var(--surface-muted);
+    background: var(--control-muted);
   }
 
   .settings-anchor-active {
@@ -707,19 +703,19 @@
   }
 
   .ui-tab {
-    @apply inline-flex cursor-pointer items-center rounded-full border border-transparent px-2.5 py-1 text-xs font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
+    @apply inline-flex cursor-pointer items-center rounded-[6px] border border-transparent px-2.5 py-1 text-xs font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
   }
 
   .ui-tab:hover {
-    @apply bg-surface-muted text-foreground;
+    @apply bg-control-muted text-foreground;
   }
 
   .ui-tab-active {
-    @apply bg-surface-muted text-foreground;
+    @apply bg-control-muted text-foreground;
   }
 
   .ui-tab:active {
-    @apply bg-surface-muted;
+    @apply bg-control-muted;
   }
 
   .ui-top-nav-tab {
@@ -727,58 +723,52 @@
   }
 
   .ui-top-nav-tab:hover {
-    @apply bg-surface-strong text-foreground;
+    @apply bg-control-hover text-foreground;
   }
 
   .ui-top-nav-tab-active {
-    @apply bg-surface-muted text-foreground;
+    @apply bg-control-muted text-foreground;
   }
 
   .ui-top-nav-tab:active {
-    @apply bg-surface-muted;
+    @apply bg-control-muted;
   }
 
   .ui-icon-button {
-    @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-muted transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150;
+    @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-[6px] border border-border bg-sheet text-muted transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150;
   }
 
   .ui-icon-button:hover {
-    @apply bg-surface-strong text-foreground;
+    @apply bg-control-hover text-foreground;
   }
 
   .ui-icon-button:active:not(:disabled) {
-    @apply bg-surface-muted;
+    @apply bg-control-muted;
   }
 
   .ui-filter-chip {
-    @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-surface px-3 text-[13px] font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
+    @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[6px] border border-border bg-sheet px-3 text-[13px] font-medium text-muted transition-[color,background-color,border-color,box-shadow,transform] duration-150;
   }
 
   .ui-filter-chip:hover {
-    @apply bg-surface-strong text-foreground;
+    @apply bg-control-hover text-foreground;
   }
 
   .ui-filter-chip:active {
-    @apply bg-surface-muted;
+    @apply bg-control-muted;
   }
 
   .ui-filter-chip-active {
     border-color: var(--border-strong);
-    background: var(--surface-muted);
+    background: var(--control-muted);
     color: var(--foreground);
   }
 
-  .ui-list-pill {
-    @apply inline-flex h-7 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium;
-    background: var(--list-pill-background);
-    color: var(--list-pill-foreground);
-  }
-
   .ui-skip-link {
-    @apply fixed left-4 top-4 z-[100] rounded-full border border-foreground bg-surface px-4 py-2 text-sm font-semibold text-foreground;
+    @apply fixed left-4 top-4 z-[100] rounded-[6px] border border-foreground bg-overlay px-4 py-2 text-sm font-semibold text-foreground;
     transform: translateY(-200%);
     transition: transform 150ms ease;
-    box-shadow: var(--shadow-ambient);
+    box-shadow: var(--shadow-elevated);
   }
 
   .ui-skip-link:focus-visible {
@@ -808,11 +798,11 @@
   }
 
   .sidebar-icon-btn:hover {
-    @apply bg-surface-muted text-foreground;
+    @apply bg-control-muted text-foreground;
   }
 
   .sidebar-icon-btn:active:not(:disabled) {
-    @apply bg-surface-strong;
+    @apply bg-control-hover;
   }
 
   .sidebar-icon-btn:disabled {
@@ -820,7 +810,7 @@
   }
 
   .sidebar-dropdown {
-    @apply absolute right-0 top-full z-50 mt-0.5 min-w-[160px] rounded-[8px] border border-border bg-surface py-1;
+    @apply absolute right-0 top-full z-50 mt-0.5 min-w-[160px] rounded-[10px] border border-border bg-overlay py-1;
     max-width: calc(272px - 24px);
     box-shadow: var(--shadow-elevated);
   }
@@ -855,7 +845,7 @@
   }
 
   .sidebar-input {
-    @apply rounded-[5px] border border-border bg-surface px-2 py-1 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] duration-150;
+    @apply rounded-[5px] border border-border bg-sheet px-2 py-1 text-[13px] text-foreground outline-none transition-[border-color,box-shadow] duration-150;
   }
 
   .sidebar-input::placeholder {
@@ -867,15 +857,15 @@
   }
 
   .sidebar-action-btn {
-    @apply inline-flex h-8 shrink-0 cursor-pointer items-center rounded-[5px] border border-border bg-surface px-2 text-xs font-medium text-muted transition-[color,background-color,border-color,transform] duration-100;
+    @apply inline-flex h-8 shrink-0 cursor-pointer items-center rounded-[5px] border border-border bg-sheet px-2 text-xs font-medium text-muted transition-[color,background-color,border-color,transform] duration-100;
   }
 
   .sidebar-action-btn:hover {
-    @apply border-border-strong bg-surface-strong text-foreground;
+    @apply border-border-strong bg-control-hover text-foreground;
   }
 
   .sidebar-action-btn:active:not(:disabled) {
-    @apply bg-surface-muted;
+    @apply bg-control-muted;
   }
 
   .sidebar-action-btn:disabled {
@@ -892,7 +882,7 @@
   }
 
   .issue-textarea:focus {
-    @apply border-border bg-surface px-3 py-2;
+    @apply border-border bg-sheet px-3 py-2;
   }
 }
 
@@ -965,6 +955,11 @@
 :where(.ui-icon-button, .sidebar-icon-btn) {
   min-width: 32px;
   min-height: 32px;
+}
+
+/* Keep development chrome out of fixture proof captures. */
+html:has([data-precision-console-fixture]) nextjs-portal {
+  display: none;
 }
 
 .email-code-grid {

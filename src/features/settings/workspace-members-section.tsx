@@ -311,7 +311,7 @@ export function WorkspaceMembersSection({
 
         <div className="space-y-3">
           <h3 className="text-[14px] font-semibold text-foreground">Active members</h3>
-          <ul className="divide-y divide-border overflow-hidden rounded-[8px] border border-border bg-surface">
+          <ul className="divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet">
             {members.map((member) => {
               const isOwner = member.role === "owner";
               const isSelf = member.id === currentMemberId;
@@ -394,11 +394,11 @@ export function WorkspaceMembersSection({
           <div className="space-y-3">
             <h3 className="text-[14px] font-semibold text-foreground">Pending invitations</h3>
             {invitations.length === 0 ? (
-              <div className="rounded-[8px] border border-border bg-surface px-4 py-3 text-sm text-muted">
+              <div className="rounded-[6px] border border-border bg-sheet px-4 py-3 text-sm text-muted">
                 No pending invitations.
               </div>
             ) : (
-              <ul className="divide-y divide-border overflow-hidden rounded-[8px] border border-border bg-surface">
+              <ul className="divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet">
                 {invitations.map((invitation) => {
                   const resendBusy = busyAction === `resend:${invitation.id}`;
                   const revokeBusy = busyAction === `revoke:${invitation.id}`;

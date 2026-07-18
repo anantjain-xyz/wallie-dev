@@ -14,7 +14,6 @@ import {
   type SessionRepositorySnapshot,
 } from "@/features/sessions/session-repository-cache";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
-import { workspaceSessionDetailPath } from "@/lib/routes";
 
 type CreateSessionDialogProps = {
   onClose: () => void;
@@ -67,12 +66,7 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
   return <CreateSessionDialogBody {...props} />;
 }
 
-function CreateSessionDialogBody({
-  onClose,
-  userId,
-  workspaceId,
-  workspaceSlug,
-}: CreateSessionDialogProps) {
+function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSessionDialogProps) {
   const router = useRouter();
 
   const [prompt, setPrompt] = useState("");
@@ -152,8 +146,7 @@ function CreateSessionDialogBody({
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
       onClose();
-      router.push(workspaceSessionDetailPath(workspaceSlug, result.number));
-      router.refresh();
+      router.push(result.canonicalUrl);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
       setIsSubmitting(false);
@@ -302,7 +295,7 @@ export function RepositoryField({
       <div
         aria-busy="true"
         aria-live="polite"
-        className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-xs text-muted"
+        className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
         role="status"
       >
         Loading repositories…
@@ -344,7 +337,7 @@ export function RepositoryField({
       ) : (
         <div
           aria-live="polite"
-          className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-xs text-muted"
+          className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
           role="status"
         >
           No repositories are available. This session will start without one.

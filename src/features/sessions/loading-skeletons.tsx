@@ -4,7 +4,7 @@ import { PageContainer } from "@/components/ui/page-shell";
 const listRowTitleWidths = ["w-7/12", "w-5/12", "w-8/12", "w-6/12", "w-9/12", "w-4/12"];
 
 function FilterChipSkeleton({ className = "w-20" }: { className?: string }) {
-  return <SkeletonBlock className={`h-8 rounded-full ${className}`} />;
+  return <SkeletonBlock className={`h-8 rounded-[6px] ${className}`} />;
 }
 
 function SessionRowSkeleton({ index }: { index: number }) {
@@ -16,8 +16,8 @@ function SessionRowSkeleton({ index }: { index: number }) {
         <div className="flex min-w-0 items-center gap-2">
           <SkeletonBlock className="h-3 w-8 shrink-0" />
           <SkeletonBlock className={`h-4 min-w-0 ${titleWidth}`} />
-          <SkeletonBlock className="h-7 w-7 shrink-0 rounded-full" />
-          <SkeletonBlock className="h-7 w-7 shrink-0 rounded-full" />
+          <SkeletonBlock className="h-7 w-7 shrink-0 rounded-[6px]" />
+          <SkeletonBlock className="h-7 w-7 shrink-0 rounded-[6px]" />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SkeletonBlock className="h-3 w-16" />
@@ -51,7 +51,7 @@ function StageRailSkeleton() {
 
 function ArtifactPanelSkeleton() {
   return (
-    <section className="rounded-[8px] border border-border bg-surface">
+    <section className="ui-sheet">
       <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-2">
           <SkeletonBlock className="h-4 w-40" />
@@ -65,7 +65,7 @@ function ArtifactPanelSkeleton() {
         <SkeletonBlock className="h-4 w-10/12" />
         <SkeletonBlock className="mt-5 h-28 w-full" />
       </div>
-      <div className="flex justify-end gap-2 border-t border-border bg-surface-muted p-4">
+      <div className="flex justify-end gap-2 border-t border-border bg-control-muted p-4">
         <SkeletonBlock className="h-9 w-40" />
         <SkeletonBlock className="h-9 w-36" />
       </div>
@@ -75,7 +75,7 @@ function ArtifactPanelSkeleton() {
 
 function CompactPanelSkeleton({ lines = 3 }: { lines?: number }) {
   return (
-    <section className="rounded-[8px] border border-border bg-surface p-4">
+    <section className="ui-sheet p-4">
       <SkeletonBlock className="h-3 w-24" />
       <div className="mt-3 space-y-2">
         {Array.from({ length: lines }, (_, index) => (
@@ -111,10 +111,7 @@ export function SessionsListLoadingSkeleton() {
           </div>
         </div>
 
-        <ul
-          aria-hidden="true"
-          className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface"
-        >
+        <ul aria-hidden="true" className="ui-sheet divide-y divide-border overflow-hidden">
           {Array.from({ length: 7 }, (_, index) => (
             <SessionRowSkeleton key={index} index={index} />
           ))}
@@ -146,7 +143,7 @@ export function SessionDetailLoadingSkeleton() {
           <SkeletonBlock className="h-4 w-28" />
         </div>
 
-        <div className="mb-6 rounded-[10px] border border-border bg-surface px-5 py-4">
+        <div className="ui-sheet mb-6 px-5 py-4">
           <StageRailSkeleton />
         </div>
 

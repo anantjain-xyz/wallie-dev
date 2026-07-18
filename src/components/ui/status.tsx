@@ -214,9 +214,9 @@ export function resolveStatusDefinition(value: unknown): StatusDefinition {
 const toneClasses: Record<StatusTone, string> = {
   attention: "border-accent bg-accent-soft text-accent font-semibold",
   danger: "border-danger/30 bg-danger-soft text-danger",
-  neutral: "border-border bg-surface-muted text-muted",
+  neutral: "border-border bg-control-muted text-muted",
   progress: "border-accent/30 bg-accent-soft text-accent",
-  subdued: "border-border bg-surface-muted text-muted opacity-80",
+  subdued: "border-border bg-control-muted text-muted opacity-80",
   success: "border-success/30 bg-success-soft text-success",
   warning: "border-warning/30 bg-warning-soft text-warning",
 };
