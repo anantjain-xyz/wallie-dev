@@ -1145,17 +1145,20 @@ function StageRail({
   stageRail: StageRailEntry[];
   selectedStageSlug: string;
 }) {
+  const railRef = useRef<HTMLOListElement>(null);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
 
   useEffect(() => {
-    buttonRefs.current.get(selectedStageSlug)?.scrollIntoView({
-      block: "nearest",
-      inline: "center",
-    });
+    const rail = railRef.current;
+    const selectedButton = buttonRefs.current.get(selectedStageSlug);
+    if (rail && selectedButton) centerStageRailSelection(rail, selectedButton);
   }, [selectedStageSlug]);
 
   return (
-    <ol className="flex snap-x items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+    <ol
+      className="flex snap-x items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0"
+      ref={railRef}
+    >
       {stageRail.map((entry, index) => {
         const isSelected = entry.stage.slug === selectedStageSlug;
         return (
@@ -1189,6 +1192,21 @@ function StageRail({
       })}
     </ol>
   );
+}
+
+export function centerStageRailSelection(
+  rail: HTMLOListElement,
+  selectedButton: HTMLButtonElement,
+) {
+  if (rail.scrollWidth <= rail.clientWidth) return;
+
+  rail.scrollTo({
+    behavior: "auto",
+    left: Math.max(
+      0,
+      selectedButton.offsetLeft - (rail.clientWidth - selectedButton.offsetWidth) / 2,
+    ),
+  });
 }
 
 function StageDot({ entry }: { entry: StageRailEntry }) {
