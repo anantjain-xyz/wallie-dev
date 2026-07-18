@@ -37,37 +37,47 @@ export function SettingsAnchorNav({
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    function redirectLegacyHash() {
-      const redirectId = resolveLegacySettingsAnchorHash(window.location.hash, legacyRedirects);
-      if (!redirectId) return;
+    let pendingHashId: string | null = null;
 
-      const target = document.getElementById(redirectId);
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${window.location.search}#${redirectId}`,
-      );
-      if (target) {
-        window.requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
-      }
+    function scrollToPendingHash() {
+      if (!pendingHashId) return;
+
+      const target = document.getElementById(pendingHashId);
+      if (!target) return;
+
+      pendingHashId = null;
+      window.requestAnimationFrame(() => target.scrollIntoView({ block: "start" }));
     }
 
-    redirectLegacyHash();
-    window.addEventListener("hashchange", redirectLegacyHash);
+    function syncHashTarget() {
+      const anchorId = window.location.hash.replace(/^#/u, "");
+      const redirectId = resolveLegacySettingsAnchorHash(window.location.hash, legacyRedirects);
+      pendingHashId = (redirectId ?? anchorId) || null;
 
-    return () => window.removeEventListener("hashchange", redirectLegacyHash);
+      if (redirectId) {
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}#${redirectId}`,
+        );
+      }
+
+      scrollToPendingHash();
+    }
+
+    syncHashTarget();
+    window.addEventListener("hashchange", syncHashTarget);
+
+    const mutationObserver = new MutationObserver(scrollToPendingHash);
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      mutationObserver.disconnect();
+      window.removeEventListener("hashchange", syncHashTarget);
+    };
   }, [legacyRedirects]);
 
   useEffect(() => {
-    const sections = groups
-      .flatMap((group) => group.anchors)
-      .map((anchor) => document.getElementById(anchor.id))
-      .filter((node): node is HTMLElement => node !== null);
-
-    if (sections.length === 0) {
-      return;
-    }
-
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries
@@ -83,11 +93,29 @@ export function SettingsAnchorNav({
       },
     );
 
-    for (const section of sections) {
-      observer.observe(section);
+    const observedSections = new WeakSet<HTMLElement>();
+
+    function observeMountedSections() {
+      const sections = groups
+        .flatMap((group) => group.anchors)
+        .map((anchor) => document.getElementById(anchor.id))
+        .filter((node): node is HTMLElement => node !== null);
+
+      for (const section of sections) {
+        if (observedSections.has(section)) continue;
+        observedSections.add(section);
+        observer.observe(section);
+      }
     }
 
-    return () => observer.disconnect();
+    observeMountedSections();
+    const mutationObserver = new MutationObserver(observeMountedSections);
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      mutationObserver.disconnect();
+      observer.disconnect();
+    };
   }, [groups]);
 
   function handleClick(event: React.MouseEvent<HTMLAnchorElement>, id: string) {

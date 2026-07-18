@@ -222,6 +222,23 @@ describe("Settings integration sections", () => {
     });
   });
 
+  it("preserves in-page Settings state when a refreshed GitHub snapshot is applied", () => {
+    const currentData = settingsData({
+      workspace: {
+        ...settingsData().workspace,
+        name: "Renamed workspace",
+      },
+    });
+    const updated = updateGithubInData(currentData, {
+      ...currentData.github,
+      missingWebhookKeys: ["GITHUB_WEBHOOK_SECRET"],
+    });
+
+    expect(updated.workspace.name).toBe("Renamed workspace");
+    expect(updated.vercelSandboxConnection).toBe(currentData.vercelSandboxConnection);
+    expect(updated.github.missingWebhookKeys).toEqual(["GITHUB_WEBHOOK_SECRET"]);
+  });
+
   it("smoke-renders the Settings pipeline editor wrapper after extraction", () => {
     const html = renderToStaticMarkup(
       createElement(PipelineEditor, {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, use, useState } from "react";
+import { Suspense, use, useState, type SetStateAction } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
@@ -266,22 +266,41 @@ function SettingsCompletePage({
   deferredMode = false,
   initialData,
   searchState,
+  streamedGithub,
   streamedUsage,
   streamedWorkspaceInvitations,
 }: {
   deferredMode?: boolean;
   initialData: SettingsPageData;
   searchState: SettingsPageClientProps["searchState"];
+  streamedGithub?: SettingsPageData["github"];
   streamedUsage?: Promise<WorkspaceUsageData>;
   streamedWorkspaceInvitations?: Promise<WorkspaceInvitation[]>;
 }) {
-  const [data, setData] = useState(initialData);
+  const [state, setState] = useState(() => ({
+    data: initialData,
+    streamedGithub,
+  }));
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(
     deferredMode ? null : initialFlashMessage(searchState),
   );
 
-  const pageData = applySecretsToData(data, secrets);
+  if (streamedGithub !== state.streamedGithub) {
+    setState({
+      data: streamedGithub ? updateGithubInData(state.data, streamedGithub) : state.data,
+      streamedGithub,
+    });
+  }
+
+  function setData(update: SetStateAction<SettingsPageData>) {
+    setState((current) => ({
+      ...current,
+      data: typeof update === "function" ? update(current.data) : update,
+    }));
+  }
+
+  const pageData = applySecretsToData(state.data, secrets);
   const isManager = pageData.canManage;
   const isOwner = pageData.currentMember.role === "owner";
   const linearSecret = pageData.linearSecret;
@@ -562,10 +581,6 @@ function StreamedWorkspaceMembersSection({
   );
 }
 
-function githubRenderKey(github: SettingsPageData["github"]) {
-  return JSON.stringify(github);
-}
-
 function SettingsDeferredPage({
   github,
   initialData,
@@ -596,8 +611,8 @@ function SettingsDeferredPage({
     <SettingsCompletePage
       deferredMode
       initialData={completeData}
-      key={githubRenderKey(github)}
       searchState={searchState}
+      streamedGithub={github}
       streamedUsage={usage}
       streamedWorkspaceInvitations={workspaceInvitations}
     />
