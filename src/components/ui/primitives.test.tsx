@@ -174,8 +174,9 @@ describe("accessible overlay primitives", () => {
     trigger.focus();
     await user.keyboard("{ArrowDown}");
     const menu = await screen.findByRole("menu", { hidden: true });
-    expect(menu).toHaveAccessibleName("Actions");
+    expect(menu).toHaveAccessibleName("Issue actions");
     expect(menu).toHaveAttribute("aria-label", "Issue actions");
+    expect(menu).not.toHaveAttribute("aria-labelledby");
     expect(menu?.closest("[aria-hidden='true']")).toBeNull();
     expect(screen.getByRole("menuitem", { hidden: true, name: "Archive" })).toHaveFocus();
 
@@ -319,6 +320,23 @@ describe("accessible overlay primitives", () => {
     expect(results.violations).toEqual([]);
   });
 
+  it("omits aria-describedby when a dialog has no description", async () => {
+    const user = userEvent.setup();
+    renderWithOverlays(
+      <Dialog>
+        <DialogTrigger asChild>
+          <button type="button">Open title-only dialog</button>
+        </DialogTrigger>
+        <DialogContent title="Title only">No supplementary description.</DialogContent>
+      </Dialog>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open title-only dialog" }));
+    expect(await screen.findByRole("dialog", { name: "Title only" })).not.toHaveAttribute(
+      "aria-describedby",
+    );
+  });
+
   it("keeps live-region announcements audible while a modal dialog is open", async () => {
     const user = userEvent.setup();
 
@@ -332,38 +350,55 @@ describe("accessible overlay primitives", () => {
               <button type="button">Open modal</button>
             </DialogTrigger>
             <DialogContent description="Modal is open." title="Modal">
+              <button onClick={() => announce("Saved while modal open", "polite")} type="button">
+                Announce
+              </button>
+              <button
+                onClick={() =>
+                  pushToast({
+                    priority: "assertive",
+                    title: "Failed while modal open",
+                    tone: "danger",
+                  })
+                }
+                type="button"
+              >
+                Toast
+              </button>
               <DialogClose asChild>
                 <button type="button">Close</button>
               </DialogClose>
             </DialogContent>
           </Dialog>
-          <button onClick={() => announce("Saved while modal open", "polite")} type="button">
-            Announce
-          </button>
-          <button
-            onClick={() =>
-              pushToast({ priority: "assertive", title: "Failed while modal open", tone: "danger" })
-            }
-            type="button"
-          >
-            Toast
-          </button>
         </>
       );
     }
 
     renderWithOverlays(<Notices />);
-    const announceButton = screen.getByRole("button", { name: "Announce", hidden: true });
     await user.click(screen.getByRole("button", { name: "Open modal" }));
-    await screen.findByRole("dialog", { name: "Modal" });
+    const modal = await screen.findByRole("dialog", { name: "Modal" });
+    const announcementRoot = document.querySelector("[data-wallie-announcement-root]");
+    const overlayRoot = document.querySelector("[data-wallie-overlay-root]");
+    expect(announcementRoot).toContainElement(overlayRoot as HTMLElement);
+    expect(overlayRoot).toContainElement(modal);
+    expect(announcementRoot).not.toHaveAttribute("aria-hidden");
 
-    await user.click(announceButton);
+    await user.click(screen.getByRole("button", { name: "Announce" }));
     const politeRegion = await waitFor(() => document.querySelector("[data-live-region='polite']"));
     expect(politeRegion?.closest("[aria-hidden='true']")).toBeNull();
     await waitFor(() => expect(politeRegion).toHaveTextContent("Saved while modal open"));
 
     const assertiveRegion = document.querySelector("[data-live-region='assertive']");
     expect(assertiveRegion?.closest("[aria-hidden='true']")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Toast" }));
+    const toastAnnouncement = await waitFor(() => {
+      const region = document.querySelector("[role='status'][aria-live='assertive']");
+      expect(region).toHaveTextContent("Failed while modal open");
+      return region;
+    });
+    expect(announcementRoot).toContainElement(toastAnnouncement as HTMLElement);
+    expect(toastAnnouncement?.closest("[aria-hidden='true']")).toBeNull();
   });
 
   it("truncates long SelectField values so the trigger does not overflow", () => {

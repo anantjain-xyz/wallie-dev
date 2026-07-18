@@ -45,7 +45,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   return (
     <ToastContext value={context}>
-      <ToastPrimitive.Provider duration={5000} swipeDirection="right">
+      <ToastPrimitive.Provider
+        announcerContainer={container ?? undefined}
+        duration={5000}
+        swipeDirection="right"
+      >
         {children}
         {container
           ? createPortal(

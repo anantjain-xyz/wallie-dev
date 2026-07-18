@@ -297,7 +297,7 @@
   .ui-select-content {
     z-index: var(--z-overlay-content);
     min-width: 12rem;
-    max-height: min(22rem, var(--radix-popper-available-height));
+    max-height: 22rem;
     overflow-y: auto;
     overscroll-behavior: contain;
     border: 1px solid var(--border);
@@ -305,12 +305,13 @@
     background: var(--surface);
     color: var(--foreground);
     box-shadow: var(--shadow-elevated);
-    transform-origin: var(--radix-popper-transform-origin);
     animation: wallie-popover-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
   }
 
   .ui-menu-content {
     @apply p-1;
+    max-height: min(22rem, var(--radix-dropdown-menu-content-available-height));
+    transform-origin: var(--radix-dropdown-menu-content-transform-origin);
   }
 
   .ui-menu-item {
@@ -348,6 +349,8 @@
 
   .ui-select-content {
     min-width: var(--radix-select-trigger-width);
+    max-height: min(22rem, var(--radix-select-content-available-height));
+    transform-origin: var(--radix-select-content-transform-origin);
   }
 
   .ui-tooltip-content {

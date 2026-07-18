@@ -13,9 +13,9 @@ export function useOverlayContainer() {
 }
 
 /**
- * Separate from the overlay root: Radix modal dialogs apply `aria-hidden` to
- * siblings of their portaled content, so live regions and the toast viewport
- * must live here to stay audible while a dialog is open.
+ * Ancestor of the overlay root: Radix modal dialogs apply `aria-hidden` outside
+ * the ancestry of their portaled content. Keeping announcements in this outer
+ * container prevents that modal isolation from hiding live status updates.
  */
 export function useAnnouncementContainer() {
   return useContext(AnnouncementContainerContext);
@@ -37,8 +37,9 @@ export function PortalRootProvider({ children }: { children: ReactNode }) {
     <AnnouncementContainerContext value={announcementContainer}>
       <OverlayContainerContext value={overlayContainer}>
         {children}
-        <div data-wallie-overlay-root="" id={OVERLAY_ROOT_ID} ref={setOverlayRoot} />
-        <div data-wallie-announcement-root="" id={ANNOUNCEMENT_ROOT_ID} ref={setAnnouncementRoot} />
+        <div data-wallie-announcement-root="" id={ANNOUNCEMENT_ROOT_ID} ref={setAnnouncementRoot}>
+          <div data-wallie-overlay-root="" id={OVERLAY_ROOT_ID} ref={setOverlayRoot} />
+        </div>
       </OverlayContainerContext>
     </AnnouncementContainerContext>
   );

@@ -13,7 +13,10 @@ export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
 export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
 export const DropdownMenuSub = DropdownMenuPrimitive.Sub;
 
-type DropdownMenuContentProps = ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+type DropdownMenuContentProps = Omit<
+  ComponentProps<typeof DropdownMenuPrimitive.Content>,
+  "aria-label" | "aria-labelledby"
+> & {
   label: string;
 };
 
@@ -33,6 +36,7 @@ export function DropdownMenuContent({
     <DropdownMenuPrimitive.Portal container={container}>
       <DropdownMenuPrimitive.Content
         aria-label={label}
+        aria-labelledby={undefined}
         align={align}
         className={cn("ui-menu-content", className)}
         collisionPadding={collisionPadding}

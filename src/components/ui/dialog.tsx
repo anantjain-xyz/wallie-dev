@@ -36,6 +36,8 @@ export function DialogContent({
 
   if (!container) return null;
 
+  const descriptionProps = description ? {} : { "aria-describedby": undefined };
+
   return (
     <DialogPrimitive.Portal container={container}>
       <DialogPrimitive.Overlay className="ui-overlay-backdrop" />
@@ -49,6 +51,7 @@ export function DialogContent({
           onPointerDownOutside?.(event);
           if (!dismissible) event.preventDefault();
         }}
+        {...descriptionProps}
         {...props}
       >
         <header className="space-y-1.5 pr-8">
