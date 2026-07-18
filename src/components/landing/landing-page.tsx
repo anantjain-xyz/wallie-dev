@@ -131,7 +131,7 @@ function LandingHeader() {
             href={githubUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-border bg-surface px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-border bg-surface px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <GitHubIcon className="h-4 w-4" />
             <span>GitHub</span>
@@ -152,7 +152,7 @@ function LandingHeader() {
 
           <Link
             href="/login"
-            className="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden"
+            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden"
           >
             Get started
           </Link>

@@ -116,5 +116,8 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toContain("@media (pointer: coarse), (max-width: 767px)");
     expect(stylesheet).toContain("min-width: 44px;");
     expect(stylesheet).toContain("min-height: 44px;");
+    expect(stylesheet).toContain(".ui-touch-target,");
+    expect(stylesheet).toContain("grid-template-columns: repeat(6, minmax(44px, 1fr));");
+    expect(stylesheet).toContain("grid-template-columns: repeat(3, minmax(44px, 1fr));");
   });
 });

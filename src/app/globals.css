@@ -582,6 +582,16 @@
   min-height: 32px;
 }
 
+.email-code-grid {
+  grid-template-columns: repeat(6, minmax(44px, 1fr));
+}
+
+@media (max-width: 340px) {
+  .email-code-grid {
+    grid-template-columns: repeat(3, minmax(44px, 1fr));
+  }
+}
+
 /* Coarse pointers and narrow layouts keep the dense desktop visual while
    expanding every control to the WCAG 2.2 target minimum. */
 @media (pointer: coarse), (max-width: 767px) {
@@ -593,6 +603,7 @@
     .ui-tab,
     .ui-top-nav-tab,
     .ui-filter-chip,
+    .ui-touch-target,
     .ui-dropdown-item,
     .settings-anchor,
     .sidebar-property-trigger,
