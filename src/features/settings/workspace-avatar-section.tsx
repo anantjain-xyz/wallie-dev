@@ -4,7 +4,9 @@ import Image from "next/image";
 import type { ChangeEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import { CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { PencilIcon } from "@/components/shared/icons/pencil-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Tooltip } from "@/components/ui/tooltip";

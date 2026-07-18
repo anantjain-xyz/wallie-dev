@@ -32,7 +32,10 @@ import {
   type SessionListItem,
   type SessionListQueryState,
 } from "@/features/sessions/types";
-import { CheckIcon, PencilIcon, SearchIcon, XIcon } from "@/components/shared/icons";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { PencilIcon } from "@/components/shared/icons/pencil-icon";
+import { SearchIcon } from "@/components/shared/icons/search-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { workspaceSessionDetailPath, workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 

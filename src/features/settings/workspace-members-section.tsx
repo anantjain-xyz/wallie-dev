@@ -2,7 +2,8 @@
 
 import { useRef, useState, type FormEvent } from "react";
 
-import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { PlusIcon } from "@/components/shared/icons/plus-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
