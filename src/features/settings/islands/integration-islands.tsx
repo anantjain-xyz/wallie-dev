@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
@@ -15,8 +15,10 @@ import { updateGithubInSettingsData } from "@/features/settings/settings-data-up
 import {
   dispatchSettingsEvent,
   SETTINGS_GITHUB_CHANGED,
+  SETTINGS_SECRETS_CHANGED,
   SETTINGS_VERCEL_CHANGED,
   type GithubChangedDetail,
+  type SecretsChangedDetail,
   type VercelChangedDetail,
 } from "@/features/settings/settings-island-events";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
@@ -141,6 +143,22 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
 export function LinearIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
   const [routing, setRouting] = useState(initialData.linearRouting);
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
+  const broadcastSecrets = useRef(false);
+  const updateSecrets: Dispatch<SetStateAction<SecretsChangedDetail>> = (update) => {
+    broadcastSecrets.current = true;
+    setSecrets(update);
+  };
+  useEffect(() => {
+    const handleSecretsChange = (event: Event) =>
+      setSecrets((event as CustomEvent<SecretsChangedDetail>).detail);
+    window.addEventListener(SETTINGS_SECRETS_CHANGED, handleSecretsChange);
+    return () => window.removeEventListener(SETTINGS_SECRETS_CHANGED, handleSecretsChange);
+  }, []);
+  useEffect(() => {
+    if (!broadcastSecrets.current) return;
+    broadcastSecrets.current = false;
+    dispatchSettingsEvent(SETTINGS_SECRETS_CHANGED, secrets);
+  }, [secrets]);
   const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
   return (
     <LinearConfigurationSection
@@ -149,7 +167,7 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
       linearSecret={linearSecret}
       onRoutingSaved={setRouting}
       routing={routing}
-      setSecrets={setSecrets}
+      setSecrets={updateSecrets}
       stages={initialData.pipeline?.stages ?? []}
       workspaceId={initialData.workspace.id}
     />
@@ -164,6 +182,11 @@ export function RuntimeIntegrationIsland({
   initialData: SettingsPageData;
 }) {
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
+  const broadcastSecrets = useRef(false);
+  const updateSecrets: Dispatch<SetStateAction<SecretsChangedDetail>> = (update) => {
+    broadcastSecrets.current = true;
+    setSecrets(update);
+  };
   const [vercelConnection, setVercelConnection] = useState(initialData.vercelSandboxConnection);
   const { feedback, setMessage } = useIslandFeedback();
   useEffect(() => {
@@ -172,6 +195,17 @@ export function RuntimeIntegrationIsland({
     window.addEventListener(SETTINGS_VERCEL_CHANGED, handleVercelChange);
     return () => window.removeEventListener(SETTINGS_VERCEL_CHANGED, handleVercelChange);
   }, []);
+  useEffect(() => {
+    const handleSecretsChange = (event: Event) =>
+      setSecrets((event as CustomEvent<SecretsChangedDetail>).detail);
+    window.addEventListener(SETTINGS_SECRETS_CHANGED, handleSecretsChange);
+    return () => window.removeEventListener(SETTINGS_SECRETS_CHANGED, handleSecretsChange);
+  }, []);
+  useEffect(() => {
+    if (!broadcastSecrets.current) return;
+    broadcastSecrets.current = false;
+    dispatchSettingsEvent(SETTINGS_SECRETS_CHANGED, secrets);
+  }, [secrets]);
 
   return (
     <>
@@ -194,7 +228,7 @@ export function RuntimeIntegrationIsland({
               isLoadingSecrets={false}
               secrets={secrets}
               setFlashMessage={setMessage}
-              setSecrets={setSecrets}
+              setSecrets={updateSecrets}
               workspaceId={initialData.workspace.id}
             />
           </div>
