@@ -1,6 +1,6 @@
 # Performance telemetry
 
-Wallie uses Vercel Speed Insights for LCP, CLS, and INP and Vercel Web Analytics for six sampled interaction timings. Both integrations render only in production builds. Development and test runs neither load the production collectors nor emit custom events.
+Wallie uses Vercel Speed Insights for LCP, CLS, and INP and Vercel Web Analytics for six sampled interaction timings. Both integrations render only when Vercel identifies the deployment as production. Preview deployments, local production-mode benchmarks, development, and tests neither load the production collectors nor emit custom events.
 
 ## Privacy contract
 
@@ -24,7 +24,7 @@ Telemetry retention is 30 days. Raw event exports and secondary storage are proh
 
 ## Ownership and operations
 
-Performance/Infra owns the field allowlist, sampling, retention, Vercel project configuration, and quarterly privacy review. Product engineers own correct start/end placement at visible interaction boundaries. Access is limited to repository and Vercel project owners.
+Performance/Infra owns the field allowlist, sampling, retention, Vercel project configuration, and quarterly privacy review. Product engineers own correct start/end placement at visible interaction boundaries. Navigation timings finish from target-page client boundaries that mount with real content, not from pathname changes or loading skeletons. Access is limited to repository and Vercel project owners.
 
 Run `pnpm test:benchmark:interaction` against the fixed local Supabase seed to record request count, transferred bytes, click-to-visible-state for Pipeline → Sessions and Sessions → Detail, and the zero-idle-detail-prefetch assertion. The benchmark reports timings but deliberately has no millisecond threshold.
 

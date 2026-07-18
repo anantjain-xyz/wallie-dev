@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
+import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import {
   archiveSessionFromClient,
   isSessionPhaseMutationResult,
@@ -777,6 +778,7 @@ export function SessionDetailPageClient({
 
   return (
     <PageContainer>
+      <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-1.5">

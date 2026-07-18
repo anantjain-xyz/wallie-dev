@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { isProductionTelemetryEnabled } from "@/lib/telemetry/environment";
+import {
+  isProductionTelemetryEnabled,
+  PRODUCTION_TELEMETRY_MARKER_ID,
+} from "@/lib/telemetry/environment";
 import {
   buildInteractionPayload,
   chooseSessionSample,
@@ -68,10 +71,17 @@ describe("interaction RUM", () => {
     );
   });
 
-  it("disables production telemetry in development and test", () => {
-    expect(isProductionTelemetryEnabled("production")).toBe(true);
-    expect(isProductionTelemetryEnabled("development")).toBe(false);
-    expect(isProductionTelemetryEnabled("test")).toBe(false);
+  it("enables client emission only when the server rendered the production marker", () => {
+    const productionRoot = {
+      getElementById: vi.fn((id: string) =>
+        id === PRODUCTION_TELEMETRY_MARKER_ID ? ({} as HTMLElement) : null,
+      ),
+    };
+    const nonProductionRoot = { getElementById: vi.fn(() => null) };
+
+    expect(isProductionTelemetryEnabled(productionRoot)).toBe(true);
+    expect(isProductionTelemetryEnabled(nonProductionRoot)).toBe(false);
+    expect(isProductionTelemetryEnabled(null)).toBe(false);
   });
 
   it("classifies interaction paths without retaining identifiers", () => {

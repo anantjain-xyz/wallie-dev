@@ -151,14 +151,3 @@ export function finishInteraction(action: InteractionAction, outcome: Interactio
 
   return payload;
 }
-
-export function finishVisibleNavigation(pathname: string) {
-  if (pathname.endsWith("/sessions")) {
-    finishInteraction("pipeline_to_sessions", "success");
-    return;
-  }
-
-  if (/\/sessions\/[^/]+$/.test(pathname)) {
-    finishInteraction("sessions_to_detail", "success");
-  }
-}

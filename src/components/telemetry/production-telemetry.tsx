@@ -1,21 +1,20 @@
 "use client";
 
-import { Analytics, type BeforeSendEvent as AnalyticsEvent } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
-import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import type { BeforeSendEvent as AnalyticsEvent } from "@vercel/analytics/next";
+import dynamic from "next/dynamic";
 
-import { finishVisibleNavigation } from "@/lib/telemetry/interaction-rum";
 import { routeTemplateForPath, sanitizeTelemetryUrl } from "@/lib/telemetry/privacy";
 
+const Analytics = dynamic(
+  () => import("@vercel/analytics/next").then((module) => module.Analytics),
+  { ssr: false },
+);
+const SpeedInsights = dynamic(
+  () => import("@vercel/speed-insights/next").then((module) => module.SpeedInsights),
+  { ssr: false },
+);
+
 export function ProductionTelemetry() {
-  const pathname = usePathname();
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => finishVisibleNavigation(pathname ?? "/"));
-    return () => cancelAnimationFrame(frame);
-  }, [pathname]);
-
   return (
     <>
       <Analytics

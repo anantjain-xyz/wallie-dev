@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
+import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { PageContainer, PageHeader } from "@/components/ui/page-shell";
 import {
   archiveSessionFromClient,
@@ -197,6 +198,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   return (
     <PageContainer>
+      <VisibleInteractionBoundary action="pipeline_to_sessions" />
       <PageHeader title="Sessions" />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
