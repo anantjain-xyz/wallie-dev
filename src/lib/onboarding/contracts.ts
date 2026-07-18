@@ -112,13 +112,18 @@ export type OnboardingSetupHealth = {
     values: Partial<Record<AgentConfigKey, unknown>>;
   };
   codexConnection: {
+    accountEmail: string | null;
+    checkedAt: string;
     connected: boolean;
     credentialType: CodexCredentialType | null;
     expiresAt: string | null;
+    reconnectReason: string | null;
+    reconnectRequired: boolean;
     status: "connected" | "expired" | "missing";
     updatedAt: string | null;
   };
   claudeCodeConnection: {
+    checkedAt: string;
     connected: boolean;
     status: "connected" | "missing";
     updatedAt: string | null;
