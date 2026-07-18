@@ -4,7 +4,7 @@ import * as ToastPrimitive from "@radix-ui/react-toast";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { XIcon } from "@/components/shared/icons";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { useAnnouncementContainer, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 

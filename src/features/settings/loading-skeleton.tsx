@@ -2,20 +2,11 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 
 const anchorGroupSizes = [5, 1, 3, 3];
 
-const sectionSkeletons = [
-  { rows: 2 },
-  { rows: 3 },
-  { rows: 3 },
-  { rows: 2 },
-  { rows: 4 },
-  { rows: 3 },
-  { rows: 4 },
-  { rows: 2 },
-  { rows: 3 },
-  { rows: 2, withAvatar: true },
-  { rows: 3 },
-  { rows: 1, tone: "danger" },
-] satisfies { rows: number; tone?: "danger"; withAvatar?: boolean }[];
+const sectionSkeletons: {
+  rows: number;
+  tone?: "danger";
+  withAvatar?: boolean;
+}[] = [{ rows: 2 }, { rows: 3 }];
 
 function SettingsAnchorSkeleton() {
   return (
@@ -129,16 +120,9 @@ export function SettingsLoadingSkeleton() {
 }
 
 export function SettingsDeferredSectionsSkeleton() {
-  return (
-    <>
-      {sectionSkeletons.slice(1).map((section, index) => (
-        <SettingsSectionSkeleton
-          key={index}
-          rows={section.rows}
-          tone={section.tone}
-          withAvatar={section.withAvatar}
-        />
-      ))}
-    </>
-  );
+  const representativeSection = sectionSkeletons[1];
+
+  return representativeSection ? (
+    <SettingsSectionSkeleton rows={representativeSection.rows} />
+  ) : null;
 }

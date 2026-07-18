@@ -6,7 +6,7 @@ import {
   IssueInputMockup,
   PipelineProgressMockup,
 } from "@/components/landing/product-mockups";
-import { GitHubIcon } from "@/components/shared/icons";
+import { GitHubIcon } from "@/components/shared/icons/github-icon";
 
 const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
 const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";

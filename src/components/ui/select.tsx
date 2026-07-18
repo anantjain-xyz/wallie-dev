@@ -3,7 +3,8 @@
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { useId, useState, type ComponentProps, type ReactNode } from "react";
 
-import { CheckIcon, ChevronDownIcon } from "@/components/shared/icons";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { useModalOverlayContainer, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
