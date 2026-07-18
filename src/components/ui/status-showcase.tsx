@@ -29,7 +29,7 @@ export function StatusShowcase() {
   }, [theme]);
 
   return (
-    <main className="min-h-screen bg-background px-5 py-10 text-foreground sm:px-8">
+    <main className="min-h-screen bg-canvas px-5 py-10 text-foreground sm:px-8">
       <ColorVisionFilters />
       <div className="mx-auto max-w-5xl space-y-8">
         <header className="space-y-3">
@@ -43,7 +43,7 @@ export function StatusShowcase() {
           </p>
         </header>
 
-        <section aria-labelledby="conditions-heading" className="ui-panel p-5">
+        <section aria-labelledby="conditions-heading" className="ui-sheet p-5">
           <h2 className="text-base font-semibold" id="conditions-heading">
             Display conditions
           </h2>
@@ -91,7 +91,7 @@ export function StatusShowcase() {
         >
           <StatusFixtureSection compact={false} title="Default" />
           <StatusFixtureSection compact title="Compact" />
-          <section className="ui-panel p-5">
+          <section className="ui-sheet p-5">
             <h2 className="text-base font-semibold">Determinate progress</h2>
             <div className="mt-4 flex flex-wrap gap-3">
               <Status progress={0} value="queued" />
@@ -107,7 +107,7 @@ export function StatusShowcase() {
 
 function StatusFixtureSection({ compact, title }: { compact: boolean; title: string }) {
   return (
-    <section className="ui-panel p-5">
+    <section className="ui-sheet p-5">
       <h2 className="text-base font-semibold">{title}</h2>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         {STATUS_VALUES.map((value) => (
