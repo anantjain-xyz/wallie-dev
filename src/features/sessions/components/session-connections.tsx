@@ -8,12 +8,7 @@ import { cn } from "@/lib/utils";
 
 export type SessionConnectionPullRequest = Pick<
   SessionPullRequest,
-  | "id"
-  | "isDraft"
-  | "pullRequestNumber"
-  | "pullRequestState"
-  | "pullRequestUrl"
-  | "repositoryFullName"
+  "id" | "pullRequestNumber" | "pullRequestUrl"
 >;
 
 type SessionConnectionsProps = {
@@ -22,7 +17,6 @@ type SessionConnectionsProps = {
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   onRequestLinkLinear?: () => void;
-  pullRequestCount: number;
   pullRequests?: SessionConnectionPullRequest[];
   quiet?: boolean;
 };

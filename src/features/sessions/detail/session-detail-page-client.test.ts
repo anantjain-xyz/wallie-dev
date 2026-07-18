@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
-import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import type { SessionReviewData } from "@/features/sessions/detail/data";
 
 const mocked = vi.hoisted(() => ({
   refresh: vi.fn(),
@@ -23,19 +23,15 @@ vi.mock("@/features/wallie/session-wallie-panel", () => ({
   SessionWalliePanel: () => null,
 }));
 
-function makeSessionDetailData(): SessionDetailPageData {
+function makeSessionDetailData(): SessionReviewData {
   return {
-    currentMember: null,
-    members: [],
-    memberIndex: new Map(),
+    creatorDisplayName: null,
     session: {
       archivedAt: null,
       artifacts: [],
       createdAt: "2026-06-07T10:00:00.000Z",
       currentArtifactVersion: 1,
       currentStageId: "stage-1",
-      currentStageName: "Product",
-      currentStagePosition: 0,
       currentStageSlug: "product",
       id: "11111111-1111-4111-8111-111111111111",
       linearIssueId: null,
@@ -44,58 +40,22 @@ function makeSessionDetailData(): SessionDetailPageData {
       phaseCompletions: [],
       phaseStatus: "awaiting_review",
       pipeline: {
-        id: "pipeline-1",
-        isDefault: true,
-        name: "Default",
-        operatingRulesMd: "",
         stages: [
           {
-            approverMemberIds: [],
             description: "Define the product",
             id: "stage-1",
             name: "Product",
-            pipelineId: "pipeline-1",
             position: 0,
-            promptTemplateMd: "",
             slug: "product",
           },
         ],
       },
-      pipelineId: "pipeline-1",
       promptMd: "Build the title editor",
-      pullRequestCount: 0,
       pullRequests: [],
-      rejectionCount: 0,
       title: "Editable Session",
       updatedAt: "2026-06-07T11:00:00.000Z",
-      workspaceId: "22222222-2222-4222-8222-222222222222",
     },
-    sessionCreator: null,
-    sessionGithubRepositoryId: null,
-    wallie: {
-      blockingReasons: [],
-      canEnqueue: false,
-      loadedMessageRunIds: [],
-      missingSecretKeys: [],
-      mode: "code",
-      repository: null,
-      requiredSecretKeys: [],
-      requiresVercelSandbox: false,
-      runs: [],
-      vercelSandboxConnection: {
-        connected: false,
-        lastValidationError: null,
-        projectId: null,
-        projectName: null,
-        status: "missing",
-        teamId: null,
-      },
-    },
-    workspace: {
-      id: "22222222-2222-4222-8222-222222222222",
-      name: "Acme",
-      slug: "acme",
-    },
+    workspaceSlug: "acme",
   };
 }
 
@@ -103,6 +63,7 @@ describe("SessionDetailPageClient", () => {
   it("renders an accessible title edit affordance alongside the session title", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: makeSessionDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -118,6 +79,7 @@ describe("SessionDetailPageClient", () => {
   it("keeps the edit control outside the heading so the heading name is only the title", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: makeSessionDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -134,6 +96,7 @@ describe("SessionDetailPageClient", () => {
   it("folds the session number into the breadcrumb instead of an orphaned row", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: makeSessionDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -150,6 +113,7 @@ describe("SessionDetailPageClient", () => {
   it("renders a metadata row with created and updated times", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: makeSessionDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -167,6 +131,7 @@ describe("SessionDetailPageClient", () => {
     // timezone this test runs in (a local formatter would shift the hour/day).
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: makeSessionDetailData(),
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -178,19 +143,11 @@ describe("SessionDetailPageClient", () => {
 
   it("renders the session creator when present", () => {
     const data = makeSessionDetailData();
-    data.sessionCreator = {
-      avatarUrl: null,
-      fullName: "Ada Lovelace",
-      id: "creator-1",
-      isActive: true,
-      kind: "human",
-      role: "member",
-      userId: "user-1",
-      username: "ada",
-    };
+    data.creatorDisplayName = "Ada Lovelace";
 
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
+        activity: null,
         initialData: data,
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
@@ -198,5 +155,30 @@ describe("SessionDetailPageClient", () => {
     );
 
     expect(html).toContain("Ada Lovelace");
+  });
+
+  it("keeps the review surface rendered when activity reports a failure", () => {
+    const data = makeSessionDetailData();
+    data.session.artifacts = [
+      {
+        createdAt: "2026-06-07T10:30:00.000Z",
+        payload: "# Rendered artifact",
+        stageSlug: "product",
+        version: 1,
+      },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(SessionDetailPageClient, {
+        activity: createElement("div", null, "Run activity is temporarily unavailable"),
+        initialData: data,
+        initialFormattedArtifact: createElement("article", null, "Rendered artifact"),
+        initialFormattedArtifactKey: "11111111-1111-4111-8111-111111111111:product:1",
+      }),
+    );
+
+    expect(html).toContain("Editable Session");
+    expect(html).toContain("Product artifact");
+    expect(html).toContain("Rendered artifact");
+    expect(html).toContain("Run activity is temporarily unavailable");
   });
 });

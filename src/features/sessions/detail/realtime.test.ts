@@ -5,16 +5,14 @@ import {
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
 } from "@/features/sessions/detail/realtime";
-import type { SessionDetail } from "@/features/sessions/types";
+import type { SessionReviewSession } from "@/features/sessions/detail/data";
 
-const baseSession: SessionDetail = {
+const baseSession: SessionReviewSession = {
   archivedAt: null,
   artifacts: [],
   createdAt: "2026-05-21T13:00:00.000Z",
   currentArtifactVersion: 0,
   currentStageId: "stage-product",
-  currentStageName: "Product",
-  currentStagePosition: 1,
   currentStageSlug: "product",
   id: "sess-1",
   linearIssueId: null,
@@ -23,41 +21,27 @@ const baseSession: SessionDetail = {
   phaseCompletions: [],
   phaseStatus: "agent_generating",
   pipeline: {
-    id: "pipe-1",
-    isDefault: true,
-    name: "Default",
-    operatingRulesMd: "",
     stages: [
       {
-        approverMemberIds: [],
         description: "Product work",
         id: "stage-product",
         name: "Product",
-        pipelineId: "pipe-1",
         position: 1,
-        promptTemplateMd: "",
         slug: "product",
       },
       {
-        approverMemberIds: [],
         description: "Design work",
         id: "stage-design",
         name: "Design",
-        pipelineId: "pipe-1",
         position: 2,
-        promptTemplateMd: "",
         slug: "design",
       },
     ],
   },
-  pipelineId: "pipe-1",
   promptMd: "Build realtime updates",
-  pullRequestCount: 0,
   pullRequests: [],
-  rejectionCount: 0,
   title: "Realtime updates",
   updatedAt: "2026-05-21T13:00:00.000Z",
-  workspaceId: "ws-1",
 };
 
 describe("session detail realtime helpers", () => {
@@ -72,16 +56,12 @@ describe("session detail realtime helpers", () => {
       linear_issue_url: "https://linear.app/acme/issue/WAL-12",
       number: 7,
       phase_status: "awaiting_review",
-      pipeline_id: "pipe-1",
       prompt_md: baseSession.promptMd,
-      rejection_count: 1,
       title: "Realtime updates v2",
       updated_at: "2026-05-21T13:05:00.000Z",
-      workspace_id: "ws-1",
     });
 
     expect(next.currentStageId).toBe("stage-design");
-    expect(next.currentStageName).toBe("Design");
     expect(next.currentStageSlug).toBe("design");
     expect(next.currentArtifactVersion).toBe(1);
     expect(next.phaseStatus).toBe("awaiting_review");
