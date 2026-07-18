@@ -5,6 +5,7 @@ type EmailMagicLinkFormProps = {
   errorMessage?: string | null;
   inputClassName?: string;
   next: string;
+  statusMessage?: string | null;
   submitClassName?: string;
   submitLabel?: string;
   variant?: "inline" | "stacked";
@@ -15,6 +16,7 @@ export function EmailMagicLinkForm({
   errorMessage,
   inputClassName,
   next,
+  statusMessage,
   submitClassName,
   submitLabel = "Send magic link",
   variant = "stacked",
@@ -27,7 +29,13 @@ export function EmailMagicLinkForm({
       className={
         className ?? (isInline ? "flex flex-col gap-2 sm:flex-row sm:items-center" : "space-y-3")
       }
-      feedback={errorMessage ? { kind: "error", message: errorMessage } : null}
+      feedback={
+        errorMessage
+          ? { kind: "error", message: errorMessage }
+          : statusMessage
+            ? { kind: "status", message: statusMessage }
+            : null
+      }
       pendingLabel="Sending secure sign-in email…"
       submitClassName={
         submitClassName ??

@@ -46,7 +46,14 @@ export function AuthForm({
       className={className}
       aria-busy={pending}
       aria-labelledby={ariaLabelledBy}
-      onSubmit={() => setPending(true)}
+      onSubmit={(event) => {
+        if (pending) {
+          event.preventDefault();
+          return;
+        }
+
+        setPending(true);
+      }}
     >
       {feedback ? (
         <div
@@ -63,9 +70,14 @@ export function AuthForm({
         </div>
       ) : null}
 
-      <fieldset disabled={pending} className="contents">
+      <fieldset className="contents">
         {children}
-        <button type="submit" className={submitClassName} aria-describedby={pendingStatusId}>
+        <button
+          type="submit"
+          className={submitClassName}
+          aria-describedby={pendingStatusId}
+          disabled={pending}
+        >
           {pending ? pendingLabel : submitLabel}
         </button>
       </fieldset>

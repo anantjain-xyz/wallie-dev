@@ -96,6 +96,15 @@ describe("AuthEntryPanel", () => {
     expect(html).not.toContain("owner@example.com");
   });
 
+  it("keeps check-email guidance visible when the continuation cookie is absent", () => {
+    const html = renderPanel({ statusCode: "check_email" });
+
+    expect(html).toContain("Check your inbox for a secure sign-in link or six-digit code.");
+    expect(html).toContain('role="status"');
+    expect(html).toContain('name="email"');
+    expect(html).not.toContain('name="tokenDigit"');
+  });
+
   it("keeps the email code form visible for failed code retries", () => {
     const html = renderPanel({
       canUseEmailCode: true,

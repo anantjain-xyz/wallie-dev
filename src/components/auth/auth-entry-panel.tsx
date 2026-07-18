@@ -51,6 +51,7 @@ export function AuthEntryPanel({
     (statusCode === "check_email" || (errorCode ? emailCodeFallbackErrors.has(errorCode) : false));
   const requestAnotherCodeHref = loginPath(next);
   const emailErrorMessage = errorCode === "password_auth_failed" ? null : errorMessage;
+  const emailStatusMessage = showEmailCodeForm ? null : statusMessage;
   const codeFeedback = errorMessage
     ? { kind: "error" as const, message: errorMessage }
     : statusMessage
@@ -77,7 +78,11 @@ export function AuthEntryPanel({
                 Recommended
               </span>
             </div>
-            <EmailMagicLinkForm errorMessage={emailErrorMessage} next={next} />
+            <EmailMagicLinkForm
+              errorMessage={emailErrorMessage}
+              next={next}
+              statusMessage={emailStatusMessage}
+            />
             <p className="mt-3 text-xs leading-5 text-muted">
               We’ll email a secure link and a six-digit code. No password required.
             </p>

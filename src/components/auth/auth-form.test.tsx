@@ -19,12 +19,16 @@ describe("AuthForm", () => {
       </AuthForm>,
     );
 
-    fireEvent.submit(container.querySelector("form")!);
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
 
     const button = screen.getByRole("button", { name: "Sending secure sign-in email…" });
-    expect((button.closest("fieldset") as HTMLFieldSetElement).disabled).toBe(true);
+    expect((button.closest("fieldset") as HTMLFieldSetElement).disabled).toBe(false);
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(new FormData(form).get("email")).toBe("owner@example.com");
     expect(screen.getByRole("status").textContent).toBe("Sending secure sign-in email…");
     expect(container.querySelector("form")?.getAttribute("aria-busy")).toBe("true");
+    expect(fireEvent.submit(form)).toBe(false);
   });
 
   it("focuses an actionable error summary for retry", async () => {
