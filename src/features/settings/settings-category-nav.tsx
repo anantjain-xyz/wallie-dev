@@ -14,24 +14,34 @@ type SettingsCategoryNavProps = {
   workspaceSlug: string;
 };
 
-const HASH_CATEGORIES: Record<string, SettingsCategory> = {
-  "cloud-execution": "advanced",
-  "coding-agent": "integrations",
-  "danger-zone": "workspace",
-  github: "integrations",
-  linear: "integrations",
-  "linear-routing": "integrations",
-  members: "workspace",
-  pipeline: "pipeline",
-  "rate-limits": "advanced",
-  repository: "integrations",
-  runtime: "integrations",
-  secrets: "integrations",
-  usage: "advanced",
-  vercel: "integrations",
-  verify: "advanced",
-  workspace: "workspace",
+type SettingsHashRoute = {
+  anchor: string;
+  category: SettingsCategory;
 };
+
+const HASH_ROUTES: Record<string, SettingsHashRoute> = {
+  "cloud-execution": { anchor: "verify", category: "advanced" },
+  "coding-agent": { anchor: "runtime", category: "integrations" },
+  "danger-zone": { anchor: "danger-zone", category: "workspace" },
+  github: { anchor: "github", category: "integrations" },
+  linear: { anchor: "linear", category: "integrations" },
+  "linear-routing": { anchor: "linear", category: "integrations" },
+  members: { anchor: "members", category: "workspace" },
+  pipeline: { anchor: "pipeline", category: "pipeline" },
+  "rate-limits": { anchor: "rate-limits", category: "advanced" },
+  repository: { anchor: "repository", category: "integrations" },
+  runtime: { anchor: "runtime", category: "integrations" },
+  secrets: { anchor: "runtime", category: "integrations" },
+  usage: { anchor: "usage", category: "advanced" },
+  vercel: { anchor: "vercel", category: "integrations" },
+  verify: { anchor: "verify", category: "advanced" },
+  workspace: { anchor: "workspace", category: "workspace" },
+};
+
+export function resolveSettingsHashRoute(hash: string): SettingsHashRoute | null {
+  const anchorId = hash.replace(/^#/u, "");
+  return HASH_ROUTES[anchorId] ?? null;
+}
 
 export function preloadSettingsCategory(category: SettingsCategory) {
   switch (category) {
@@ -58,12 +68,24 @@ export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsC
   const search = useSearchParams().toString();
 
   useEffect(() => {
-    const hash = window.location.hash.replace(/^#/u, "");
-    const hashCategory = HASH_CATEGORIES[hash];
-    if (!hashCategory || hashCategory === activeCategory) return;
-    const next = new URLSearchParams(search);
-    next.set("category", hashCategory);
-    router.replace(`${pathname}?${next.toString()}#${hash}`);
+    function routeHash() {
+      const hash = window.location.hash.replace(/^#/u, "");
+      const route = resolveSettingsHashRoute(hash);
+      if (!route) return;
+
+      const needsCategoryChange = route.category !== activeCategory;
+      const needsAnchorRewrite = route.anchor !== hash;
+      if (!needsCategoryChange && !needsAnchorRewrite) return;
+
+      const next = new URLSearchParams(search);
+      next.set("category", route.category);
+      const query = next.toString();
+      router.replace(`${pathname}?${query}#${route.anchor}`);
+    }
+
+    routeHash();
+    window.addEventListener("hashchange", routeHash);
+    return () => window.removeEventListener("hashchange", routeHash);
   }, [activeCategory, pathname, router, search]);
 
   return (
