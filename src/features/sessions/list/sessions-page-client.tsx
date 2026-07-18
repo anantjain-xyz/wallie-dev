@@ -8,6 +8,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { CommandBar, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -218,6 +219,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   return (
     <PageContainer>
+      <VisibleInteractionBoundary action="pipeline_to_sessions" />
       <PageHeader title="Sessions" />
 
       <CommandBar className="mb-6">
@@ -528,6 +530,7 @@ function SessionRow({
     <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center">
       <SessionDetailLink
         href={detailHref}
+        trackSessionsToDetail
         className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
       >
         <span className="sr-only">
