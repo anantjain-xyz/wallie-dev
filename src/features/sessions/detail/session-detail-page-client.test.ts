@@ -2,7 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
+import {
+  reconcilePhaseMutationResult,
+  SessionDetailPageClient,
+} from "@/features/sessions/detail/session-detail-page-client";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 
 const mocked = vi.hoisted(() => ({
@@ -60,6 +63,33 @@ function makeSessionDetailData(): SessionReviewData {
 }
 
 describe("SessionDetailPageClient", () => {
+  it("merges an authoritative stage snapshot that was absent from the initial pipeline", () => {
+    const data = makeSessionDetailData();
+
+    const next = reconcilePhaseMutationResult(data.session, {
+      archivedAt: null,
+      artifactVersion: 0,
+      currentStage: {
+        description: "A stage added while the detail page was open",
+        id: "stage-2",
+        name: "Build",
+        position: 1,
+        slug: "build",
+      },
+      currentStageId: "stage-2",
+      id: data.session.id,
+      phaseStatus: "agent_generating",
+      rejectionCount: 0,
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+
+    expect(next.currentStageId).toBe("stage-2");
+    expect(next.currentStageSlug).toBe("build");
+    expect(next.pipeline.stages).toContainEqual(
+      expect.objectContaining({ id: "stage-2", slug: "build" }),
+    );
+  });
+
   it("renders an accessible title edit affordance alongside the session title", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {

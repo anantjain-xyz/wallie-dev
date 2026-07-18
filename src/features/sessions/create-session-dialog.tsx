@@ -14,7 +14,6 @@ import {
   type SessionRepositorySnapshot,
 } from "@/features/sessions/session-repository-cache";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
-import { workspaceSessionDetailPath } from "@/lib/routes";
 import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 
 type CreateSessionDialogProps = {
@@ -68,12 +67,7 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
   return <CreateSessionDialogBody {...props} />;
 }
 
-function CreateSessionDialogBody({
-  onClose,
-  userId,
-  workspaceId,
-  workspaceSlug,
-}: CreateSessionDialogProps) {
+function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSessionDialogProps) {
   const router = useRouter();
 
   useEffect(() => {
@@ -157,8 +151,7 @@ function CreateSessionDialogBody({
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
       onClose();
-      router.push(workspaceSessionDetailPath(workspaceSlug, result.number));
-      router.refresh();
+      router.push(result.canonicalUrl);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
       setIsSubmitting(false);
