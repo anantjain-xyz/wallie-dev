@@ -55,6 +55,7 @@ test("title and archive state render before their delayed responses", async ({ p
         archivedAt: "2026-07-17T20:01:00.000Z",
         id: "a2b2c3d4-0001-4000-8000-000000000001",
         phaseStatus: "awaiting_review",
+        updatedAt: "2026-07-17T20:01:00.000Z",
       },
     });
   });
@@ -76,14 +77,13 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
     await route.fulfill({
       contentType: "application/json",
       json: {
-        session: {
-          archivedAt: null,
-          currentArtifactVersion: 0,
-          currentStageId: "synthetic-next-stage",
-          phaseStatus: "agent_generating",
-          rejectionCount: 0,
-        },
-        success: true,
+        archivedAt: null,
+        artifactVersion: 0,
+        currentStageId: "synthetic-next-stage",
+        id: "a2b2c3d4-0001-4000-8000-000000000001",
+        phaseStatus: "agent_generating",
+        rejectionCount: 0,
+        updatedAt: "2026-07-17T20:02:00.000Z",
       },
     });
   });
@@ -102,14 +102,13 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
     await route.fulfill({
       contentType: "application/json",
       json: {
-        session: {
-          archivedAt: null,
-          currentArtifactVersion: 1,
-          currentStageId: "synthetic-current-stage",
-          phaseStatus: "rejected",
-          rejectionCount: 1,
-        },
-        success: true,
+        archivedAt: null,
+        artifactVersion: 1,
+        currentStageId: "synthetic-current-stage",
+        id: "a2b2c3d4-0003-4000-8000-000000000003",
+        phaseStatus: "rejected",
+        rejectionCount: 1,
+        updatedAt: "2026-07-17T20:03:00.000Z",
       },
     });
   });

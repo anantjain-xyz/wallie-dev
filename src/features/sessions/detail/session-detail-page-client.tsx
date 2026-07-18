@@ -225,6 +225,7 @@ export function SessionDetailPageClient({
     (session.phaseStatus === "awaiting_review" || phaseActionPending !== null) &&
     !session.archivedAt;
   const phaseActionBusy = phaseActionPending !== null;
+  const canStopRun = isDraftingSelectedStage && !phaseActionBusy;
 
   useEffect(() => {
     setSession(initialData.session);
@@ -510,6 +511,7 @@ export function SessionDetailPageClient({
   }
 
   async function handleStopRun() {
+    if (phaseActionPending !== null || stopPending) return;
     setActionError(null);
     setStopPending(true);
     const optimisticPatch: SessionMutationPatch = { phaseStatus: "rejected" };
@@ -571,9 +573,10 @@ export function SessionDetailPageClient({
         mutate: () => archiveSessionFromClient({ sessionId: session.id }),
         commit: (result) =>
           setSession((current) =>
-            applySessionMutationPatch(current, {
+            reconcileSessionMutationPatch(current, {
               archivedAt: result.archivedAt,
               phaseStatus: result.phaseStatus,
+              updatedAt: result.updatedAt,
             }),
           ),
         rollback: () =>
@@ -605,9 +608,10 @@ export function SessionDetailPageClient({
         mutate: () => unarchiveSessionFromClient({ sessionId: session.id }),
         commit: (result) =>
           setSession((current) =>
-            applySessionMutationPatch(current, {
+            reconcileSessionMutationPatch(current, {
               archivedAt: result.archivedAt,
               phaseStatus: result.phaseStatus,
+              updatedAt: result.updatedAt,
             }),
           ),
         rollback: () =>
@@ -824,7 +828,7 @@ export function SessionDetailPageClient({
             />
           </div>
 
-          {isDraftingSelectedStage ? (
+          {canStopRun ? (
             <div className="border-t border-border bg-surface-muted p-4">
               {actionError ? (
                 <div

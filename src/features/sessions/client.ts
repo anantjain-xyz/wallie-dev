@@ -26,6 +26,7 @@ export type SessionArchiveResult = {
   archivedAt: string | null;
   id: string;
   phaseStatus: "agent_generating" | "approved" | "awaiting_review" | "rejected";
+  updatedAt: string;
 };
 
 export type SessionRepositoryOptionsResult = {
@@ -150,13 +151,18 @@ async function mutateSessionArchive(
     error?: string;
     id?: string;
     phaseStatus?: SessionArchiveResult["phaseStatus"];
+    updatedAt?: string;
   } | null;
 
   if (!response.ok) {
     throw new Error(responsePayload?.error ?? fallbackError);
   }
 
-  if (typeof responsePayload?.id !== "string" || typeof responsePayload.phaseStatus !== "string") {
+  if (
+    typeof responsePayload?.id !== "string" ||
+    typeof responsePayload.phaseStatus !== "string" ||
+    typeof responsePayload.updatedAt !== "string"
+  ) {
     throw new Error("Session archive response was invalid.");
   }
 
@@ -164,6 +170,7 @@ async function mutateSessionArchive(
     archivedAt: responsePayload.archivedAt ?? null,
     id: responsePayload.id,
     phaseStatus: responsePayload.phaseStatus,
+    updatedAt: responsePayload.updatedAt,
   };
 }
 

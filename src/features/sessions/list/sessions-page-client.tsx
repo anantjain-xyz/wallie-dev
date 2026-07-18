@@ -71,7 +71,7 @@ export function commitListTitle(
 ) {
   return sessions
     .map((session) =>
-      session.id === result.id
+      session.id === result.id && result.updatedAt >= session.updatedAt
         ? { ...session, title: result.title, updatedAt: result.updatedAt }
         : session,
     )
@@ -85,19 +85,26 @@ export function commitListArchive(
     archivedAt: string | null;
     id: string;
     phaseStatus: SessionListItem["phaseStatus"];
+    updatedAt: string;
   },
 ) {
   return sessions
     .map((session) =>
-      session.id === result.id
-        ? { ...session, archivedAt: result.archivedAt, phaseStatus: result.phaseStatus }
+      session.id === result.id && result.updatedAt >= session.updatedAt
+        ? {
+            ...session,
+            archivedAt: result.archivedAt,
+            phaseStatus: result.phaseStatus,
+            updatedAt: result.updatedAt,
+          }
         : session,
     )
     .filter(
       (session) =>
         (scope !== "active" || !session.archivedAt) &&
         (scope !== "archived" || Boolean(session.archivedAt)),
-    );
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
@@ -112,6 +119,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
             archivedAt: string | null;
             id: string;
             phaseStatus: SessionListItem["phaseStatus"];
+            updatedAt: string;
           };
         }
       | { kind: "title"; result: { id: string; title: string; updatedAt: string } }
@@ -159,6 +167,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
     archivedAt: string | null;
     id: string;
     phaseStatus: SessionListItem["phaseStatus"];
+    updatedAt: string;
   }) {
     setCommittedMutations((current) => [...current, { kind: "archive", result }]);
   }
@@ -306,6 +315,7 @@ function SessionRow({
     archivedAt: string | null;
     id: string;
     phaseStatus: SessionListItem["phaseStatus"];
+    updatedAt: string;
   }) => void;
   onTitleCommitted: (result: { id: string; title: string; updatedAt: string }) => void;
   scope: SessionFilterKey;
@@ -315,8 +325,10 @@ function SessionRow({
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
   const [displayTitle, setDisplayTitle] = useState(session.title);
   const [draftTitle, setDraftTitle] = useState(session.title);
-  const [archivedAt, setArchivedAt] = useState(session.archivedAt);
-  const [phaseStatus, setPhaseStatus] = useState(session.phaseStatus);
+  const [optimisticArchive, setOptimisticArchive] = useState<{
+    archivedAt: string | null;
+    phaseStatus: SessionListItem["phaseStatus"];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -326,6 +338,8 @@ function SessionRow({
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const previousSessionTitleRef = useRef(session.title);
 
+  const archivedAt = optimisticArchive ? optimisticArchive.archivedAt : session.archivedAt;
+  const phaseStatus = optimisticArchive ? optimisticArchive.phaseStatus : session.phaseStatus;
   const isArchived = Boolean(archivedAt);
   const archiveActionLabel = archivePending
     ? archivePending === "archive"
@@ -338,30 +352,27 @@ function SessionRow({
   async function toggleArchive() {
     if (archivePending) return;
     const action = isArchived ? "unarchive" : "archive";
-    const previousArchivedAt = archivedAt;
-    const previousPhaseStatus = phaseStatus;
     setArchivePending(action);
     setArchiveError(null);
-    setArchivedAt(isArchived ? null : new Date().toISOString());
-    if (!isArchived && phaseStatus === "agent_generating") setPhaseStatus("rejected");
+    setOptimisticArchive({
+      archivedAt: isArchived ? null : new Date().toISOString(),
+      phaseStatus: !isArchived && phaseStatus === "agent_generating" ? "rejected" : phaseStatus,
+    });
 
     try {
       const result = isArchived
         ? await unarchiveSessionFromClient({ sessionId: session.id })
         : await archiveSessionFromClient({ sessionId: session.id });
-      setArchivedAt(result.archivedAt);
-      setPhaseStatus(result.phaseStatus);
       setArchiveConfirming(false);
       onArchiveCommitted(result);
     } catch (errorValue) {
-      setArchivedAt(previousArchivedAt);
-      setPhaseStatus(previousPhaseStatus);
       setArchiveError(
         errorValue instanceof Error
           ? errorValue.message
           : `Failed to ${archiveActionLabel.toLowerCase()} session.`,
       );
     } finally {
+      setOptimisticArchive(null);
       setArchivePending(null);
     }
   }

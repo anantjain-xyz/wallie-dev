@@ -72,8 +72,8 @@ export async function POST(_request: Request, { params }: Params) {
   return NextResponse.json({
     archivedAt: result.archivedAt,
     id: result.id,
-    phaseStatus:
-      resolved.row.phase_status === "agent_generating" ? "rejected" : resolved.row.phase_status,
+    phaseStatus: result.phaseStatus,
+    updatedAt: result.updatedAt,
   });
 }
 
@@ -99,6 +99,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   return NextResponse.json({
     archivedAt: result.archivedAt,
     id: result.id,
-    phaseStatus: resolved.row.phase_status,
+    phaseStatus: result.phaseStatus,
+    updatedAt: result.updatedAt,
   });
 }

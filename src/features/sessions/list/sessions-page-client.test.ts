@@ -215,6 +215,21 @@ describe("session list mutation reconciliation", () => {
     });
   });
 
+  it("does not replay a stale committed title over newer server data", () => {
+    const fresh = makeSession({
+      title: "Newer server title",
+      updatedAt: "2026-06-07T13:00:00.000Z",
+    });
+
+    expect(
+      commitListTitle([fresh], {
+        id: fresh.id,
+        title: "Older committed title",
+        updatedAt: "2026-06-07T12:00:00.000Z",
+      }),
+    ).toEqual([fresh]);
+  });
+
   it("removes archive changes that no longer match the server-backed scope", () => {
     const active = makeSession({ id: "active" });
     const archived = makeSession({ archivedAt: "2026-06-07T09:00:00.000Z", id: "archived" });
@@ -224,6 +239,7 @@ describe("session list mutation reconciliation", () => {
         archivedAt: "2026-06-07T12:00:00.000Z",
         id: active.id,
         phaseStatus: active.phaseStatus,
+        updatedAt: "2026-06-07T12:00:00.000Z",
       }),
     ).toEqual([]);
     expect(
@@ -231,7 +247,43 @@ describe("session list mutation reconciliation", () => {
         archivedAt: null,
         id: archived.id,
         phaseStatus: archived.phaseStatus,
+        updatedAt: "2026-06-07T12:00:00.000Z",
       }),
     ).toEqual([]);
+  });
+
+  it("uses authoritative archive timestamps without regressing fresher rows", () => {
+    const stale = makeSession({
+      archivedAt: null,
+      id: "stale",
+      updatedAt: "2026-06-07T10:00:00.000Z",
+    });
+    const fresh = makeSession({
+      archivedAt: null,
+      id: "fresh",
+      updatedAt: "2026-06-07T13:00:00.000Z",
+    });
+
+    const result = commitListArchive([fresh, stale], "all", {
+      archivedAt: "2026-06-07T12:00:00.000Z",
+      id: stale.id,
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+    expect(result.map((session) => session.id)).toEqual(["fresh", "stale"]);
+    expect(result[1]).toMatchObject({
+      archivedAt: "2026-06-07T12:00:00.000Z",
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+
+    expect(
+      commitListArchive([fresh], "all", {
+        archivedAt: "2026-06-07T12:00:00.000Z",
+        id: fresh.id,
+        phaseStatus: "rejected",
+        updatedAt: "2026-06-07T12:00:00.000Z",
+      }),
+    ).toEqual([fresh]);
   });
 });

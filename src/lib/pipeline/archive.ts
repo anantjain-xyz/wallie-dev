@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -8,6 +9,8 @@ type AdminClient = SupabaseClient<Database>;
 export type SessionArchiveState = {
   archivedAt: string | null;
   id: string;
+  phaseStatus: PipelinePhaseStatus;
+  updatedAt: string;
 };
 
 /**
@@ -36,12 +39,12 @@ export async function archiveSession(
   // job/run in the window before the marker lands — work this call would never
   // cancel. The processor's claim CAS is also archive-aware, so anything that
   // still slips in before the marker cannot execute.
-  const { data, error } = await admin
+  const { error } = await admin
     .from("sessions")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", input.sessionId)
     .is("archived_at", null)
-    .select("id, archived_at")
+    .select("id")
     .maybeSingle();
 
   if (error) {
@@ -60,13 +63,10 @@ export async function archiveSession(
     sessionId: input.sessionId,
   });
 
-  // No row matched ⇒ the session was already archived. Read the current state
-  // so the caller still gets the id + archived_at to echo back.
-  if (!data) {
-    return readSessionArchiveState(admin, input.sessionId);
-  }
-
-  return { archivedAt: data.archived_at, id: data.id };
+  // Cancellation can change phase_status after archived_at is written. Always
+  // reload after it settles so callers receive one authoritative final row,
+  // including updated_at for timestamp-aware client reconciliation.
+  return readSessionArchiveState(admin, input.sessionId);
 }
 
 /**
@@ -80,23 +80,19 @@ export async function unarchiveSession(
   admin: AdminClient,
   input: { sessionId: string },
 ): Promise<SessionArchiveState> {
-  const { data, error } = await admin
+  const { error } = await admin
     .from("sessions")
     .update({ archived_at: null })
     .eq("id", input.sessionId)
     .not("archived_at", "is", null)
-    .select("id, archived_at")
+    .select("id")
     .maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  if (!data) {
-    return readSessionArchiveState(admin, input.sessionId);
-  }
-
-  return { archivedAt: data.archived_at, id: data.id };
+  return readSessionArchiveState(admin, input.sessionId);
 }
 
 async function readSessionArchiveState(
@@ -105,7 +101,7 @@ async function readSessionArchiveState(
 ): Promise<SessionArchiveState> {
   const { data, error } = await admin
     .from("sessions")
-    .select("id, archived_at")
+    .select("id, archived_at, phase_status, updated_at")
     .eq("id", sessionId)
     .single();
 
@@ -113,5 +109,10 @@ async function readSessionArchiveState(
     throw error;
   }
 
-  return { archivedAt: data.archived_at, id: data.id };
+  return {
+    archivedAt: data.archived_at,
+    id: data.id,
+    phaseStatus: data.phase_status,
+    updatedAt: data.updated_at,
+  };
 }
