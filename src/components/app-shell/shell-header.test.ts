@@ -36,9 +36,9 @@ describe("ShellHeader", () => {
     const html = renderToStaticMarkup(
       createElement(ShellHeader, {
         navItems,
-        defaultSessionGithubRepositoryId: "repo-1",
         onboarding: { currentStep: "repository", status: "in_progress" },
         viewerEmail: "owner@example.com",
+        viewerId: "user-1",
         workspace,
         workspaceAvatarUrl: null,
       }),
@@ -56,9 +56,9 @@ describe("ShellHeader", () => {
     const html = renderToStaticMarkup(
       createElement(ShellHeader, {
         navItems,
-        defaultSessionGithubRepositoryId: "repo-1",
         onboarding: { currentStep: "verify", status: "completed" },
         viewerEmail: "owner@example.com",
+        viewerId: "user-1",
         workspace,
         workspaceAvatarUrl: null,
       }),
@@ -73,9 +73,9 @@ describe("ShellHeader", () => {
     const html = renderToStaticMarkup(
       createElement(ShellHeader, {
         navItems,
-        defaultSessionGithubRepositoryId: null,
         onboarding: { currentStep: "verify", status: "completed" },
         viewerEmail: "owner@example.com",
+        viewerId: "user-1",
         workspace,
         workspaceAvatarUrl: null,
       }),
@@ -90,9 +90,9 @@ describe("ShellHeader", () => {
     const html = renderToStaticMarkup(
       createElement(ShellHeader, {
         navItems,
-        defaultSessionGithubRepositoryId: null,
         onboarding: { currentStep: "verify", status: "completed" },
         viewerEmail: "owner@example.com",
+        viewerId: "user-1",
         workspace,
         workspaceAvatarUrl: null,
       }),
@@ -108,9 +108,9 @@ describe("ShellHeader", () => {
     const html = renderToStaticMarkup(
       createElement(ShellHeader, {
         navItems,
-        defaultSessionGithubRepositoryId: null,
         onboarding: { currentStep: "verify", status: "completed" },
         viewerEmail: "owner@example.com",
+        viewerId: "user-1",
         workspace,
         workspaceAvatarUrl: null,
       }),
@@ -132,28 +132,58 @@ describe("create-session dialog loading", () => {
   });
 
   it("deduplicates preloads for one shell mount", () => {
-    const started = { current: false };
-    const load = vi.fn(async () => undefined);
+    const startedKey = { current: null };
+    const preloadSessionRepositories = vi.fn(async () => ({
+      defaultGithubRepositoryId: null,
+      repositoryOptions: [],
+    }));
+    const load = vi.fn(async () => ({ preloadSessionRepositories }));
+    const input = { userId: "user-1", workspaceId: "workspace-1" };
 
-    preloadCreateSessionDialogOnce(started, load);
-    preloadCreateSessionDialogOnce(started, load);
+    preloadCreateSessionDialogOnce(startedKey, input, load);
+    preloadCreateSessionDialogOnce(startedKey, input, load);
 
     expect(load).toHaveBeenCalledTimes(1);
+    return vi.waitFor(() => expect(preloadSessionRepositories).toHaveBeenCalledWith(input));
   });
 
   it("resets the guard so a failed preload can retry", async () => {
-    const started = { current: false };
-    const load = vi.fn(async () => {
-      throw new Error("chunk failed");
+    const startedKey = { current: null };
+    const preloadSessionRepositories = vi.fn(async () => {
+      throw new Error("repositories failed");
     });
+    const load = vi.fn(async () => ({ preloadSessionRepositories }));
+    const input = { userId: "user-1", workspaceId: "workspace-1" };
 
-    preloadCreateSessionDialogOnce(started, load);
-    await Promise.resolve();
-    await Promise.resolve();
+    preloadCreateSessionDialogOnce(startedKey, input, load);
+    await vi.waitFor(() => expect(startedKey.current).toBeNull());
 
-    preloadCreateSessionDialogOnce(started, load);
+    preloadCreateSessionDialogOnce(startedKey, input, load);
 
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a separate preload after the workspace changes", async () => {
+    const startedKey = { current: null };
+    const preloadSessionRepositories = vi.fn(async () => ({
+      defaultGithubRepositoryId: null,
+      repositoryOptions: [],
+    }));
+    const load = vi.fn(async () => ({ preloadSessionRepositories }));
+
+    preloadCreateSessionDialogOnce(
+      startedKey,
+      { userId: "user-1", workspaceId: "workspace-1" },
+      load,
+    );
+    preloadCreateSessionDialogOnce(
+      startedKey,
+      { userId: "user-1", workspaceId: "workspace-2" },
+      load,
+    );
+
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(preloadSessionRepositories).toHaveBeenCalledTimes(2));
   });
 });
 

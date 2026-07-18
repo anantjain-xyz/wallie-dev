@@ -2,15 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   loadAuthenticatedWorkspaceContext: vi.fn(),
-  loadDefaultSessionRepositoryId: vi.fn(),
 }));
 
 vi.mock("@/features/workspaces/authenticated-context", () => ({
   loadAuthenticatedWorkspaceContext: mocked.loadAuthenticatedWorkspaceContext,
-}));
-
-vi.mock("@/features/sessions/repository-options", () => ({
-  loadDefaultSessionRepositoryId: mocked.loadDefaultSessionRepositoryId,
 }));
 
 vi.mock("@/lib/storage/workspace-avatar", () => ({
@@ -30,11 +25,9 @@ const workspace = {
 function buildSupabaseMock(
   onboardingRow: {
     current_step: string;
-    selected_github_repository_id?: string | null;
     status: string;
   } | null = {
     current_step: "github",
-    selected_github_repository_id: null,
     status: "dismissed",
   },
 ) {
@@ -58,12 +51,13 @@ function buildSupabaseMock(
 describe("loadWorkspaceLayoutContext", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("returns lightweight shell context without repository picker options", async () => {
     const supabase = buildSupabaseMock({
       current_step: "repository",
-      selected_github_repository_id: "repo-b",
       status: "in_progress",
     });
     mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
@@ -71,24 +65,18 @@ describe("loadWorkspaceLayoutContext", () => {
       user,
       workspace,
     });
-    mocked.loadDefaultSessionRepositoryId.mockResolvedValue("repo-a");
-
     await expect(loadWorkspaceLayoutContext("member-access")).resolves.toEqual({
       onboarding: {
         currentStep: "repository",
         status: "in_progress",
       },
-      defaultSessionGithubRepositoryId: "repo-a",
       supabase,
       user,
       workspace,
       workspaceAvatarUrl: null,
     });
-    expect(mocked.loadDefaultSessionRepositoryId).toHaveBeenCalledWith({
-      selectedRepositoryId: "repo-b",
-      supabase,
-      workspaceId: workspace.id,
-    });
+    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(supabase.from).toHaveBeenCalledWith("workspace_onboarding");
   });
 
   it("treats a missing onboarding row as setup-required state", async () => {
@@ -98,13 +86,31 @@ describe("loadWorkspaceLayoutContext", () => {
       user,
       workspace,
     });
-    mocked.loadDefaultSessionRepositoryId.mockResolvedValue(null);
-
     await expect(loadWorkspaceLayoutContext("legacy-workspace")).resolves.toMatchObject({
       onboarding: {
         currentStep: "github",
         status: "not_started",
       },
     });
+  });
+
+  it("omits the default-repository segment from workspace layout timing", async () => {
+    const supabase = buildSupabaseMock();
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    vi.stubEnv("WALLIE_TIMING_LOGS", "1");
+    const timingLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await loadWorkspaceLayoutContext("timed-workspace");
+
+    const timingPayload = timingLog.mock.calls.find(
+      (call) => call[0] === "[server-timing]",
+    )?.[1] as { segments?: Array<{ name: string }> } | undefined;
+    expect(timingPayload?.segments?.map((segment) => segment.name)).toEqual([
+      "auth-workspace-context",
+      "workspace-onboarding",
+    ]);
+    expect(timingPayload?.segments).not.toContainEqual(
+      expect.objectContaining({ name: "default-session-repository" }),
+    );
   });
 });

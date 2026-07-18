@@ -3,7 +3,6 @@ import "server-only";
 import { cache } from "react";
 
 import { mapOnboardingResumeState } from "@/features/onboarding/flow";
-import { loadDefaultSessionRepositoryId } from "@/features/sessions/repository-options";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
@@ -27,7 +26,7 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
       () =>
         supabase
           .from("workspace_onboarding")
-          .select("current_step, selected_github_repository_id, status")
+          .select("current_step, status")
           .eq("workspace_id", workspace.id)
           .maybeSingle(),
       (result) => ({
@@ -37,21 +36,7 @@ export const loadWorkspaceLayoutContext = cache(async (workspaceSlug: string) =>
     );
     if (onboardingError) throw onboardingError;
 
-    const defaultSessionGithubRepositoryId = await timing.segment(
-      "default-session-repository",
-      () =>
-        loadDefaultSessionRepositoryId({
-          selectedRepositoryId: onboardingRow?.selected_github_repository_id ?? null,
-          supabase,
-          workspaceId: workspace.id,
-        }),
-      (repositoryId) => ({
-        rows: repositoryId ? 1 : 0,
-      }),
-    );
-
     return {
-      defaultSessionGithubRepositoryId,
       onboarding: mapOnboardingResumeState(onboardingRow),
       supabase,
       user,

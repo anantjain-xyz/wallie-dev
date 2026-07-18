@@ -85,6 +85,7 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
   workspaceId: string;
 }): Promise<SessionRepositoryOptionsResult> {
   const response = await fetch(`/api/workspaces/${input.workspaceId}/session-repositories`, {
+    cache: "no-store",
     method: "GET",
   });
   const responsePayload = (await response.json().catch(() => null)) as {

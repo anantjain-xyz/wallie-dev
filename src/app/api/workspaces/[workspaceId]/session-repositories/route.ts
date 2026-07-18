@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import {
-  loadDefaultSessionRepositoryId,
-  loadSessionRepositoryOptions,
+  loadSessionRepositoryOptionsWithPrimary,
+  resolveDefaultSessionRepositoryId,
 } from "@/features/sessions/repository-options";
 import { workspaceIdParamsSchema } from "@/lib/workspaces";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -31,30 +31,37 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  const { data: onboardingRow, error: onboardingError } = await access.context.supabase
-    .from("workspace_onboarding")
-    .select("selected_github_repository_id")
-    .eq("workspace_id", access.context.workspace.id)
-    .maybeSingle();
-
-  if (onboardingError) {
-    return NextResponse.json({ error: onboardingError.message }, { status: 500 });
-  }
-
-  const [defaultGithubRepositoryId, repositoryOptions] = await Promise.all([
-    loadDefaultSessionRepositoryId({
-      selectedRepositoryId: onboardingRow?.selected_github_repository_id ?? null,
-      supabase: access.context.supabase,
-      workspaceId: access.context.workspace.id,
-    }),
-    loadSessionRepositoryOptions({
+  const [onboardingResult, repositoryResult] = await Promise.all([
+    access.context.supabase
+      .from("workspace_onboarding")
+      .select("selected_github_repository_id")
+      .eq("workspace_id", access.context.workspace.id)
+      .maybeSingle(),
+    loadSessionRepositoryOptionsWithPrimary({
       supabase: access.context.supabase,
       workspaceId: access.context.workspace.id,
     }),
   ]);
 
-  return NextResponse.json({
-    defaultGithubRepositoryId,
-    repositoryOptions,
+  if (onboardingResult.error) {
+    return NextResponse.json({ error: onboardingResult.error.message }, { status: 500 });
+  }
+
+  const defaultGithubRepositoryId = resolveDefaultSessionRepositoryId({
+    primaryGithubRepositoryId: repositoryResult.primaryGithubRepositoryId,
+    repositoryOptions: repositoryResult.repositoryOptions,
+    selectedGithubRepositoryId: onboardingResult.data?.selected_github_repository_id ?? null,
   });
+
+  return NextResponse.json(
+    {
+      defaultGithubRepositoryId,
+      repositoryOptions: repositoryResult.repositoryOptions,
+    },
+    {
+      headers: {
+        "Cache-Control": "private, no-store",
+      },
+    },
+  );
 }

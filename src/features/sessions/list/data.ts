@@ -118,7 +118,6 @@ export async function loadSessionListPageData(
         () => loadWorkspaceLayoutContext(workspaceSlug),
         (resolvedContext) => ({
           payloadBytes: approximatePayloadSizeBytes({
-            defaultSessionGithubRepositoryId: resolvedContext.defaultSessionGithubRepositoryId,
             onboarding: resolvedContext.onboarding,
             workspace: resolvedContext.workspace,
           }),

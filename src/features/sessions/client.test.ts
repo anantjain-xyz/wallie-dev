@@ -114,6 +114,7 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${WORKSPACE_ID}/session-repositories`, {
+      cache: "no-store",
       method: "GET",
     });
   });

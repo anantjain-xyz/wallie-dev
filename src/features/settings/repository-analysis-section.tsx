@@ -6,6 +6,7 @@ import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
+import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
 import {
   mergeRepositoryOnboardingState,
   hasCurrentWallieSkills,
@@ -173,6 +174,7 @@ export function RepositoryAnalysisSection({
         }
 
         setData((current) => mergeOnboardingData(current, body));
+        notifySessionRepositoriesChanged(data.workspace.id);
         const selected = body.github.repositories.find(
           (candidate) => candidate.id === repository.id,
         );
@@ -268,6 +270,7 @@ export function RepositoryAnalysisSection({
       }
 
       setData((current) => applySavedRepositoryProfile(current, body.profile!));
+      notifySessionRepositoriesChanged(data.workspace.id);
       setProfileDraft(body.profile);
       setProfileDirty(false);
       setFlashMessage({ kind: "success", text: "Repository profile saved." });
