@@ -106,12 +106,14 @@ async function queryPipelineDashboard(
   supabase: SupabaseServerClient,
   args: PipelineDashboardRpcArgs,
 ) {
-  const rpc = supabase.rpc as unknown as (
-    name: "get_pipeline_dashboard_page",
-    args: PipelineDashboardRpcArgs,
-  ) => PipelineDashboardRpcResult;
+  const client = supabase as unknown as {
+    rpc: (
+      name: "get_pipeline_dashboard_page",
+      args: PipelineDashboardRpcArgs,
+    ) => PipelineDashboardRpcResult;
+  };
 
-  return rpc("get_pipeline_dashboard_page", args);
+  return client.rpc("get_pipeline_dashboard_page", args);
 }
 
 export async function loadPipelineDashboardLanePage({

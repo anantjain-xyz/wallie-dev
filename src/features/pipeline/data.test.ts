@@ -169,7 +169,8 @@ describe("Pipeline dashboard data", () => {
     };
     const supabase = {
       from: () => onboardingQuery,
-      rpc: () => {
+      rpc(this: unknown) {
+        expect(this).toBe(supabase);
         starts.push("dashboard");
         return dashboardPromise;
       },
