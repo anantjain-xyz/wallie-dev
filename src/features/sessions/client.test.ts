@@ -31,7 +31,7 @@ describe("createSessionFromClient", () => {
     const fetchMock = mockFetch({ body: { number: 7 }, ok: true });
 
     await expect(
-      createSessionFromClient({} as never, { promptMd: "   ", workspaceId: WORKSPACE_ID }),
+      createSessionFromClient({ promptMd: "   ", workspaceId: WORKSPACE_ID }),
     ).rejects.toThrow("Prompt is required.");
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -43,7 +43,7 @@ describe("createSessionFromClient", () => {
       ok: true,
     });
 
-    const result = await createSessionFromClient({} as never, {
+    const result = await createSessionFromClient({
       githubRepositoryId: `  ${REPOSITORY_ID}  `,
       linearIssueUrl: "  https://linear.app/team/issue/TEAM-42/some-slug  ",
       promptMd: "  Add SSO  ",
@@ -73,7 +73,7 @@ describe("createSessionFromClient", () => {
     });
 
     await expect(
-      createSessionFromClient({} as never, {
+      createSessionFromClient({
         promptMd: "Add SSO",
         workspaceId: WORKSPACE_ID,
       }),
@@ -84,7 +84,7 @@ describe("createSessionFromClient", () => {
     mockFetch({ body: { success: true }, ok: true });
 
     await expect(
-      createSessionFromClient({} as never, {
+      createSessionFromClient({
         promptMd: "Add SSO",
         workspaceId: WORKSPACE_ID,
       }),
