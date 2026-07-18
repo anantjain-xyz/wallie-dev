@@ -1,6 +1,6 @@
 import "server-only";
 
-import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
+import { SessionActivityPanel } from "@/features/sessions/detail/session-activity-client";
 import { loadWallieSessionData } from "@/features/wallie/server";
 import type { WallieSessionData } from "@/features/wallie/types";
 import type { SessionActivityContext } from "@/features/sessions/detail/data";
@@ -56,13 +56,11 @@ export async function SessionActivity({
   if (!data) return <SessionActivityFailure />;
 
   return (
-    <SessionWalliePanel
+    <SessionActivityPanel
+      initialArchivedAt={archivedAt}
       initialData={data}
-      session={{
-        archivedAt,
-        id: context.sessionId,
-        workspaceId: context.workspaceId,
-      }}
+      sessionId={context.sessionId}
+      workspaceId={context.workspaceId}
       workspaceSlug={workspaceSlug}
     />
   );

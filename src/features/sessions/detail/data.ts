@@ -9,7 +9,7 @@ import type {
   SessionPhaseStatus,
 } from "@/features/sessions/types";
 import type { WallieSessionRepository } from "@/features/wallie/types";
-import { loginPath, workspaceSessionDetailPath } from "@/lib/routes";
+import { loginPath, onboardingWorkspacePath, workspaceSessionDetailPath } from "@/lib/routes";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -83,6 +83,14 @@ type SessionDetailRpcPayload = {
   workspaceSlug: string;
 };
 
+type SessionDetailRpcAccessMiss = {
+  access: {
+    hasAnyWorkspace: boolean;
+  };
+};
+
+type SessionDetailRpcResult = SessionDetailRpcAccessMiss | SessionDetailRpcPayload;
+
 export async function loadSessionDetailPageData(
   workspaceSlug: string,
   sessionNumberValue: string,
@@ -135,7 +143,15 @@ async function loadSessionDetailPageDataWithTiming(
   if (rpcError) throw rpcError;
   if (!rpcData) notFound();
 
-  const payload = rpcData as SessionDetailRpcPayload;
+  const payload = rpcData as SessionDetailRpcResult;
+  if ("access" in payload) {
+    if (!payload.access.hasAnyWorkspace) {
+      redirect(onboardingWorkspacePath());
+    }
+
+    notFound();
+  }
+
   if (!payload.session || !payload.activity) notFound();
 
   const review = serializeSessionReviewData(payload);

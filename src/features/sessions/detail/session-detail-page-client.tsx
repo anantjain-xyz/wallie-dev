@@ -23,6 +23,7 @@ import {
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import type {
   SessionReviewData,
   SessionReviewPipeline,
@@ -768,7 +769,11 @@ export function SessionDetailPageClient({
 
         <section className="rounded-[8px] border border-border bg-surface p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Run activity</h2>
-          <div className="mt-3">{activity}</div>
+          <div className="mt-3">
+            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+              {activity}
+            </SessionActivityArchivedAtProvider>
+          </div>
         </section>
       </div>
     </PageContainer>

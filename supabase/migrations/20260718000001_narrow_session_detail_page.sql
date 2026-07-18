@@ -11,6 +11,7 @@ set search_path = public, pg_temp
 as $$
 declare
   v_workspace_id uuid;
+  v_has_any_workspace boolean;
   v_session public.sessions%rowtype;
   v_current_stage public.pipeline_stages%rowtype;
   v_creator_display_name text;
@@ -33,7 +34,20 @@ begin
   limit 1;
 
   if v_workspace_id is null then
-    return null;
+    select exists (
+      select 1
+      from public.workspace_members wm
+      where wm.user_id = auth.uid()
+        and wm.is_active
+        and wm.kind = 'human'
+    )
+    into v_has_any_workspace;
+
+    return jsonb_build_object(
+      'access', jsonb_build_object(
+        'hasAnyWorkspace', v_has_any_workspace
+      )
+    );
   end if;
 
   select *

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
@@ -33,6 +36,10 @@ import {
 import { approximatePayloadSizeBytes } from "@/lib/server-timing";
 
 const SEEDED_SESSION_18_BASELINE_RPC_BYTES = 10_603;
+const detailMigration = readFileSync(
+  join(process.cwd(), "supabase/migrations/20260718000001_narrow_session_detail_page.sql"),
+  "utf8",
+);
 
 function makeRpcPayload() {
   return {
@@ -148,6 +155,16 @@ describe("session review RSC contract", () => {
   });
 });
 
+describe("session detail RPC access result", () => {
+  it("folds the no-workspace signal into the existing detail RPC", () => {
+    expect(detailMigration).toContain("'access', jsonb_build_object(");
+    expect(detailMigration).toContain("'hasAnyWorkspace', v_has_any_workspace");
+    expect(detailMigration).toContain("wm.user_id = auth.uid()");
+    expect(detailMigration).toContain("and wm.is_active");
+    expect(detailMigration).toContain("and wm.kind = 'human'");
+  });
+});
+
 describe("session detail loader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -172,5 +189,42 @@ describe("session detail loader", () => {
       "redirect:/login?next=%2Fw%2Facme-corp%2Fsessions%2F18",
     );
     expect(mocked.redirect).toHaveBeenCalledWith("/login?next=%2Fw%2Facme-corp%2Fsessions%2F18");
+  });
+
+  it("redirects authenticated users with no workspace memberships from the detail RPC", async () => {
+    const from = vi.fn();
+    const rpc = vi.fn().mockResolvedValue({
+      data: { access: { hasAnyWorkspace: false } },
+      error: null,
+    });
+
+    mocked.createSupabaseServerClient.mockResolvedValue({ from, rpc });
+    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-without-workspaces" });
+
+    await expect(loadSessionDetailPageData("acme-corp", "18")).rejects.toThrow(
+      "redirect:/onboarding/workspace",
+    );
+
+    expect(mocked.redirect).toHaveBeenCalledWith("/onboarding/workspace");
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("returns not found when the user has another workspace but cannot access the target", async () => {
+    const from = vi.fn();
+    const rpc = vi.fn().mockResolvedValue({
+      data: { access: { hasAnyWorkspace: true } },
+      error: null,
+    });
+
+    mocked.createSupabaseServerClient.mockResolvedValue({ from, rpc });
+    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-with-another-workspace" });
+
+    await expect(loadSessionDetailPageData("private-workspace", "18")).rejects.toThrow("not-found");
+
+    expect(mocked.notFound).toHaveBeenCalledOnce();
+    expect(mocked.redirect).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(from).not.toHaveBeenCalled();
   });
 });
