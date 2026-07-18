@@ -36,10 +36,24 @@ describe("AuthEntryPanel", () => {
   it("hides the email code form until code has been requested", () => {
     const html = renderPanel();
 
-    expect(html).not.toContain("Enter 6-digit code emailed to you");
+    expect(html).not.toContain("Check your email");
     expect(html).not.toContain("Continue with code");
-    expect(html).not.toContain("Request another code");
+    expect(html).not.toContain("Request a new email");
     expect(html).not.toContain('name="tokenDigit"');
+  });
+
+  it("presents a single page heading, context, visible email label, and recommended method", () => {
+    const html = renderPanel();
+
+    expect(countMatches(html, "<h1")).toBe(1);
+    expect(html).toContain("Sign in to Wallie");
+    expect(html).toContain("Continue to your workspace and review active sessions.");
+    expect(html).toContain("Sign in with email");
+    expect(html).toContain("Recommended");
+    expect(html).toContain("Work email");
+    expect(html).toContain('autoComplete="email"');
+    expect(html).toContain('inputMode="email"');
+    expect(html).toContain("Visit the home page");
   });
 
   it("does not render social auth options", () => {
@@ -56,16 +70,17 @@ describe("AuthEntryPanel", () => {
       statusCode: "check_email",
     });
 
-    expect(html).toContain("Enter 6-digit code emailed to you");
+    expect(html).toContain("Check your email");
+    expect(html).toContain("Verification code");
     expect(html).toContain("Continue with code");
-    expect(html).toContain("Request another code");
+    expect(html).toContain("Request a new email");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
     expect(countMatches(html, 'aria-label="Digit ')).toBe(6);
     expect(countMatches(html, 'inputMode="numeric"')).toBe(6);
     expect(countMatches(html, 'pattern="[0-9]*"')).toBe(6);
     expect(countMatches(html, 'maxLength="1"')).toBe(6);
-    expect(html).toContain("email-code-form space-y-2");
+    expect(html).toContain("email-code-form mt-4 space-y-3");
     expect(html).toContain("email-code-grid grid gap-1");
     expect(countMatches(html, "h-11 min-w-11")).toBe(6);
     expect(html).toContain('autoComplete="one-time-code"');
@@ -83,9 +98,11 @@ describe("AuthEntryPanel", () => {
       errorCode: "email_code_failed",
     });
 
-    expect(html).toContain("Enter 6-digit code emailed to you");
-    expect(html).toContain("Wallie could not verify that code.");
-    expect(html).toContain("Request another code");
+    expect(html).toContain("Check your email");
+    expect(html).toContain("That code could not be verified.");
+    expect(html).toContain("Request a new email");
+    expect(html).toContain("Try code again");
+    expect(html).toContain('role="alert" tabindex="-1"');
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
     expect(html).not.toContain("Send magic link");
     expect(html).not.toContain('name="email"');
@@ -99,7 +116,7 @@ describe("AuthEntryPanel", () => {
     });
 
     expect(countMatches(html, 'name="tokenDigit"')).toBe(6);
-    expect(html).toContain("Request another code");
+    expect(html).toContain("Request a new email");
     expect(html).not.toContain("Send magic link");
     expect(html).not.toContain('name="email"');
   });
@@ -110,11 +127,12 @@ describe("AuthEntryPanel", () => {
       errorCode: "email_sign_in_failed",
     });
 
-    expect(html).toContain("Wallie could not send that magic link.");
-    expect(html).toContain("Send magic link");
+    expect(html).toContain("We could not send a sign-in email.");
+    expect(html).toContain("Try sending again");
+    expect(html).toContain('role="alert" tabindex="-1"');
     expect(html).toContain('name="email"');
     expect(html).not.toContain('name="tokenDigit"');
-    expect(html).not.toContain("Request another code");
+    expect(html).not.toContain("Request a new email");
   });
 
   it("does not show the email code form on fallback errors without stored email", () => {
@@ -124,5 +142,18 @@ describe("AuthEntryPanel", () => {
 
     expect(html).not.toContain('name="tokenDigit"');
     expect(html).not.toContain("Continue with code");
+  });
+
+  it("labels and retries the development-only password alternative", () => {
+    process.env.VERCEL_ENV = "development";
+    const html = renderPanel({ errorCode: "password_auth_failed" });
+
+    expect(html).toContain("Development alternative");
+    expect(html).toContain("Developer email");
+    expect(html).toContain("Developer password");
+    expect(html).toContain("Try password again");
+    expect(html).toContain("<details");
+    expect(html).toContain('open=""');
+    expect(countMatches(html, 'role="alert"')).toBe(1);
   });
 });

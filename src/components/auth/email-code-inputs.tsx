@@ -109,7 +109,8 @@ export function EmailCodeInputs() {
   }
 
   return (
-    <div className="email-code-grid grid gap-1" aria-label="Six-digit code">
+    <fieldset className="email-code-grid grid gap-1" aria-label="Six-digit verification code">
+      <legend className="ui-label col-span-full mb-1 text-foreground">Verification code</legend>
       {Array.from({ length: CODE_LENGTH }, (_, index) => (
         <input
           key={index}
@@ -152,6 +153,6 @@ export function EmailCodeInputs() {
           }}
         />
       ))}
-    </div>
+    </fieldset>
   );
 }

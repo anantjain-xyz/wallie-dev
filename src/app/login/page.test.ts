@@ -34,7 +34,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
 }));
 
-import LoginPage from "@/app/login/page";
+import LoginPage, { metadata } from "@/app/login/page";
 
 const originalVercelEnv = process.env.VERCEL_ENV;
 
@@ -104,6 +104,8 @@ describe("/login page", () => {
     expect(html).toContain("Send magic link");
     expect(html).toContain('name="email"');
     expect(html).toContain("you@company.com");
+    expect(html).toContain("Sign in to Wallie");
+    expect((metadata.title as { absolute: string }).absolute).toBe("Sign in · Wallie");
   });
 
   it("renders auth feedback and the OTP form after requesting a code", async () => {
@@ -121,8 +123,9 @@ describe("/login page", () => {
     );
 
     expect(html).toContain("Check your inbox for a secure sign-in link");
-    expect(html).toContain("Enter 6-digit code emailed to you");
+    expect(html).toContain("Check your email");
     expect(html).toContain("Continue with code");
     expect(html).toContain('href="/login?next=%2Fw%2Facme"');
+    expect(html).not.toContain("owner@example.com");
   });
 });

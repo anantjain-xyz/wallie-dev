@@ -6,9 +6,9 @@ export function SplashShell({ children }: { children: ReactNode }) {
   return (
     <main
       id="main-content"
-      className="flex min-h-[100svh] w-full items-center justify-center bg-sheet px-6 py-10 text-foreground"
+      className="flex min-h-[100svh] w-full items-center justify-center bg-sheet px-4 py-8 text-foreground sm:px-6 sm:py-10"
     >
-      <div className="flex w-full max-w-[360px] flex-col items-center gap-6">
+      <div className="flex w-full max-w-[400px] flex-col items-center gap-6">
         <Link
           href="/"
           aria-label="Wallie home"
