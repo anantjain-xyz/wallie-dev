@@ -1,237 +1,161 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  appendPipelineBoardLanePage,
-  appendPipelineLanePage,
-  reconcilePipelineDashboardLanes,
-  upsertPipelineRealtimeCard,
-} from "@/features/pipeline/model";
+import { createPipelineBoardState, pipelineBoardReducer } from "@/features/pipeline/model";
 import type { PipelineDashboardCard, PipelineDashboardLane } from "@/features/pipeline/types";
 
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
-const STAGE_ID = "20000000-0000-4000-8000-000000000001";
+const PLAN_STAGE_ID = "20000000-0000-4000-8000-000000000001";
+const BUILD_STAGE_ID = "20000000-0000-4000-8000-000000000002";
 
 function card(
-  id: string,
-  phaseStatus: PipelineDashboardCard["phaseStatus"],
-  updatedAt: string,
+  number: number,
+  stageId = PLAN_STAGE_ID,
+  phaseStatus: PipelineDashboardCard["phaseStatus"] = "agent_generating",
+  updatedAt = `2026-07-17T${String(number).padStart(2, "0")}:00:00Z`,
 ): PipelineDashboardCard {
   return {
     createdAt: updatedAt,
-    currentStageId: STAGE_ID,
-    id,
+    currentStageId: stageId,
+    id: `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
     linearIssueId: null,
     linearIssueUrl: null,
-    number: Number(id.at(-1)),
+    number,
     phaseStatus,
     pipelineId: PIPELINE_ID,
     pullRequests: [],
     rejectionCount: 0,
-    title: id,
+    title: `Session ${number}`,
     updatedAt,
     workspaceId: "30000000-0000-4000-8000-000000000001",
   };
 }
 
-function lane(cards: PipelineDashboardCard[]): PipelineDashboardLane {
+function lane(id: string, name: string, cards: PipelineDashboardCard[]): PipelineDashboardLane {
   return {
     cards,
     cursor: "page-1",
-    description: "",
-    id: STAGE_ID,
-    name: "Plan",
+    description: `${name} the work.`,
+    id,
+    name,
     pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
-    position: 1,
-    slug: "plan",
-    totalCount: Math.max(4, cards.length),
+    position: id === PLAN_STAGE_ID ? 1 : 2,
+    slug: name.toLowerCase(),
+    totalCount: cards.length,
   };
 }
 
-describe("appendPipelineLanePage", () => {
-  it("appends only the requested lane and keeps attention-first stable ordering", () => {
-    const initial = lane([
-      card("00000000-0000-4000-8000-000000000001", "agent_generating", "2026-07-17T04:00:00Z"),
-      card("00000000-0000-4000-8000-000000000002", "agent_generating", "2026-07-17T03:00:00Z"),
+function board() {
+  return createPipelineBoardState([
+    lane(PLAN_STAGE_ID, "Plan", [card(1), card(2)]),
+    lane(BUILD_STAGE_ID, "Build", [card(3, BUILD_STAGE_ID)]),
+  ]);
+}
+
+describe("pipelineBoardReducer", () => {
+  it("normalizes cards once into an ID map and ordered per-lane ID arrays", () => {
+    const duplicated = card(1);
+    const state = createPipelineBoardState([
+      lane(PLAN_STAGE_ID, "Plan", [duplicated]),
+      lane(BUILD_STAGE_ID, "Build", [duplicated, card(3, BUILD_STAGE_ID)]),
     ]);
-    const result = appendPipelineLanePage(initial, {
-      cards: [
-        card("00000000-0000-4000-8000-000000000003", "awaiting_review", "2026-07-17T01:00:00Z"),
-        card("00000000-0000-4000-8000-000000000004", "agent_generating", "2026-07-17T02:00:00Z"),
+
+    expect(Object.keys(state.cardsById)).toEqual([duplicated.id, card(3).id]);
+    expect(state.lanes[0]?.cardIds).toEqual([duplicated.id]);
+    expect(state.lanes[1]?.cardIds).toEqual([card(3).id]);
+  });
+
+  it("inserts one entity and changes only the target lane", () => {
+    const initial = board();
+    const inserted = card(4, BUILD_STAGE_ID, "awaiting_review");
+    const next = pipelineBoardReducer(initial, { card: inserted, isInsert: true, type: "upsert" });
+
+    expect(next.cardsById[inserted.id]).toBe(inserted);
+    expect(next.lanes[0]).toBe(initial.lanes[0]);
+    expect(next.lanes[1]?.cardIds).toEqual([inserted.id, card(3).id]);
+    expect(next.lanes[1]?.totalCount).toBe(2);
+  });
+
+  it("updates and reorders one entity without rebuilding unrelated lanes or cards", () => {
+    const initial = board();
+    const unchanged = initial.cardsById[card(2).id];
+    const updated = {
+      ...initial.cardsById[card(1).id]!,
+      phaseStatus: "awaiting_review" as const,
+      title: "Session 1 updated",
+      updatedAt: "2026-07-18T01:00:00Z",
+    };
+    const next = pipelineBoardReducer(initial, { card: updated, isInsert: false, type: "upsert" });
+
+    expect(next.cardsById[updated.id]).toBe(updated);
+    expect(next.cardsById[card(2).id]).toBe(unchanged);
+    expect(next.lanes[0]).not.toBe(initial.lanes[0]);
+    expect(next.lanes[1]).toBe(initial.lanes[1]);
+    expect(next.lanes[0]?.cardIds[0]).toBe(updated.id);
+  });
+
+  it("moves one entity with stable ordering and changes only source and destination lanes", () => {
+    const auditStageId = "20000000-0000-4000-8000-000000000003";
+    const initial = createPipelineBoardState([
+      ...[
+        lane(PLAN_STAGE_ID, "Plan", [card(1), card(2)]),
+        lane(BUILD_STAGE_ID, "Build", [card(3, BUILD_STAGE_ID)]),
       ],
-      cursor: null,
-      id: STAGE_ID,
-      pipeline: initial.pipeline,
-      totalCount: 4,
-    });
-
-    expect(result.cards.map((item) => item.id.at(-1))).toEqual(["3", "1", "2", "4"]);
-    expect(result.cursor).toBeNull();
-  });
-
-  it("deduplicates a concurrently updated card instead of appending it twice", () => {
-    const sessionId = "00000000-0000-4000-8000-000000000001";
-    const initial = lane([card(sessionId, "agent_generating", "2026-07-17T01:00:00Z")]);
-    const result = appendPipelineLanePage(initial, {
-      cards: [card(sessionId, "awaiting_review", "2026-07-17T05:00:00Z")],
-      cursor: "snapshot-page-2",
-      id: STAGE_ID,
-      pipeline: initial.pipeline,
-      totalCount: 4,
-    });
-
-    expect(result.cards).toHaveLength(1);
-    expect(result.cards[0]).toMatchObject({
-      phaseStatus: "awaiting_review",
-      updatedAt: "2026-07-17T05:00:00Z",
-    });
-  });
-
-  it("ignores a page for a different pinned pipeline lane", () => {
-    const initial = lane([]);
-    const result = appendPipelineLanePage(initial, {
-      cards: [],
-      cursor: null,
-      id: STAGE_ID,
-      pipeline: { ...initial.pipeline, id: "90000000-0000-4000-8000-000000000001" },
-      totalCount: 0,
-    });
-
-    expect(result).toBe(initial);
-  });
-});
-
-describe("concurrent dashboard updates", () => {
-  it("adds refreshed lane metadata without discarding already loaded cards", () => {
-    const secondCard = card(
-      "00000000-0000-4000-8000-000000000002",
-      "agent_generating",
-      "2026-07-17T02:00:00Z",
-    );
-    const currentLane = lane([
-      card("00000000-0000-4000-8000-000000000001", "agent_generating", "2026-07-17T01:00:00Z"),
-      secondCard,
+      lane(auditStageId, "Audit", [card(9, auditStageId)]),
     ]);
-    const newStageId = "50000000-0000-4000-8000-000000000001";
-    const refreshedLane = {
-      ...lane([secondCard]),
-      description: "Updated description",
-      totalCount: 2,
+    const moved = {
+      ...initial.cardsById[card(1).id]!,
+      currentStageId: BUILD_STAGE_ID,
+      updatedAt: "2026-07-18T06:00:00Z",
     };
-    const newLane = {
-      ...lane([]),
-      cursor: null,
-      id: newStageId,
-      name: "Review",
-      position: 2,
-      slug: "review",
-      totalCount: 0,
-    };
+    const next = pipelineBoardReducer(initial, { card: moved, isInsert: false, type: "upsert" });
 
-    const result = reconcilePipelineDashboardLanes([currentLane], [refreshedLane, newLane]);
-
-    expect(result).toHaveLength(2);
-    expect(result[0]?.description).toBe("Updated description");
-    expect(result[0]?.cards).toHaveLength(2);
-    expect(result[1]).toEqual(newLane);
+    expect(next.lanes[0]?.cardIds).toEqual([card(2).id]);
+    expect(next.lanes[1]?.cardIds).toEqual([moved.id, card(3).id]);
+    expect(next.lanes[2]).toBe(initial.lanes[2]);
+    expect(next.lanes[0]?.totalCount).toBe(1);
+    expect(next.lanes[1]?.totalCount).toBe(2);
   });
 
-  it("removes an invalidated card from its old lane when refreshed into a new lane", () => {
-    const movedId = "00000000-0000-4000-8000-000000000009";
-    const currentLane = lane([card(movedId, "agent_generating", "2026-07-17T01:00:00Z")]);
-    const newStageId = "50000000-0000-4000-8000-000000000001";
-    const movedCard = {
-      ...card(movedId, "agent_generating", "2026-07-17T02:00:00Z"),
-      currentStageId: newStageId,
-    };
-    const newLane = {
-      ...lane([movedCard]),
-      cursor: null,
-      id: newStageId,
-      name: "Review",
-      position: 2,
-      slug: "review",
-      totalCount: 1,
-    };
+  it("removes one entity and changes only its source lane", () => {
+    const initial = board();
+    const next = pipelineBoardReducer(initial, { cardId: card(1).id, type: "remove" });
 
-    const result = reconcilePipelineDashboardLanes(
-      [currentLane],
-      [{ ...currentLane, cards: [], totalCount: 0 }, newLane],
-      new Set([movedId]),
-    );
-
-    expect(result[0]?.cards).toEqual([]);
-    expect(result[1]?.cards).toEqual([movedCard]);
+    expect(next.cardsById[card(1).id]).toBeUndefined();
+    expect(next.lanes[0]?.cardIds).toEqual([card(2).id]);
+    expect(next.lanes[0]?.totalCount).toBe(1);
+    expect(next.lanes[1]).toBe(initial.lanes[1]);
   });
 
-  it("does not restore a stale load-more card after realtime moved it to another lane", () => {
-    const movedId = "00000000-0000-4000-8000-000000000009";
-    const buildStageId = "50000000-0000-4000-8000-000000000001";
-    const planLane = lane([]);
-    const movedCard = {
-      ...card(movedId, "agent_generating", "2026-07-17T06:00:00Z"),
-      currentStageId: buildStageId,
-    };
-    const buildLane = {
-      ...lane([movedCard]),
-      cursor: null,
-      id: buildStageId,
-      name: "Build",
-      slug: "build",
-      totalCount: 1,
-    };
-
-    const result = appendPipelineBoardLanePage([planLane, buildLane], {
-      cards: [card(movedId, "agent_generating", "2026-07-17T05:00:00Z")],
-      cursor: null,
-      id: STAGE_ID,
-      pipeline: planLane.pipeline,
-      totalCount: 1,
+  it("appends a cursor page to one lane without rebuilding other lanes", () => {
+    const initial = board();
+    const otherLane = initial.lanes[1];
+    const otherCard = initial.cardsById[card(3).id];
+    const appended = card(4);
+    const next = pipelineBoardReducer(initial, {
+      page: {
+        cards: [appended],
+        cursor: null,
+        id: PLAN_STAGE_ID,
+        pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+        totalCount: 3,
+      },
+      type: "append-page",
     });
 
-    expect(result[0]?.cards).toEqual([]);
-    expect(result[1]?.cards).toEqual([movedCard]);
+    expect(next.lanes[0]?.cardIds).toContain(appended.id);
+    expect(next.lanes[0]?.cursor).toBeNull();
+    expect(next.lanes[1]).toBe(otherLane);
+    expect(next.cardsById[card(3).id]).toBe(otherCard);
   });
 
-  it("ignores off-page realtime updates so a loaded slice remains bounded", () => {
-    const cards = Array.from({ length: 25 }, (_, index) =>
-      card(
-        `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-        "agent_generating",
-        `2026-07-17T${String(index).padStart(2, "0")}:00:00Z`,
-      ),
-    );
-    const initial = [lane(cards)];
-    const offPageCard = card(
-      "00000000-0000-4000-8000-000000000099",
-      "awaiting_review",
-      "2026-07-18T00:00:00Z",
-    );
+  it("keeps a full visible slice bounded while incrementing its insert summary", () => {
+    const cards = Array.from({ length: 25 }, (_, index) => card(index + 1));
+    const initial = createPipelineBoardState([lane(PLAN_STAGE_ID, "Plan", cards)]);
+    const inserted = card(99, PLAN_STAGE_ID, "awaiting_review");
+    const next = pipelineBoardReducer(initial, { card: inserted, isInsert: true, type: "upsert" });
 
-    const result = upsertPipelineRealtimeCard(initial, offPageCard, false);
-
-    expect(result).toBe(initial);
-    expect(result[0]?.cards).toHaveLength(25);
-  });
-
-  it("does not let realtime inserts grow a full initial lane", () => {
-    const cards = Array.from({ length: 25 }, (_, index) =>
-      card(
-        `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-        "agent_generating",
-        `2026-07-17T${String(index).padStart(2, "0")}:00:00Z`,
-      ),
-    );
-    const initial = [lane(cards)];
-    const inserted = card(
-      "00000000-0000-4000-8000-000000000099",
-      "awaiting_review",
-      "2026-07-18T00:00:00Z",
-    );
-
-    const result = upsertPipelineRealtimeCard(initial, inserted, true);
-
-    expect(result).toBe(initial);
-    expect(result[0]?.cards).toHaveLength(25);
-    expect(result[0]?.totalCount).toBe(25);
+    expect(next.lanes[0]?.cardIds).toHaveLength(25);
+    expect(next.lanes[0]?.totalCount).toBe(26);
+    expect(next.cardsById[inserted.id]).toBeUndefined();
   });
 });

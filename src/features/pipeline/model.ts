@@ -1,9 +1,27 @@
 import type {
+  PipelineBoardLane,
+  PipelineBoardState,
   PipelineDashboardCard,
   PipelineDashboardLane,
   PipelineDashboardLanePage,
+  PipelineDashboardPullRequest,
 } from "@/features/pipeline/types";
 import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
+
+export type PipelineBoardAction =
+  | {
+      invalidatedCardIds?: ReadonlySet<string>;
+      lanes: PipelineDashboardLane[];
+      type: "reconcile";
+    }
+  | { card: PipelineDashboardCard; isInsert: boolean; type: "upsert" }
+  | { cardId: string; type: "remove" }
+  | { page: PipelineDashboardLanePage; type: "append-page" }
+  | {
+      pullRequests: PipelineDashboardPullRequest[];
+      sessionId: string;
+      type: "update-pull-requests";
+    };
 
 function attentionRank(card: PipelineDashboardCard) {
   return card.phaseStatus === "awaiting_review" ? 0 : 1;
@@ -22,147 +40,298 @@ export function comparePipelineDashboardCards(
   return right.id.localeCompare(left.id);
 }
 
-export function appendPipelineLanePage(
-  lane: PipelineDashboardLane,
-  page: PipelineDashboardLanePage,
-): PipelineDashboardLane {
-  if (lane.id !== page.id || lane.pipeline.id !== page.pipeline.id) {
-    return lane;
-  }
-
-  const cardsById = new Map(lane.cards.map((card) => [card.id, card]));
-  for (const card of page.cards) {
-    cardsById.set(card.id, card);
-  }
-
-  return {
-    ...lane,
-    cards: Array.from(cardsById.values()).sort(comparePipelineDashboardCards),
-    cursor: page.cursor,
-    totalCount: page.totalCount,
-  };
-}
-
-export function appendPipelineBoardLanePage(
-  lanes: PipelineDashboardLane[],
-  page: PipelineDashboardLanePage,
-) {
-  const requestedLaneIndex = lanes.findIndex(
-    (lane) => lane.id === page.id && lane.pipeline.id === page.pipeline.id,
-  );
-  if (requestedLaneIndex < 0) return lanes;
-
-  const cardIdsOwnedByOtherLanes = new Set(
-    lanes.flatMap((lane, laneIndex) =>
-      laneIndex === requestedLaneIndex ? [] : lane.cards.map((card) => card.id),
-    ),
-  );
-  const safePage = {
-    ...page,
-    cards: page.cards.filter(
-      (card) =>
-        card.pipelineId === page.pipeline.id &&
-        card.currentStageId === page.id &&
-        !cardIdsOwnedByOtherLanes.has(card.id),
-    ),
-  };
-
-  return lanes.map((lane, laneIndex) =>
-    laneIndex === requestedLaneIndex ? appendPipelineLanePage(lane, safePage) : lane,
-  );
-}
-
-function laneKey(lane: Pick<PipelineDashboardLane, "id" | "pipeline">) {
+export function pipelineLaneKey(lane: Pick<PipelineBoardLane, "id" | "pipeline">) {
   return `${lane.pipeline.id}:${lane.id}`;
 }
 
-export function reconcilePipelineDashboardLanes(
-  currentLanes: PipelineDashboardLane[],
-  refreshedLanes: PipelineDashboardLane[],
-  invalidatedCardIds: ReadonlySet<string> = new Set(),
-) {
-  const currentByLane = new Map(currentLanes.map((lane) => [laneKey(lane), lane]));
-  const refreshedCardOwner = new Map(
-    refreshedLanes.flatMap((lane) => lane.cards.map((card) => [card.id, laneKey(lane)] as const)),
+function sortCardIds(cardIds: Iterable<string>, cardsById: Record<string, PipelineDashboardCard>) {
+  return Array.from(new Set(cardIds)).sort((leftId, rightId) =>
+    comparePipelineDashboardCards(cardsById[leftId]!, cardsById[rightId]!),
   );
+}
 
-  return refreshedLanes.map((refreshedLane) => {
-    const key = laneKey(refreshedLane);
-    const currentLane = currentByLane.get(key);
-    if (!currentLane) return refreshedLane;
+function samePullRequests(
+  left: PipelineDashboardPullRequest[],
+  right: PipelineDashboardPullRequest[],
+) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (pullRequest, index) =>
+        pullRequest.id === right[index]?.id &&
+        pullRequest.pullRequestNumber === right[index]?.pullRequestNumber &&
+        pullRequest.pullRequestUrl === right[index]?.pullRequestUrl,
+    )
+  );
+}
 
-    const cardsById = new Map(
-      currentLane.cards
-        .filter(
-          (card) =>
-            !invalidatedCardIds.has(card.id) &&
-            card.pipelineId === refreshedLane.pipeline.id &&
-            card.currentStageId === refreshedLane.id &&
-            (!refreshedCardOwner.has(card.id) || refreshedCardOwner.get(card.id) === key),
-        )
-        .map((card) => [card.id, card]),
-    );
-    for (const card of refreshedLane.cards) {
-      cardsById.set(card.id, card);
+function sameCard(left: PipelineDashboardCard, right: PipelineDashboardCard) {
+  return (
+    left.createdAt === right.createdAt &&
+    left.currentStageId === right.currentStageId &&
+    left.id === right.id &&
+    left.linearIssueId === right.linearIssueId &&
+    left.linearIssueUrl === right.linearIssueUrl &&
+    left.number === right.number &&
+    left.phaseStatus === right.phaseStatus &&
+    left.pipelineId === right.pipelineId &&
+    left.rejectionCount === right.rejectionCount &&
+    left.title === right.title &&
+    left.updatedAt === right.updatedAt &&
+    left.workspaceId === right.workspaceId &&
+    samePullRequests(left.pullRequests, right.pullRequests)
+  );
+}
+
+function sameIds(left: string[], right: string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+function sameLaneMetadata(left: PipelineBoardLane, right: PipelineBoardLane) {
+  return (
+    left.cursor === right.cursor &&
+    left.description === right.description &&
+    left.id === right.id &&
+    left.name === right.name &&
+    left.pipeline.id === right.pipeline.id &&
+    left.pipeline.isDefault === right.pipeline.isDefault &&
+    left.pipeline.name === right.pipeline.name &&
+    left.position === right.position &&
+    left.slug === right.slug &&
+    left.totalCount === right.totalCount
+  );
+}
+
+export function createPipelineBoardState(lanes: PipelineDashboardLane[]): PipelineBoardState {
+  const cardsById: Record<string, PipelineDashboardCard> = {};
+  const claimedCardIds = new Set<string>();
+
+  const normalizedLanes = lanes.map(({ cards, ...lane }) => {
+    const cardIds: string[] = [];
+    for (const card of cards) {
+      if (
+        claimedCardIds.has(card.id) ||
+        card.pipelineId !== lane.pipeline.id ||
+        card.currentStageId !== lane.id
+      ) {
+        continue;
+      }
+
+      claimedCardIds.add(card.id);
+      cardsById[card.id] = card;
+      cardIds.push(card.id);
     }
 
-    return {
+    return { ...lane, cardIds: sortCardIds(cardIds, cardsById) };
+  });
+
+  return { cardsById, lanes: normalizedLanes };
+}
+
+function reconcilePipelineBoard(
+  current: PipelineBoardState,
+  refreshedLanes: PipelineDashboardLane[],
+  invalidatedCardIds: ReadonlySet<string> = new Set(),
+): PipelineBoardState {
+  const refreshed = createPipelineBoardState(refreshedLanes);
+  const currentByLane = new Map(current.lanes.map((lane) => [pipelineLaneKey(lane), lane]));
+  const refreshedCardOwner = new Map(
+    refreshed.lanes.flatMap((lane) =>
+      lane.cardIds.map((cardId) => [cardId, pipelineLaneKey(lane)] as const),
+    ),
+  );
+  const cardsById: Record<string, PipelineDashboardCard> = {};
+
+  const lanes = refreshed.lanes.map((refreshedLane) => {
+    const key = pipelineLaneKey(refreshedLane);
+    const currentLane = currentByLane.get(key);
+    if (!currentLane) {
+      for (const cardId of refreshedLane.cardIds) {
+        cardsById[cardId] = refreshed.cardsById[cardId]!;
+      }
+      return refreshedLane;
+    }
+
+    const candidateIds = [
+      ...currentLane.cardIds.filter(
+        (cardId) =>
+          !invalidatedCardIds.has(cardId) &&
+          current.cardsById[cardId]?.pipelineId === refreshedLane.pipeline.id &&
+          current.cardsById[cardId]?.currentStageId === refreshedLane.id &&
+          (!refreshedCardOwner.has(cardId) || refreshedCardOwner.get(cardId) === key),
+      ),
+      ...refreshedLane.cardIds,
+    ];
+    let entityChanged = false;
+    for (const cardId of new Set(candidateIds)) {
+      const currentCard = current.cardsById[cardId];
+      const refreshedCard = refreshed.cardsById[cardId];
+      const nextCard =
+        currentCard && refreshedCard && sameCard(currentCard, refreshedCard)
+          ? currentCard
+          : (refreshedCard ?? currentCard);
+      if (!nextCard) continue;
+      cardsById[cardId] = nextCard;
+      entityChanged ||= nextCard !== currentCard;
+    }
+
+    const nextLane: PipelineBoardLane = {
       ...refreshedLane,
-      cards: Array.from(cardsById.values()).sort(comparePipelineDashboardCards),
+      cardIds: sortCardIds(candidateIds, cardsById),
       cursor:
-        currentLane.cards.length > PIPELINE_DASHBOARD_PAGE_SIZE
+        currentLane.cardIds.length > PIPELINE_DASHBOARD_PAGE_SIZE
           ? currentLane.cursor
           : refreshedLane.cursor,
     };
+
+    return !entityChanged &&
+      sameLaneMetadata(currentLane, nextLane) &&
+      sameIds(currentLane.cardIds, nextLane.cardIds)
+      ? currentLane
+      : nextLane;
   });
+
+  return { cardsById, lanes };
 }
 
-export function upsertPipelineRealtimeCard(
-  lanes: PipelineDashboardLane[],
+function upsertPipelineCard(
+  state: PipelineBoardState,
   card: PipelineDashboardCard,
   isInsert: boolean,
-) {
-  const existingLaneIndex = lanes.findIndex((lane) =>
-    lane.cards.some((candidate) => candidate.id === card.id),
-  );
-  const targetLaneIndex = lanes.findIndex(
+): PipelineBoardState {
+  const existingLaneIndex = state.lanes.findIndex((lane) => lane.cardIds.includes(card.id));
+  const targetLaneIndex = state.lanes.findIndex(
     (lane) => lane.pipeline.id === card.pipelineId && lane.id === card.currentStageId,
   );
 
-  // An update for an unloaded card is outside the currently loaded slice. Let a
-  // refresh or explicit Load more request reconcile it instead of growing the lane.
-  if (existingLaneIndex < 0 && !isInsert) return lanes;
+  if (targetLaneIndex < 0 || (existingLaneIndex < 0 && !isInsert)) return state;
 
-  // A new or moved card can enter only when the target's initial visible slice
-  // still has room. Loaded pages grow exclusively through the Load more action.
-  const targetHasRoom =
-    targetLaneIndex >= 0 &&
-    (targetLaneIndex === existingLaneIndex ||
-      lanes[targetLaneIndex]!.cards.length < PIPELINE_DASHBOARD_PAGE_SIZE);
+  if (existingLaneIndex < 0) {
+    const targetLane = state.lanes[targetLaneIndex]!;
+    const hasRoom = targetLane.cardIds.length < PIPELINE_DASHBOARD_PAGE_SIZE;
+    const cardsById = hasRoom ? { ...state.cardsById, [card.id]: card } : state.cardsById;
+    const lanes = state.lanes.map((lane, laneIndex) =>
+      laneIndex === targetLaneIndex
+        ? {
+            ...lane,
+            cardIds: hasRoom ? sortCardIds([...lane.cardIds, card.id], cardsById) : lane.cardIds,
+            totalCount: lane.totalCount + 1,
+          }
+        : lane,
+    );
+    return { cardsById, lanes };
+  }
 
-  if (existingLaneIndex < 0 && !targetHasRoom) return lanes;
-
-  return lanes.map((lane, laneIndex) => {
+  const cardsById = { ...state.cardsById, [card.id]: card };
+  const lanes = state.lanes.map((lane, laneIndex) => {
     if (laneIndex !== existingLaneIndex && laneIndex !== targetLaneIndex) return lane;
 
-    const cards = lane.cards.filter((candidate) => candidate.id !== card.id);
-    let totalCount = lane.totalCount;
-
-    if (laneIndex === existingLaneIndex && laneIndex !== targetLaneIndex) {
-      totalCount = Math.max(0, totalCount - 1);
+    if (existingLaneIndex === targetLaneIndex) {
+      return { ...lane, cardIds: sortCardIds(lane.cardIds, cardsById) };
     }
 
-    if (laneIndex === targetLaneIndex) {
-      if (targetHasRoom) {
-        cards.push(card);
-        cards.sort(comparePipelineDashboardCards);
-      }
-
-      if (existingLaneIndex !== targetLaneIndex && (existingLaneIndex >= 0 || isInsert)) {
-        totalCount += 1;
-      }
+    if (laneIndex === existingLaneIndex) {
+      return {
+        ...lane,
+        cardIds: lane.cardIds.filter((cardId) => cardId !== card.id),
+        totalCount: Math.max(0, lane.totalCount - 1),
+      };
     }
 
-    return { ...lane, cards, totalCount };
+    return {
+      ...lane,
+      cardIds: sortCardIds([...lane.cardIds, card.id], cardsById),
+      totalCount: lane.totalCount + 1,
+    };
   });
+
+  return { cardsById, lanes };
+}
+
+function removePipelineCard(state: PipelineBoardState, cardId: string): PipelineBoardState {
+  const laneIndex = state.lanes.findIndex((lane) => lane.cardIds.includes(cardId));
+  if (laneIndex < 0) return state;
+
+  const cardsById = { ...state.cardsById };
+  delete cardsById[cardId];
+  const lanes = state.lanes.map((lane, index) =>
+    index === laneIndex
+      ? {
+          ...lane,
+          cardIds: lane.cardIds.filter((candidateId) => candidateId !== cardId),
+          totalCount: Math.max(0, lane.totalCount - 1),
+        }
+      : lane,
+  );
+  return { cardsById, lanes };
+}
+
+function appendPipelineBoardLanePage(
+  state: PipelineBoardState,
+  page: PipelineDashboardLanePage,
+): PipelineBoardState {
+  const requestedLaneIndex = state.lanes.findIndex(
+    (lane) => lane.id === page.id && lane.pipeline.id === page.pipeline.id,
+  );
+  if (requestedLaneIndex < 0) return state;
+
+  const idsOwnedByOtherLanes = new Set(
+    state.lanes.flatMap((lane, laneIndex) =>
+      laneIndex === requestedLaneIndex ? [] : lane.cardIds,
+    ),
+  );
+  const safeCards = page.cards.filter(
+    (card) =>
+      card.pipelineId === page.pipeline.id &&
+      card.currentStageId === page.id &&
+      !idsOwnedByOtherLanes.has(card.id),
+  );
+  const cardsById = { ...state.cardsById };
+  for (const card of safeCards) cardsById[card.id] = card;
+
+  const lanes = state.lanes.map((lane, laneIndex) =>
+    laneIndex === requestedLaneIndex
+      ? {
+          ...lane,
+          cardIds: sortCardIds([...lane.cardIds, ...safeCards.map((card) => card.id)], cardsById),
+          cursor: page.cursor,
+          totalCount: page.totalCount,
+        }
+      : lane,
+  );
+
+  return { cardsById, lanes };
+}
+
+function updatePipelineCardPullRequests(
+  state: PipelineBoardState,
+  sessionId: string,
+  pullRequests: PipelineDashboardPullRequest[],
+): PipelineBoardState {
+  const card = state.cardsById[sessionId];
+  const laneIndex = state.lanes.findIndex((lane) => lane.cardIds.includes(sessionId));
+  if (!card || laneIndex < 0 || samePullRequests(card.pullRequests, pullRequests)) return state;
+
+  return {
+    cardsById: { ...state.cardsById, [sessionId]: { ...card, pullRequests } },
+    lanes: state.lanes.map((lane, index) => (index === laneIndex ? { ...lane } : lane)),
+  };
+}
+
+export function pipelineBoardReducer(
+  state: PipelineBoardState,
+  action: PipelineBoardAction,
+): PipelineBoardState {
+  switch (action.type) {
+    case "append-page":
+      return appendPipelineBoardLanePage(state, action.page);
+    case "reconcile":
+      return reconcilePipelineBoard(state, action.lanes, action.invalidatedCardIds);
+    case "remove":
+      return removePipelineCard(state, action.cardId);
+    case "update-pull-requests":
+      return updatePipelineCardPullRequests(state, action.sessionId, action.pullRequests);
+    case "upsert":
+      return upsertPipelineCard(state, action.card, action.isInsert);
+  }
 }
