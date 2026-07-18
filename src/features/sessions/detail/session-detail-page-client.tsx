@@ -23,34 +23,29 @@ import {
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
-import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
+import type {
+  SessionReviewData,
+  SessionReviewPipeline,
+  SessionReviewSession,
+  SessionReviewStage,
+} from "@/features/sessions/detail/data";
 import {
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
 } from "@/features/sessions/detail/realtime";
-import {
-  isTerminalStage,
-  stageIndex,
-  type PipelineStage,
-  type SessionArtifactSummary,
-  type SessionDetail,
-  type SessionPhaseStatus,
-} from "@/features/sessions/types";
+import type { SessionArtifactSummary, SessionPhaseStatus } from "@/features/sessions/types";
 import { StatusChip } from "@/components/shared/status-chip";
 import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
-import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
-import {
-  getWorkspaceMemberDisplayName,
-  type WorkspaceMember,
-} from "@/features/workspace-members/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
-  initialData: SessionDetailPageData;
+  activity: ReactNode;
+  initialData: SessionReviewData;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
 };
@@ -100,8 +95,8 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function CreatorAvatar({ member }: { member: WorkspaceMember }) {
-  const initial = getWorkspaceMemberDisplayName(member).trim().charAt(0).toUpperCase() || "?";
+function CreatorAvatar({ displayName }: { displayName: string }) {
+  const initial = displayName.trim().charAt(0).toUpperCase() || "?";
   return (
     <span
       aria-hidden="true"
@@ -113,13 +108,22 @@ function CreatorAvatar({ member }: { member: WorkspaceMember }) {
 }
 
 type StageRailEntry = {
-  stage: PipelineStage;
+  stage: SessionReviewStage;
   status: "completed" | "current" | "upcoming";
   phaseStatus: SessionPhaseStatus | null;
   completedAt: string | null;
 };
 
-function buildStageRail(session: SessionDetail): StageRailEntry[] {
+function stageIndex(pipeline: SessionReviewPipeline, stageSlug: string): number {
+  return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
+}
+
+function isTerminalStage(pipeline: SessionReviewPipeline, stageSlug: string): boolean {
+  const terminalStage = pipeline.stages[pipeline.stages.length - 1];
+  return terminalStage?.slug === stageSlug;
+}
+
+function buildStageRail(session: SessionReviewSession): StageRailEntry[] {
   const completionIndex = new Map(
     session.phaseCompletions.map((c) => [c.stageSlug, c.completedAt]),
   );
@@ -152,6 +156,7 @@ function buildStageRail(session: SessionDetail): StageRailEntry[] {
 }
 
 export function SessionDetailPageClient({
+  activity,
   initialData,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
@@ -159,7 +164,7 @@ export function SessionDetailPageClient({
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
-  const sessionCreator = initialData.sessionCreator;
+  const creatorDisplayName = initialData.creatorDisplayName;
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
@@ -531,7 +536,7 @@ export function SessionDetailPageClient({
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             <Link
-              href={workspaceSessionsPath(initialData.workspace.slug)}
+              href={workspaceSessionsPath(initialData.workspaceSlug)}
               className="hover:text-foreground"
             >
               ← Sessions
@@ -555,13 +560,11 @@ export function SessionDetailPageClient({
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
-        {sessionCreator ? (
+        {creatorDisplayName ? (
           <>
             <span className="inline-flex items-center gap-1.5">
-              <CreatorAvatar member={sessionCreator} />
-              <span className="text-foreground">
-                {getWorkspaceMemberDisplayName(sessionCreator)}
-              </span>
+              <CreatorAvatar displayName={creatorDisplayName} />
+              <span className="text-foreground">{creatorDisplayName}</span>
             </span>
             <span aria-hidden="true">·</span>
           </>
@@ -585,7 +588,6 @@ export function SessionDetailPageClient({
             <SessionConnections
               linearIssueId={session.linearIssueId}
               linearIssueUrl={session.linearIssueUrl}
-              pullRequestCount={session.pullRequestCount}
               pullRequests={session.pullRequests}
             />
           </>
@@ -768,17 +770,9 @@ export function SessionDetailPageClient({
         <section className="rounded-[8px] border border-border bg-surface p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Run activity</h2>
           <div className="mt-3">
-            <SessionWalliePanel
-              initialData={initialData.wallie}
-              session={{
-                archivedAt: session.archivedAt,
-                id: session.id,
-                workspaceId: session.workspaceId,
-              }}
-              memberIndex={initialData.memberIndex}
-              supabase={supabase}
-              workspaceSlug={initialData.workspace.slug}
-            />
+            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+              {activity}
+            </SessionActivityArchivedAtProvider>
           </div>
         </section>
       </div>

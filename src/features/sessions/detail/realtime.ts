@@ -1,7 +1,7 @@
 import type { Tables } from "@/lib/supabase/database.types";
+import type { SessionReviewSession } from "@/features/sessions/detail/data";
 import type {
   SessionArtifactSummary,
-  SessionDetail,
   SessionPhaseCompletion,
   SessionPhaseStatus,
 } from "@/features/sessions/types";
@@ -17,12 +17,9 @@ type SessionRealtimeRow = Pick<
   | "linear_issue_url"
   | "number"
   | "phase_status"
-  | "pipeline_id"
   | "prompt_md"
-  | "rejection_count"
   | "title"
   | "updated_at"
-  | "workspace_id"
 >;
 
 type ArtifactRealtimeRow = Pick<
@@ -36,9 +33,9 @@ type CompletionRealtimeRow = Pick<
 >;
 
 export function mergeSessionRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: SessionRealtimeRow,
-): SessionDetail {
+): SessionReviewSession {
   if (row.id !== session.id) {
     return session;
   }
@@ -51,26 +48,21 @@ export function mergeSessionRealtimeRow(
     createdAt: row.created_at,
     currentArtifactVersion: row.current_artifact_version,
     currentStageId: row.current_stage_id,
-    currentStageName: currentStage?.name ?? session.currentStageName,
-    currentStagePosition: currentStage?.position ?? session.currentStagePosition,
     currentStageSlug: currentStage?.slug ?? session.currentStageSlug,
     linearIssueId: row.linear_issue_id,
     linearIssueUrl: row.linear_issue_url,
     number: row.number,
     phaseStatus: row.phase_status as SessionPhaseStatus,
-    pipelineId: row.pipeline_id,
     promptMd: row.prompt_md,
-    rejectionCount: row.rejection_count,
     title: row.title,
     updatedAt: row.updated_at,
-    workspaceId: row.workspace_id,
   };
 }
 
 export function mergeArtifactRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: ArtifactRealtimeRow,
-): SessionDetail {
+): SessionReviewSession {
   if (row.session_id !== session.id) {
     return session;
   }
@@ -94,9 +86,9 @@ export function mergeArtifactRealtimeRow(
 }
 
 export function mergeCompletionRealtimeRow(
-  session: SessionDetail,
+  session: SessionReviewSession,
   row: CompletionRealtimeRow,
-): SessionDetail {
+): SessionReviewSession {
   if (row.session_id !== session.id) {
     return session;
   }
