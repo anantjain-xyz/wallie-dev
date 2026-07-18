@@ -16,6 +16,12 @@ import {
 } from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } from "@/lib/routes";
+import {
+  finishInteraction,
+  interactionRouteTemplateForPath,
+  isUnmodifiedPrimaryClick,
+  startInteraction,
+} from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
 type ShellHeaderProps = {
@@ -56,6 +62,10 @@ const CreateSessionLoadingCloseContext = createContext<(() => void) | null>(null
 
 export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void } = {}) {
   const closeFromShell = useContext(CreateSessionLoadingCloseContext);
+
+  useEffect(() => {
+    finishInteraction("open_create_dialog", "success");
+  }, []);
 
   return (
     <Dialog
@@ -177,6 +187,19 @@ export function ShellHeader({
           href={item.href}
           aria-current={active ? "page" : undefined}
           className={cn("ui-top-nav-tab", className, active && "ui-top-nav-tab-active")}
+          onClick={(event) => {
+            if (
+              isUnmodifiedPrimaryClick(event) &&
+              pathname === pipelineHref &&
+              item.href.endsWith("/sessions")
+            ) {
+              startInteraction(
+                "pipeline_to_sessions",
+                "/w/[workspaceSlug]",
+                "/w/[workspaceSlug]/sessions",
+              );
+            }
+          }}
         >
           {item.label}
         </Link>
@@ -224,7 +247,10 @@ export function ShellHeader({
                 type="button"
                 className="ui-button-primary inline-flex h-9 w-9 items-center gap-2 px-0 sm:h-auto sm:w-auto sm:px-3"
                 aria-label="New session"
-                onClick={() => setUserCreateOpen(true)}
+                onClick={() => {
+                  startInteraction("open_create_dialog", interactionRouteTemplateForPath(pathname));
+                  setUserCreateOpen(true);
+                }}
                 onFocus={preloadCreateDialog}
                 onPointerEnter={preloadCreateDialog}
               >

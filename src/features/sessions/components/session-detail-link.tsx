@@ -12,6 +12,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { isUnmodifiedPrimaryClick, startInteraction } from "@/lib/telemetry/interaction-rum";
+
 type Prefetch = (href: string) => void;
 
 const SessionDetailPrefetchContext = createContext<Set<string> | null>(null);
@@ -48,12 +50,15 @@ type SessionDetailLinkProps = Omit<
   href: string;
   onFocus?: FocusEventHandler<HTMLAnchorElement>;
   onPointerEnter?: PointerEventHandler<HTMLAnchorElement>;
+  trackSessionsToDetail?: boolean;
 };
 
 export function SessionDetailLink({
   href,
+  onClick,
   onFocus,
   onPointerEnter,
+  trackSessionsToDetail = false,
   ...props
 }: SessionDetailLinkProps) {
   const router = useRouter();
@@ -72,6 +77,16 @@ export function SessionDetailLink({
       {...props}
       href={href}
       prefetch={false}
+      onClick={(event) => {
+        onClick?.(event);
+        if (!event.defaultPrevented && trackSessionsToDetail && isUnmodifiedPrimaryClick(event)) {
+          startInteraction(
+            "sessions_to_detail",
+            "/w/[workspaceSlug]/sessions",
+            "/w/[workspaceSlug]/sessions/[sessionNumber]",
+          );
+        }
+      }}
       onFocus={(event) => {
         onFocus?.(event);
         if (!event.defaultPrevented) prefetch();

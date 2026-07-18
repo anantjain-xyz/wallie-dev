@@ -2,8 +2,11 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, Inter } from "next/font/google";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+import { ProductionTelemetry } from "@/components/telemetry/production-telemetry";
+import { isProductionDeploy } from "@/env/deploy";
 import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
+import { PRODUCTION_TELEMETRY_MARKER_ID } from "@/lib/telemetry/environment";
 import "./globals.css";
 
 const inter = Inter({
@@ -118,6 +121,12 @@ export default function RootLayout({
           </a>
           {children}
         </OverlayProvider>
+        {isProductionDeploy() ? (
+          <>
+            <span id={PRODUCTION_TELEMETRY_MARKER_ID} hidden />
+            <ProductionTelemetry />
+          </>
+        ) : null}
       </body>
     </html>
   );

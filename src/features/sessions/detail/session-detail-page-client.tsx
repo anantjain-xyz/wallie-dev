@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
+import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
 import {
   archiveSessionFromClient,
@@ -49,6 +50,7 @@ import type { SessionArtifactSummary, SessionPhaseStatus } from "@/features/sess
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
+import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
@@ -458,6 +460,7 @@ export function SessionDetailPageClient({
 
     setActionError(null);
     setPhaseActionPending(action);
+    startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
     const previousStageSlug = session.currentStageSlug;
     const previousPatch: SessionMutationPatch = {
@@ -548,7 +551,9 @@ export function SessionDetailPageClient({
 
       setFeedbackDraft("");
       setFeedbackOpen(false);
+      finishInteraction(action, "success");
     } catch (error) {
+      finishInteraction(action, "error");
       setActionError(error instanceof Error ? error.message : "Action failed.");
     } finally {
       setPhaseActionPending(null);
@@ -772,6 +777,7 @@ export function SessionDetailPageClient({
 
   return (
     <PageContainer>
+      <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
