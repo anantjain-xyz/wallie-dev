@@ -106,7 +106,7 @@ export function WorkspaceAvatarSection({
               {workspaceName}
             </p>
           )}
-          <p className="font-mono text-[12px] text-muted">/w/{workspace.slug}</p>
+          <p className="type-code text-muted">/w/{workspace.slug}</p>
         </div>
 
         {canManage ? (
@@ -121,7 +121,7 @@ export function WorkspaceAvatarSection({
             />
           </label>
         ) : (
-          <p className="text-[12px] leading-5 text-muted">
+          <p className="text-xs leading-5 text-muted">
             Workspace admins can change the name and avatar.
           </p>
         )}
@@ -255,7 +255,7 @@ function EditableWorkspaceName({
           </button>
         </div>
         {error ? (
-          <p className="text-[12px] leading-4 text-danger" role="alert">
+          <p className="text-xs leading-4 text-danger" role="alert">
             {error}
           </p>
         ) : null}

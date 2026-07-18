@@ -502,7 +502,7 @@ function ArtifactPanelStage({
                     type="button"
                     aria-pressed={selectedVersion === artifact.version}
                     className={cn(
-                      "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                      "rounded-full border px-2.5 py-1 text-xs font-medium",
                       selectedVersion === artifact.version
                         ? "border-accent/40 bg-accent-soft text-accent"
                         : "border-border text-muted hover:text-foreground",
@@ -555,7 +555,7 @@ function TabButton({ active, children, controls, onClick, onKeyDown, ref }: TabB
       aria-controls={controls}
       aria-selected={active}
       className={cn(
-        "rounded-[4px] px-2.5 py-1 text-[11px] font-medium",
+        "rounded-[4px] px-2.5 py-1 text-xs font-medium",
         active ? "bg-surface-muted text-foreground" : "text-muted hover:text-foreground",
       )}
       id={id}
@@ -603,7 +603,7 @@ function ArtifactBodyView({
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[11px] uppercase tracking-wide text-muted">
+        <p className="type-annotation uppercase tracking-wide text-muted">
           v{artifact.version} · {new Date(artifact.createdAt).toLocaleString()}
         </p>
         {isMarkdown ? (
@@ -614,7 +614,7 @@ function ArtifactBodyView({
                 type="button"
                 aria-selected={displayMode === mode}
                 className={cn(
-                  "rounded-[4px] px-2 py-1 text-[11px] font-medium capitalize",
+                  "rounded-[4px] px-2 py-1 text-xs font-medium capitalize",
                   displayMode === mode
                     ? "bg-surface-muted text-foreground"
                     : "text-muted hover:text-foreground",
@@ -641,7 +641,7 @@ function ArtifactBodyView({
       ) : (
         <pre
           className={cn(
-            "max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-[12px] leading-5 text-foreground",
+            "max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-xs leading-5 text-foreground",
             !isMarkdown && "bg-background",
           )}
         >
@@ -654,7 +654,7 @@ function ArtifactBodyView({
 
 function EmptyHint({ text }: { text: string }) {
   return (
-    <p className="rounded-[4px] border border-dashed border-border px-3 py-6 text-center text-[12px] text-muted">
+    <p className="rounded-[4px] border border-dashed border-border px-3 py-6 text-center text-xs text-muted">
       {text}
     </p>
   );
@@ -663,7 +663,7 @@ function EmptyHint({ text }: { text: string }) {
 function FailureHint({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div
-      className="mb-3 flex items-center justify-between gap-3 rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+      className="mb-3 flex items-center justify-between gap-3 rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning"
       role="alert"
     >
       <span>{message}</span>
@@ -681,7 +681,7 @@ function FailureHint({ message, onRetry }: { message: string; onRetry: () => voi
 function ProgressHint({ text }: { text: string }) {
   return (
     <div
-      className="mb-3 flex items-center justify-center gap-2 rounded-[4px] border border-accent/20 bg-accent-soft px-3 py-4 text-[12px] font-medium text-accent"
+      className="mb-3 flex items-center justify-center gap-2 rounded-[4px] border border-accent/20 bg-accent-soft px-3 py-4 text-xs font-medium text-accent"
       role="status"
     >
       <Spinner />

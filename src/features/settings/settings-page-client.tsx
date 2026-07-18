@@ -271,10 +271,8 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
       <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
         <header className="mb-8 sm:mb-10">
           <div className="min-w-0 space-y-2">
-            <h1 className="text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
-              Settings
-            </h1>
-            <p className="max-w-2xl text-[14px] leading-6 text-muted">
+            <h1 className="type-page-title">Settings</h1>
+            <p className="type-body max-w-2xl text-muted">
               Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
             </p>
           </div>
@@ -340,7 +338,7 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                 <div className="space-y-4 border-t border-border pt-6">
                   <div className="min-w-0">
                     <h3 className="text-[14px] font-semibold text-foreground">Workspace secrets</h3>
-                    <p className="mt-1 text-[12px] leading-5 text-muted">
+                    <p className="mt-1 text-xs leading-5 text-muted">
                       Secret values never come back to the client. Wallie shows preview-only rows
                       and writes encrypted values through route handlers.
                     </p>
@@ -416,10 +414,8 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
                     className="flex flex-col gap-1.5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="space-y-1">
-                      <code className="font-mono text-[12px] text-foreground">
-                        {limit.endpoint}
-                      </code>
-                      <p className="text-[12px] leading-5 text-muted">{limit.description}</p>
+                      <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
+                      <p className="text-xs leading-5 text-muted">{limit.description}</p>
                     </div>
                     <span className="ui-pill shrink-0">
                       {limit.max} req / {Math.round(limit.windowMs / 1000)}s

@@ -12,6 +12,8 @@ describe("MarkdownContent", () => {
   it("renders markdown structure as real typography", () => {
     const html = render("# Review\n\nPR #12 reviewed.\n\n- one\n- two");
     expect(html).toContain("<h1");
+    expect(html).toContain('class="artifact-content"');
+    expect(html).toContain('class="artifact-heading-1"');
     expect(html).toContain("Review");
     expect(html).toContain("<ul");
     expect(html).toContain("<li");
@@ -24,6 +26,17 @@ describe("MarkdownContent", () => {
     expect(html).toContain("<pre");
     expect(html).toContain("<code");
     expect(html).toContain("const x = 1;");
+    expect(html).toContain("artifact-inline-code");
+    expect(html).toContain("artifact-pre");
+    expect(html).toContain("artifact-code-block");
+  });
+
+  it("uses materially distinct semantic classes for artifact heading levels", () => {
+    const html = render("# One\n\n## Two\n\n### Three\n\n#### Four");
+    expect(html).toContain('class="artifact-heading-1"');
+    expect(html).toContain('class="artifact-heading-2"');
+    expect(html).toContain('class="artifact-heading-3"');
+    expect(html).toContain('class="artifact-heading-4"');
   });
 
   it("renders GFM tables and task lists", () => {

@@ -107,7 +107,7 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5">
             <p className="text-[13px] font-medium text-foreground">Anthropic API key</p>
-            <p className="text-[12px] text-muted">
+            <p className="text-xs text-muted">
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
           </div>
@@ -126,7 +126,7 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
 
       <form className="space-y-3" onSubmit={handleSave}>
         <label className="block space-y-1.5">
-          <span className="text-[12px] font-medium text-foreground">Anthropic API key</span>
+          <span className="text-xs font-medium text-foreground">Anthropic API key</span>
           <input
             autoComplete="off"
             className="ui-input font-mono text-[13px]"
