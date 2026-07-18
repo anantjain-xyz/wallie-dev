@@ -10,6 +10,7 @@ type WorkspaceHomePageProps = {
 export default async function WorkspaceHomePage({ params }: WorkspaceHomePageProps) {
   const { workspaceSlug } = await params;
   const data = await loadPipelineDashboardData(workspaceSlug);
+  const initialNow = new Date().toISOString();
 
-  return <PipelinePageClient initialData={data} />;
+  return <PipelinePageClient initialData={data} initialNow={initialNow} />;
 }

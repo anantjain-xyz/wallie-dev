@@ -10,6 +10,7 @@ import type {
 } from "@/app/api/agent-config/route";
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { TimeDisplay } from "@/components/shared/time-display";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
@@ -104,6 +105,7 @@ import { cn } from "@/lib/utils";
 
 type OnboardingPageClientProps = {
   initialData: WorkspaceOnboardingData;
+  initialNow?: string;
 };
 
 export { RepositoryProfileEditor };
@@ -111,7 +113,7 @@ export { RepositoryProfileEditor };
 type HealthTone = "accent" | "danger" | "neutral" | "success" | "warning";
 
 type HealthSummaryItem = {
-  detail: string;
+  detail: ReactNode;
   label: string;
   tone: HealthTone;
   value: string;
@@ -440,7 +442,10 @@ export function updateVercelSandboxConnectionInData(
   };
 }
 
-export function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryItem[] {
+export function setupHealthItems(
+  health: OnboardingSetupHealth,
+  initialNow = "1970-01-01T00:00:00.000Z",
+): HealthSummaryItem[] {
   const github = health.githubInstallation.connected
     ? {
         detail: health.githubInstallation.targetName ?? "Connected installation",
@@ -529,11 +534,20 @@ export function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryIt
           ? { tone: "accent" as const, value: "Running" }
           : { tone: "danger" as const, value: "Error" }
     : { tone: "neutral" as const, value: "No check" };
-  const sandboxDetail = !health.vercelSandboxConnection.connected
-    ? "Connect Vercel first"
-    : health.latestSandboxCapabilityCheck
-      ? `Checked ${formatRelativeTime(health.latestSandboxCapabilityCheck.checkedAt)}`
-      : "Run a capability check";
+  const sandboxDetail = !health.vercelSandboxConnection.connected ? (
+    "Connect Vercel first"
+  ) : health.latestSandboxCapabilityCheck ? (
+    <>
+      Checked{" "}
+      <TimeDisplay
+        initialNow={initialNow}
+        value={health.latestSandboxCapabilityCheck.checkedAt}
+        variant="relative"
+      />
+    </>
+  ) : (
+    "Run a capability check"
+  );
 
   return [
     { detail: github.detail, label: "GitHub", tone: github.tone, value: github.value },
@@ -601,28 +615,6 @@ export function setupHealthItems(health: OnboardingSetupHealth): HealthSummaryIt
 
 function settingsHref(workspaceSlug: string, anchor: string) {
   return `${workspaceSettingsPath(workspaceSlug)}#${anchor}`;
-}
-
-function formatRelativeTime(value: string, nowMs = Date.now()) {
-  const thenMs = Date.parse(value);
-  if (!Number.isFinite(thenMs)) return "recently";
-
-  const elapsedSeconds = Math.max(0, Math.round((nowMs - thenMs) / 1000));
-  if (elapsedSeconds < 45) return "just now";
-
-  const units = [
-    { max: 60, name: "second", seconds: 1 },
-    { max: 60 * 60, name: "minute", seconds: 60 },
-    { max: 24 * 60 * 60, name: "hour", seconds: 60 * 60 },
-    { max: 7 * 24 * 60 * 60, name: "day", seconds: 24 * 60 * 60 },
-    { max: 30 * 24 * 60 * 60, name: "week", seconds: 7 * 24 * 60 * 60 },
-    { max: 365 * 24 * 60 * 60, name: "month", seconds: 30 * 24 * 60 * 60 },
-    { max: Number.POSITIVE_INFINITY, name: "year", seconds: 365 * 24 * 60 * 60 },
-  ] as const;
-
-  const unit = units.find((candidate) => elapsedSeconds < candidate.max) ?? units[0];
-  const count = Math.max(1, Math.floor(elapsedSeconds / unit.seconds));
-  return `${count} ${unit.name}${count === 1 ? "" : "s"} ago`;
 }
 
 const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
@@ -2124,12 +2116,18 @@ function MobileStepControl({
   );
 }
 
-function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
+function SetupHealthSummary({
+  health,
+  initialNow,
+}: {
+  health: OnboardingSetupHealth;
+  initialNow: string;
+}) {
   return (
     <aside className="h-fit min-w-0 lg:sticky lg:top-8">
       <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Health</h2>
       <div className="mt-4 space-y-3">
-        {setupHealthItems(health).map((item) => (
+        {setupHealthItems(health, initialNow).map((item) => (
           <div key={item.label} className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-medium text-foreground">{item.label}</p>
@@ -2286,7 +2284,8 @@ export function scrollOnboardingSetupToTop(target?: {
   scrollTarget?.scrollTo({ behavior: "auto", left: 0, top: 0 });
 }
 
-export function OnboardingPageClient({ initialData }: OnboardingPageClientProps) {
+export function OnboardingPageClient({ initialData, initialNow }: OnboardingPageClientProps) {
+  const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
   const [data, setData] = useState(initialData);
   const [error, setError] = useState<string | null>(null);
@@ -2865,7 +2864,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           </div>
         </section>
 
-        <SetupHealthSummary health={data.setupHealth} />
+        <SetupHealthSummary health={data.setupHealth} initialNow={renderNow} />
       </main>
 
       <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur sm:px-6">
