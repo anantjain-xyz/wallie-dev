@@ -40,6 +40,16 @@ export type PipelineDashboardLane = {
   totalCount: number;
 };
 
+export type PipelineBoardLane = Omit<PipelineDashboardLane, "cards"> & {
+  cardIds: string[];
+};
+
+export type PipelineBoardState = {
+  cardsById: Record<string, PipelineDashboardCard>;
+  lanes: PipelineBoardLane[];
+  offPageCardLaneKeys: Record<string, string>;
+};
+
 export type PipelineDashboardData = {
   lanes: PipelineDashboardLane[];
   onboarding: OnboardingResumeState | null;
