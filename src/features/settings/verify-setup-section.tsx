@@ -49,7 +49,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
         <div className="space-y-3">
           {checklist.map((item) => (
             <div
-              className="flex flex-col gap-3 rounded-[6px] border border-border bg-surface px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
+              className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-4 py-3 sm:flex-row sm:items-start sm:justify-between"
               key={item.id}
             >
               <div className="min-w-0">

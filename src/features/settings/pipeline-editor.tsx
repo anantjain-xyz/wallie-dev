@@ -8,13 +8,16 @@ import {
   moveDraftStage,
   OperatingRulesField,
   PipelineEditorControls,
+  PipelineValidationSummary,
   PipelineVariableHelp,
+  pipelineValidationTargetId,
   removeDraftStage,
   StageRowEditor,
   stageToDraft,
   updateDraftStage,
   validatePipelineDraft,
   type DraftPipelineStage,
+  type PipelineDraftValidationResult,
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
 import type { SessionPipeline } from "@/features/sessions/types";
@@ -38,9 +41,13 @@ export function PipelineEditor({
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
     keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
+  const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [isPending, startTransition] = useTransition();
+  const validation: PipelineDraftValidationResult = hasAttemptedSave
+    ? validatePipelineDraft({ name, stages })
+    : { ok: true };
 
   if (!pipeline) {
     return (
@@ -68,6 +75,7 @@ export function PipelineEditor({
       return;
     }
 
+    setHasAttemptedSave(false);
     setSavedAt(new Date());
     finishInteraction("save_settings", "success");
   }
@@ -77,10 +85,15 @@ export function PipelineEditor({
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
     const validation = validatePipelineDraft({ name, stages: stagesToSave });
     if (!validation.ok) {
-      setError(validation.message);
+      setHasAttemptedSave(true);
+      const targetId = pipelineValidationTargetId(validation.issues[0]!);
+      if (targetId) {
+        window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
+      }
       return;
     }
 
+    setHasAttemptedSave(false);
     setStages(stagesToSave);
     startInteraction("save_settings", "/w/[workspaceSlug]/settings");
 
@@ -94,10 +107,10 @@ export function PipelineEditor({
 
   return (
     <div className="space-y-6">
+      <PipelineValidationSummary validation={validation} />
       {error ? (
         <div
-          role="status"
-          aria-live="polite"
+          role="alert"
           className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
         >
           {error}
@@ -110,17 +123,30 @@ export function PipelineEditor({
       ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
-        <label className="block space-y-1.5">
-          <span className="text-[13px] font-medium text-foreground">Pipeline name</span>
+        <div className="block space-y-1.5">
+          <label className="text-[13px] font-medium text-foreground" htmlFor="pipeline-name">
+            Pipeline name
+          </label>
           <input
+            aria-describedby={`pipeline-name-description${!validation.ok && validation.field === "pipeline-name" ? " pipeline-name-error" : ""}`}
+            aria-invalid={!validation.ok && validation.field === "pipeline-name" ? true : undefined}
+            id="pipeline-name"
             type="text"
             value={name}
             disabled={!canManage}
             onChange={(event) => setName(event.target.value)}
-            className="ui-input min-w-[240px]"
+            className={`ui-input min-w-[240px] ${!validation.ok && validation.field === "pipeline-name" ? "border-danger" : ""}`}
             maxLength={80}
           />
-        </label>
+          <p className="type-annotation text-muted" id="pipeline-name-description">
+            Identifies this pipeline throughout the workspace.
+          </p>
+          {!validation.ok && validation.field === "pipeline-name" ? (
+            <p className="text-xs font-medium text-danger" id="pipeline-name-error">
+              {validation.message}
+            </p>
+          ) : null}
+        </div>
         <PipelineVariableHelp />
       </div>
 
@@ -135,6 +161,18 @@ export function PipelineEditor({
           <StageRowEditor
             key={stage.id ?? `new-${index}`}
             canManage={canManage}
+            errors={
+              validation.ok
+                ? undefined
+                : {
+                    name: validation.issues.find(
+                      (issue) => issue.stageIndex === index && issue.field === "stage-name",
+                    )?.message,
+                    slug: validation.issues.find(
+                      (issue) => issue.stageIndex === index && issue.field === "stage-slug",
+                    )?.message,
+                  }
+            }
             index={index}
             isFirst={index === 0}
             isLast={index === stages.length - 1}

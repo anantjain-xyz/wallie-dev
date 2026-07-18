@@ -31,7 +31,7 @@ const heroBadges = ["Open source", "MIT licensed", "Self-hostable"];
 
 export function LandingPage() {
   return (
-    <main id="main-content" className="min-h-[100svh] bg-surface text-foreground tracking-normal">
+    <main id="main-content" className="min-h-[100svh] bg-sheet text-foreground tracking-normal">
       <LandingHeader />
 
       <section className="mx-auto flex w-full max-w-[1180px] flex-col px-5 pb-16 pt-12 sm:px-8 sm:pb-20 sm:pt-16 lg:px-10">
@@ -44,12 +44,9 @@ export function LandingPage() {
             inspect and approve together.
           </p>
 
-          <ul className="mx-auto mt-8 flex flex-wrap items-center justify-center gap-2">
+          <ul className="mx-auto mt-8 flex flex-wrap items-center justify-center text-[13px] font-medium text-muted">
             {heroBadges.map((badge) => (
-              <li
-                key={badge}
-                className="inline-flex items-center rounded-full border border-border bg-surface px-3 py-1 text-[13px] font-medium text-muted"
-              >
+              <li key={badge} className="border-l border-border px-3 first:border-l-0">
                 {badge}
               </li>
             ))}
@@ -74,7 +71,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      <div className="border-t border-border bg-background">
+      <div className="border-t border-border bg-canvas">
         <FeatureSection
           id="sandboxed-execution"
           index="01"
@@ -112,7 +109,7 @@ export function LandingPage() {
 
 function LandingHeader() {
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
+    <header className="sticky top-0 z-50 border-b border-border bg-sheet/95 backdrop-blur supports-[backdrop-filter]:bg-sheet/80">
       <div className="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-3 px-5 py-4 sm:px-8 lg:px-10">
         <Link href="/" className="flex shrink-0 items-center gap-3 focus-visible:outline-none">
           <Image
@@ -120,7 +117,7 @@ function LandingHeader() {
             alt=""
             width={44}
             height={44}
-            className="h-11 w-11 rounded-[10px] object-contain dark:invert"
+            className="h-11 w-11 rounded-[6px] object-contain dark:invert"
             priority
           />
           <span className="text-[16px] font-semibold text-foreground">Wallie</span>
@@ -131,7 +128,7 @@ function LandingHeader() {
             href={githubUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-border bg-surface px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong hover:bg-surface-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-border bg-sheet px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
           >
             <GitHubIcon className="h-4 w-4" />
             <span>GitHub</span>
@@ -144,15 +141,15 @@ function LandingHeader() {
               next={nextPath}
               variant="inline"
               className="flex items-center gap-2"
-              inputClassName="h-9 w-full rounded-[6px] border border-border bg-surface px-3 text-[13px] text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-muted focus-visible:border-accent/50 focus-visible:shadow-[0_0_0_4px_var(--focus-ring-soft)]"
-              submitClassName="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              inputClassName="h-9 w-full rounded-[6px] border border-border bg-sheet px-3 text-[13px] text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-muted focus-visible:border-accent/50 focus-visible:shadow-[0_0_0_4px_var(--focus-ring-soft)]"
+              submitClassName="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
               submitLabel="Get started"
             />
           </div>
 
           <Link
             href="/login"
-            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:hidden"
+            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas lg:hidden"
           >
             Get started
           </Link>
@@ -164,7 +161,7 @@ function LandingHeader() {
 
 function LandingFooter() {
   return (
-    <footer className="border-t border-border bg-surface">
+    <footer className="border-t border-border bg-sheet">
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
         <div className="flex items-center gap-3">
           <Image
@@ -172,7 +169,7 @@ function LandingFooter() {
             alt=""
             width={28}
             height={28}
-            className="h-7 w-7 rounded-[8px] object-contain dark:invert"
+            className="h-7 w-7 rounded-[6px] object-contain dark:invert"
           />
           <span className="text-[14px] font-semibold text-foreground">Wallie</span>
         </div>
@@ -243,7 +240,7 @@ function FeatureSection({
   const textClassName = layout === "stacked" ? "max-w-[760px]" : "";
 
   return (
-    <section id={id} className="border-b border-border bg-surface">
+    <section id={id} className="border-b border-border bg-sheet">
       <div className={contentClassName}>
         <div className={textClassName}>
           <p className="font-mono text-xs font-semibold text-accent">{index}</p>

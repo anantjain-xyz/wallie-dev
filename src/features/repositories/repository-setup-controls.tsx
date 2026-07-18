@@ -1,6 +1,7 @@
 "use client";
 
 import { ArchiveIcon, BranchIcon, CodeIcon, GlobeIcon, LockIcon } from "@/components/shared/icons";
+import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { StatusBadge } from "@/features/settings/settings-ui";
@@ -39,7 +40,7 @@ function RepoPropertyIcon({
   return <GlobeIcon className={className} />;
 }
 
-export function RepositoryPropertyPill({
+function RepositoryProperty({
   icon,
   label,
   monospace = false,
@@ -51,40 +52,49 @@ export function RepositoryPropertyPill({
   value: string;
 }) {
   return (
-    <span aria-label={`${label}: ${value}`} className="ui-pill" title={`${label}: ${value}`}>
-      <RepoPropertyIcon type={icon} />
-      <span className={monospace ? "font-mono" : undefined}>{value}</span>
-    </span>
+    <MetadataItem
+      aria-label={`${label}: ${value}`}
+      className="flex items-center gap-1.5 border-0 py-0"
+      label={
+        <span className="inline-flex items-center gap-1">
+          <RepoPropertyIcon type={icon} />
+          {label}
+        </span>
+      }
+      monospace={monospace}
+      title={`${label}: ${value}`}
+      value={value}
+    />
   );
 }
 
-export function RepositoryMetadataPills({ repository }: { repository: WorkspaceGitHubRepository }) {
+export function RepositoryMetadata({ repository }: { repository: WorkspaceGitHubRepository }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <MetadataList className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex">
       {repository.defaultProgrammingLanguage ? (
-        <RepositoryPropertyPill
+        <RepositoryProperty
           icon="language"
           label="Language"
           value={repository.defaultProgrammingLanguage}
         />
       ) : null}
       {repository.defaultBranch ? (
-        <RepositoryPropertyPill
+        <RepositoryProperty
           icon="branch"
           label="Default branch"
           monospace
           value={repository.defaultBranch}
         />
       ) : null}
-      <RepositoryPropertyPill
+      <RepositoryProperty
         icon={repository.isPrivate ? "private" : "public"}
         label="Visibility"
         value={repository.isPrivate ? "Private" : "Public"}
       />
       {repository.isArchived ? (
-        <RepositoryPropertyPill icon="archived" label="Status" value="Archived" />
+        <RepositoryProperty icon="archived" label="Status" value="Archived" />
       ) : null}
-    </div>
+    </MetadataList>
   );
 }
 

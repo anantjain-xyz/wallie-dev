@@ -82,10 +82,7 @@ export function UiPrimitivesShowcase() {
   }
 
   return (
-    <main
-      id="main-content"
-      className="min-h-screen bg-background px-5 py-10 text-foreground sm:px-8"
-    >
+    <main id="main-content" className="min-h-screen bg-canvas px-5 py-10 text-foreground sm:px-8">
       <div className="mx-auto max-w-5xl space-y-8">
         <header className="space-y-3">
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-accent">
@@ -100,7 +97,7 @@ export function UiPrimitivesShowcase() {
           </p>
         </header>
 
-        <section aria-labelledby="display-heading" className="ui-panel p-5">
+        <section aria-labelledby="display-heading" className="ui-sheet p-5">
           <h2 className="text-base font-semibold" id="display-heading">
             Display conditions
           </h2>
@@ -273,7 +270,7 @@ function ShowcaseCard({
   title: string;
 }) {
   return (
-    <section className="ui-panel min-h-48 p-5">
+    <section className="ui-sheet min-h-48 p-5">
       <h2 className="text-base font-semibold">{title}</h2>
       <p className="mt-1 min-h-10 text-sm leading-5 text-muted">{description}</p>
       <div className="mt-5">{children}</div>

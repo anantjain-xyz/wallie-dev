@@ -84,7 +84,7 @@ export function WorkspaceAvatarSection({
         {workspaceAvatarUrl ? (
           <Image
             alt={`${workspaceName} avatar`}
-            className="h-16 w-16 rounded-[10px] border border-border object-cover"
+            className="h-16 w-16 rounded-[6px] border border-border object-cover"
             height={64}
             src={workspaceAvatarUrl}
             width={64}

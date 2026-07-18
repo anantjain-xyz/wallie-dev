@@ -75,7 +75,7 @@ export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void }
     >
       <DialogContent description="The session form is loading." title="Start a new session">
         <div aria-busy="true" aria-live="polite" role="status">
-          <div className="h-40 animate-pulse rounded bg-surface-muted" />
+          <div className="h-40 animate-pulse rounded bg-control-muted" />
           <p className="mt-4 text-sm text-muted">Loading session form…</p>
         </div>
       </DialogContent>
@@ -110,7 +110,7 @@ function WorkspaceAvatar({ name, url }: { name: string; url: string | null }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-border bg-surface-strong type-annotation font-semibold text-foreground"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-border bg-control-hover type-annotation font-semibold text-foreground"
     >
       {initial}
     </span>
@@ -204,7 +204,7 @@ export function ShellHeader({
 
   return (
     <>
-      <header className="sticky top-0 z-20 min-w-0 border-b border-border bg-surface">
+      <header className="sticky top-0 z-20 min-w-0 border-b border-border bg-sheet">
         <div className="flex h-14 min-w-0 items-center justify-between gap-3 px-3 sm:px-5">
           <div className="flex min-w-0 shrink items-center gap-2">
             <Link
