@@ -4,65 +4,80 @@ import { describe, expect, it } from "vitest";
 
 import { LandingPage } from "@/components/landing/landing-page";
 import {
-  ApprovalGatesMockup,
-  HeroWorkspaceMockup,
-  RuntimeChoiceMockup,
-  SandboxExecutionMockup,
+  ArtifactDecisionMockup,
+  IssueInputMockup,
+  PipelineProgressMockup,
 } from "@/components/landing/product-mockups";
 
 describe("LandingPage", () => {
-  it("smoke-renders the landing page and top auth form", () => {
+  it("renders exactly six sections with one h1 and sequential section headings", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain("Wallie");
-    expect(html).toContain("Bring agents together with your team in one shared workspace.");
-    expect(html).toContain('action="/auth/email"');
-    expect(html).toContain('name="email"');
-    expect(html).toContain("Approval gates your team controls");
-    expect(html).toContain("Bring your favorite agent and sandbox");
+    expect(html.match(/<section(?:\s|>)/g)).toHaveLength(6);
+    expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
+    expect(html.match(/<h2(?:\s|>)/g)).toHaveLength(5);
+    expect(html).toContain("Turn Linear issues into reviewed, staged work.");
+    expect(html).toContain("Bring the Linear issue into focus.");
+    expect(html).toContain("See exactly which stage owns the work.");
+    expect(html).toContain("Review the artifact, then approve or return it.");
+    expect(html).toContain("Boundaries your team can see.");
+    expect(html).toContain("Start with the issue your team already has.");
   });
 
-  it("renders GitHub links in the header and footer", () => {
-    const html = renderToStaticMarkup(createElement(LandingPage));
-
-    expect(html).toContain('href="https://github.com/anantjain-xyz/wallie-dev"');
-    expect(html).toContain("GitHub");
-  });
-
-  it("offers a Get started link to /login for narrow viewports", () => {
+  it("uses the required CTA destinations and a focusable walkthrough target", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
     expect(html).toContain('href="/login"');
-    expect(html).toContain("Get started");
-    expect(html.match(/ui-touch-target/g)).toHaveLength(2);
+    expect(html).toContain("Sign in to Wallie");
+    expect(html).toContain('href="#product-walkthrough"');
+    expect(html).toContain('id="product-walkthrough"');
+    expect(html).toContain('tabindex="-1"');
   });
 
-  it("renders the footer with author attribution", () => {
+  it("keeps decorative product controls out of the interactive accessibility tree", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain("Built by");
-    expect(html).toContain('href="https://anantjain.xyz"');
-    expect(html).toContain("Anant Jain");
+    expect(html).not.toMatch(/<(button|input|select|textarea)(?:\s|>)/);
+    expect(html.match(/aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).toContain("Create session");
+    expect(html).toContain("Approve artifact");
+    expect(html).toContain("Return with feedback");
   });
 
-  it("smoke-renders the code-native product mockups", () => {
+  it("uses a complete static three-state story without time-driven motion", () => {
+    const html = renderToStaticMarkup(createElement(LandingPage));
+
+    expect(html).toContain("New session · Source");
+    expect(html).toContain("Session · Pipeline");
+    expect(html).toContain("Build · Artifact v2");
+    expect(html).not.toContain("animate-");
+    expect(html).not.toContain("aria-live");
+  });
+
+  it("limits trust copy to the three approved boundaries", () => {
+    const html = renderToStaticMarkup(createElement(LandingPage));
+
+    expect(html).toContain("Human approval gates");
+    expect(html).toContain("Workspace isolation");
+    expect(html).toContain("Integration boundaries");
+    expect(html).not.toMatch(/customers|teams trust|work faster/i);
+  });
+
+  it("smoke-renders each focused product crop", () => {
     const html = renderToStaticMarkup(
       createElement(
         "div",
         null,
-        createElement(HeroWorkspaceMockup),
-        createElement(SandboxExecutionMockup),
-        createElement(ApprovalGatesMockup),
-        createElement(RuntimeChoiceMockup),
+        createElement(IssueInputMockup),
+        createElement(PipelineProgressMockup),
+        createElement(ArtifactDecisionMockup),
       ),
     );
 
-    expect(html).toContain("Default pipeline");
-    expect(html).toContain("vercel://acme-sso-4921");
-    expect(html).toContain("Review pipeline");
-    expect(html).toContain("Approvers: Ava Patel, Jordan Kim");
-    expect(html).toContain("Connect Agent");
-    expect(html).toContain("Provider access");
-    expect(html).toContain("Vercel Sandbox");
+    expect(html).toContain("OP-349");
+    expect(html).toContain("Plan");
+    expect(html).toContain("Build");
+    expect(html).toContain("Land");
+    expect(html).toContain("Awaiting review");
   });
 });
