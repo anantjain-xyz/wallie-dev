@@ -2,7 +2,7 @@ import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
-  SettingsPageClient: vi.fn(() => null),
+  SettingsServerShell: vi.fn(() => null),
   loadSettingsPageData: vi.fn(),
 }));
 
@@ -10,8 +10,8 @@ vi.mock("@/features/settings/data", () => ({
   loadSettingsPageData: mocked.loadSettingsPageData,
 }));
 
-vi.mock("@/features/settings/settings-page-client", () => ({
-  SettingsPageClient: mocked.SettingsPageClient,
+vi.mock("@/features/settings/settings-server-shell", () => ({
+  SettingsServerShell: mocked.SettingsServerShell,
 }));
 
 import SettingsPage from "./page";
@@ -36,11 +36,12 @@ describe("SettingsPage", () => {
 
     const element = (await SettingsPage({
       params: Promise.resolve({ workspaceSlug: "northwind" }),
-      searchParams: Promise.resolve({ github: "connected" }),
+      searchParams: Promise.resolve({ category: "workspace", github: "connected" }),
     })) as ReactElement;
 
-    expect(element.type).toBe(mocked.SettingsPageClient);
+    expect(element.type).toBe(mocked.SettingsServerShell);
     expect(element.props).toMatchObject({
+      category: "workspace",
       initialData,
       searchState: { codexStatus: null, githubStatus: "connected" },
       setupData,

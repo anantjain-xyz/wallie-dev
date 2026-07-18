@@ -1,5 +1,6 @@
-import { SettingsPageClient } from "@/features/settings/settings-page-client";
 import { loadSettingsPageData } from "@/features/settings/data";
+import { parseSettingsCategory } from "@/features/settings/settings-categories";
+import { SettingsServerShell } from "@/features/settings/settings-server-shell";
 
 type SettingsPageProps = {
   params: Promise<{
@@ -8,6 +9,7 @@ type SettingsPageProps = {
   searchParams: Promise<{
     github?: string;
     codex_connect?: string;
+    category?: string | string[];
   }>;
 };
 
@@ -18,7 +20,8 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
   const initialData = await data.initialData;
 
   return (
-    <SettingsPageClient
+    <SettingsServerShell
+      category={parseSettingsCategory(resolvedSearchParams.category)}
       initialData={initialData}
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
