@@ -1,0 +1,27 @@
+[
+  {
+    "route": "/w/[workspaceSlug]",
+    "firstLoadUncompressedJsBytes": 1150000,
+    "firstLoadChunkPaths": [".next/static/chunks/pipeline.js"]
+  },
+  {
+    "route": "/w/[workspaceSlug]/sessions",
+    "firstLoadUncompressedJsBytes": 1150000,
+    "firstLoadChunkPaths": [".next/static/chunks/sessions.js"]
+  },
+  {
+    "route": "/w/[workspaceSlug]/settings",
+    "firstLoadUncompressedJsBytes": 1320401,
+    "firstLoadChunkPaths": [".next/static/chunks/settings.js"]
+  },
+  {
+    "route": "/w/[workspaceSlug]/sessions/[sessionNumber]",
+    "firstLoadUncompressedJsBytes": 1350000,
+    "firstLoadChunkPaths": [".next/static/chunks/detail.js"]
+  },
+  {
+    "route": "/w/[workspaceSlug]/onboarding",
+    "firstLoadUncompressedJsBytes": 1100000,
+    "firstLoadChunkPaths": [".next/static/chunks/onboarding.js"]
+  }
+]

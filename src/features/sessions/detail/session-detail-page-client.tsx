@@ -41,6 +41,7 @@ import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
+import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
@@ -355,6 +356,7 @@ export function SessionDetailPageClient({
 
     setActionError(null);
     setPhaseActionPending(action);
+    startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
     try {
       const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
@@ -370,14 +372,19 @@ export function SessionDetailPageClient({
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
         setActionError(body?.error ?? "Action failed.");
+        finishInteraction(action, "error");
         return;
       }
 
       setFeedbackDraft("");
       setFeedbackOpen(false);
+      finishInteraction(action, "success");
       startTransition(() => {
         router.refresh();
       });
+    } catch (error) {
+      finishInteraction(action, "error");
+      setActionError(error instanceof Error ? error.message : "Action failed.");
     } finally {
       setPhaseActionPending(null);
     }

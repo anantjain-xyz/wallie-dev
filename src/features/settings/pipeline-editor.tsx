@@ -18,6 +18,7 @@ import {
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
 import type { SessionPipeline } from "@/features/sessions/types";
+import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 
 type PipelineEditorProps = {
   canManage: boolean;
@@ -63,10 +64,12 @@ export function PipelineEditor({
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       setError(body?.error ?? "Failed to save pipeline.");
+      finishInteraction("save_settings", "error");
       return;
     }
 
     setSavedAt(new Date());
+    finishInteraction("save_settings", "success");
   }
 
   function handleSave() {
@@ -79,9 +82,11 @@ export function PipelineEditor({
     }
 
     setStages(stagesToSave);
+    startInteraction("save_settings", "/w/[workspaceSlug]/settings");
 
     startTransition(async () => {
       await savePipeline().catch((caught: unknown) => {
+        finishInteraction("save_settings", "error");
         setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
       });
     });

@@ -2,8 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, Inter } from "next/font/google";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+import { ProductionTelemetry } from "@/components/telemetry/production-telemetry";
 import { resolveAppUrl } from "@/lib/app-url";
 import { siteConfig } from "@/lib/site-config";
+import { isProductionTelemetryEnabled } from "@/lib/telemetry/environment";
 import "./globals.css";
 
 const inter = Inter({
@@ -118,6 +120,7 @@ export default function RootLayout({
           </a>
           {children}
         </OverlayProvider>
+        {isProductionTelemetryEnabled() ? <ProductionTelemetry /> : null}
       </body>
     </html>
   );
