@@ -55,6 +55,7 @@ describe("AuthEntryPanel", () => {
     expect(html).toContain("Work email");
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('inputMode="email"');
+    expect(html).toContain('class="grid gap-3"');
     expect(html).toContain("ui-button-primary min-h-11 w-full");
     expect(html).toContain("Visit the home page");
   });
@@ -84,7 +85,7 @@ describe("AuthEntryPanel", () => {
     expect(countMatches(html, 'inputMode="numeric"')).toBe(6);
     expect(countMatches(html, 'pattern="[0-9]*"')).toBe(6);
     expect(countMatches(html, 'maxLength="1"')).toBe(6);
-    expect(html).toContain("email-code-form mt-4 space-y-3");
+    expect(html).toContain("email-code-form mt-4 grid gap-3");
     expect(html).toContain("email-code-grid grid gap-1");
     expect(countMatches(html, "h-11 min-w-11")).toBe(6);
     expect(html).toContain('autoComplete="one-time-code"');

@@ -100,7 +100,7 @@ export function AuthEntryPanel({
             <AuthForm
               action="/auth/code"
               ariaLabelledBy="email-code-heading"
-              className="email-code-form mt-4 space-y-3"
+              className="email-code-form mt-4 grid gap-3"
               feedback={codeFeedback}
               pendingLabel="Verifying code…"
               submitLabel={errorMessage ? "Try code again" : "Continue with code"}
@@ -127,7 +127,7 @@ export function AuthEntryPanel({
             </summary>
             <AuthForm
               action="/auth/password"
-              className="mt-3 space-y-3"
+              className="mt-3 grid gap-3"
               feedback={
                 errorCode === "password_auth_failed" && errorMessage
                   ? { kind: "error", message: errorMessage }

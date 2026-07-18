@@ -27,7 +27,7 @@ export function EmailMagicLinkForm({
     <AuthForm
       action="/auth/email"
       className={
-        className ?? (isInline ? "flex flex-col gap-2 sm:flex-row sm:items-center" : "space-y-3")
+        className ?? (isInline ? "flex flex-col gap-2 sm:flex-row sm:items-center" : "grid gap-3")
       }
       feedback={
         errorMessage
