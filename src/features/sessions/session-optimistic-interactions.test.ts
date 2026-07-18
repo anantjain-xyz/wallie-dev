@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
@@ -131,8 +132,18 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
   };
 }
 
+function listView(initialData: SessionListPageData) {
+  return createElement(OverlayProvider, null, createElement(SessionsPageClient, { initialData }));
+}
+
 describe("optimistic session interactions", () => {
   beforeEach(() => {
+    class ResizeObserverStub {
+      disconnect() {}
+      observe() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
     vi.stubGlobal("fetch", mocked.fetch);
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -302,14 +313,12 @@ describe("optimistic session interactions", () => {
   });
 
   it("uses newer archive props when a keyed row survives soft navigation", () => {
-    const view = render(
-      createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
-    );
+    const view = render(listView(makeListData(session, "all")));
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
 
     view.rerender(
-      createElement(SessionsPageClient, {
-        initialData: makeListData(
+      listView(
+        makeListData(
           {
             ...session,
             archivedAt: "2026-07-17T12:00:00.000Z",
@@ -318,7 +327,7 @@ describe("optimistic session interactions", () => {
           },
           "archived",
         ),
-      }),
+      ),
     );
 
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
@@ -332,16 +341,36 @@ describe("optimistic session interactions", () => {
       archivedAt: "2026-07-17T12:00:00.000Z",
       updatedAt: "2026-07-17T12:00:00.000Z",
     };
-    render(
-      createElement(SessionsPageClient, {
-        initialData: makeListData(archived, "archived"),
-      }),
-    );
+    render(listView(makeListData(archived, "archived")));
 
-    fireEvent.click(screen.getByRole("button", { name: "Unarchive session #1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm unarchive for session #1" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unarchive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Unarchive session" }));
 
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
+  });
+
+  it("keeps archive confirmation copy tied to the pending action", () => {
+    mocked.fetch.mockImplementation(() => new Promise<Response>(() => undefined));
+    render(listView(makeListData(session, "all")));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
+
+    expect(
+      screen.getByText(
+        "It will leave active session views but remain available in the archived filter.",
+        { exact: false },
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("It will return to active session views.", { exact: false }),
+    ).toBeNull();
   });
 
   it("keeps a newer server title when an older save response arrives late", async () => {
@@ -359,19 +388,20 @@ describe("optimistic session interactions", () => {
             );
         }),
     );
-    const view = render(
-      createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
-    );
+    const view = render(listView(makeListData(session, "all")));
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit title for session #1" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit title" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session #1 title" }), {
       target: { value: "Older saved title" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save title for session #1" }));
 
     view.rerender(
-      createElement(SessionsPageClient, {
-        initialData: makeListData(
+      listView(
+        makeListData(
           {
             ...session,
             title: "Newer server title",
@@ -379,7 +409,7 @@ describe("optimistic session interactions", () => {
           },
           "all",
         ),
-      }),
+      ),
     );
 
     await waitFor(() =>

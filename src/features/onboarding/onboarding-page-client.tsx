@@ -14,6 +14,7 @@ import { TimeDisplay } from "@/components/shared/time-display";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
+import { Tooltip } from "@/components/ui/tooltip";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -1445,16 +1446,17 @@ function RuntimeStep({
                       spellCheck={false}
                       value={row.key}
                     />
-                    <button
-                      aria-label="Remove variable row"
-                      className="ui-button h-10 w-10 shrink-0 !px-0 !py-0"
-                      disabled={busyAction !== null}
-                      onClick={() => handleRemoveNewSecretRow(row.id)}
-                      title="Remove row"
-                      type="button"
-                    >
-                      <XIcon className="h-4 w-4" />
-                    </button>
+                    <Tooltip content="Remove row">
+                      <button
+                        aria-label="Remove variable row"
+                        className="ui-button h-10 w-10 shrink-0 !px-0 !py-0"
+                        disabled={busyAction !== null}
+                        onClick={() => handleRemoveNewSecretRow(row.id)}
+                        type="button"
+                      >
+                        <XIcon className="h-4 w-4" />
+                      </button>
+                    </Tooltip>
                   </div>
                   <SecretValueInput
                     ariaLabel="New variable value"

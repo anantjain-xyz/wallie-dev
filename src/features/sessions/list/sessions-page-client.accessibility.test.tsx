@@ -4,8 +4,9 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 
@@ -64,19 +65,31 @@ const initialData: SessionListPageData = {
   },
 };
 
+beforeEach(() => {
+  class ResizeObserverStub {
+    disconnect() {}
+    observe() {}
+    unobserve() {}
+  }
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+});
+
 afterEach(() => {
   cleanup();
   mocked.refresh.mockReset();
   mocked.replace.mockReset();
+  vi.unstubAllGlobals();
 });
 
 describe("SessionsPageClient accessibility", () => {
   it("labels filter groups and supports keyboard Search, pressed state, and Clear", async () => {
     const user = userEvent.setup();
     render(
-      <main>
-        <SessionsPageClient initialData={initialData} />
-      </main>,
+      <OverlayProvider>
+        <main>
+          <SessionsPageClient initialData={initialData} />
+        </main>
+      </OverlayProvider>,
     );
 
     expect(screen.getByRole("group", { name: "Session scope" })).toBeInTheDocument();
@@ -111,27 +124,55 @@ describe("SessionsPageClient accessibility", () => {
       queryState: { ...initialData.queryState, query: "OP-339" },
     };
     const { rerender } = render(
-      <main>
-        <SessionsPageClient initialData={dataWithQuery} />
-      </main>,
+      <OverlayProvider>
+        <main>
+          <SessionsPageClient initialData={dataWithQuery} />
+        </main>
+      </OverlayProvider>,
     );
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(mocked.replace).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&scope=active");
 
     rerender(
-      <main>
-        <SessionsPageClient
-          initialData={{
-            ...dataWithQuery,
-            queryState: { ...dataWithQuery.queryState, query: "" },
-          }}
-        />
-      </main>,
+      <OverlayProvider>
+        <main>
+          <SessionsPageClient
+            initialData={{
+              ...dataWithQuery,
+              queryState: { ...dataWithQuery.queryState, query: "" },
+            }}
+          />
+        </main>
+      </OverlayProvider>,
     );
 
     await waitFor(() =>
       expect(screen.getByRole("searchbox", { name: "Search sessions" })).toHaveFocus(),
     );
+  });
+
+  it("opens row actions on the first item and restores focus after nested archive dialog", async () => {
+    const user = userEvent.setup();
+    render(
+      <OverlayProvider>
+        <main>
+          <SessionsPageClient initialData={initialData} />
+        </main>
+      </OverlayProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Actions for session #339" });
+    await user.click(trigger);
+    expect(await screen.findByRole("menu", { name: "Actions for session #339" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Edit title" })).toHaveFocus();
+
+    await user.keyboard("{End}{Enter}");
+    expect(await screen.findByRole("alertdialog", { name: "Archive session #339?" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(trigger).toHaveFocus();
   });
 });
