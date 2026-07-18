@@ -135,10 +135,17 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const shouldRestoreSearchFocusRef = useRef(false);
   const [committedMutations, setCommittedMutations] = useState<ListCommittedMutation[]>([]);
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
+
+  useEffect(() => {
+    if (!shouldRestoreSearchFocusRef.current) return;
+    shouldRestoreSearchFocusRef.current = false;
+    searchInputRef.current?.focus();
+  }, [initialData.queryState.query]);
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
@@ -156,6 +163,16 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
     event.preventDefault();
     const value = searchInputRef.current?.value ?? "";
     updateQueryState({ query: value });
+  }
+
+  function handleSearchClear() {
+    if (searchInputRef.current) searchInputRef.current.value = "";
+    if (initialData.queryState.query) {
+      shouldRestoreSearchFocusRef.current = true;
+    } else {
+      searchInputRef.current?.focus();
+    }
+    updateQueryState({ query: "" });
   }
 
   const sessions = useMemo(
@@ -202,64 +219,86 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
       <CommandBar className="mb-6">
         <form
           onSubmit={handleSearchSubmit}
-          className="relative w-full flex-none sm:max-w-md sm:flex-1 sm:min-w-[220px]"
+          className="w-full flex-none space-y-1.5 sm:max-w-xl sm:flex-1 sm:min-w-[300px]"
         >
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-          <input
-            key={initialData.queryState.query}
-            ref={searchInputRef}
-            type="search"
-            defaultValue={initialData.queryState.query}
-            placeholder="Search prompts, titles, Linear IDs"
-            className="ui-input pl-8"
-            aria-label="Search sessions"
-          />
+          <label className="text-[13px] font-medium text-foreground" htmlFor="sessions-search">
+            Search sessions
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <input
+                key={initialData.queryState.query}
+                ref={searchInputRef}
+                id="sessions-search"
+                type="search"
+                defaultValue={initialData.queryState.query}
+                placeholder="Prompts, titles, or Linear IDs"
+                className="ui-input pl-8"
+              />
+            </div>
+            <button className="ui-button-primary" type="submit">
+              Search
+            </button>
+            <button className="ui-button" onClick={handleSearchClear} type="button">
+              Clear
+            </button>
+          </div>
         </form>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {SCOPE_CHIPS.map((chip) => (
-            <button
-              key={chip.key}
-              type="button"
-              className={cn(
-                "ui-filter-chip",
-                initialData.queryState.scope === chip.key && "ui-filter-chip-active",
-              )}
-              onClick={() => updateQueryState({ scope: chip.key })}
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
+        <fieldset className="space-y-1.5">
+          <legend className="text-[13px] font-medium text-foreground">Session scope</legend>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {SCOPE_CHIPS.map((chip) => {
+              const isSelected = initialData.queryState.scope === chip.key;
+              return (
+                <button
+                  aria-pressed={isSelected}
+                  key={chip.key}
+                  type="button"
+                  className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
+                  onClick={() => updateQueryState({ scope: chip.key })}
+                >
+                  {chip.label}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            className={cn(
-              "ui-filter-chip",
-              initialData.queryState.stageSlug === null && "ui-filter-chip-active",
-            )}
-            onClick={() => updateQueryState({ stageSlug: null })}
-          >
-            All stages
-          </button>
-          {stageGroups.order.map((stage) => (
+        <fieldset className="space-y-1.5">
+          <legend className="text-[13px] font-medium text-foreground">Pipeline stage</legend>
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
-              key={stage.slug}
+              aria-pressed={initialData.queryState.stageSlug === null}
               type="button"
               className={cn(
                 "ui-filter-chip",
-                initialData.queryState.stageSlug === stage.slug && "ui-filter-chip-active",
+                initialData.queryState.stageSlug === null && "ui-filter-chip-active",
               )}
-              onClick={() => updateQueryState({ stageSlug: stage.slug })}
+              onClick={() => updateQueryState({ stageSlug: null })}
             >
-              {stage.name}
-              <span className="ml-1 type-annotation text-muted">
-                {stageGroups.counts.get(stage.slug) ?? 0}
-              </span>
+              All stages
             </button>
-          ))}
-        </div>
+            {stageGroups.order.map((stage) => {
+              const isSelected = initialData.queryState.stageSlug === stage.slug;
+              const count = stageGroups.counts.get(stage.slug) ?? 0;
+              return (
+                <button
+                  aria-label={`${stage.name}, ${count} ${count === 1 ? "session" : "sessions"}`}
+                  aria-pressed={isSelected}
+                  key={stage.slug}
+                  type="button"
+                  className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
+                  onClick={() => updateQueryState({ stageSlug: stage.slug })}
+                >
+                  {stage.name}
+                  <span className="ml-1 type-annotation text-muted">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
       </CommandBar>
 
       {sessions.length === 0 ? (
