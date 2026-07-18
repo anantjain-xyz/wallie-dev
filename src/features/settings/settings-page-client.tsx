@@ -450,7 +450,6 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
             />
             <DangerZoneSection
               canDelete={isOwner}
-              setFlashMessage={setFlashMessage}
               workspaceId={pageData.workspace.id}
               workspaceName={pageData.workspace.name}
             />

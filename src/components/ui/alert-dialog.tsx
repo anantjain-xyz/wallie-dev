@@ -16,6 +16,7 @@ type AlertDialogContentProps = Omit<
   "aria-describedby" | "aria-labelledby" | "title"
 > & {
   description: ReactNode;
+  dismissible?: boolean;
   title: ReactNode;
 };
 
@@ -23,6 +24,8 @@ export function AlertDialogContent({
   children,
   className,
   description,
+  dismissible = true,
+  onEscapeKeyDown,
   title,
   ...props
 }: AlertDialogContentProps) {
@@ -33,7 +36,14 @@ export function AlertDialogContent({
   return (
     <AlertDialogPrimitive.Portal container={container}>
       <AlertDialogPrimitive.Overlay className="ui-overlay-backdrop" />
-      <AlertDialogPrimitive.Content className={cn("ui-dialog-content", className)} {...props}>
+      <AlertDialogPrimitive.Content
+        className={cn("ui-dialog-content", className)}
+        onEscapeKeyDown={(event) => {
+          onEscapeKeyDown?.(event);
+          if (!dismissible) event.preventDefault();
+        }}
+        {...props}
+      >
         <header className="space-y-1.5">
           <AlertDialogPrimitive.Title className="text-base font-semibold text-foreground">
             {title}

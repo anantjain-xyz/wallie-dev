@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select";
 import {
   createSessionFromClient,
@@ -53,7 +54,6 @@ function CreateSessionDialogBody({
   workspaceId,
   workspaceSlug,
 }: CreateSessionDialogProps) {
-  const titleId = useId();
   const router = useRouter();
 
   const [prompt, setPrompt] = useState("");
@@ -184,23 +184,19 @@ function CreateSessionDialogBody({
   }
 
   return (
-    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
-      <div
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="ui-panel-elevated relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto overscroll-contain bg-surface p-5 sm:max-h-[calc(100dvh-5rem)] sm:p-6"
-        role="dialog"
+    <Dialog
+      open
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !isSubmitting) onClose();
+      }}
+    >
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto sm:max-h-[calc(100dvh-5rem)]"
+        description="Describe the work, choose its repository, and optionally link a Linear issue."
+        dismissible={!isSubmitting}
+        title="Start a new session"
       >
-        <div>
-          <h2
-            id={titleId}
-            className="text-2xl font-semibold tracking-tight text-balance text-foreground"
-          >
-            Start a new session
-          </h2>
-        </div>
-
-        <form className="mt-6 space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
+        <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
               Prompt
@@ -280,7 +276,7 @@ function CreateSessionDialogBody({
           ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-3">
-            <button type="button" onClick={onClose} className="ui-button">
+            <button type="button" disabled={isSubmitting} onClick={onClose} className="ui-button">
               Cancel
             </button>
             <button
@@ -292,7 +288,7 @@ function CreateSessionDialogBody({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

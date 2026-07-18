@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
 import { PlusIcon } from "@/components/shared/icons";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
@@ -46,18 +47,19 @@ export function preloadCreateSessionDialogOnce(
 
 export function CreateSessionDialogLoading() {
   return (
-    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
-      <div
-        aria-busy="true"
-        aria-live="polite"
-        className="ui-panel-elevated w-full max-w-xl bg-surface p-5 sm:p-6"
-        role="status"
+    <Dialog defaultOpen>
+      <DialogContent
+        description="The session form is loading."
+        dismissible={false}
+        hideCloseButton
+        title="Start a new session"
       >
-        <div className="h-7 w-52 animate-pulse rounded bg-surface-strong" />
-        <div className="mt-6 h-40 animate-pulse rounded bg-surface-muted" />
-        <p className="mt-4 text-sm text-muted">Loading session form…</p>
-      </div>
-    </div>
+        <div aria-busy="true" aria-live="polite" role="status">
+          <div className="h-40 animate-pulse rounded bg-surface-muted" />
+          <p className="mt-4 text-sm text-muted">Loading session form…</p>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -142,21 +144,6 @@ export function ShellHeader({
 
     requestAnimationFrame(() => createButtonRef.current?.focus());
   }, [createFromUrl, pathname, router, searchParams]);
-
-  useEffect(() => {
-    if (!createOpen) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        handleCreateClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [createOpen, handleCreateClose]);
 
   function preloadCreateDialog() {
     preloadCreateSessionDialogOnce(createDialogPreloadStarted);

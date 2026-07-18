@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section, StatusBadge } from "@/features/settings/settings-ui";
@@ -39,6 +40,8 @@ export function VercelSandboxConnectionSection({
   const [token, setToken] = useState("");
   const [teamId, setTeamId] = useState(connection?.teamId ?? "");
   const [projectId, setProjectId] = useState(connection?.projectId ?? "");
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
   const saveConnection = useApiAction<VercelSandboxConnectionResponse>({
     call: () =>
@@ -60,14 +63,23 @@ export function VercelSandboxConnectionSection({
     successText: "Vercel Sandbox connection saved.",
   });
 
-  const disconnect = useApiAction<VercelSandboxConnectionResponse>({
+  const disconnect = useApiAction<VercelSandboxConnectionResponse, [], boolean>({
     call: () =>
       fetch(`/api/workspaces/${workspaceId}/vercel-sandbox-connection`, {
         method: "DELETE",
       }),
     errorText: "Vercel Sandbox disconnect failed.",
-    onSuccess: (payload) => onConnectionChange(payload.connection),
-    setFlashMessage,
+    onError: (message) => {
+      setDisconnectError(message);
+      return false;
+    },
+    onSuccess: (payload) => {
+      onConnectionChange(payload.connection);
+      return true;
+    },
+    setFlashMessage: (message) => {
+      if (message.kind === "success") setFlashMessage(message);
+    },
     successText: "Vercel Sandbox disconnected.",
   });
 
@@ -83,12 +95,9 @@ export function VercelSandboxConnectionSection({
     void saveConnection.run();
   }
 
-  function handleDisconnect() {
-    if (!window.confirm("Disconnect Vercel Sandbox for this workspace?")) {
-      return;
-    }
-
-    void disconnect.run();
+  async function handleDisconnect() {
+    setDisconnectError(null);
+    if (await disconnect.run()) setDisconnectOpen(false);
   }
 
   return (
@@ -121,14 +130,29 @@ export function VercelSandboxConnectionSection({
             ) : null}
           </div>
           {connection && canManage ? (
-            <button
-              className="ui-button-danger"
-              disabled={disconnect.isBusy}
-              onClick={handleDisconnect}
-              type="button"
-            >
-              {disconnect.isBusy ? "Disconnecting…" : "Disconnect"}
-            </button>
+            <DestructiveConfirmationDialog
+              actionLabel="Disconnect Vercel Sandbox"
+              description={`Disconnecting ${connection.projectName ?? connection.projectId} prevents this workspace from starting new sandbox runs until another Vercel connection is saved.`}
+              errorMessage={disconnectError}
+              onConfirm={() => void handleDisconnect()}
+              onOpenChange={(open) => {
+                setDisconnectOpen(open);
+                setDisconnectError(null);
+              }}
+              open={disconnectOpen}
+              pending={disconnect.isBusy}
+              pendingLabel="Disconnecting…"
+              title={`Disconnect ${connection.projectName ?? connection.projectId}?`}
+              trigger={
+                <button
+                  aria-label="Disconnect Vercel Sandbox"
+                  className="ui-button-danger"
+                  type="button"
+                >
+                  Disconnect
+                </button>
+              }
+            />
           ) : null}
         </div>
 
