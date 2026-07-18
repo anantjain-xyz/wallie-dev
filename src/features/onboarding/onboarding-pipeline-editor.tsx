@@ -21,7 +21,7 @@ import type { SessionPipeline } from "@/features/sessions/types";
 
 type OnboardingPipelineEditorProps = {
   canManage: boolean;
-  onCompleted: (action: string) => Promise<void>;
+  onCompleted: (action: string, pipeline: SessionPipeline) => Promise<void>;
   pipeline: SessionPipeline | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
@@ -74,7 +74,8 @@ export function OnboardingPipelineEditor({
         return;
       }
 
-      await onCompleted("pipeline:save");
+      const body = (await response.json()) as { pipeline: SessionPipeline };
+      await onCompleted("pipeline:save", body.pipeline);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
     } finally {

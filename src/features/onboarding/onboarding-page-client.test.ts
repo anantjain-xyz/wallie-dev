@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
@@ -19,12 +20,12 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  applySavedPipelineToData,
   applySavedRepositoryProfileToData,
   buildRepositoryProfileCompletionPatch,
   isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
-  reduceOnboardingMutationData,
   RepositoryProfileEditor,
   scrollOnboardingSetupToTop,
   setupHealthItems,
@@ -389,10 +390,10 @@ describe("reduceOnboardingMutationData", () => {
     expect(next.setupHealth).toBe(current.setupHealth);
   });
 
-  it("applies only repository-selection health fields and restores authoritative conflicts", () => {
+  it("restores authoritative repository health for conflicts on any action", () => {
     const current = onboardingData();
     const next = reduceOnboardingMutationData(current, {
-      action: "repository-selection",
+      action: "navigate",
       authoritative: {
         onboarding: {
           completedAt: null,
@@ -404,6 +405,17 @@ describe("reduceOnboardingMutationData", () => {
           status: "in_progress",
         },
         setupHealth: {
+          latestSandboxCapabilityCheck: {
+            capabilities: {},
+            checkedAt: "2026-05-16T18:01:00.000Z",
+            errorText: null,
+            githubRepositoryId: "repo-a",
+            id: "check-repo-a",
+            sandboxProvider: "vercel",
+            sandboxVercelProjectId: "project-a",
+            sandboxVercelTeamId: "team-a",
+            status: "success",
+          },
           selectedRepository: {
             configured: true,
             fullName: "acme/repo-a",
@@ -416,7 +428,7 @@ describe("reduceOnboardingMutationData", () => {
       error: "Latest progress was restored; retry your action.",
       kind: "onboarding-conflict",
       retryable: true,
-      step: "repository",
+      step: "linear",
       validationErrors: [],
     });
 
@@ -428,6 +440,7 @@ describe("reduceOnboardingMutationData", () => {
       repositoryId: "repo-a",
       status: "ready",
     });
+    expect(next.setupHealth.latestSandboxCapabilityCheck?.id).toBe("check-repo-a");
     expect(next.setupHealth.agentConfig).toBe(current.setupHealth.agentConfig);
   });
 });
@@ -515,7 +528,22 @@ describe("OnboardingPageClient", () => {
     });
     const savedProfile = profile("repo-a");
 
-    const nextData = applySavedRepositoryProfileToData(currentData, savedProfile);
+    const latestSandboxCapabilityCheck = {
+      capabilities: {},
+      checkedAt: "2026-05-16T18:30:00.000Z",
+      errorText: null,
+      githubRepositoryId: "repo-a",
+      id: "check-repo-a",
+      sandboxProvider: "vercel" as const,
+      sandboxVercelProjectId: "project-a",
+      sandboxVercelTeamId: "team-a",
+      status: "success" as const,
+    };
+    const nextData = applySavedRepositoryProfileToData(
+      currentData,
+      savedProfile,
+      latestSandboxCapabilityCheck,
+    );
 
     expect(nextData.github.primaryProfile).toBe(savedProfile);
     expect(nextData.github.repositories[0]).toMatchObject({
@@ -526,6 +554,38 @@ describe("OnboardingPageClient", () => {
     expect(nextData.setupHealth.primaryRepositoryProfile).toMatchObject({
       configured: true,
       repositoryId: "repo-a",
+    });
+    expect(nextData.setupHealth.latestSandboxCapabilityCheck).toBe(latestSandboxCapabilityCheck);
+  });
+
+  it("installs saved pipeline stages before advancing to Linear", () => {
+    const currentData = onboardingData();
+    const savedPipeline = {
+      ...configuredPipeline,
+      stages: [
+        ...configuredPipeline.stages,
+        {
+          approverMemberIds: [],
+          description: "Build",
+          id: "stage-build",
+          name: "Build",
+          pipelineId: configuredPipeline.id,
+          position: 2,
+          promptTemplateMd: "Build prompt",
+          slug: "build",
+        },
+      ],
+    };
+
+    const nextData = applySavedPipelineToData(currentData, savedPipeline);
+
+    expect(nextData.pipeline).toBe(savedPipeline);
+    expect(nextData.pipeline?.stages.map((stage) => stage.slug)).toEqual(["product", "build"]);
+    expect(nextData.setupHealth.defaultPipeline).toEqual({
+      configured: true,
+      pipelineId: "pipeline-1",
+      stageCount: 2,
+      status: "ready",
     });
   });
 

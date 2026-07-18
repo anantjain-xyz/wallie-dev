@@ -31,6 +31,7 @@ import {
 } from "@/features/onboarding/flow";
 import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
 import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import {
   buildRuntimeReadiness,
@@ -128,37 +129,6 @@ type PersistOnboardingAction = {
   savingAction: string;
   step: WorkspaceOnboardingStep;
 };
-
-export function reduceOnboardingMutationData(
-  currentData: WorkspaceOnboardingData,
-  response: WorkspaceOnboardingMutationDelta | WorkspaceOnboardingConflictResponse,
-): WorkspaceOnboardingData {
-  const delta =
-    response.kind === "onboarding-conflict"
-      ? response.authoritative
-      : {
-          onboarding: response.onboarding,
-          setupHealth: response.setupHealth,
-          updatedAt: response.updatedAt,
-        };
-  const onboarding = {
-    ...currentData.onboarding,
-    ...delta.onboarding,
-    updatedAt: delta.updatedAt,
-  };
-  const mutationKey = `${response.step}:${response.action}`;
-
-  switch (mutationKey) {
-    case "repository:repository-selection":
-      return {
-        ...currentData,
-        onboarding,
-        setupHealth: { ...currentData.setupHealth, ...delta.setupHealth },
-      };
-    default:
-      return { ...currentData, onboarding };
-  }
-}
 
 type RuntimeCompletionState = {
   hasInvalidDrafts: boolean;
@@ -1941,6 +1911,7 @@ function StepBody({
   onRepositoryProfileSaved,
   onRepositorySetupMessage,
   onRuntimeStateChange,
+  onPipelineCompleted,
   onSelectStep,
   onSelectGithubRepository,
   profileAnalyzing,
@@ -1953,6 +1924,10 @@ function StepBody({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
+  onPipelineCompleted: (
+    action: string,
+    pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+  ) => Promise<void>;
   onAnalyzeRepository: (repository: WorkspaceGitHubRepository) => void;
   onDataChange: OnboardingDataChange;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
@@ -2035,7 +2010,7 @@ function StepBody({
     controls = (
       <OnboardingPipelineEditor
         canManage={data.canManage}
-        onCompleted={onCompleteStep}
+        onCompleted={onPipelineCompleted}
         pipeline={data.pipeline}
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
@@ -2204,6 +2179,7 @@ export function isRepositorySelectionCurrent(
 export function applySavedRepositoryProfileToData(
   currentData: WorkspaceOnboardingData,
   profile: EditableProfile,
+  latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null,
 ): WorkspaceOnboardingData {
   const nextGithub: WorkspaceGitHubData = {
     ...currentData.github,
@@ -2223,10 +2199,32 @@ export function applySavedRepositoryProfileToData(
     ...currentData,
     github: nextGithub,
     setupHealth: applyGithubHealth(
-      currentData.setupHealth,
+      {
+        ...currentData.setupHealth,
+        latestSandboxCapabilityCheck,
+      },
       nextGithub,
       currentData.onboarding.selectedGithubRepositoryId,
     ),
+  };
+}
+
+export function applySavedPipelineToData(
+  currentData: WorkspaceOnboardingData,
+  pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    pipeline,
+    setupHealth: {
+      ...currentData.setupHealth,
+      defaultPipeline: {
+        configured: pipeline.stages.length > 0,
+        pipelineId: pipeline.id,
+        stageCount: pipeline.stages.length,
+        status: pipeline.stages.length > 0 ? "ready" : "missing",
+      },
+    },
   };
 }
 
@@ -2490,6 +2488,16 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     if (!nextData) {
       throw new Error("Failed to save onboarding state.");
     }
+  }
+
+  async function completePipelineStep(
+    action: string,
+    pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+  ) {
+    const nextData = applySavedPipelineToData(latestDataRef.current, pipeline);
+    latestDataRef.current = nextData;
+    setData(nextData);
+    await completeCurrentStep(action);
   }
 
   async function continueSetup() {
@@ -2760,8 +2768,15 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         throw new Error(body?.error ?? "Failed to save repository profile.");
       }
 
-      const body = (await response.json()) as { profile: EditableProfile };
-      const nextData = applySavedRepositoryProfileToData(latestDataRef.current, body.profile);
+      const body = (await response.json()) as {
+        latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+        profile: EditableProfile;
+      };
+      const nextData = applySavedRepositoryProfileToData(
+        latestDataRef.current,
+        body.profile,
+        body.latestSandboxCapabilityCheck,
+      );
       latestDataRef.current = nextData;
       setData(nextData);
 
@@ -2847,6 +2862,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               data={data}
               isSaving={isSaving}
               onCompleteStep={completeCurrentStep}
+              onPipelineCompleted={completePipelineStep}
               onAnalyzeRepository={(repository) => void analyzeRepository(repository)}
               onDataChange={updateData}
               onInferRepository={(repository) => void inferRepositoryProfile(repository)}

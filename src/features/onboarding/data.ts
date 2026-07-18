@@ -21,6 +21,7 @@ import {
 } from "@/lib/linear-routing/contracts";
 import { credentialExpired, isCodexCredentialType } from "@/lib/codex/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
+import { getLatestSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/server";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -756,6 +757,7 @@ async function loadRepositorySelectionHealthDelta(
 ): Promise<OnboardingSetupHealthDelta> {
   if (!selectedRepositoryId) {
     return {
+      latestSandboxCapabilityCheck: null,
       primaryRepositoryProfile: {
         configured: false,
         fullName: null,
@@ -776,26 +778,32 @@ async function loadRepositorySelectionHealthDelta(
     };
   }
 
-  const [repositoryResult, profileResult, setupResult] = await Promise.all([
-    admin
-      .from("github_repositories")
-      .select("id, full_name, is_archived")
-      .eq("workspace_id", workspaceId)
-      .eq("id", selectedRepositoryId)
-      .maybeSingle(),
-    admin
-      .from("workspace_repository_profiles")
-      .select("github_repository_id")
-      .eq("workspace_id", workspaceId)
-      .eq("is_primary", true)
-      .maybeSingle(),
-    admin
-      .from("repository_onboarding_status")
-      .select("github_repository_id, status")
-      .eq("workspace_id", workspaceId)
-      .eq("github_repository_id", selectedRepositoryId)
-      .maybeSingle(),
-  ]);
+  const [repositoryResult, profileResult, setupResult, latestSandboxCapabilityCheck] =
+    await Promise.all([
+      admin
+        .from("github_repositories")
+        .select("id, full_name, is_archived")
+        .eq("workspace_id", workspaceId)
+        .eq("id", selectedRepositoryId)
+        .maybeSingle(),
+      admin
+        .from("workspace_repository_profiles")
+        .select("github_repository_id")
+        .eq("workspace_id", workspaceId)
+        .eq("is_primary", true)
+        .maybeSingle(),
+      admin
+        .from("repository_onboarding_status")
+        .select("github_repository_id, status")
+        .eq("workspace_id", workspaceId)
+        .eq("github_repository_id", selectedRepositoryId)
+        .maybeSingle(),
+      getLatestSandboxCapabilityCheck({
+        admin,
+        repositoryId: selectedRepositoryId,
+        workspaceId,
+      }),
+    ]);
 
   const firstError = repositoryResult.error ?? profileResult.error ?? setupResult.error;
   if (firstError) throw firstError;
@@ -815,6 +823,7 @@ async function loadRepositorySelectionHealthDelta(
       : "placeholder";
 
   return {
+    latestSandboxCapabilityCheck,
     primaryRepositoryProfile: {
       configured: primaryProfileMatches,
       fullName: primaryProfileMatches ? (repository?.full_name ?? null) : null,
@@ -857,7 +866,11 @@ async function buildOnboardingConflict(input: {
   step: WorkspaceOnboardingStep;
   workspaceId: string;
 }): Promise<WorkspaceOnboardingConflictResponse> {
-  const setupHealth = await mutationSetupHealthDelta(input);
+  const setupHealth = await loadRepositorySelectionHealthDelta(
+    input.admin,
+    input.workspaceId,
+    input.row.selected_github_repository_id,
+  );
   return {
     action: input.action,
     authoritative: {
