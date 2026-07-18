@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -63,13 +65,23 @@ export function WorkspaceMembersSection({
   const [invitations, setInvitations] = useState(initialInvitations);
   const [role, setRole] = useState<WorkspaceInvitationRole>("member");
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [memberRoleTarget, setMemberRoleTarget] = useState<WorkspaceMemberSummary | null>(null);
+  const [memberRoleTrigger, setMemberRoleTrigger] = useState<HTMLButtonElement | null>(null);
+  const [memberRoleDraft, setMemberRoleDraft] = useState<WorkspaceInvitationRole>("member");
   const [memberPendingRemoval, setMemberPendingRemoval] = useState<WorkspaceMemberSummary | null>(
     null,
   );
+  const [invitationPendingRevocation, setInvitationPendingRevocation] =
+    useState<WorkspaceInvitation | null>(null);
 
   async function inviteMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busyAction) return;
     setBusyAction("create");
+    setInviteError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/invitations`, {
@@ -84,25 +96,26 @@ export function WorkspaceMembersSection({
       );
       setEmail("");
       setRole("member");
+      setInviteOpen(false);
       setFlashMessage({
         kind: "success",
         text: `Invitation sent to ${payload.invitation.email}.`,
       });
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not send that invitation.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Wallie could not send that invitation.";
+      setInviteError(message);
     } finally {
       setBusyAction(null);
     }
   }
 
   async function changeMemberRole(member: WorkspaceMemberSummary, nextRole: string) {
-    if (nextRole === member.role) {
+    if (busyAction || nextRole === member.role) {
       return;
     }
     setBusyAction(`role:${member.id}`);
+    setDialogError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, {
@@ -123,18 +136,19 @@ export function WorkspaceMembersSection({
         kind: "success",
         text: `${memberDisplayName(payload.member)} is now ${roleLabel(payload.member.role)}.`,
       });
+      setMemberRoleTarget(null);
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not update that role.",
-      });
+      const message = error instanceof Error ? error.message : "Wallie could not update that role.";
+      setDialogError(message);
     } finally {
       setBusyAction(null);
     }
   }
 
   async function removeMember(member: WorkspaceMemberSummary) {
+    if (busyAction) return;
     setBusyAction(`remove:${member.id}`);
+    setDialogError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/members/${member.id}`, {
@@ -151,10 +165,9 @@ export function WorkspaceMembersSection({
         text: `${memberDisplayName(payload.member)} was removed from the workspace.`,
       });
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not remove that member.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Wallie could not remove that member.";
+      setDialogError(message);
     } finally {
       setBusyAction(null);
     }
@@ -188,7 +201,9 @@ export function WorkspaceMembersSection({
   }
 
   async function revokeInvitation(invitationId: string) {
+    if (busyAction) return;
     setBusyAction(`revoke:${invitationId}`);
+    setDialogError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
@@ -203,11 +218,11 @@ export function WorkspaceMembersSection({
         kind: "success",
         text: `Invitation revoked for ${payload.invitation.email}.`,
       });
+      setInvitationPendingRevocation(null);
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not revoke that invitation.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Wallie could not revoke that invitation.";
+      setDialogError(message);
     } finally {
       setBusyAction(null);
     }
@@ -221,41 +236,76 @@ export function WorkspaceMembersSection({
     >
       <div className="space-y-6">
         {canManage ? (
-          <form
-            className="grid gap-3 rounded-[8px] border border-border bg-surface p-4 sm:grid-cols-[minmax(0,1fr)_160px_auto] sm:items-end"
-            onSubmit={inviteMember}
-          >
-            <label className="block space-y-1.5">
-              <span className="text-[13px] font-medium text-foreground">Email</span>
-              <input
-                autoComplete="email"
-                className="ui-input"
-                disabled={busyAction !== null}
-                inputMode="email"
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="teammate@company.com"
-                required
-                spellCheck={false}
-                type="email"
-                value={email}
-              />
-            </label>
-            <SelectField
-              disabled={busyAction !== null}
-              label="Role"
-              onValueChange={(value) => setRole(value as WorkspaceInvitationRole)}
-              options={ROLE_OPTIONS}
-              value={role}
-            />
-            <button
-              className="ui-button-primary min-h-10 gap-2"
-              disabled={busyAction !== null}
-              type="submit"
+          <div className="flex justify-end">
+            <Dialog
+              open={inviteOpen}
+              onOpenChange={(open) => {
+                if (busyAction === "create") return;
+                setInviteOpen(open);
+                setInviteError(null);
+              }}
             >
-              <PlusIcon />
-              {busyAction === "create" ? "Sending" : "Invite"}
-            </button>
-          </form>
+              <DialogTrigger asChild>
+                <button className="ui-button-primary min-h-10 gap-2" type="button">
+                  <PlusIcon />
+                  Invite member
+                </button>
+              </DialogTrigger>
+              <DialogContent
+                description="Send an invitation and choose the workspace access this person should receive."
+                dismissible={busyAction !== "create"}
+                title="Invite a workspace member"
+              >
+                <form className="space-y-4" onSubmit={inviteMember}>
+                  <label className="block space-y-1.5">
+                    <span className="text-[13px] font-medium text-foreground">Email</span>
+                    <input
+                      autoComplete="email"
+                      autoFocus
+                      className="ui-input"
+                      disabled={busyAction === "create"}
+                      inputMode="email"
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="teammate@company.com"
+                      required
+                      spellCheck={false}
+                      type="email"
+                      value={email}
+                    />
+                  </label>
+                  <SelectField
+                    disabled={busyAction === "create"}
+                    label="Role"
+                    onValueChange={(value) => setRole(value as WorkspaceInvitationRole)}
+                    options={ROLE_OPTIONS}
+                    value={role}
+                  />
+                  {inviteError ? (
+                    <div className="ui-inline-message ui-inline-message-danger" role="alert">
+                      {inviteError}
+                    </div>
+                  ) : null}
+                  <DialogFooter>
+                    <button
+                      className="ui-button"
+                      disabled={busyAction === "create"}
+                      onClick={() => setInviteOpen(false)}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="ui-button-primary"
+                      disabled={busyAction === "create" || !email.trim()}
+                      type="submit"
+                    >
+                      {busyAction === "create" ? "Sending…" : "Send invitation"}
+                    </button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
         ) : null}
 
         <div className="space-y-3">
@@ -268,6 +318,7 @@ export function WorkspaceMembersSection({
               // row, so those rows stay read-only even for managers.
               const canManageRow = canManage && !isOwner && !isSelf;
               const removeBusy = busyAction === `remove:${member.id}`;
+              const roleBusy = busyAction === `role:${member.id}`;
 
               return (
                 <li
@@ -285,25 +336,49 @@ export function WorkspaceMembersSection({
                   </div>
                   {canManageRow ? (
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      <SelectField
-                        className="w-[140px]"
-                        disabled={busyAction !== null}
-                        label={
-                          <span className="sr-only">{`Role for ${memberDisplayName(member)}`}</span>
-                        }
-                        onValueChange={(value) => void changeMemberRole(member, value)}
-                        options={ROLE_OPTIONS}
-                        value={member.role}
-                      />
                       <button
-                        className="ui-button min-h-9 gap-2"
+                        className="ui-button min-h-9"
                         disabled={busyAction !== null}
-                        onClick={() => setMemberPendingRemoval(member)}
+                        onClick={(event) => {
+                          setDialogError(null);
+                          setMemberRoleDraft(member.role as WorkspaceInvitationRole);
+                          setMemberRoleTrigger(event.currentTarget);
+                          setMemberRoleTarget(member);
+                        }}
                         type="button"
                       >
-                        <XIcon />
-                        {removeBusy ? "Removing" : "Remove"}
+                        {roleBusy ? "Saving…" : `Change role (${roleLabel(member.role)})`}
                       </button>
+                      <DestructiveConfirmationDialog
+                        actionLabel="Remove member"
+                        description={
+                          <>
+                            Removing <strong>{memberDisplayName(member)}</strong> revokes their
+                            workspace access immediately. You can re-invite them later.
+                          </>
+                        }
+                        errorMessage={memberPendingRemoval?.id === member.id ? dialogError : null}
+                        onConfirm={() => void removeMember(member)}
+                        onOpenChange={(open) => {
+                          setDialogError(null);
+                          setMemberPendingRemoval(open ? member : null);
+                        }}
+                        open={memberPendingRemoval?.id === member.id}
+                        pending={removeBusy}
+                        pendingLabel="Removing…"
+                        title={`Remove ${memberDisplayName(member)}?`}
+                        trigger={
+                          <button
+                            aria-label={`Remove ${memberDisplayName(member)}`}
+                            className="ui-button min-h-9 gap-2"
+                            disabled={busyAction !== null}
+                            type="button"
+                          >
+                            <XIcon />
+                            Remove
+                          </button>
+                        }
+                      />
                     </div>
                   ) : (
                     <StatusBadge tone={isOwner ? "accent" : "neutral"}>
@@ -356,15 +431,38 @@ export function WorkspaceMembersSection({
                         >
                           {resendBusy ? "Resending" : "Resend"}
                         </button>
-                        <button
-                          className="ui-button min-h-9 gap-2"
-                          disabled={busyAction !== null}
-                          onClick={() => void revokeInvitation(invitation.id)}
-                          type="button"
-                        >
-                          <XIcon />
-                          {revokeBusy ? "Revoking" : "Revoke"}
-                        </button>
+                        <DestructiveConfirmationDialog
+                          actionLabel="Revoke invitation"
+                          description={
+                            <>
+                              Revoking the invitation for <strong>{invitation.email}</strong>
+                              prevents that invitation link from granting workspace access.
+                            </>
+                          }
+                          errorMessage={
+                            invitationPendingRevocation?.id === invitation.id ? dialogError : null
+                          }
+                          onConfirm={() => void revokeInvitation(invitation.id)}
+                          onOpenChange={(open) => {
+                            setDialogError(null);
+                            setInvitationPendingRevocation(open ? invitation : null);
+                          }}
+                          open={invitationPendingRevocation?.id === invitation.id}
+                          pending={revokeBusy}
+                          pendingLabel="Revoking…"
+                          title={`Revoke ${invitation.email}'s invitation?`}
+                          trigger={
+                            <button
+                              aria-label={`Revoke invitation for ${invitation.email}`}
+                              className="ui-button min-h-9 gap-2"
+                              disabled={busyAction !== null}
+                              type="button"
+                            >
+                              <XIcon />
+                              Revoke
+                            </button>
+                          }
+                        />
                       </div>
                     </li>
                   );
@@ -375,75 +473,67 @@ export function WorkspaceMembersSection({
         ) : null}
       </div>
 
-      {memberPendingRemoval ? (
-        <RemoveMemberDialog
-          busy={busyAction === `remove:${memberPendingRemoval.id}`}
-          memberName={memberDisplayName(memberPendingRemoval)}
-          onCancel={() => setMemberPendingRemoval(null)}
-          onConfirm={() => void removeMember(memberPendingRemoval)}
-        />
-      ) : null}
-    </Section>
-  );
-}
-
-function RemoveMemberDialog({
-  busy,
-  memberName,
-  onCancel,
-  onConfirm,
-}: {
-  busy: boolean;
-  memberName: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const titleId = useId();
-  const descriptionId = useId();
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) {
-        onCancel();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [busy, onCancel]);
-
-  return (
-    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
-      <div
-        aria-describedby={descriptionId}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="ui-panel-elevated relative z-10 mt-[20vh] w-full max-w-md overflow-y-auto overscroll-contain bg-surface p-5 sm:p-6"
-        role="dialog"
+      <Dialog
+        open={memberRoleTarget !== null}
+        onOpenChange={(open) => {
+          if (busyAction?.startsWith("role:")) return;
+          if (!open) setMemberRoleTarget(null);
+          setDialogError(null);
+        }}
       >
-        <h2 id={titleId} className="text-lg font-semibold tracking-tight text-foreground">
-          Remove member
-        </h2>
-        <p id={descriptionId} className="mt-2 text-sm leading-6 text-muted">
-          Remove <span className="font-medium text-foreground">{memberName}</span> from this
-          workspace? They lose access immediately. You can re-invite them later.
-        </p>
-        <div className="mt-6 flex justify-end gap-2">
-          <button className="ui-button min-h-9" disabled={busy} onClick={onCancel} type="button">
-            Cancel
-          </button>
-          <button
-            className="ui-button-danger min-h-9"
-            disabled={busy}
-            onClick={onConfirm}
-            type="button"
-          >
-            {busy ? "Removing" : "Remove member"}
-          </button>
-        </div>
-      </div>
-    </div>
+        <DialogContent
+          description={
+            memberRoleTarget
+              ? `Choose ${memberDisplayName(memberRoleTarget)}'s access. Changing an admin to member removes workspace management access.`
+              : "Choose this member's workspace access."
+          }
+          dismissible={!busyAction?.startsWith("role:")}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            memberRoleTrigger?.focus();
+          }}
+          title={
+            memberRoleTarget
+              ? `Change role for ${memberDisplayName(memberRoleTarget)}`
+              : "Change member role"
+          }
+        >
+          <SelectField
+            disabled={busyAction?.startsWith("role:")}
+            label="Role"
+            onValueChange={(value) => setMemberRoleDraft(value as WorkspaceInvitationRole)}
+            options={ROLE_OPTIONS}
+            value={memberRoleDraft}
+          />
+          {dialogError ? (
+            <div className="ui-inline-message ui-inline-message-danger mt-4" role="alert">
+              {dialogError}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <button
+              className="ui-button"
+              disabled={busyAction?.startsWith("role:")}
+              onClick={() => setMemberRoleTarget(null)}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="ui-button-primary"
+              disabled={
+                busyAction?.startsWith("role:") || memberRoleDraft === memberRoleTarget?.role
+              }
+              onClick={() => {
+                if (memberRoleTarget) void changeMemberRole(memberRoleTarget, memberRoleDraft);
+              }}
+              type="button"
+            >
+              {busyAction?.startsWith("role:") ? "Saving…" : "Save role"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Section>
   );
 }

@@ -10,6 +10,7 @@ import type {
 } from "@/app/api/agent-config/route";
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
@@ -732,7 +733,7 @@ function RuntimeRequirementList({
   );
 }
 
-function OnboardingVercelSandboxPanel({
+export function OnboardingVercelSandboxPanel({
   canManage,
   connection,
   disabled,
@@ -749,6 +750,8 @@ function OnboardingVercelSandboxPanel({
   const [teamId, setTeamId] = useState(connection?.teamId ?? "");
   const [projectId, setProjectId] = useState(connection?.projectId ?? "");
   const [busyAction, setBusyAction] = useState<"disconnect" | "save" | null>(null);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const busy = disabled || busyAction !== null;
@@ -795,13 +798,8 @@ function OnboardingVercelSandboxPanel({
 
   async function handleDisconnect() {
     if (!canManage || busy) return;
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm("Disconnect Vercel Sandbox for this workspace?")
-    ) {
-      return;
-    }
     setBusyAction("disconnect");
+    setDisconnectError(null);
     setError(null);
     setMessage(null);
 
@@ -815,10 +813,13 @@ function OnboardingVercelSandboxPanel({
       if (!response.ok || !body) {
         throw new Error(body?.error ?? "Vercel Sandbox disconnect failed.");
       }
+      setDisconnectOpen(false);
       onConnectionChange(body.connection);
       setMessage("Vercel Sandbox disconnected.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Vercel Sandbox disconnect failed.");
+      const message =
+        caught instanceof Error ? caught.message : "Vercel Sandbox disconnect failed.";
+      setDisconnectError(message);
     } finally {
       setBusyAction(null);
     }
@@ -913,14 +914,30 @@ function OnboardingVercelSandboxPanel({
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
             {connection ? (
-              <button
-                className="ui-button-danger"
-                disabled={busy}
-                onClick={() => void handleDisconnect()}
-                type="button"
-              >
-                {busyAction === "disconnect" ? "Disconnecting…" : "Disconnect"}
-              </button>
+              <DestructiveConfirmationDialog
+                actionLabel="Disconnect Vercel Sandbox"
+                description={`Disconnecting ${connection.projectName ?? connection.projectId} prevents this workspace from starting new sandbox runs until another Vercel connection is saved.`}
+                errorMessage={disconnectError}
+                onConfirm={() => void handleDisconnect()}
+                onOpenChange={(open) => {
+                  setDisconnectOpen(open);
+                  setDisconnectError(null);
+                }}
+                open={disconnectOpen}
+                pending={busyAction === "disconnect"}
+                pendingLabel="Disconnecting…"
+                title={`Disconnect ${connection.projectName ?? connection.projectId}?`}
+                trigger={
+                  <button
+                    aria-label="Disconnect Vercel Sandbox"
+                    className="ui-button-danger"
+                    disabled={busy}
+                    type="button"
+                  >
+                    Disconnect
+                  </button>
+                }
+              />
             ) : null}
             <button
               className="ui-button-primary"
