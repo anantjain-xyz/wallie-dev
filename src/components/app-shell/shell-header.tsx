@@ -1,9 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
@@ -11,8 +12,7 @@ import { PlusIcon } from "@/components/shared/icons";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
-} from "@/features/onboarding/flow";
-import { CreateSessionDialog } from "@/features/sessions/create-session-dialog";
+} from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,46 @@ type ShellHeaderProps = {
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
 };
+
+const loadCreateSessionDialog = () =>
+  import("@/features/sessions/create-session-dialog").then((module) => module.CreateSessionDialog);
+
+export function preloadCreateSessionDialogOnce(
+  started: { current: boolean },
+  load: () => Promise<unknown> = loadCreateSessionDialog,
+) {
+  if (started.current) {
+    return;
+  }
+
+  started.current = true;
+  // Reset on failure so a transient chunk error allows retry, not a permanent preload lockout.
+  load().catch(() => {
+    started.current = false;
+  });
+}
+
+export function CreateSessionDialogLoading() {
+  return (
+    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
+      <div
+        aria-busy="true"
+        aria-live="polite"
+        className="ui-panel-elevated w-full max-w-xl bg-surface p-5 sm:p-6"
+        role="status"
+      >
+        <div className="h-7 w-52 animate-pulse rounded bg-surface-strong" />
+        <div className="mt-6 h-40 animate-pulse rounded bg-surface-muted" />
+        <p className="mt-4 text-sm text-muted">Loading session form…</p>
+      </div>
+    </div>
+  );
+}
+
+const CreateSessionDialog = dynamic(loadCreateSessionDialog, {
+  loading: CreateSessionDialogLoading,
+  ssr: false,
+});
 
 function WorkspaceAvatar({ name, url }: { name: string; url: string | null }) {
   if (url) {
@@ -82,6 +122,8 @@ export function ShellHeader({
   const createFromUrl = searchParams?.get("create") === "1";
   const [userCreateOpen, setUserCreateOpen] = useState(false);
   const createOpen = !shouldResumeSetup && (userCreateOpen || createFromUrl);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
+  const createDialogPreloadStarted = useRef(false);
 
   useEffect(() => {
     if (shouldResumeSetup && createFromUrl) {
@@ -89,7 +131,7 @@ export function ShellHeader({
     }
   }, [createFromUrl, onboardingHref, router, shouldResumeSetup]);
 
-  function handleCreateClose() {
+  const handleCreateClose = useCallback(() => {
     setUserCreateOpen(false);
     if (createFromUrl) {
       const params = new URLSearchParams(searchParams?.toString() ?? "");
@@ -97,6 +139,27 @@ export function ShellHeader({
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : (pathname ?? "/"));
     }
+
+    requestAnimationFrame(() => createButtonRef.current?.focus());
+  }, [createFromUrl, pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (!createOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        handleCreateClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [createOpen, handleCreateClose]);
+
+  function preloadCreateDialog() {
+    preloadCreateSessionDialogOnce(createDialogPreloadStarted);
   }
 
   const pipelineHref = workspaceBasePath(workspace.slug);
@@ -153,10 +216,13 @@ export function ShellHeader({
               </Link>
             ) : (
               <button
+                ref={createButtonRef}
                 type="button"
                 className="ui-button-primary inline-flex h-9 w-9 items-center gap-2 px-0 sm:h-auto sm:w-auto sm:px-3"
                 aria-label="New session"
                 onClick={() => setUserCreateOpen(true)}
+                onFocus={preloadCreateDialog}
+                onPointerEnter={preloadCreateDialog}
               >
                 <PlusIcon className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">New session</span>
@@ -177,13 +243,15 @@ export function ShellHeader({
         </nav>
       </header>
 
-      <CreateSessionDialog
-        defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
-        open={createOpen}
-        onClose={handleCreateClose}
-        workspaceId={workspace.id}
-        workspaceSlug={workspace.slug}
-      />
+      {createOpen ? (
+        <CreateSessionDialog
+          defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
+          open
+          onClose={handleCreateClose}
+          workspaceId={workspace.id}
+          workspaceSlug={workspace.slug}
+        />
+      ) : null}
     </>
   );
 }

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { ShellHeader } from "@/components/app-shell/shell-header";
-import type { OnboardingResumeState } from "@/features/onboarding/flow";
+import type { OnboardingResumeState } from "@/features/onboarding/resume";
 import type { WorkspaceSummary } from "@/lib/auth";
 import { getWorkspaceNavItems } from "@/lib/routes";
 

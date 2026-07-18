@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isSessionSubmitShortcut } from "./create-session-dialog";
+import { getLinearUrlError, isSessionSubmitShortcut } from "./create-session-dialog";
 
 describe("isSessionSubmitShortcut", () => {
   it("matches Command+Enter", () => {
@@ -21,5 +21,19 @@ describe("isSessionSubmitShortcut", () => {
 
   it("ignores other Ctrl shortcuts", () => {
     expect(isSessionSubmitShortcut({ ctrlKey: true, key: "k", metaKey: false })).toBe(false);
+  });
+});
+
+describe("getLinearUrlError", () => {
+  it("accepts empty and Linear URLs", () => {
+    expect(getLinearUrlError("  ")).toBeNull();
+    expect(getLinearUrlError("https://linear.app/acme/issue/TEAM-42/title")).toBeNull();
+    expect(getLinearUrlError("https://custom.linear.app/acme/issue/TEAM-42/title")).toBeNull();
+  });
+
+  it("rejects non-Linear URLs", () => {
+    expect(getLinearUrlError("https://example.com/acme/issue/TEAM-42")).toBe(
+      "Must be a linear.app URL.",
+    );
   });
 });
