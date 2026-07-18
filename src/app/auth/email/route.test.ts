@@ -91,5 +91,7 @@ describe("POST /auth/email", () => {
     expect(response.headers.get("set-cookie")).toContain(
       `${emailCodeAuthCookieName}=owner%40example.com`,
     );
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(response.headers.get("set-cookie")).not.toContain("Email rate limit exceeded");
   });
 });

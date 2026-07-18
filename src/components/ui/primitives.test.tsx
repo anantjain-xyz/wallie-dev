@@ -164,6 +164,7 @@ describe("accessible overlay primitives", () => {
           <button type="button">Actions</button>
         </DropdownMenuTrigger>
         <DropdownMenuContent label="Issue actions">
+          <DropdownMenuItem disabled>Unavailable</DropdownMenuItem>
           <DropdownMenuItem>Archive</DropdownMenuItem>
           <DropdownMenuItem>Duplicate</DropdownMenuItem>
           <DropdownMenuItem>Move</DropdownMenuItem>
@@ -173,7 +174,7 @@ describe("accessible overlay primitives", () => {
 
     const trigger = screen.getByRole("button", { name: "Actions" });
     trigger.focus();
-    await user.keyboard("{ArrowDown}");
+    await user.click(trigger);
     const menu = await screen.findByRole("menu", { hidden: true });
     expect(menu).toHaveAccessibleName("Issue actions");
     expect(menu).toHaveAttribute("aria-label", "Issue actions");

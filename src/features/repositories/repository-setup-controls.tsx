@@ -62,7 +62,6 @@ function RepositoryProperty({
         </span>
       }
       monospace={monospace}
-      title={`${label}: ${value}`}
       value={value}
     />
   );

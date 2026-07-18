@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 
 import { MoonIcon, SunIcon } from "@/components/shared/icons";
+import { Tooltip } from "@/components/ui/tooltip";
 
 export const THEME_STORAGE_KEY = "wallie-theme";
 
@@ -87,15 +88,16 @@ export function ThemeToggle() {
   const Icon = isDark ? SunIcon : MoonIcon;
 
   return (
-    <button
-      type="button"
-      className="ui-icon-button"
-      aria-label={label}
-      aria-pressed={isDark}
-      title={label}
-      onClick={handleToggle}
-    >
-      <Icon className="h-3.5 w-3.5" />
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        className="ui-icon-button"
+        aria-label={label}
+        aria-pressed={isDark}
+        onClick={handleToggle}
+      >
+        <Icon className="h-3.5 w-3.5" />
+      </button>
+    </Tooltip>
   );
 }
