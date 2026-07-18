@@ -2,7 +2,7 @@
 
 import { forwardRef, type ComponentProps, type ReactNode } from "react";
 
-import { MoreIcon } from "@/components/shared/icons";
+import { MoreIcon } from "@/components/shared/icons/more-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,

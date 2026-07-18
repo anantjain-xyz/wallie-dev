@@ -3,7 +3,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import type { ComponentProps, ReactNode } from "react";
 
-import { XIcon } from "@/components/shared/icons";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 

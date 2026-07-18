@@ -2,7 +2,8 @@
 
 import { useSyncExternalStore } from "react";
 
-import { MoonIcon, SunIcon } from "@/components/shared/icons";
+import { MoonIcon } from "@/components/shared/icons/moon-icon";
+import { SunIcon } from "@/components/shared/icons/sun-icon";
 import { Tooltip } from "@/components/ui/tooltip";
 
 export const THEME_STORAGE_KEY = "wallie-theme";
