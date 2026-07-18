@@ -13,6 +13,7 @@ import {
   type CSSProperties,
 } from "react";
 
+import { TimeDisplay } from "@/components/shared/time-display";
 import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
 import {
   createPipelineBoardState,
@@ -41,6 +42,7 @@ import { cn } from "@/lib/utils";
 
 type PipelinePageClientProps = {
   initialData: PipelineDashboardData;
+  initialNow?: string;
 };
 
 type PendingCardFocus = {
@@ -53,18 +55,7 @@ const CARD_FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const LANE_WIDTH_PX = 260;
 
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (Number.isNaN(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
+const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
 
 function captureCardFocus(cardId: string, targetLaneKey: string): PendingCardFocus | null {
   const activeElement = document.activeElement;
@@ -80,15 +71,16 @@ function captureCardFocus(cardId: string, targetLaneKey: string): PendingCardFoc
   return focusableIndex < 0 ? null : { cardId, focusableIndex, targetLaneKey };
 }
 
-export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
+export function PipelinePageClient({ initialData, initialNow }: PipelinePageClientProps) {
   return (
     <SessionDetailLinkPrefetchBoundary>
-      <PipelinePageContent initialData={initialData} />
+      <PipelinePageContent initialData={initialData} initialNow={initialNow} />
     </SessionDetailLinkPrefetchBoundary>
   );
 }
 
-function PipelinePageContent({ initialData }: PipelinePageClientProps) {
+function PipelinePageContent({ initialData, initialNow }: PipelinePageClientProps) {
+  const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const [board, dispatch] = useReducer(
     pipelineBoardReducer,
     initialData.lanes,
@@ -382,6 +374,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                     key={key}
                     cardsById={board.cardsById}
                     error={laneErrors[key]}
+                    initialNow={renderNow}
                     isLoading={loadingLaneKey === key}
                     isMobileActive={activeLaneKey === key}
                     lane={lane}
@@ -401,6 +394,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
 type PipelineLaneProps = {
   cardsById: PipelineBoardState["cardsById"];
   error: string | undefined;
+  initialNow: string;
   isLoading: boolean;
   isMobileActive: boolean;
   lane: PipelineBoardLane;
@@ -412,6 +406,7 @@ const PipelineLane = memo(
   function PipelineLane({
     cardsById,
     error,
+    initialNow,
     isLoading,
     isMobileActive,
     lane,
@@ -468,6 +463,7 @@ const PipelineLane = memo(
               <PipelineCard
                 key={card.id}
                 id={card.id}
+                initialNow={initialNow}
                 linearIssueId={card.linearIssueId}
                 linearIssueUrl={card.linearIssueUrl}
                 number={card.number}
@@ -497,6 +493,7 @@ const PipelineLane = memo(
   },
   (previous, next) =>
     previous.error === next.error &&
+    previous.initialNow === next.initialNow &&
     previous.isLoading === next.isLoading &&
     previous.isMobileActive === next.isMobileActive &&
     previous.lane === next.lane &&
@@ -549,6 +546,7 @@ const PipelineLanePagination = memo(function PipelineLanePagination({
 
 export const PipelineCard = memo(function PipelineCard({
   id,
+  initialNow,
   linearIssueId,
   linearIssueUrl,
   number,
@@ -560,6 +558,7 @@ export const PipelineCard = memo(function PipelineCard({
   workspaceSlug,
 }: {
   id: string;
+  initialNow: string;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   number: number;
@@ -625,7 +624,9 @@ export const PipelineCard = memo(function PipelineCard({
 
           <div className="flex items-center gap-1">
             <dt className="sr-only">Updated</dt>
-            <dd>{relativeTime(updatedAt)}</dd>
+            <dd>
+              <TimeDisplay initialNow={initialNow} value={updatedAt} variant="relative" />
+            </dd>
           </div>
         </dl>
       </div>

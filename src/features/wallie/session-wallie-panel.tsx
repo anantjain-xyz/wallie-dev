@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
+import { TimeDisplay } from "@/components/shared/time-display";
 import { Status, agentRunStatusValue } from "@/components/ui/status";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
@@ -38,17 +39,11 @@ export type WalliePanelSession = {
 
 type SessionWalliePanelProps = {
   initialData: WallieSessionData;
+  initialNow?: string;
   session: WalliePanelSession;
   supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
 };
-
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  month: "short",
-});
 
 const interactiveLinkClass =
   "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
@@ -136,10 +131,12 @@ function formatRequestedBy(run: WallieRun) {
 
 export function SessionWalliePanel({
   initialData,
+  initialNow,
   session,
   supabase: injectedSupabase,
   workspaceSlug,
 }: SessionWalliePanelProps) {
+  const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const [supabase] = useState<SupabaseClient<Database>>(
     () => injectedSupabase ?? createSupabaseBrowserClient(),
   );
@@ -544,13 +541,40 @@ export function SessionWalliePanel({
                       Requested by {requestedByLabel}
                     </p>
                     <p className="mt-1 text-sm text-muted">
-                      Created {dateTimeFormatter.format(new Date(run.createdAt))}
-                      {run.startedAt
-                        ? ` · Started ${dateTimeFormatter.format(new Date(run.startedAt))}`
-                        : ""}
-                      {run.finishedAt
-                        ? ` · Finished ${dateTimeFormatter.format(new Date(run.finishedAt))}`
-                        : ""}
+                      Created{" "}
+                      <TimeDisplay
+                        absoluteStyle="short"
+                        initialNow={renderNow}
+                        value={run.createdAt}
+                      />
+                      {run.startedAt ? (
+                        <>
+                          {" · Started "}
+                          <TimeDisplay
+                            absoluteStyle="short"
+                            initialNow={renderNow}
+                            value={run.startedAt}
+                          />
+                          {" · Elapsed "}
+                          <TimeDisplay
+                            active={run.isActive}
+                            endValue={run.finishedAt}
+                            initialNow={renderNow}
+                            value={run.startedAt}
+                            variant="elapsed"
+                          />
+                        </>
+                      ) : null}
+                      {run.finishedAt ? (
+                        <>
+                          {" · Finished "}
+                          <TimeDisplay
+                            absoluteStyle="short"
+                            initialNow={renderNow}
+                            value={run.finishedAt}
+                          />
+                        </>
+                      ) : null}
                     </p>
                   </button>
 
@@ -594,7 +618,11 @@ export function SessionWalliePanel({
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
                               <span>{message.kind}</span>
-                              <span>{dateTimeFormatter.format(new Date(message.createdAt))}</span>
+                              <TimeDisplay
+                                absoluteStyle="short"
+                                initialNow={renderNow}
+                                value={message.createdAt}
+                              />
                             </div>
                             <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
                           </div>
