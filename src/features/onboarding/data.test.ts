@@ -188,6 +188,7 @@ describe("canonical onboarding snapshot", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -210,7 +211,9 @@ describe("canonical onboarding snapshot", () => {
     const fixture = createFixture({
       agentConfig: [{ key: "agent_provider", value_json: "codex" }],
       codexCredentials: {
+        account_email: "owner@example.com",
         access_token_expires_at: "2099-01-01T00:00:00.000Z",
+        auth_reconnect_reason: null,
         auth_reconnect_required: false,
         credential_type: "platform_api_key",
         updated_at: NOW,
@@ -242,7 +245,10 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.agentConfig.status).toBe("present");
     expect(result.data.setupHealth.defaultPipeline.status).toBe("ready");
     expect(result.data.setupHealth.codexConnection.status).toBe("connected");
+    expect(result.data.setupHealth.codexConnection.accountEmail).toBe("owner@example.com");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
+    expect(result.data.setupHealth.codexConnection.checkedAt).toMatch(/Z$/);
+    expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toMatch(/Z$/);
 
     for (const table of [
       "workspace_onboarding",
@@ -260,6 +266,31 @@ describe("canonical onboarding snapshot", () => {
     }
     expect(mocked.github).toHaveBeenCalledTimes(1);
     expect(mocked.vercel).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves Codex reconnect metadata in the server setup snapshot", async () => {
+    const fixture = createFixture({
+      codexCredentials: {
+        account_email: "owner@example.com",
+        access_token_expires_at: null,
+        auth_reconnect_reason: "Refresh token was rejected.",
+        auth_reconnect_required: true,
+        credential_type: "chatgpt_auth_json",
+        updated_at: NOW,
+      },
+    });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.setupHealth.codexConnection).toMatchObject({
+      connected: false,
+      credentialType: "chatgpt_auth_json",
+      reconnectReason: "Refresh token was rejected.",
+      reconnectRequired: true,
+      status: "expired",
+    });
   });
 
   it("uses the selected repository's latest bounded sandbox check", async () => {
@@ -515,6 +546,31 @@ describe("canonical onboarding snapshot", () => {
 
     resolveGithub?.(freshGithub());
     await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
+  it("timestamps provider status when the provider reads resolve", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-17T12:00:00.000Z"));
+    let resolveGithub: ((value: ReturnType<typeof freshGithub>) => void) | undefined;
+    mocked.github.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGithub = resolve;
+        }),
+    );
+    const fixture = createFixture({ memberRole: "owner" });
+
+    const pending = loadWorkspaceOnboardingDataForContext(fixture.context as never);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.setSystemTime(new Date("2026-07-17T12:02:00.000Z"));
+    resolveGithub?.(freshGithub());
+
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.setupHealth.codexConnection.checkedAt).toBe("2026-07-17T12:00:00.000Z");
+    expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toBe("2026-07-17T12:00:00.000Z");
   });
 
   it("reports named snapshot phases around one concurrent critical path", async () => {

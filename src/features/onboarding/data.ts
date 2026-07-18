@@ -226,17 +226,24 @@ function mapSecretPreview(row: SecretPreviewRow): WorkspaceSecretPreview {
 
 function codexConnectionStatus(
   row: {
+    account_email: string | null;
     access_token_expires_at: string | null;
+    auth_reconnect_reason: string | null;
     auth_reconnect_required: boolean;
     credential_type: string;
     updated_at: string;
   } | null,
+  checkedAt: string,
 ) {
   if (!row || !isCodexCredentialType(row.credential_type)) {
     return {
+      accountEmail: null,
+      checkedAt,
       connected: false,
       credentialType: null,
       expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "missing" as const,
       updatedAt: null,
     };
@@ -247,17 +254,22 @@ function codexConnectionStatus(
     row.credential_type === "chatgpt_auth_json" && row.auth_reconnect_required;
 
   return {
+    accountEmail: row.account_email,
+    checkedAt,
     connected: !isExpired && !reconnectRequired,
     credentialType: row.credential_type,
     expiresAt: row.access_token_expires_at,
+    reconnectReason: row.auth_reconnect_reason,
+    reconnectRequired,
     status: isExpired || reconnectRequired ? ("expired" as const) : ("connected" as const),
     updatedAt: row.updated_at,
   };
 }
 
-function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
+function claudeCodeConnectionStatus(row: { updated_at: string } | null, checkedAt: string) {
   if (!row) {
     return {
+      checkedAt,
       connected: false,
       status: "missing" as const,
       updatedAt: null,
@@ -265,6 +277,7 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
   }
 
   return {
+    checkedAt,
     connected: true,
     status: "connected" as const,
     updatedAt: row.updated_at,
@@ -359,12 +372,16 @@ function secretSnapshotRows(value: Json | null): SecretPreviewRow[] {
 type OnboardingSnapshot = {
   agentConfigRows: AgentConfigRow[];
   claudeCodeCredentials: { updated_at: string } | null;
+  claudeCodeCredentialsCheckedAt: string;
   codexCredentials: {
+    account_email: string | null;
     access_token_expires_at: string | null;
+    auth_reconnect_reason: string | null;
     auth_reconnect_required: boolean;
     credential_type: string;
     updated_at: string;
   } | null;
+  codexCredentialsCheckedAt: string;
   github: WorkspaceGitHubData;
   linearRoutingRow: LinearRoutingRow | null;
   onboardingRow: Tables<"workspace_onboarding">;
@@ -378,6 +395,11 @@ type OnboardingSnapshot = {
 
 function throwQueryError(error: unknown) {
   if (error) throw error;
+}
+
+async function timestampQueryResult<T>(query: PromiseLike<T>) {
+  const result = await query;
+  return { checkedAt: new Date().toISOString(), result };
 }
 
 function createOnboardingSnapshot(
@@ -457,16 +479,22 @@ function createOnboardingSnapshot(
       ),
       timing.segment("snapshot.providers", () =>
         Promise.all([
-          admin
-            .from("user_codex_credentials")
-            .select("access_token_expires_at, auth_reconnect_required, credential_type, updated_at")
-            .eq("user_id", context.user.id)
-            .maybeSingle(),
-          admin
-            .from("user_claude_code_credentials")
-            .select("updated_at")
-            .eq("user_id", context.user.id)
-            .maybeSingle(),
+          timestampQueryResult(
+            admin
+              .from("user_codex_credentials")
+              .select(
+                "account_email, access_token_expires_at, auth_reconnect_reason, auth_reconnect_required, credential_type, updated_at",
+              )
+              .eq("user_id", context.user.id)
+              .maybeSingle(),
+          ),
+          timestampQueryResult(
+            admin
+              .from("user_claude_code_credentials")
+              .select("updated_at")
+              .eq("user_id", context.user.id)
+              .maybeSingle(),
+          ),
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
@@ -486,7 +514,9 @@ function createOnboardingSnapshot(
       ),
     ]);
 
-    const [codexResult, claudeCodeResult] = providerResults;
+    const [codexProviderResult, claudeCodeProviderResult] = providerResults;
+    const codexResult = codexProviderResult.result;
+    const claudeCodeResult = claudeCodeProviderResult.result;
     for (const error of [
       pipelineResult.error,
       stageResult.error,
@@ -504,7 +534,9 @@ function createOnboardingSnapshot(
     return {
       agentConfigRows: (agentConfigResult.data ?? []) as AgentConfigRow[],
       claudeCodeCredentials: claudeCodeResult.data,
+      claudeCodeCredentialsCheckedAt: claudeCodeProviderResult.checkedAt,
       codexCredentials: codexResult.data,
+      codexCredentialsCheckedAt: codexProviderResult.checkedAt,
       github,
       linearRoutingRow: routingResult.data as LinearRoutingRow | null,
       onboardingRow,
@@ -590,7 +622,6 @@ function deriveSetupHealth(
   const secretKeys = [...new Set(snapshot.secretRows.map((row) => row.key))].sort();
   const linearSecret = snapshot.secretRows.find((row) => row.key === "LINEAR_API_KEY") ?? null;
   const linearRoutingUpdatedAt = snapshot.linearRoutingRow?.updated_at ?? null;
-
   return {
     agentConfig: {
       configured: configuredKeys.length > 0,
@@ -598,8 +629,14 @@ function deriveSetupHealth(
       status: configuredKeys.length > 0 ? "present" : "missing",
       values: agentConfig,
     },
-    claudeCodeConnection: claudeCodeConnectionStatus(snapshot.claudeCodeCredentials),
-    codexConnection: codexConnectionStatus(snapshot.codexCredentials),
+    claudeCodeConnection: claudeCodeConnectionStatus(
+      snapshot.claudeCodeCredentials,
+      snapshot.claudeCodeCredentialsCheckedAt,
+    ),
+    codexConnection: codexConnectionStatus(
+      snapshot.codexCredentials,
+      snapshot.codexCredentialsCheckedAt,
+    ),
     defaultPipeline: {
       configured: Boolean(pipeline && pipeline.stages.length > 0),
       pipelineId: pipeline?.id ?? null,

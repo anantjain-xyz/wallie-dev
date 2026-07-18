@@ -51,7 +51,7 @@ describe("/api/codex/connection", () => {
     const response = await GET();
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ connected: false });
+    expect(await response.json()).toEqual({ checkedAt: expect.any(String), connected: false });
   });
 
   it("returns saved credential metadata without returning the secret", async () => {
@@ -76,6 +76,7 @@ describe("/api/codex/connection", () => {
     expect(await response.json()).toEqual({
       accountEmail: null,
       authCacheLastRefresh: null,
+      checkedAt: expect.any(String),
       connected: true,
       credentialType: "platform_api_key",
       expired: false,
