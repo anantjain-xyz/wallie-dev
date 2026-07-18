@@ -105,6 +105,26 @@ describe("optimistic session mutations", () => {
     );
   });
 
+  it("rolls back matching optimistic fields after an unrelated timestamp update", () => {
+    const optimistic = { phaseStatus: "agent_generating" as const };
+    const optimisticSession = applySessionMutationPatch(session, optimistic);
+    const concurrentlyUpdated = applySessionMutationPatch(optimisticSession, {
+      title: "Newer title",
+      updatedAt: "2026-07-17T13:00:00.000Z",
+    });
+
+    expect(
+      rollbackSessionMutationPatch(concurrentlyUpdated, optimistic, {
+        phaseStatus: session.phaseStatus,
+        updatedAt: session.updatedAt,
+      }),
+    ).toMatchObject({
+      phaseStatus: session.phaseStatus,
+      title: "Newer title",
+      updatedAt: "2026-07-17T13:00:00.000Z",
+    });
+  });
+
   it("resolves stage metadata when an approval advances", () => {
     const next = applySessionMutationPatch(session, {
       currentArtifactVersion: 0,

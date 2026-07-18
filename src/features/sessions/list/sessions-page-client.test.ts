@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   commitListArchive,
   commitListTitle,
+  reconcileListMutations,
   SessionsPageClient,
 } from "@/features/sessions/list/sessions-page-client";
 import type { SessionListPageData, SessionStageFacet } from "@/features/sessions/list/data";
@@ -285,5 +286,43 @@ describe("session list mutation reconciliation", () => {
         updatedAt: "2026-06-07T12:00:00.000Z",
       }),
     ).toEqual([fresh]);
+  });
+
+  it("composes delayed archive fields with a newer title mutation", () => {
+    const active = makeSession({
+      archivedAt: null,
+      title: "Original title",
+      updatedAt: "2026-06-07T11:00:00.000Z",
+    });
+
+    expect(
+      reconcileListMutations([active], "all", [
+        {
+          kind: "title",
+          result: {
+            id: active.id,
+            title: "New title",
+            updatedAt: "2026-06-07T13:00:00.000Z",
+          },
+        },
+        {
+          kind: "archive",
+          result: {
+            archivedAt: "2026-06-07T12:00:00.000Z",
+            id: active.id,
+            phaseStatus: "rejected",
+            updatedAt: "2026-06-07T12:00:00.000Z",
+          },
+        },
+      ]),
+    ).toEqual([
+      {
+        ...active,
+        archivedAt: "2026-06-07T12:00:00.000Z",
+        phaseStatus: "rejected",
+        title: "New title",
+        updatedAt: "2026-06-07T13:00:00.000Z",
+      },
+    ]);
   });
 });

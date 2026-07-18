@@ -32,6 +32,18 @@ type SessionsPageClientProps = {
   initialData: SessionListPageData;
 };
 
+type ListCommittedMutation =
+  | {
+      kind: "archive";
+      result: {
+        archivedAt: string | null;
+        id: string;
+        phaseStatus: SessionListItem["phaseStatus"];
+        updatedAt: string;
+      };
+    }
+  | { kind: "title"; result: { id: string; title: string; updatedAt: string } };
+
 function buildHref(
   base: string,
   state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope">,
@@ -107,24 +119,23 @@ export function commitListArchive(
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
+export function reconcileListMutations(
+  sessions: readonly SessionListItem[],
+  scope: SessionFilterKey,
+  mutations: readonly ListCommittedMutation[],
+) {
+  return [...mutations]
+    .sort((left, right) => left.result.updatedAt.localeCompare(right.result.updatedAt))
+    .reduce<
+      SessionListItem[]
+    >((current, mutation) => (mutation.kind === "title" ? commitListTitle(current, mutation.result) : commitListArchive(current, scope, mutation.result)), [...sessions]);
+}
+
 export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [committedMutations, setCommittedMutations] = useState<
-    (
-      | {
-          kind: "archive";
-          result: {
-            archivedAt: string | null;
-            id: string;
-            phaseStatus: SessionListItem["phaseStatus"];
-            updatedAt: string;
-          };
-        }
-      | { kind: "title"; result: { id: string; title: string; updatedAt: string } }
-    )[]
-  >([]);
+  const [committedMutations, setCommittedMutations] = useState<ListCommittedMutation[]>([]);
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -149,12 +160,10 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   const sessions = useMemo(
     () =>
-      committedMutations.reduce<SessionListItem[]>(
-        (current, mutation) =>
-          mutation.kind === "title"
-            ? commitListTitle(current, mutation.result)
-            : commitListArchive(current, initialData.queryState.scope, mutation.result),
+      reconcileListMutations(
         initialData.sessions,
+        initialData.queryState.scope,
+        committedMutations,
       ),
     [committedMutations, initialData.queryState.scope, initialData.sessions],
   );
@@ -336,7 +345,9 @@ function SessionRow({
   const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+  const latestSessionRef = useRef(session);
   const previousSessionTitleRef = useRef(session.title);
+  latestSessionRef.current = session;
 
   const archivedAt = optimisticArchive ? optimisticArchive.archivedAt : session.archivedAt;
   const phaseStatus = optimisticArchive ? optimisticArchive.phaseStatus : session.phaseStatus;
@@ -430,6 +441,7 @@ function SessionRow({
     setIsSaving(true);
     setError(null);
     const previousTitle = displayTitle;
+    const titleAtMutationStart = latestSessionRef.current.title;
     setDisplayTitle(normalizedTitle);
     setIsEditing(false);
 
@@ -438,8 +450,13 @@ function SessionRow({
         sessionId: session.id,
         title: normalizedTitle,
       });
-      setDisplayTitle(result.title);
-      setDraftTitle(result.title);
+      const latestSession = latestSessionRef.current;
+      const committedTitle =
+        result.updatedAt >= latestSession.updatedAt || latestSession.title === titleAtMutationStart
+          ? result.title
+          : latestSession.title;
+      setDisplayTitle(committedTitle);
+      setDraftTitle(committedTitle);
       onTitleCommitted(result);
     } catch (errorValue) {
       setDisplayTitle(previousTitle);

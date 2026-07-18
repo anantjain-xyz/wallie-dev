@@ -250,4 +250,52 @@ describe("optimistic session interactions", () => {
 
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
   });
+
+  it("keeps a newer server title when an older save response arrives late", async () => {
+    let releaseResponse!: () => void;
+    mocked.fetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseResponse = () =>
+            resolve(
+              Response.json({
+                id: session.id,
+                title: "Older saved title",
+                updatedAt: "2026-07-17T12:00:00.000Z",
+              }),
+            );
+        }),
+    );
+    const view = render(
+      createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit title for session #1" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Session #1 title" }), {
+      target: { value: "Older saved title" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save title for session #1" }));
+
+    view.rerender(
+      createElement(SessionsPageClient, {
+        initialData: makeListData(
+          {
+            ...session,
+            title: "Newer server title",
+            updatedAt: "2026-07-17T13:00:00.000Z",
+          },
+          "all",
+        ),
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: /Newer server title/ })).toBeTruthy(),
+    );
+    await act(async () => releaseResponse());
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: /Newer server title/ })).toBeTruthy(),
+    );
+    expect(screen.queryByRole("link", { name: /Older saved title/ })).toBeNull();
+  });
 });

@@ -111,10 +111,6 @@ export function rollbackSessionMutationPatch(
   optimisticPatch: SessionMutationPatch,
   previousPatch: SessionMutationPatch,
 ): SessionDetail {
-  if (previousPatch.updatedAt && session.updatedAt !== previousPatch.updatedAt) {
-    return session;
-  }
-
   const rollbackPatch: SessionMutationPatch = {};
 
   for (const key of Object.keys(previousPatch) as (keyof SessionMutationPatch)[]) {
