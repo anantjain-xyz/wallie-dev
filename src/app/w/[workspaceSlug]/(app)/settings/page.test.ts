@@ -39,6 +39,8 @@ describe("SettingsPage", () => {
       searchParams: Promise.resolve({ category: "workspace", github: "connected" }),
     })) as ReactElement;
 
+    expect(mocked.loadSettingsPageData).toHaveBeenCalledWith("northwind", "workspace");
+
     expect(element.type).toBe(mocked.SettingsServerShell);
     expect(element.props).toMatchObject({
       category: "workspace",

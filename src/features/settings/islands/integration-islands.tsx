@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
@@ -11,6 +11,14 @@ import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import { VercelSandboxConnectionSection } from "@/features/settings/vercel-sandbox-connection-section";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
+import { updateGithubInSettingsData } from "@/features/settings/settings-data-updates";
+import {
+  dispatchSettingsEvent,
+  SETTINGS_GITHUB_CHANGED,
+  SETTINGS_VERCEL_CHANGED,
+  type GithubChangedDetail,
+  type VercelChangedDetail,
+} from "@/features/settings/settings-island-events";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 
 export function preloadProviderIsland(provider: AgentProvider) {
@@ -46,12 +54,32 @@ export function GithubIntegrationIsland({
   workspaceId: string;
 }) {
   const [github, setGithub] = useState(initialGithub);
-  const initialMessage: FlashMessage | null =
-    githubStatus === "connected"
-      ? { kind: "success", text: "GitHub App installation connected and repositories synced." }
-      : githubStatus
-        ? { kind: "error", text: "GitHub installation could not be completed. Try again." }
-        : null;
+  const initialMessage: FlashMessage | null = (() => {
+    switch (githubStatus) {
+      case "connected":
+        return {
+          kind: "success",
+          text: "GitHub App installation connected and repositories synced.",
+        };
+      case "config_missing":
+        return {
+          kind: "error",
+          text: "GitHub install completed, but Wallie is missing server config needed to finish the sync.",
+        };
+      case "invalid_state":
+        return {
+          kind: "error",
+          text: "GitHub installation state expired or could not be verified. Start the install flow again from settings.",
+        };
+      case "failed":
+        return {
+          kind: "error",
+          text: "GitHub installation callback failed. Try the install flow again after checking server config.",
+        };
+      default:
+        return null;
+    }
+  })();
   const { feedback, setMessage } = useIslandFeedback(initialMessage);
 
   return (
@@ -60,7 +88,10 @@ export function GithubIntegrationIsland({
       <GitHubInstallSection
         canManage={canManage}
         github={github}
-        onGithubChange={setGithub}
+        onGithubChange={(nextGithub) => {
+          setGithub(nextGithub);
+          dispatchSettingsEvent(SETTINGS_GITHUB_CHANGED, nextGithub);
+        }}
         setFlashMessage={setMessage}
         workspaceId={workspaceId}
       />
@@ -71,6 +102,14 @@ export function GithubIntegrationIsland({
 export function RepositoryIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
   const [data, setData] = useState(initialData);
   const { feedback, setMessage } = useIslandFeedback();
+  useEffect(() => {
+    const handleGithubChange = (event: Event) => {
+      const github = (event as CustomEvent<GithubChangedDetail>).detail;
+      setData((current) => updateGithubInSettingsData(current, github));
+    };
+    window.addEventListener(SETTINGS_GITHUB_CHANGED, handleGithubChange);
+    return () => window.removeEventListener(SETTINGS_GITHUB_CHANGED, handleGithubChange);
+  }, []);
   return (
     <>
       {feedback}
@@ -88,7 +127,10 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
       <VercelSandboxConnectionSection
         canManage={initialData.canManage}
         connection={connection}
-        onConnectionChange={setConnection}
+        onConnectionChange={(nextConnection) => {
+          setConnection(nextConnection);
+          dispatchSettingsEvent(SETTINGS_VERCEL_CHANGED, nextConnection);
+        }}
         setFlashMessage={setMessage}
         workspaceId={initialData.workspace.id}
       />
@@ -122,7 +164,14 @@ export function RuntimeIntegrationIsland({
   initialData: SettingsPageData;
 }) {
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
+  const [vercelConnection, setVercelConnection] = useState(initialData.vercelSandboxConnection);
   const { feedback, setMessage } = useIslandFeedback();
+  useEffect(() => {
+    const handleVercelChange = (event: Event) =>
+      setVercelConnection((event as CustomEvent<VercelChangedDetail>).detail);
+    window.addEventListener(SETTINGS_VERCEL_CHANGED, handleVercelChange);
+    return () => window.removeEventListener(SETTINGS_VERCEL_CHANGED, handleVercelChange);
+  }, []);
 
   return (
     <>
@@ -170,7 +219,7 @@ export function RuntimeIntegrationIsland({
         setFlashMessage={setMessage}
         tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
         title="Agent"
-        vercelSandboxConnection={initialData.vercelSandboxConnection}
+        vercelSandboxConnection={vercelConnection}
         workspaceId={initialData.workspace.id}
       />
     </>

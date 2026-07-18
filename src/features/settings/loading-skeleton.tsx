@@ -1,6 +1,6 @@
 import { SkeletonBlock } from "@/components/ui/skeleton";
 
-const anchorGroupSizes = [5, 1, 3, 3];
+const anchorGroupSizes = [4];
 
 const sectionSkeletons: {
   rows: number;
@@ -102,15 +102,8 @@ export function SettingsLoadingSkeleton() {
           <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
             <SettingsAnchorSkeleton />
 
-            <div className="min-w-0 space-y-16">
-              {sectionSkeletons.map((section, index) => (
-                <SettingsSectionSkeleton
-                  key={index}
-                  rows={section.rows}
-                  tone={section.tone}
-                  withAvatar={section.withAvatar}
-                />
-              ))}
+            <div className="min-w-0">
+              <SettingsSectionSkeleton rows={3} />
             </div>
           </div>
         </div>

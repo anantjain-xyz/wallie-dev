@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 
 import {
   SETTINGS_CATEGORY_LINKS,
@@ -10,6 +12,25 @@ import {
 type SettingsCategoryNavProps = {
   activeCategory: SettingsCategory;
   workspaceSlug: string;
+};
+
+const HASH_CATEGORIES: Record<string, SettingsCategory> = {
+  "cloud-execution": "advanced",
+  "coding-agent": "integrations",
+  "danger-zone": "workspace",
+  github: "integrations",
+  linear: "integrations",
+  "linear-routing": "integrations",
+  members: "workspace",
+  pipeline: "pipeline",
+  "rate-limits": "advanced",
+  repository: "integrations",
+  runtime: "integrations",
+  secrets: "integrations",
+  usage: "advanced",
+  vercel: "integrations",
+  verify: "advanced",
+  workspace: "workspace",
 };
 
 export function preloadSettingsCategory(category: SettingsCategory) {
@@ -32,6 +53,19 @@ export function preloadSettingsCategory(category: SettingsCategory) {
 }
 
 export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsCategoryNavProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const search = useSearchParams().toString();
+
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/u, "");
+    const hashCategory = HASH_CATEGORIES[hash];
+    if (!hashCategory || hashCategory === activeCategory) return;
+    const next = new URLSearchParams(search);
+    next.set("category", hashCategory);
+    router.replace(`${pathname}?${next.toString()}#${hash}`);
+  }, [activeCategory, pathname, router, search]);
+
   return (
     <nav aria-label="Settings categories" className="sticky top-6">
       <ul className="flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">

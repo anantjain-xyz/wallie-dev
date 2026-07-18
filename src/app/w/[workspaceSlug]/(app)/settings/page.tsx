@@ -16,12 +16,13 @@ type SettingsPageProps = {
 export default async function SettingsPage({ params, searchParams }: SettingsPageProps) {
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
-  const data = await loadSettingsPageData(workspaceSlug);
+  const category = parseSettingsCategory(resolvedSearchParams.category);
+  const data = await loadSettingsPageData(workspaceSlug, category);
   const initialData = await data.initialData;
 
   return (
     <SettingsServerShell
-      category={parseSettingsCategory(resolvedSearchParams.category)}
+      category={category}
       initialData={initialData}
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
