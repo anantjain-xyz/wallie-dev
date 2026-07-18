@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   claimQueuedJobCandidate,
+  createSessionWithFirstJob,
   enqueueWallieRun,
   processQueuedAgentJobs,
 } from "@/lib/wallie/service";
@@ -49,6 +50,57 @@ afterEach(() => {
 });
 
 describe("wallie service helpers", () => {
+  it("creates a session and its first job with one RPC mutation", async () => {
+    const rpc = vi.fn(() => ({
+      single: async () => ({
+        data: {
+          job_id: "job-1",
+          run_id: "run-1",
+          session_id: "session-1",
+          session_number: 42,
+          workspace_slug: "acme",
+        },
+        error: null,
+      }),
+    }));
+
+    const result = await createSessionWithFirstJob({
+      admin: { rpc } as unknown as NonNullable<
+        Parameters<typeof createSessionWithFirstJob>[0]["admin"]
+      >,
+      creatorMemberId: "member-1",
+      githubRepositoryId: null,
+      linearIssueId: null,
+      linearIssueUrl: null,
+      modelName: "gpt-5.5",
+      modelProvider: "codex",
+      promptMd: "Create it atomically.",
+      title: "Atomic create",
+      workspaceId: "workspace-1",
+    });
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("create_session_with_first_job", {
+      agent_model_name: "gpt-5.5",
+      agent_model_provider: "codex",
+      creator_member_id: "member-1",
+      selected_pipeline_id: undefined,
+      session_github_repository_id: undefined,
+      session_linear_issue_id: undefined,
+      session_linear_issue_url: undefined,
+      session_prompt_md: "Create it atomically.",
+      session_title: "Atomic create",
+      target_workspace_id: "workspace-1",
+    });
+    expect(result).toEqual({
+      jobId: "job-1",
+      number: 42,
+      runId: "run-1",
+      sessionId: "session-1",
+      workspaceSlug: "acme",
+    });
+  });
+
   it("claims the first candidate that wins the race", async () => {
     const candidates = [
       { id: "job-1", status: "queued" },
