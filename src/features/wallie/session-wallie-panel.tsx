@@ -500,7 +500,11 @@ export function SessionWalliePanel({
             const runIsBusy = run.isActive;
 
             return (
-              <article key={run.id} aria-busy={runIsBusy} className="py-5">
+              <article
+                key={run.id}
+                aria-busy={runIsBusy}
+                className={cn("py-5", !isExpanded && !runIsBusy && "run-history-group")}
+              >
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <button
                     aria-controls={runDetailsId}
