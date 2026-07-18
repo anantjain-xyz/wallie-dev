@@ -41,31 +41,90 @@ function getErrorCode(error: unknown) {
   return null;
 }
 
-async function loadSessionRepositoryOptions(input: { admin: AdminClient; workspaceId: string }) {
-  const [{ data: primaryProfile, error: primaryProfileError }, { data, error }] = await Promise.all(
-    [
-      input.admin
-        .from("workspace_repository_profiles")
-        .select("github_repository_id")
-        .eq("workspace_id", input.workspaceId)
-        .eq("is_primary", true)
-        .maybeSingle(),
-      input.admin
-        .from("github_repositories")
-        .select("id")
-        .eq("workspace_id", input.workspaceId)
-        .eq("is_archived", false)
-        .order("full_name", { ascending: true }),
-    ],
-  );
+async function loadAvailableSessionRepositoryId(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<string | null> {
+  const { data, error } = await input.admin
+    .from("github_repositories")
+    .select("id")
+    .eq("id", input.repositoryId)
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_archived", false)
+    .maybeSingle();
 
-  if (primaryProfileError) throw primaryProfileError;
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
-  return {
-    availableIds: (data ?? []).map((repository) => repository.id),
-    primaryRepositoryId: primaryProfile?.github_repository_id ?? null,
-  };
+  return data?.id ?? null;
+}
+
+async function loadFirstAvailableSessionRepositoryId(input: {
+  admin: AdminClient;
+  workspaceId: string;
+}): Promise<string | null> {
+  const { data, error } = await input.admin
+    .from("github_repositories")
+    .select("id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_archived", false)
+    .order("full_name", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.id ?? null;
+}
+
+async function loadDefaultSessionRepositoryId(input: {
+  admin: AdminClient;
+  onboardingRepositoryId: string | null;
+  workspaceId: string;
+}): Promise<string | null> {
+  const { data: primaryProfileRow, error: primaryProfileError } = await input.admin
+    .from("workspace_repository_profiles")
+    .select("github_repository_id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("is_primary", true)
+    .maybeSingle();
+
+  if (primaryProfileError) {
+    throw primaryProfileError;
+  }
+
+  const primaryRepositoryId = primaryProfileRow?.github_repository_id ?? null;
+  if (primaryRepositoryId) {
+    const repositoryId = await loadAvailableSessionRepositoryId({
+      admin: input.admin,
+      repositoryId: primaryRepositoryId,
+      workspaceId: input.workspaceId,
+    });
+    if (repositoryId) return repositoryId;
+  }
+
+  if (input.onboardingRepositoryId) {
+    const repositoryId = await loadAvailableSessionRepositoryId({
+      admin: input.admin,
+      repositoryId: input.onboardingRepositoryId,
+      workspaceId: input.workspaceId,
+    });
+    if (repositoryId) return repositoryId;
+  }
+
+  return loadFirstAvailableSessionRepositoryId(input);
+}
+
+async function validateSessionRepositoryId(input: {
+  admin: AdminClient;
+  repositoryId: string;
+  workspaceId: string;
+}): Promise<boolean> {
+  return Boolean(await loadAvailableSessionRepositoryId(input));
 }
 
 export async function POST(request: Request) {
@@ -91,16 +150,12 @@ export async function POST(request: Request) {
   }
 
   const admin = createSupabaseAdminClient();
-  const [onboardingResult, repositoryOptionsResult, firstRunResult] = await Promise.all([
+  const [onboardingResult, firstRunResult] = await Promise.all([
     access.context.supabase
       .from("workspace_onboarding")
       .select("status, selected_github_repository_id")
       .eq("workspace_id", normalized.workspaceId)
       .maybeSingle(),
-    loadSessionRepositoryOptions({ admin, workspaceId: normalized.workspaceId }).then(
-      (data) => ({ data, error: null }),
-      (error: unknown) => ({ data: null, error }),
-    ),
     prepareSessionFirstRun({ admin, workspaceId: normalized.workspaceId }).then(
       (data) => ({ data, error: null }),
       (error: unknown) => ({ data: null, error }),
@@ -117,34 +172,36 @@ export async function POST(request: Request) {
     );
   }
 
-  if (repositoryOptionsResult.error || !repositoryOptionsResult.data) {
+  let githubRepositoryId: string | null = null;
+  try {
+    if (normalized.githubRepositoryId) {
+      const repositoryAvailable = await validateSessionRepositoryId({
+        admin,
+        repositoryId: normalized.githubRepositoryId,
+        workspaceId: normalized.workspaceId,
+      });
+
+      if (!repositoryAvailable) {
+        return NextResponse.json(
+          { error: "Repository is not available for this workspace." },
+          { status: 400 },
+        );
+      }
+
+      githubRepositoryId = normalized.githubRepositoryId;
+    } else {
+      githubRepositoryId = await loadDefaultSessionRepositoryId({
+        admin,
+        onboardingRepositoryId: onboardingRow.selected_github_repository_id,
+        workspaceId: normalized.workspaceId,
+      });
+    }
+  } catch (error) {
     return NextResponse.json(
-      {
-        error: getErrorMessage(
-          repositoryOptionsResult.error,
-          "Wallie could not resolve a session repository.",
-        ),
-      },
+      { error: getErrorMessage(error, "Wallie could not resolve a session repository.") },
       { status: 500 },
     );
   }
-
-  const availableRepositoryIds = new Set(repositoryOptionsResult.data.availableIds);
-  if (normalized.githubRepositoryId && !availableRepositoryIds.has(normalized.githubRepositoryId)) {
-    return NextResponse.json(
-      { error: "Repository is not available for this workspace." },
-      { status: 400 },
-    );
-  }
-
-  const githubRepositoryId =
-    normalized.githubRepositoryId ??
-    [
-      repositoryOptionsResult.data.primaryRepositoryId,
-      onboardingRow.selected_github_repository_id,
-      ...repositoryOptionsResult.data.availableIds,
-    ].find((repositoryId) => repositoryId && availableRepositoryIds.has(repositoryId)) ??
-    null;
 
   if (firstRunResult.error || !firstRunResult.data) {
     try {

@@ -54,10 +54,14 @@ function buildSupabaseMock(
 
 function buildAdminMock(
   opts: {
+    firstRepositoryId?: string | null;
     primaryRepositoryId?: string | null;
-    repositories?: Array<{ full_name: string; id: string }>;
+    repositoriesById?: Record<string, boolean>;
   } = {},
 ) {
+  const repositoriesById = opts.repositoriesById ?? {};
+  const firstRepositoryId = opts.firstRepositoryId ?? null;
+
   return {
     from(table: string) {
       if (table === "workspace_repository_profiles") {
@@ -78,12 +82,47 @@ function buildAdminMock(
       }
 
       if (table === "github_repositories") {
+        let selectedId: string | null = null;
+        let scopedToWorkspace = false;
+        let scopedToActive = false;
+        let limited = false;
+
         const builder = {
-          eq: () => builder,
-          order: async () => ({
-            data: (opts.repositories ?? []).map(({ id }) => ({ id })),
-            error: null,
-          }),
+          eq(column: string, value: string | boolean) {
+            if (column === "id" && typeof value === "string") {
+              selectedId = value;
+            }
+            if (column === "workspace_id") {
+              scopedToWorkspace = value === WORKSPACE_ID;
+            }
+            if (column === "is_archived") {
+              scopedToActive = value === false;
+            }
+            return builder;
+          },
+          limit(count: number) {
+            limited = count === 1;
+            return builder;
+          },
+          maybeSingle: async () => {
+            if (!scopedToWorkspace || !scopedToActive) {
+              return { data: null, error: null };
+            }
+
+            if (selectedId) {
+              return {
+                data: repositoriesById[selectedId] ? { id: selectedId } : null,
+                error: null,
+              };
+            }
+
+            if (limited && firstRepositoryId) {
+              return { data: { id: firstRepositoryId }, error: null };
+            }
+
+            return { data: null, error: null };
+          },
+          order: () => builder,
           select: () => builder,
         };
         return builder;
@@ -111,7 +150,10 @@ describe("POST /api/sessions", () => {
     vi.clearAllMocks();
     setupAccess();
     mocked.createSupabaseAdminClient.mockReturnValue(
-      buildAdminMock({ repositories: [{ full_name: "acme/app", id: REPOSITORY_ID }] }),
+      buildAdminMock({
+        firstRepositoryId: REPOSITORY_ID,
+        repositoriesById: { [REPOSITORY_ID]: true },
+      }),
     );
     mocked.prepareSessionFirstRun.mockResolvedValue({ model: "gpt-5.5", provider: "codex" });
     mocked.createSessionWithFirstJob.mockResolvedValue({
@@ -154,7 +196,7 @@ describe("POST /api/sessions", () => {
     );
   });
 
-  it("pins an explicitly selected repository", async () => {
+  it("pins an explicitly selected repository via point lookup", async () => {
     const response = await POST(
       makeRequest({
         githubRepositoryId: REPOSITORY_ID,
@@ -173,11 +215,12 @@ describe("POST /api/sessions", () => {
     const secondRepositoryId = "55555555-5555-4555-8555-555555555555";
     mocked.createSupabaseAdminClient.mockReturnValue(
       buildAdminMock({
+        firstRepositoryId: REPOSITORY_ID,
         primaryRepositoryId: secondRepositoryId,
-        repositories: [
-          { full_name: "acme/app", id: REPOSITORY_ID },
-          { full_name: "acme/web", id: secondRepositoryId },
-        ],
+        repositoriesById: {
+          [REPOSITORY_ID]: true,
+          [secondRepositoryId]: true,
+        },
       }),
     );
 
