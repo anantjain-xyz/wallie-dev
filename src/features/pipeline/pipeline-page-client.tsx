@@ -316,7 +316,7 @@ function PipelinePageContent({ initialData, initialNow }: PipelinePageClientProp
   const hasAnySession = board.lanes.some((lane) => lane.totalCount > 0);
 
   return (
-    <div className="min-h-full bg-canvas">
+    <div className="min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas">
       <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
         <div className="mx-auto w-full" style={{ maxWidth: boardContainerWidth }}>
           <div className="max-w-2xl space-y-2">

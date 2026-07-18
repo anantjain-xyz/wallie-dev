@@ -166,7 +166,11 @@ describe("PipelinePageClient", () => {
 
   it("renders one semantic card tree with the same mobile selector names and destinations", async () => {
     installSupabaseMock();
-    render(<PipelinePageClient initialData={initialData()} />);
+    const view = render(<PipelinePageClient initialData={initialData()} />);
+
+    expect(view.container.firstElementChild?.classList).toContain(
+      "min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
+    );
 
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
     expect(screen.getAllByText("Session 3")).toHaveLength(1);
