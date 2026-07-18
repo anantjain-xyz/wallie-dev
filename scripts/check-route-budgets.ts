@@ -98,10 +98,9 @@ export function sharedRootBytes(projectDirectory: string) {
   ) {
     throw new Error("Next build manifest is missing rootMainFiles.");
   }
-  return manifest.rootMainFiles.reduce(
-    (total, path) => total + statSync(resolve(projectDirectory, ".next", path)).size,
-    0,
-  );
+  return manifest.rootMainFiles
+    .filter((path) => path.endsWith(".js"))
+    .reduce((total, path) => total + statSync(resolve(projectDirectory, ".next", path)).size, 0);
 }
 
 export function evaluateRouteBudgets(input: {

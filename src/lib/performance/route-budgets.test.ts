@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   establishedMaximumBytes,
@@ -6,7 +10,16 @@ import {
   parseBudgetConfig,
   parseRouteBundleStats,
   runRouteBudgetCheck,
+  sharedRootBytes,
 } from "../../../scripts/check-route-budgets";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
 
 const routeStats = [
   ["/w/[workspaceSlug]", 700_000],
@@ -58,6 +71,24 @@ describe("route bundle budgets", () => {
         }),
       ),
     ).toThrow("increased above its established ceiling");
+  });
+
+  it("counts only JavaScript assets in the shared root budget", () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "wallie-route-budgets-"));
+    temporaryDirectories.push(projectDirectory);
+    const nextDirectory = join(projectDirectory, ".next");
+    mkdirSync(join(nextDirectory, "static/chunks"), { recursive: true });
+    mkdirSync(join(nextDirectory, "static/css"), { recursive: true });
+    writeFileSync(
+      join(nextDirectory, "build-manifest.json"),
+      JSON.stringify({
+        rootMainFiles: ["static/chunks/root.js", "static/css/root.css"],
+      }),
+    );
+    writeFileSync(join(nextDirectory, "static/chunks/root.js"), "12345");
+    writeFileSync(join(nextDirectory, "static/css/root.css"), "123456789");
+
+    expect(sharedRootBytes(projectDirectory)).toBe(5);
   });
 
   it("fails the intentional fixture after printing all route totals", () => {
