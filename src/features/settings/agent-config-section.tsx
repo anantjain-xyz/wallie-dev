@@ -376,11 +376,7 @@ export function AgentConfigSection({
               onClick={() => void handleSaveAll()}
               type="button"
             >
-              <ActionButtonLabel
-                idle="Save changes"
-                pending={isSaving}
-                pendingLabel="Saving…"
-              />
+              <ActionButtonLabel idle="Save changes" pending={isSaving} pendingLabel="Saving…" />
             </button>
           </div>
 

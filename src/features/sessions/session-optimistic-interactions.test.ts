@@ -22,13 +22,14 @@ const mocked = vi.hoisted(() => {
   return {
     channel,
     fetch: vi.fn(),
+    refresh: vi.fn(),
     removeChannel: vi.fn(),
     replace: vi.fn(),
   };
 });
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: mocked.replace }),
+  useRouter: () => ({ refresh: mocked.refresh, replace: mocked.replace }),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -400,6 +401,27 @@ describe("optimistic session interactions", () => {
     await waitFor(() => expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy());
   });
 
+  it("restores the optimistic row when the archive response is already active", async () => {
+    mocked.fetch.mockResolvedValue(
+      Response.json({
+        archivedAt: null,
+        id: session.id,
+        phaseStatus: session.phaseStatus,
+        updatedAt: "2026-07-17T13:00:00.000Z",
+      }),
+    );
+    render(listView(makeListData(session, "all")));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+
+    await screen.findByText("Session #1 remains active.");
+    expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
   it("shows a committed archive after soft navigation to the Archived scope", async () => {
     const archivedAt = "2026-07-17T12:00:00.000Z";
     mocked.fetch.mockResolvedValue(
@@ -490,6 +512,56 @@ describe("optimistic session interactions", () => {
 
     expect(mocked.fetch).toHaveBeenCalledTimes(3);
     expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+  });
+
+  it("refreshes the active destination after a detail archive Undo survives navigation", async () => {
+    const archivedAt = "2026-07-17T12:00:00.000Z";
+    mocked.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: archivedAt,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: null,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: "2026-07-17T13:00:00.000Z",
+        }),
+      );
+
+    const view = render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: makeDetailData(),
+          initialFormattedArtifact: null,
+          initialFormattedArtifactKey: null,
+        }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+
+    view.rerender(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPageClient, {
+          initialData: makeListData({ ...session, archivedAt, updatedAt: archivedAt }, "archived"),
+        }),
+      ),
+    );
+    fireEvent.click(undo);
+
+    await waitFor(() => expect(mocked.refresh).toHaveBeenCalledTimes(1));
+    expect(mocked.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("guards a list Undo that survives navigation against a newer archive", async () => {

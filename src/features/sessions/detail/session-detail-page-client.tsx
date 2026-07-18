@@ -640,7 +640,7 @@ export function SessionDetailPageClient({
             ) {
               return;
             }
-            void handleUnarchive(undoVersion.archivedAt ?? undefined);
+            void handleUnarchive(undoVersion.archivedAt ?? undefined, true);
           },
         },
         duration: 7000,
@@ -662,7 +662,7 @@ export function SessionDetailPageClient({
     }
   }
 
-  async function handleUnarchive(expectedArchivedAt?: string) {
+  async function handleUnarchive(expectedArchivedAt?: string, refreshActiveRoute = false) {
     if (phaseActionPending !== null || archivePending !== null) return;
     archiveUndoVersionRef.current = null;
     const currentSession = latestSessionRef.current;
@@ -699,6 +699,7 @@ export function SessionDetailPageClient({
         title: `Session #${currentSession.number} unarchived.`,
         tone: "success",
       });
+      if (refreshActiveRoute) router.refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to unarchive session.";
       setArchiveError(message);

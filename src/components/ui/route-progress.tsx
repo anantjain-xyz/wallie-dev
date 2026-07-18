@@ -91,7 +91,10 @@ export function RouteProgressProvider({ children }: { children: ReactNode }) {
 
   const startNavigation = useCallback(
     (href?: string) => {
-      if (href && destinationKey(href) === browserRouteKey()) return;
+      if (href && destinationKey(href) === browserRouteKey()) {
+        stopNavigation();
+        return;
+      }
 
       if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
       if (monitorFrameRef.current !== null) {

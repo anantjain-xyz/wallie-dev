@@ -241,6 +241,15 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
         handleArchiveCommitted(result);
         archiveInFlightRef.current.delete(session.id);
         dismissToast(pendingToastId);
+        if (!result.archivedAt) {
+          setArchiveHidden(session.id, false);
+          pushToast({
+            priority: "polite",
+            title: `Session #${session.number} remains active.`,
+          });
+          return;
+        }
+        const archivedAt = result.archivedAt;
         pushToast({
           action: {
             altText: `Undo archive for session #${session.number}`,
@@ -248,9 +257,8 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
             onClick: () => {
               void (async () => {
                 try {
-                  if (!result.archivedAt) return;
                   const undoResult = await unarchiveSessionFromClient({
-                    expectedArchivedAt: result.archivedAt,
+                    expectedArchivedAt: archivedAt,
                     sessionId: session.id,
                   });
                   if (undoResult.archivedAt !== null) return;

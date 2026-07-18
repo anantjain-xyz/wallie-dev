@@ -70,4 +70,41 @@ describe("shared action feedback", () => {
     act(() => frames.shift()?.(32));
     expect(screen.queryByRole("status")).toBeNull();
   });
+
+  it("clears an active navigation when a same-route request supersedes it", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    window.history.replaceState({}, "", "/current");
+
+    function NavigationTrigger() {
+      const { startNavigation } = useRouteProgress();
+      return (
+        <>
+          <button onClick={() => startNavigation("/next")} type="button">
+            Next
+          </button>
+          <button onClick={() => startNavigation("/current")} type="button">
+            Current
+          </button>
+        </>
+      );
+    }
+
+    render(
+      <RouteProgressProvider>
+        <NavigationTrigger />
+      </RouteProgressProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    act(() => frames.shift()?.(16));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
+
+    fireEvent.click(screen.getByRole("button", { name: "Current" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
 });
