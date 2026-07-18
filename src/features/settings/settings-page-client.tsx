@@ -324,7 +324,7 @@ function SettingsCompletePage({
         {flashMessage ? (
           <div
             aria-live="polite"
-            className={`mb-8 rounded-[10px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
+            className={`mb-8 rounded-[6px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
             role="status"
           >
             {flashMessage.text}
@@ -464,7 +464,7 @@ function SettingsCompletePage({
               tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls. Excess requests return 429 with a Retry-After header."
               title="Rate limits"
             >
-              <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+              <ul className="ui-sheet divide-y divide-border">
                 {pageData.rateLimits.map((limit) => (
                   <li
                     key={limit.endpoint}
@@ -474,7 +474,7 @@ function SettingsCompletePage({
                       <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
                       <p className="text-xs leading-5 text-muted">{limit.description}</p>
                     </div>
-                    <span className="ui-pill shrink-0">
+                    <span className="shrink-0 font-mono type-annotation text-muted">
                       {limit.max} req / {Math.round(limit.windowMs / 1000)}s
                     </span>
                   </li>
@@ -647,7 +647,7 @@ function SettingsStreamingPage({
         {flashMessage ? (
           <div
             aria-live="polite"
-            className={`mb-8 rounded-[10px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
+            className={`mb-8 rounded-[6px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
             role="status"
           >
             {flashMessage.text}

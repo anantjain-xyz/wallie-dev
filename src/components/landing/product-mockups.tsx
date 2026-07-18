@@ -204,8 +204,8 @@ function statusLabel(status: StageCard["items"][number]["status"]) {
 
 function BrowserFrame({ children, title }: { children: ReactNode; title: string }) {
   return (
-    <div className="overflow-hidden rounded-[16px] border border-border bg-surface shadow-[0_24px_80px_rgba(29,31,34,0.12)]">
-      <div className="flex h-10 items-center justify-between border-b border-border bg-surface-strong px-4">
+    <div className="overflow-hidden rounded-[6px] border border-border bg-sheet">
+      <div className="flex h-10 items-center justify-between border-b border-border bg-control-hover px-4">
         <div className="flex items-center gap-1.5" aria-hidden="true">
           <span className="h-2.5 w-2.5 rounded-full bg-danger/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-warning/70" />
@@ -228,7 +228,7 @@ function toneDotClassName(tone: HealthTone) {
 function toneBadgeClassName(tone: HealthTone) {
   if (tone === "success") return "bg-success-soft text-success";
   if (tone === "warning") return "bg-warning-soft text-warning";
-  return "bg-surface-muted text-muted";
+  return "bg-control-muted text-muted";
 }
 
 function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTitles)[number] }) {
@@ -277,7 +277,7 @@ function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
       <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup health</p>
       <div className="space-y-3">
         {rows.map((row) => (
-          <div key={row.label} className="rounded-[8px] border border-border bg-surface p-3">
+          <div key={row.label} className="rounded-[6px] border border-border bg-sheet p-3">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-medium text-foreground">{row.label}</p>
               <span
@@ -296,15 +296,15 @@ function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
 export function HeroWorkspaceMockup() {
   return (
     <BrowserFrame title="wallie.dev/w/acme">
-      <div className="grid min-h-[520px] grid-cols-[190px_minmax(0,1fr)] bg-surface text-left max-md:min-h-0 max-md:grid-cols-1">
-        <div className="border-r border-border bg-surface-strong p-4 max-md:hidden">
+      <div className="grid min-h-[520px] grid-cols-[190px_minmax(0,1fr)] bg-sheet text-left max-md:min-h-0 max-md:grid-cols-1">
+        <div className="border-r border-border bg-control-hover p-4 max-md:hidden">
           <div className="mb-7 flex items-center gap-2">
             <Image
               src="/wallie-logo-minimal.png"
               alt=""
               width={32}
               height={32}
-              className="h-8 w-8 rounded-[8px] object-contain dark:invert"
+              className="h-8 w-8 rounded-[6px] object-contain dark:invert"
             />
             <div>
               <p className="text-[13px] font-semibold text-foreground">Wallie</p>
@@ -316,9 +316,7 @@ export function HeroWorkspaceMockup() {
               <div
                 key={item}
                 className={`rounded-[6px] px-3 py-2 ${
-                  index === 0
-                    ? "bg-surface text-foreground shadow-[0_1px_1px_rgba(0,0,0,0.04)]"
-                    : "text-muted"
+                  index === 0 ? "bg-sheet text-foreground" : "text-muted"
                 }`}
               >
                 {item}
@@ -333,7 +331,7 @@ export function HeroWorkspaceMockup() {
               <p className="text-xs text-muted">Default pipeline</p>
               <h2 className="text-[20px] font-semibold text-foreground">Sessions</h2>
             </div>
-            <div className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted">
+            <div className="rounded-full border border-border bg-sheet px-3 py-1.5 text-xs font-medium text-muted">
               Realtime sync active
             </div>
           </header>
@@ -358,7 +356,7 @@ export function HeroWorkspaceMockup() {
                     {stage.items.map((item) => (
                       <article
                         key={item.title}
-                        className="rounded-[8px] border border-border bg-surface p-3 shadow-[0_1px_2px_rgba(0,0,0,0.035)]"
+                        className="rounded-[6px] border border-border bg-sheet p-3"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-xs font-medium leading-5 text-foreground">
@@ -370,7 +368,7 @@ export function HeroWorkspaceMockup() {
                             {statusLabel(item.status)}
                           </span>
                         </div>
-                        <div className="mt-3 h-1.5 rounded-full bg-surface-muted">
+                        <div className="mt-3 h-1.5 rounded-full bg-control-muted">
                           <div className="h-full w-2/3 rounded-full bg-accent/70" />
                         </div>
                       </article>
@@ -389,7 +387,7 @@ export function HeroWorkspaceMockup() {
 export function SandboxExecutionMockup() {
   return (
     <BrowserFrame title="wallie.dev/w/acme/sessions/42">
-      <div className="grid min-h-[430px] grid-cols-[1fr_320px] bg-surface max-md:grid-cols-1">
+      <div className="grid min-h-[430px] grid-cols-[1fr_320px] bg-sheet max-md:grid-cols-1">
         <div className="border-r border-border p-5 max-md:border-b max-md:border-r-0">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -403,20 +401,20 @@ export function SandboxExecutionMockup() {
             </span>
           </div>
 
-          <div className="space-y-3 rounded-[10px] border border-border bg-[#111827] p-4 font-mono text-xs leading-5 text-[#dbeafe]">
+          <div className="space-y-3 rounded-[6px] border border-border bg-foreground p-4 font-mono text-xs leading-5 text-sheet">
             <p>$ pnpm install</p>
-            <p className="text-[#4ade80]">resolved 742 packages in isolated workspace</p>
+            <p className="text-success">resolved 742 packages in isolated workspace</p>
             <p>$ pnpm test -- realtime</p>
-            <p className="text-[#4ade80]">12 tests passed</p>
+            <p className="text-success">12 tests passed</p>
             <p>$ git diff -- src/features/auth/saml.ts</p>
-            <p className="text-[#93c5fd]">artifact written: build-output.v3.json</p>
+            <p className="text-accent">artifact written: build-output.v3.json</p>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {runLog.map((item) => (
               <div
                 key={item.label}
-                className="rounded-[8px] border border-border bg-surface-strong p-3"
+                className="rounded-[6px] border border-border bg-control-hover p-3"
               >
                 <p className="type-annotation font-semibold uppercase text-muted">{item.label}</p>
                 <p className="mt-1 truncate font-mono text-xs text-foreground">{item.value}</p>
@@ -425,7 +423,7 @@ export function SandboxExecutionMockup() {
           </div>
         </div>
 
-        <div className="bg-surface-strong p-5">
+        <div className="bg-control-hover p-5">
           <p className="text-xs font-semibold text-foreground">Team activity</p>
           <div className="mt-4 space-y-4">
             {[
@@ -435,7 +433,7 @@ export function SandboxExecutionMockup() {
               ["Jordan", "Reviewing the latest artifact."],
             ].map(([actor, text]) => (
               <div key={text} className="flex gap-3">
-                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface type-annotation font-semibold text-muted">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sheet type-annotation font-semibold text-muted">
                   {actor.slice(0, 2).toUpperCase()}
                 </span>
                 <div>
@@ -454,7 +452,7 @@ export function SandboxExecutionMockup() {
 export function ApprovalGatesMockup() {
   return (
     <BrowserFrame title="wallie.dev/w/acme/onboarding?step=pipeline">
-      <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-surface p-5 text-left max-md:grid-cols-1">
+      <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-sheet p-5 text-left max-md:grid-cols-1">
         <OnboardingRail activeTitle="Pipeline" />
 
         <div className="min-w-0 px-5 max-md:px-0">
@@ -471,7 +469,7 @@ export function ApprovalGatesMockup() {
                 <span className="text-xs font-medium text-foreground">Pipeline name</span>
                 <div className="ui-input h-9 px-3 py-2 text-xs">Default</div>
               </label>
-              <div className="rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-xs text-foreground">
+              <div className="rounded-[6px] border border-border bg-control-hover px-3 py-2 text-xs text-foreground">
                 Template variables
               </div>
             </div>
@@ -488,9 +486,9 @@ export function ApprovalGatesMockup() {
               {onboardingStageRows.map((stage, index) => (
                 <li
                   key={stage.slug}
-                  className="relative rounded-[10px] border border-border bg-surface p-4"
+                  className="relative rounded-[6px] border border-border bg-sheet p-4"
                 >
-                  <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted type-annotation font-semibold text-muted">
+                  <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-control-muted type-annotation font-semibold text-muted">
                     {index + 1}
                   </div>
                   <div className="space-y-3 pl-9">
@@ -546,7 +544,7 @@ export function ApprovalGatesMockup() {
 export function RuntimeChoiceMockup() {
   return (
     <BrowserFrame title="wallie.dev/w/acme/onboarding?step=runtime">
-      <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-surface p-5 text-left max-md:grid-cols-1">
+      <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-sheet p-5 text-left max-md:grid-cols-1">
         <OnboardingRail activeTitle="Agent" />
 
         <div className="min-w-0 px-5 max-md:px-0">
@@ -558,7 +556,7 @@ export function RuntimeChoiceMockup() {
           </div>
 
           <div className="space-y-4">
-            <section className="rounded-[6px] border border-border bg-surface p-4">
+            <section className="rounded-[6px] border border-border bg-sheet p-4">
               <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <h4 className="text-[14px] font-semibold text-foreground">Agent config</h4>
@@ -601,7 +599,7 @@ export function RuntimeChoiceMockup() {
                   {providerAccessRows.map((row) => (
                     <div
                       key={row.label}
-                      className="rounded-[8px] border border-border bg-surface p-3"
+                      className="rounded-[6px] border border-border bg-sheet p-3"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-xs font-medium text-foreground">{row.label}</p>
@@ -618,7 +616,7 @@ export function RuntimeChoiceMockup() {
               </div>
             </section>
 
-            <section className="rounded-[6px] border border-border bg-surface">
+            <section className="rounded-[6px] border border-border bg-sheet">
               <div className="border-b border-border px-4 py-3">
                 <h4 className="text-[14px] font-semibold text-foreground">
                   Repository environment variables
@@ -638,7 +636,7 @@ export function RuntimeChoiceMockup() {
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                         row.status === "Stored"
                           ? "bg-success-soft text-success"
-                          : "bg-surface-muted text-muted"
+                          : "bg-control-muted text-muted"
                       }`}
                     >
                       {row.status}
@@ -656,17 +654,14 @@ export function RuntimeChoiceMockup() {
               </div>
             </section>
 
-            <section className="rounded-[6px] border border-border bg-surface p-4">
+            <section className="rounded-[6px] border border-border bg-sheet p-4">
               <h4 className="text-[14px] font-semibold text-foreground">Runtime readiness</h4>
               <p className="mt-1 text-xs leading-5 text-muted">
                 Provider-specific requirements must pass before this step can complete.
               </p>
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 {runtimeRequirementRows.map((row) => (
-                  <div
-                    key={row.label}
-                    className="rounded-[8px] border border-border bg-surface p-3"
-                  >
+                  <div key={row.label} className="rounded-[6px] border border-border bg-sheet p-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-xs font-medium text-foreground">{row.label}</p>
                       <span

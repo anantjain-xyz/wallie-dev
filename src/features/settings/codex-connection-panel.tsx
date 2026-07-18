@@ -87,7 +87,7 @@ export function ChatGptSubscriptionControls({
       </button>
 
       {deviceFlow ? (
-        <div className="space-y-2 rounded-[6px] border border-border bg-surface p-3">
+        <div className="space-y-2 rounded-[6px] border border-border bg-sheet p-3">
           <p className="text-xs font-medium text-foreground">
             {deviceFlow.status === "starting"
               ? "Waiting for sign-in code…"
@@ -416,12 +416,12 @@ export function CodexConnectionPanel({
 
       {status && showForm ? (
         <>
-          <div className="inline-flex flex-wrap rounded-[6px] border border-border bg-surface p-1">
+          <div className="inline-flex flex-wrap rounded-[6px] border border-border bg-sheet p-1">
             {CREDENTIAL_TYPES.map((type) => (
               <button
                 className={`rounded-[5px] px-3 py-1.5 text-xs font-medium transition-colors ${
                   credentialType === type
-                    ? "bg-surface-strong text-foreground"
+                    ? "bg-control-hover text-foreground"
                     : "text-muted hover:text-foreground"
                 }`}
                 disabled={isBusy}

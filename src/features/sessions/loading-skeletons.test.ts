@@ -22,7 +22,7 @@ describe("SkeletonBlock", () => {
 
     expect(html).toContain('aria-hidden="true"');
     expect(html).toContain("animate-pulse");
-    expect(html).toContain("bg-surface-muted");
+    expect(html).toContain("bg-control-muted");
     expect(html).toContain("h-4");
     expect(html).toContain("w-20");
   });
@@ -47,8 +47,8 @@ describe("SessionDetailLoadingSkeleton", () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('aria-label="Loading session"');
     expect(html).toContain("border-b border-border");
-    expect(html).toContain("bg-surface-muted");
-    expect((html.match(/rounded-\[8px\] border border-border bg-surface/g) ?? []).length).toBe(3);
+    expect(html).toContain("bg-control-muted");
+    expect((html.match(/ui-sheet/g) ?? []).length).toBe(4);
     expectNoFocusableFakeControls(html);
   });
 });

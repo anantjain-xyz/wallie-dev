@@ -100,7 +100,7 @@ function CreatorAvatar({ displayName }: { displayName: string }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong type-annotation font-semibold text-foreground"
+      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-control-hover type-annotation font-semibold text-foreground"
     >
       {initial}
     </span>
@@ -594,7 +594,7 @@ export function SessionDetailPageClient({
         ) : null}
       </div>
 
-      <div className="mb-6 rounded-[10px] border border-border bg-surface px-5 py-4">
+      <div className="ui-sheet mb-6 px-5 py-4">
         <StageRail
           stageRail={stageRail}
           selectedStageSlug={selectedStageSlug}
@@ -603,7 +603,7 @@ export function SessionDetailPageClient({
       </div>
 
       <div className="flex flex-col gap-6">
-        <section className="rounded-[8px] border border-border bg-surface">
+        <section className="ui-sheet">
           <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h2 className="text-[13px] font-semibold text-foreground">
@@ -641,7 +641,7 @@ export function SessionDetailPageClient({
           </div>
 
           {isDraftingSelectedStage ? (
-            <div className="border-t border-border bg-surface-muted p-4">
+            <div className="border-t border-border bg-control-muted p-4">
               {actionError ? (
                 <div
                   role="status"
@@ -672,7 +672,7 @@ export function SessionDetailPageClient({
           ) : null}
 
           {canActOnCurrent ? (
-            <div className="border-t border-border bg-surface-muted p-4">
+            <div className="border-t border-border bg-control-muted p-4">
               {actionError ? (
                 <div
                   role="status"
@@ -760,14 +760,14 @@ export function SessionDetailPageClient({
           ) : null}
         </section>
 
-        <section className="rounded-[8px] border border-border bg-surface p-4">
+        <section className="ui-sheet p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Prompt</h2>
           <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
             {session.promptMd || "No prompt recorded."}
           </pre>
         </section>
 
-        <section className="rounded-[8px] border border-border bg-surface p-4">
+        <section className="ui-sheet p-4">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Run activity</h2>
           <div className="mt-3">
             <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
@@ -963,10 +963,10 @@ function StageRail({
               type="button"
               onClick={() => onSelect(entry.stage.slug)}
               className={cn(
-                "group flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                "group flex items-center gap-2 rounded-[6px] border px-3 py-1.5 text-xs font-medium transition-colors",
                 isSelected
                   ? "border-accent/40 bg-accent-soft text-accent"
-                  : "border-border bg-surface text-foreground hover:bg-surface-muted",
+                  : "border-border bg-sheet text-foreground hover:bg-control-muted",
               )}
               aria-current={isSelected ? "step" : undefined}
             >
@@ -988,7 +988,7 @@ function StageDot({ entry }: { entry: StageRailEntry }) {
   if (entry.status === "completed") {
     className = cn(className, "bg-success");
   } else if (entry.status === "upcoming") {
-    className = cn(className, "bg-surface-muted border border-border");
+    className = cn(className, "bg-control-muted border border-border");
   } else if (entry.phaseStatus === "rejected") {
     className = cn(className, "bg-danger");
   } else if (entry.phaseStatus === "approved") {
