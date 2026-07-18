@@ -47,6 +47,7 @@ export type PipelineBoardLane = Omit<PipelineDashboardLane, "cards"> & {
 export type PipelineBoardState = {
   cardsById: Record<string, PipelineDashboardCard>;
   lanes: PipelineBoardLane[];
+  offPageCardLaneKeys: Record<string, string>;
 };
 
 export type PipelineDashboardData = {

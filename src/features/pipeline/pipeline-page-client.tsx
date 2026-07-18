@@ -46,6 +46,7 @@ type PipelinePageClientProps = {
 type PendingCardFocus = {
   cardId: string;
   focusableIndex: number;
+  targetLaneKey: string;
 };
 
 const CARD_FOCUSABLE_SELECTOR =
@@ -65,7 +66,7 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function captureCardFocus(cardId: string): PendingCardFocus | null {
+function captureCardFocus(cardId: string, targetLaneKey: string): PendingCardFocus | null {
   const activeElement = document.activeElement;
   if (!(activeElement instanceof HTMLElement)) return null;
 
@@ -76,7 +77,7 @@ function captureCardFocus(cardId: string): PendingCardFocus | null {
     cardElement.querySelectorAll<HTMLElement>(CARD_FOCUSABLE_SELECTOR),
   );
   const focusableIndex = focusableElements.indexOf(activeElement);
-  return focusableIndex < 0 ? null : { cardId, focusableIndex };
+  return focusableIndex < 0 ? null : { cardId, focusableIndex, targetLaneKey };
 }
 
 export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
@@ -112,8 +113,10 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
     if (initialLanesRef.current === initialData.lanes) return;
     initialLanesRef.current = initialData.lanes;
     const invalidated = new Set(invalidatedCardIds.current);
+    const focusTargetLaneKey = pendingCardFocus.current?.targetLaneKey;
 
     startTransition(() => {
+      if (focusTargetLaneKey) setActiveLaneKey(focusTargetLaneKey);
       dispatch({ invalidatedCardIds: invalidated, lanes: initialData.lanes, type: "reconcile" });
     });
     invalidatedCardIds.current.clear();
@@ -134,7 +137,16 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
     );
     const focusTarget =
       cardElement?.querySelectorAll<HTMLElement>(CARD_FOCUSABLE_SELECTOR)[pending.focusableIndex];
-    if (!focusTarget) return;
+    if (!focusTarget) {
+      if (!board.cardsById[pending.cardId]) {
+        const mobileStageSelector = document.querySelector<HTMLSelectElement>("#pipeline-stage");
+        if (mobileStageSelector?.offsetParent) {
+          mobileStageSelector.focus({ preventScroll: true });
+        }
+        pendingCardFocus.current = null;
+      }
+      return;
+    }
 
     focusTarget.focus({ preventScroll: true });
     pendingCardFocus.current = null;
@@ -204,9 +216,10 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
           const hasTargetLane = currentBoard.lanes.some(
             (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
           );
+          const targetLaneKey = `${next.pipelineId}:${next.currentStageId}`;
 
           if (!hasTargetLane) {
-            pendingCardFocus.current = captureCardFocus(next.id);
+            pendingCardFocus.current = captureCardFocus(next.id, targetLaneKey);
             invalidatedCardIds.current.add(next.id);
             if (!laneRefreshPending.current) {
               laneRefreshPending.current = true;
@@ -220,8 +233,10 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
             (existing.pipelineId !== next.pipelineId ||
               existing.currentStageId !== next.currentStageId);
           if (moved) {
-            pendingCardFocus.current = captureCardFocus(next.id);
+            const focus = captureCardFocus(next.id, targetLaneKey);
+            pendingCardFocus.current = focus;
             startTransition(() => {
+              if (focus) setActiveLaneKey(focus.targetLaneKey);
               dispatch({ card: next, isInsert: payload.eventType === "INSERT", type: "upsert" });
             });
             return;

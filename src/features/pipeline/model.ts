@@ -125,7 +125,7 @@ export function createPipelineBoardState(lanes: PipelineDashboardLane[]): Pipeli
     return { ...lane, cardIds: sortCardIds(cardIds, cardsById) };
   });
 
-  return { cardsById, lanes: normalizedLanes };
+  return { cardsById, lanes: normalizedLanes, offPageCardLaneKeys: {} };
 }
 
 function reconcilePipelineBoard(
@@ -191,7 +191,7 @@ function reconcilePipelineBoard(
       : nextLane;
   });
 
-  return { cardsById, lanes };
+  return { cardsById, lanes, offPageCardLaneKeys: {} };
 }
 
 function upsertPipelineCard(
@@ -200,16 +200,27 @@ function upsertPipelineCard(
   isInsert: boolean,
 ): PipelineBoardState {
   const existingLaneIndex = state.lanes.findIndex((lane) => lane.cardIds.includes(card.id));
+  const offPageLaneKey = state.offPageCardLaneKeys[card.id];
+  const offPageLaneIndex = offPageLaneKey
+    ? state.lanes.findIndex((lane) => pipelineLaneKey(lane) === offPageLaneKey)
+    : -1;
+  const sourceLaneIndex = existingLaneIndex >= 0 ? existingLaneIndex : offPageLaneIndex;
   const targetLaneIndex = state.lanes.findIndex(
     (lane) => lane.pipeline.id === card.pipelineId && lane.id === card.currentStageId,
   );
 
-  if (targetLaneIndex < 0 || (existingLaneIndex < 0 && !isInsert)) return state;
+  if (targetLaneIndex < 0 || (sourceLaneIndex < 0 && !isInsert)) return state;
 
-  if (existingLaneIndex < 0) {
+  if (sourceLaneIndex < 0) {
     const targetLane = state.lanes[targetLaneIndex]!;
     const hasRoom = targetLane.cardIds.length < PIPELINE_DASHBOARD_PAGE_SIZE;
     const cardsById = hasRoom ? { ...state.cardsById, [card.id]: card } : state.cardsById;
+    const offPageCardLaneKeys = hasRoom
+      ? state.offPageCardLaneKeys
+      : {
+          ...state.offPageCardLaneKeys,
+          [card.id]: pipelineLaneKey(targetLane),
+        };
     const lanes = state.lanes.map((lane, laneIndex) =>
       laneIndex === targetLaneIndex
         ? {
@@ -219,18 +230,36 @@ function upsertPipelineCard(
           }
         : lane,
     );
-    return { cardsById, lanes };
+    return { cardsById, lanes, offPageCardLaneKeys };
   }
 
-  const cardsById = { ...state.cardsById, [card.id]: card };
-  const lanes = state.lanes.map((lane, laneIndex) => {
-    if (laneIndex !== existingLaneIndex && laneIndex !== targetLaneIndex) return lane;
+  if (sourceLaneIndex === targetLaneIndex && existingLaneIndex < 0) return state;
 
-    if (existingLaneIndex === targetLaneIndex) {
+  const targetHasRoom =
+    sourceLaneIndex === targetLaneIndex ||
+    state.lanes[targetLaneIndex]!.cardIds.length < PIPELINE_DASHBOARD_PAGE_SIZE;
+  const currentCard = state.cardsById[card.id];
+  const nextCard =
+    currentCard && card.pullRequests !== currentCard.pullRequests
+      ? { ...card, pullRequests: currentCard.pullRequests }
+      : card;
+  const cardsById = { ...state.cardsById };
+  const offPageCardLaneKeys = { ...state.offPageCardLaneKeys };
+  delete offPageCardLaneKeys[card.id];
+  if (targetHasRoom) {
+    cardsById[card.id] = nextCard;
+  } else {
+    delete cardsById[card.id];
+    offPageCardLaneKeys[card.id] = pipelineLaneKey(state.lanes[targetLaneIndex]!);
+  }
+  const lanes = state.lanes.map((lane, laneIndex) => {
+    if (laneIndex !== sourceLaneIndex && laneIndex !== targetLaneIndex) return lane;
+
+    if (sourceLaneIndex === targetLaneIndex) {
       return { ...lane, cardIds: sortCardIds(lane.cardIds, cardsById) };
     }
 
-    if (laneIndex === existingLaneIndex) {
+    if (laneIndex === sourceLaneIndex) {
       return {
         ...lane,
         cardIds: lane.cardIds.filter((cardId) => cardId !== card.id),
@@ -240,22 +269,29 @@ function upsertPipelineCard(
 
     return {
       ...lane,
-      cardIds: sortCardIds([...lane.cardIds, card.id], cardsById),
+      cardIds: targetHasRoom ? sortCardIds([...lane.cardIds, card.id], cardsById) : lane.cardIds,
       totalCount: lane.totalCount + 1,
     };
   });
 
-  return { cardsById, lanes };
+  return { cardsById, lanes, offPageCardLaneKeys };
 }
 
 function removePipelineCard(state: PipelineBoardState, cardId: string): PipelineBoardState {
   const laneIndex = state.lanes.findIndex((lane) => lane.cardIds.includes(cardId));
-  if (laneIndex < 0) return state;
+  const offPageLaneKey = state.offPageCardLaneKeys[cardId];
+  const sourceLaneIndex =
+    laneIndex >= 0
+      ? laneIndex
+      : state.lanes.findIndex((lane) => pipelineLaneKey(lane) === offPageLaneKey);
+  if (sourceLaneIndex < 0) return state;
 
   const cardsById = { ...state.cardsById };
   delete cardsById[cardId];
+  const offPageCardLaneKeys = { ...state.offPageCardLaneKeys };
+  delete offPageCardLaneKeys[cardId];
   const lanes = state.lanes.map((lane, index) =>
-    index === laneIndex
+    index === sourceLaneIndex
       ? {
           ...lane,
           cardIds: lane.cardIds.filter((candidateId) => candidateId !== cardId),
@@ -263,7 +299,7 @@ function removePipelineCard(state: PipelineBoardState, cardId: string): Pipeline
         }
       : lane,
   );
-  return { cardsById, lanes };
+  return { cardsById, lanes, offPageCardLaneKeys };
 }
 
 function appendPipelineBoardLanePage(
@@ -287,7 +323,11 @@ function appendPipelineBoardLanePage(
       !idsOwnedByOtherLanes.has(card.id),
   );
   const cardsById = { ...state.cardsById };
-  for (const card of safeCards) cardsById[card.id] = card;
+  const offPageCardLaneKeys = { ...state.offPageCardLaneKeys };
+  for (const card of safeCards) {
+    cardsById[card.id] = card;
+    delete offPageCardLaneKeys[card.id];
+  }
 
   const lanes = state.lanes.map((lane, laneIndex) =>
     laneIndex === requestedLaneIndex
@@ -300,7 +340,7 @@ function appendPipelineBoardLanePage(
       : lane,
   );
 
-  return { cardsById, lanes };
+  return { cardsById, lanes, offPageCardLaneKeys };
 }
 
 function updatePipelineCardPullRequests(
@@ -315,6 +355,7 @@ function updatePipelineCardPullRequests(
   return {
     cardsById: { ...state.cardsById, [sessionId]: { ...card, pullRequests } },
     lanes: state.lanes.map((lane, index) => (index === laneIndex ? { ...lane } : lane)),
+    offPageCardLaneKeys: state.offPageCardLaneKeys,
   };
 }
 

@@ -247,6 +247,9 @@ describe("PipelinePageClient", () => {
       ),
     );
     expect(
+      (screen.getByRole("combobox", { name: "Pipeline stage" }) as HTMLSelectElement).value,
+    ).toBe(`${PIPELINE_ID}:${BUILD_STAGE_ID}`);
+    expect(
       within(screen.getByRole("heading", { name: "Build" }).closest("section")!).getByText(
         "Session 1",
       ),

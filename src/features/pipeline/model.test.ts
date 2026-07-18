@@ -157,5 +157,57 @@ describe("pipelineBoardReducer", () => {
     expect(next.lanes[0]?.cardIds).toHaveLength(25);
     expect(next.lanes[0]?.totalCount).toBe(26);
     expect(next.cardsById[inserted.id]).toBeUndefined();
+    expect(next.offPageCardLaneKeys[inserted.id]).toBe(`${PIPELINE_ID}:${PLAN_STAGE_ID}`);
+
+    const removed = pipelineBoardReducer(next, { cardId: inserted.id, type: "remove" });
+    expect(removed.lanes[0]?.totalCount).toBe(25);
+    expect(removed.offPageCardLaneKeys[inserted.id]).toBeUndefined();
+  });
+
+  it("keeps a full destination slice bounded when a loaded card moves into it", () => {
+    const buildCards = Array.from({ length: 25 }, (_, index) =>
+      card(
+        index + 10,
+        BUILD_STAGE_ID,
+        "agent_generating",
+        `2026-07-17T00:${String(index).padStart(2, "0")}:00Z`,
+      ),
+    );
+    const moving = card(1);
+    const initial = createPipelineBoardState([
+      lane(PLAN_STAGE_ID, "Plan", [moving]),
+      lane(BUILD_STAGE_ID, "Build", buildCards),
+    ]);
+    const moved = { ...moving, currentStageId: BUILD_STAGE_ID };
+    const next = pipelineBoardReducer(initial, { card: moved, isInsert: false, type: "upsert" });
+
+    expect(next.lanes[0]?.cardIds).toEqual([]);
+    expect(next.lanes[0]?.totalCount).toBe(0);
+    expect(next.lanes[1]?.cardIds).toEqual(initial.lanes[1]?.cardIds);
+    expect(next.lanes[1]?.totalCount).toBe(26);
+    expect(next.cardsById[moved.id]).toBeUndefined();
+    expect(next.offPageCardLaneKeys[moved.id]).toBe(`${PIPELINE_ID}:${BUILD_STAGE_ID}`);
+  });
+
+  it("preserves reducer-current pull requests across a stale session upsert", () => {
+    const initial = board();
+    const session = initial.cardsById[card(1).id]!;
+    const pullRequests = [
+      { id: "pr-1", pullRequestNumber: 260, pullRequestUrl: "https://github.com/example/pr/260" },
+    ];
+    const withPullRequests = pipelineBoardReducer(initial, {
+      pullRequests,
+      sessionId: session.id,
+      type: "update-pull-requests",
+    });
+    const staleSessionEvent = { ...session, title: "Updated title" };
+    const next = pipelineBoardReducer(withPullRequests, {
+      card: staleSessionEvent,
+      isInsert: false,
+      type: "upsert",
+    });
+
+    expect(next.cardsById[session.id]?.title).toBe("Updated title");
+    expect(next.cardsById[session.id]?.pullRequests).toBe(pullRequests);
   });
 });
