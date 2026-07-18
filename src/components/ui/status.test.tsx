@@ -147,12 +147,21 @@ describe("status story fixtures", () => {
     await user.click(screen.getByRole("button", { name: "Dark theme" }));
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
 
-    for (const name of ["Protanopia", "Deuteranopia", "Tritanopia", "Achromatopsia"]) {
+    for (const name of [
+      "Forced colors preview",
+      "Protanopia",
+      "Deuteranopia",
+      "Tritanopia",
+      "Achromatopsia",
+    ]) {
       await user.click(screen.getByRole("button", { name }));
       expect(screen.getByTestId("status-fixtures")).toHaveAttribute(
         "data-status-simulation",
-        name.toLowerCase(),
+        name === "Forced colors preview" ? "forced-colors" : name.toLowerCase(),
       );
     }
+
+    await user.click(screen.getByRole("button", { name: "200% zoom preview" }));
+    expect(screen.getByTestId("status-fixtures")).toHaveAttribute("data-status-zoom", "200");
   });
 });

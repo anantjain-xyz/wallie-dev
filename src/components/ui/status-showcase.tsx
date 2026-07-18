@@ -7,6 +7,7 @@ import { Status, STATUS_VALUES } from "@/components/ui/status";
 const themes = ["light", "dark"] as const;
 const simulations = [
   { label: "Standard color", value: "standard" },
+  { label: "Forced colors preview", value: "forced-colors" },
   { label: "Protanopia", value: "protanopia" },
   { label: "Deuteranopia", value: "deuteranopia" },
   { label: "Tritanopia", value: "tritanopia" },
@@ -18,6 +19,7 @@ type StatusSimulation = (typeof simulations)[number]["value"];
 export function StatusShowcase() {
   const [theme, setTheme] = useState<(typeof themes)[number]>("light");
   const [simulation, setSimulation] = useState<StatusSimulation>("standard");
+  const [zoomed, setZoomed] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -57,6 +59,14 @@ export function StatusShowcase() {
                 {value === "light" ? "Light theme" : "Dark theme"}
               </button>
             ))}
+            <button
+              aria-pressed={zoomed}
+              className={zoomed ? "ui-button-primary" : "ui-button"}
+              onClick={() => setZoomed((current) => !current)}
+              type="button"
+            >
+              200% zoom preview
+            </button>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {simulations.map((option) => (
@@ -75,6 +85,7 @@ export function StatusShowcase() {
 
         <div
           data-status-simulation={simulation === "standard" ? undefined : simulation}
+          data-status-zoom={zoomed ? "200" : undefined}
           data-testid="status-fixtures"
           className="space-y-5"
         >

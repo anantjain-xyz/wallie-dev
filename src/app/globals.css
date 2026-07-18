@@ -643,6 +643,38 @@
     filter: url("#status-tritanopia");
   }
 
+  [data-status-zoom="200"] {
+    zoom: 2;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="attention"],
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="progress"] {
+    border-color: Highlight;
+    color: Highlight;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="danger"],
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="warning"] {
+    border-style: double;
+    border-width: 3px;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status-progress {
+    border: 1px solid currentColor;
+    background: Canvas;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status-progress-value {
+    background: Highlight;
+  }
+
   .settings-anchor-group {
     @apply px-3 pb-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-muted;
   }
