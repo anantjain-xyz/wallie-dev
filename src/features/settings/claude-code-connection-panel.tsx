@@ -2,6 +2,9 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Spinner } from "@/components/shared/spinner";
+import { ActionMenu } from "@/components/ui/action-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status } from "@/components/ui/status";
 import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
 
@@ -28,6 +31,7 @@ export function ClaudeCodeConnectionPanel({
   );
   const [credential, setCredential] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [disconnectPending, setDisconnectPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -91,6 +95,7 @@ export function ClaudeCodeConnectionPanel({
 
   const handleDisconnect = async () => {
     setIsBusy(true);
+    setDisconnectPending(true);
     setError(null);
     setNotice(null);
     try {
@@ -104,6 +109,7 @@ export function ClaudeCodeConnectionPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect Claude Code.");
     } finally {
+      setDisconnectPending(false);
       setIsBusy(false);
     }
   };
@@ -128,14 +134,22 @@ export function ClaudeCodeConnectionPanel({
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
           </div>
-          <button
-            type="button"
-            className="ui-button-danger"
-            disabled={isBusy}
-            onClick={handleDisconnect}
-          >
-            {isBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          {disconnectPending ? (
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 text-xs text-muted"
+              role="status"
+            >
+              <Spinner />
+              Disconnecting…
+            </span>
+          ) : (
+            <ActionMenu disabled={isBusy} label="Claude Code credential actions">
+              <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+                Disconnect
+              </DropdownMenuItem>
+            </ActionMenu>
+          )}
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { AvatarFallback, Section } from "@/features/settings/settings-ui";
@@ -229,30 +230,32 @@ function EditableWorkspaceName({
               }
             }}
           />
-          <button
-            type="button"
-            className="ui-icon-button h-8 w-8 text-accent"
-            aria-label="Save workspace name"
-            title="Save workspace name"
-            disabled={saveName.isBusy}
-            onClick={submit}
-          >
-            {saveName.isBusy ? (
-              <Spinner className="h-4 w-4" label="Saving workspace name" />
-            ) : (
-              <CheckIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            type="button"
-            className="ui-icon-button h-8 w-8"
-            aria-label="Cancel workspace name edit"
-            title="Cancel workspace name edit"
-            disabled={saveName.isBusy}
-            onClick={cancelEditing}
-          >
-            <XIcon className="h-4 w-4" />
-          </button>
+          <Tooltip content="Save workspace name">
+            <button
+              type="button"
+              className="ui-icon-button h-8 w-8 text-accent"
+              aria-label="Save workspace name"
+              disabled={saveName.isBusy}
+              onClick={submit}
+            >
+              {saveName.isBusy ? (
+                <Spinner className="h-4 w-4" label="Saving workspace name" />
+              ) : (
+                <CheckIcon className="h-4 w-4" />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip content="Cancel workspace name edit">
+            <button
+              type="button"
+              className="ui-icon-button h-8 w-8"
+              aria-label="Cancel workspace name edit"
+              disabled={saveName.isBusy}
+              onClick={cancelEditing}
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </Tooltip>
         </div>
         {error ? (
           <p className="text-xs leading-4 text-danger" role="alert">
@@ -268,15 +271,16 @@ function EditableWorkspaceName({
       <p className="min-w-0 truncate text-[16px] font-semibold tracking-tight text-foreground">
         {name}
       </p>
-      <button
-        type="button"
-        className="ui-icon-button h-7 w-7 shrink-0"
-        aria-label="Edit workspace name"
-        title="Edit workspace name"
-        onClick={startEditing}
-      >
-        <PencilIcon className="h-4 w-4" />
-      </button>
+      <Tooltip content="Edit workspace name">
+        <button
+          type="button"
+          className="ui-icon-button h-7 w-7 shrink-0"
+          aria-label="Edit workspace name"
+          onClick={startEditing}
+        >
+          <PencilIcon className="h-4 w-4" />
+        </button>
+      </Tooltip>
     </div>
   );
 }

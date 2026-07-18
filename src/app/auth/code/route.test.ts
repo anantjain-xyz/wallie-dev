@@ -175,7 +175,7 @@ describe("POST /auth/code", () => {
     );
   });
 
-  it("keeps rejected codes on the login page", async () => {
+  it("keeps expired codes in a retryable login state without exposing provider details", async () => {
     mocked.createSupabaseServerClient.mockResolvedValue({
       auth: {
         verifyOtp: mocked.verifyOtp,
@@ -202,5 +202,6 @@ describe("POST /auth/code", () => {
     expect(response.headers.get("set-cookie")).toContain(
       `${emailCodeAuthCookieName}=owner%40example.com`,
     );
+    expect(response.headers.get("location")).not.toContain("expired");
   });
 });
