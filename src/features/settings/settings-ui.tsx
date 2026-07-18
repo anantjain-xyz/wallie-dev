@@ -1,9 +1,6 @@
-import type { ReactNode } from "react";
-
-import { PageSection, Status } from "@/components/ui/page-shell";
+import { PageSection } from "@/components/ui/page-shell";
 import type { WorkspaceUsageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 
 export const dateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -17,24 +14,6 @@ export const interactiveLinkClass =
 // Re-export the shared PageSection under the legacy "Section" name so the
 // settings sub-components keep importing from this module unchanged.
 export const Section = PageSection;
-
-export type BadgeTone = "success" | "warning" | "danger" | "neutral" | "accent";
-
-export function StatusBadge({
-  children,
-  tone,
-  withDot = true,
-}: {
-  children: ReactNode;
-  tone: BadgeTone;
-  withDot?: boolean;
-}) {
-  return (
-    <Status tone={tone} withDot={withDot}>
-      {typeof children === "string" ? formatSentenceCaseLabel(children) : children}
-    </Status>
-  );
-}
 
 export function toneClass(kind: FlashMessage["kind"]) {
   switch (kind) {

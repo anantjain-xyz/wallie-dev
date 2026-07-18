@@ -130,29 +130,6 @@ export function MetadataItem({
   );
 }
 
-export type StatusTone = "accent" | "danger" | "neutral" | "success" | "warning";
-
-type StatusProps = HTMLAttributes<HTMLSpanElement> & {
-  children: ReactNode;
-  tone?: StatusTone;
-  withDot?: boolean;
-};
-
-export function Status({
-  children,
-  className,
-  tone = "neutral",
-  withDot = true,
-  ...props
-}: StatusProps) {
-  return (
-    <span className={cn("ui-status", `ui-status-${tone}`, className)} {...props}>
-      {withDot ? <span aria-hidden="true" className="ui-status-dot" /> : null}
-      {children}
-    </span>
-  );
-}
-
 type PageSectionProps = {
   actions?: ReactNode;
   anchorId?: string;

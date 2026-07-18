@@ -296,7 +296,7 @@ describe("optimistic session interactions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
 
-    await waitFor(() => expect(screen.getByText("Awaiting review")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("Awaiting review")).not.toHaveLength(0));
     expect(screen.getByText("Artifact ready")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
   });

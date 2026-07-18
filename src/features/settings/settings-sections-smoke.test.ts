@@ -8,6 +8,10 @@ import type { SettingsPageData } from "@/features/settings/data";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import {
+  buildSettingsRepositorySelectionMutation,
+  reduceSettingsOnboardingMutationData,
+} from "@/features/settings/repository-analysis-section";
+import {
   markSandboxCapabilityCheckPollingFailed,
   resolveSandboxRepositorySelection,
   SandboxCapabilitySection,
@@ -194,6 +198,55 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
 }
 
 describe("Settings integration sections", () => {
+  it("uses the typed minimal onboarding mutation contract for repository selection", () => {
+    const current = settingsData();
+    const changes = {
+      selectedGithubRepositoryId: "11111111-1111-4111-8111-111111111111",
+      status: "in_progress" as const,
+    };
+
+    expect(buildSettingsRepositorySelectionMutation(current.onboarding, changes)).toEqual({
+      action: "repository-selection",
+      changes,
+      expectedUpdatedAt: "2026-05-16T18:00:00.000Z",
+      step: "repository",
+    });
+
+    const check = {
+      capabilities: {},
+      checkedAt: "2026-05-16T18:10:00.000Z",
+      errorText: null,
+      githubRepositoryId: changes.selectedGithubRepositoryId,
+      id: "check-1",
+      sandboxProvider: "vercel" as const,
+      sandboxVercelProjectId: "project-1",
+      sandboxVercelTeamId: "team-1",
+      status: "success" as const,
+    };
+    const next = reduceSettingsOnboardingMutationData(current, {
+      action: "repository-selection",
+      kind: "onboarding-mutation",
+      onboarding: {
+        completedAt: null,
+        completedSteps: [],
+        currentStep: "github",
+        dismissedAt: null,
+        selectedGithubRepositoryId: changes.selectedGithubRepositoryId,
+        skippedSteps: [],
+        status: "in_progress",
+      },
+      setupHealth: { latestSandboxCapabilityCheck: check },
+      step: "repository",
+      updatedAt: "2026-05-16T18:01:00.000Z",
+      validationErrors: [],
+    });
+
+    expect(next.onboarding.selectedGithubRepositoryId).toBe(changes.selectedGithubRepositoryId);
+    expect(next.latestSandboxCapabilityCheck).toBe(check);
+    expect(next.rateLimits).toBe(current.rateLimits);
+    expect(next.workspaceSecrets).toBe(current.workspaceSecrets);
+  });
+
   it("recomputes setup health when a refreshed GitHub snapshot is applied", () => {
     const currentData = settingsData();
     const updatedAt = "2026-07-17T18:00:00.000Z";
@@ -327,6 +380,34 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Vercel Sandbox");
     expect(html).toContain('href="/w/acme/settings#vercel"');
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in with ChatGPT<\/button>/);
+  });
+
+  it.each([
+    ["authenticated", "ChatGPT sign-in succeeded."],
+    ["canceled", "ChatGPT sign-in was canceled."],
+    ["error", "ChatGPT sign-in failed. Try again."],
+    ["expired", "ChatGPT sign-in expired. Start again."],
+  ] as const)("renders explicit %s device-flow copy", (status, expectedCopy) => {
+    const html = renderToStaticMarkup(
+      createElement(ChatGptSubscriptionControls, {
+        blocked: false,
+        deviceFlow: {
+          error: null,
+          expiresAt: "2026-05-16T18:05:00.000Z",
+          flowId: "flow-1",
+          instructions: null,
+          status,
+          userCode: null,
+          verificationUri: null,
+        },
+        isBusy: false,
+        onCancel: vi.fn(),
+        onStart: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain(expectedCopy);
+    expect(html).not.toContain("ChatGPT sign-in finished.");
   });
 
   it("renders Settings anchors grouped under noun labels", () => {

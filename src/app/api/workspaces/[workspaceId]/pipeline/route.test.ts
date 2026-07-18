@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
+  loadDefaultPipelineForWorkspace: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   rpc: vi.fn(),
 }));
@@ -12,6 +13,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/pipeline/stages", () => ({
+  loadDefaultPipelineForWorkspace: mocked.loadDefaultPipelineForWorkspace,
 }));
 
 import { PUT } from "./route";
@@ -56,6 +61,24 @@ function setupRpc(result: { data?: unknown; error?: { message: string } } = {}) 
   });
   mocked.createSupabaseAdminClient.mockReturnValue({
     rpc: mocked.rpc,
+  });
+  mocked.loadDefaultPipelineForWorkspace.mockResolvedValue({
+    id: "pipeline-1",
+    isDefault: true,
+    name: "Default",
+    operatingRulesMd: "",
+    stages: [
+      {
+        approverMemberIds: [],
+        description: "",
+        id: PRODUCT_STAGE_ID,
+        name: "Product",
+        pipelineId: "pipeline-1",
+        position: 1,
+        promptTemplateMd: "",
+        slug: "product",
+      },
+    ],
   });
 }
 
@@ -107,7 +130,13 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ success: true });
+    await expect(response.json()).resolves.toMatchObject({
+      pipeline: {
+        id: "pipeline-1",
+        stages: [{ slug: "product" }],
+      },
+      success: true,
+    });
     expect(mocked.rpc).toHaveBeenCalledWith("rewrite_default_pipeline", {
       // Omitted from the body → undefined → RPC preserves existing rules.
       operating_rules_md: undefined,
@@ -123,6 +152,10 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
       ],
       target_workspace_id: WORKSPACE_ID,
     });
+    expect(mocked.loadDefaultPipelineForWorkspace).toHaveBeenCalledWith(
+      mocked.createSupabaseAdminClient.mock.results[0]?.value,
+      WORKSPACE_ID,
+    );
   });
 
   it("forwards operating rules to the rewrite RPC", async () => {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
+  getLatestSandboxCapabilityCheck: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   saveWorkspaceRepositoryProfile: vi.fn(),
 }));
@@ -12,6 +13,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/sandbox-capabilities/server", () => ({
+  getLatestSandboxCapabilityCheck: mocked.getLatestSandboxCapabilityCheck,
 }));
 
 vi.mock("@/lib/repo-inference/server", async (importOriginal) => {
@@ -87,14 +92,43 @@ describe("repository profile route", () => {
     };
     mocked.createSupabaseAdminClient.mockReturnValue(admin);
     mocked.saveWorkspaceRepositoryProfile.mockResolvedValue(profile);
+    mocked.getLatestSandboxCapabilityCheck.mockResolvedValue({
+      capabilities: {},
+      checkedAt: "2026-05-16T17:00:00.000Z",
+      errorText: null,
+      githubRepositoryId: REPOSITORY_ID,
+      id: "check-1",
+      sandboxProvider: "vercel",
+      sandboxVercelProjectId: "project-1",
+      sandboxVercelTeamId: "team-1",
+      status: "success",
+    });
 
     const response = await PUT(request(validPayload), routeContext());
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ profile });
+    await expect(response.json()).resolves.toEqual({
+      latestSandboxCapabilityCheck: {
+        capabilities: {},
+        checkedAt: "2026-05-16T17:00:00.000Z",
+        errorText: null,
+        githubRepositoryId: REPOSITORY_ID,
+        id: "check-1",
+        sandboxProvider: "vercel",
+        sandboxVercelProjectId: "project-1",
+        sandboxVercelTeamId: "team-1",
+        status: "success",
+      },
+      profile,
+    });
     expect(mocked.saveWorkspaceRepositoryProfile).toHaveBeenCalledWith({
       admin,
       payload: validPayload,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(mocked.getLatestSandboxCapabilityCheck).toHaveBeenCalledWith({
+      admin,
+      repositoryId: REPOSITORY_ID,
       workspaceId: WORKSPACE_ID,
     });
   });

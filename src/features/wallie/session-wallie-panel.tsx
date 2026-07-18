@@ -5,6 +5,7 @@ import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
+import { Status, agentRunStatusValue } from "@/components/ui/status";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type {
   AgentRunActionErrorResponse,
@@ -21,7 +22,6 @@ import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -62,27 +62,6 @@ function flashToneClass(kind: FlashMessage["kind"]) {
     default:
       return "border-success/20 bg-success-soft text-success";
   }
-}
-
-function runStatusToneClass(status: WallieRun["status"]) {
-  switch (status) {
-    case "queued":
-      return "border-border-strong bg-control-muted text-muted";
-    case "started":
-      return "border-accent/20 bg-accent-soft text-accent";
-    case "running":
-      return "border-accent/20 bg-accent-soft text-accent";
-    case "success":
-      return "border-success/20 bg-success-soft text-success";
-    case "error":
-      return "border-danger/20 bg-danger-soft text-danger";
-    case "canceled":
-      return "border-warning/20 bg-warning-soft text-warning";
-  }
-}
-
-function formatRunStatus(status: WallieRun["status"]) {
-  return formatSentenceCaseLabel(status);
 }
 
 function buildDefaultExpandedRunIds(runs: readonly WallieRun[]) {
@@ -546,15 +525,7 @@ export function SessionWalliePanel({
                     type="button"
                   >
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-                          runStatusToneClass(run.status),
-                        )}
-                      >
-                        {runIsBusy ? <Spinner /> : null}
-                        {formatRunStatus(run.status)}
-                      </span>
+                      <Status value={agentRunStatusValue(run.status)} />
                       <dl className="flex flex-wrap gap-x-3 gap-y-1 type-annotation text-muted">
                         <div className="flex gap-1">
                           <dt>Stage</dt>

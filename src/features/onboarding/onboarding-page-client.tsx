@@ -12,6 +12,7 @@ import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provide
 import { PlusIcon, XIcon } from "@/components/shared/icons";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
+import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -31,6 +32,7 @@ import {
 } from "@/features/onboarding/flow";
 import { OnboardingLinearStep } from "@/features/onboarding/onboarding-linear-step";
 import { OnboardingPipelineEditor } from "@/features/onboarding/onboarding-pipeline-editor";
+import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import {
   buildRuntimeReadiness,
@@ -52,13 +54,17 @@ import {
   RepositorySetupControls,
   RepositorySetupMessages,
   repositorySetupCanAdvance,
-  RepositorySetupStatusBadge,
+  RepositorySetupStatus,
 } from "@/features/repositories/repository-setup-controls";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { codexCredentialTypeLabel } from "@/lib/codex/contracts";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type {
   OnboardingSetupHealth,
+  WorkspaceOnboardingConflictResponse,
+  WorkspaceOnboardingMutationAction,
+  WorkspaceOnboardingMutationDelta,
+  WorkspaceOnboardingMutationErrorResponse,
   WorkspaceOnboardingStep,
   WorkspaceOnboardingUpdatePayload,
 } from "@/lib/onboarding/contracts";
@@ -93,7 +99,6 @@ import type {
   VercelSandboxConnectionPreview,
   VercelSandboxConnectionResponse,
 } from "@/lib/vercel-sandbox/contracts";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import { workspaceBasePath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -119,6 +124,12 @@ type OnboardingDataUpdate =
   | ((currentData: WorkspaceOnboardingData) => WorkspaceOnboardingData);
 type OnboardingDataChange = (update: OnboardingDataUpdate) => void;
 
+type PersistOnboardingAction = {
+  action: WorkspaceOnboardingMutationAction;
+  savingAction: string;
+  step: WorkspaceOnboardingStep;
+};
+
 type RuntimeCompletionState = {
   hasInvalidDrafts: boolean;
   hasUnsavedDrafts: boolean;
@@ -140,14 +151,6 @@ type NewSecretDraftRow = {
   value: string;
 };
 
-const badgeToneClasses: Record<HealthTone, string> = {
-  accent: "ui-status-neutral",
-  danger: "ui-status-danger",
-  neutral: "ui-status-neutral",
-  success: "ui-status-success",
-  warning: "ui-status-warning",
-};
-
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   active: "bg-accent-soft text-accent",
   available: "text-muted hover:bg-control-hover hover:text-foreground",
@@ -156,26 +159,16 @@ const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   skipped: "text-muted hover:bg-control-hover hover:text-foreground",
 };
 
-function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "h-2 w-2 rounded-full",
-        state === "active" ? "bg-accent" : "bg-muted/60",
-        state === "blocked" && "bg-border-strong",
-      )}
-    />
-  );
-}
+const onboardingStepStatusValues = {
+  active: "running",
+  available: "queued",
+  blocked: "blocked",
+  completed: "complete",
+  skipped: "skipped",
+} satisfies Record<OnboardingStepDisplayState, StatusValue>;
 
-function Badge({ children, tone }: { children: string; tone: HealthTone }) {
-  return (
-    <span className={cn("ui-status whitespace-nowrap", badgeToneClasses[tone])}>
-      <span className="ui-status-dot" />
-      {formatSentenceCaseLabel(children)}
-    </span>
-  );
+function OnboardingStepStatus({ state }: { state: OnboardingStepDisplayState }) {
+  return <Status compact value={onboardingStepStatusValues[state]} />;
 }
 
 function SecretValueInput({
@@ -200,22 +193,6 @@ function SecretValueInput({
       type="password"
       value={value}
     />
-  );
-}
-
-function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
-  const toneClassName =
-    tone === "danger"
-      ? "ui-status-danger"
-      : tone === "success"
-        ? "ui-status-success"
-        : "ui-status-neutral";
-
-  return (
-    <span className={cn("ui-status whitespace-nowrap", toneClassName)}>
-      <span className="ui-status-dot" />
-      {formatSentenceCaseLabel(children)}
-    </span>
   );
 }
 
@@ -724,9 +701,10 @@ function RuntimeRequirementList({
             <p className="text-xs font-medium text-foreground">{requirement.label}</p>
             <p className="mt-0.5 text-xs leading-5 text-muted">{requirement.detail}</p>
           </div>
-          <Badge tone={requirement.passed ? "success" : "warning"}>
-            {requirement.passed ? "Ready" : "Blocked"}
-          </Badge>
+          <Status
+            label={requirement.passed ? "Ready" : "Blocked"}
+            value={requirement.passed ? "healthy" : "blocked"}
+          />
         </div>
       ))}
     </div>
@@ -835,7 +813,7 @@ export function OnboardingVercelSandboxPanel({
             so sessions can run — the token is encrypted and never returned to the browser.
           </p>
         </div>
-        <Badge tone={statusTone}>{statusLabel}</Badge>
+        <Status label={statusLabel} value={configurationStatusFromTone(statusTone)} />
       </div>
 
       {error ? (
@@ -1439,9 +1417,10 @@ function RuntimeStep({
                       <code className="break-all font-mono text-[13px] font-medium text-foreground">
                         {key}
                       </code>
-                      <Badge tone={secret ? "success" : "neutral"}>
-                        {secret ? secretPreviewLabel(secret) : "Not set"}
-                      </Badge>
+                      <Status
+                        label={secret ? secretPreviewLabel(secret) : "Not set"}
+                        value={secret ? "healthy" : "not_started"}
+                      />
                     </div>
 
                     <SecretValueInput
@@ -1540,11 +1519,14 @@ function RuntimeStep({
   );
 }
 
-function sandboxStatusTone(check: SandboxCapabilityCheckState | null): HealthTone {
-  if (!check) return "neutral";
-  if (check.status === "success") return "success";
-  if (check.status === "error") return "danger";
-  return "accent";
+function sandboxStatusValue(check: SandboxCapabilityCheckState | null): StatusValue {
+  if (!check) return "not_started";
+  const values = {
+    error: "blocked",
+    running: "running",
+    success: "healthy",
+  } satisfies Record<SandboxCapabilityCheckState["status"], StatusValue>;
+  return values[check.status];
 }
 
 function VerifyStep({
@@ -1671,9 +1653,12 @@ function VerifyStep({
                 <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
-                  {item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
-                </Badge>
+                <Status
+                  label={item.statusLabel ?? (item.passed ? "Ready" : "Blocked")}
+                  value={configurationStatusFromTone(
+                    item.statusTone ?? (item.passed ? "success" : "warning"),
+                  )}
+                />
                 {!item.passed && item.step !== "verify" ? (
                   <button
                     className="ui-button"
@@ -1698,27 +1683,27 @@ function VerifyStep({
               Checks run against the selected repository.
             </p>
           </div>
-          <Badge tone={sandboxStatusTone(check)}>{check?.status ?? "No check"}</Badge>
+          <Status label={check ? undefined : "No check"} value={sandboxStatusValue(check)} />
         </div>
         {check?.errorText ? (
           <p className="mt-3 text-xs leading-5 text-danger">{check.errorText}</p>
         ) : null}
         {check ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            {Object.entries(check.capabilities).map(([name, result]) => (
-              <div
-                className={cn(
-                  "rounded-[6px] border px-3 py-2 text-xs leading-5",
-                  result?.ok
-                    ? "border-success/20 bg-success-soft text-success"
-                    : "border-danger/20 bg-danger-soft text-danger",
-                )}
-                key={name}
-              >
-                <p className="font-semibold">{name}</p>
-                <p>{result?.detail ?? "No detail recorded."}</p>
-              </div>
-            ))}
+            {Object.entries(check.capabilities).map(([name, result]) => {
+              const value: StatusValue = result?.ok ? "healthy" : "blocked";
+              return (
+                <div className="rounded-[6px] border border-border px-3 py-2" key={name}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-foreground">{name}</p>
+                    <Status compact value={value} />
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    {result?.detail ?? "No detail recorded."}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         ) : null}
         <div className="mt-4 flex justify-end">
@@ -1820,8 +1805,8 @@ function RepositoryAnalysisStep({
                 >
                   {repository.fullName}
                 </a>
-                {selected ? <Badge tone="accent">Selected</Badge> : null}
-                <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                {selected ? <Status label="Selected" value="approved" /> : null}
+                <RepositorySetupStatus status={repository.onboarding.status} />
               </div>
               <RepositoryMetadata repository={repository} />
               {repository.description ? (
@@ -1900,6 +1885,7 @@ function StepBody({
   onRepositoryProfileSaved,
   onRepositorySetupMessage,
   onRuntimeStateChange,
+  onPipelineCompleted,
   onSelectStep,
   onSelectGithubRepository,
   profileAnalyzing,
@@ -1912,6 +1898,10 @@ function StepBody({
   data: WorkspaceOnboardingData;
   isSaving: boolean;
   onCompleteStep: (action: string) => Promise<void>;
+  onPipelineCompleted: (
+    action: string,
+    pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+  ) => Promise<void>;
   onAnalyzeRepository: (repository: WorkspaceGitHubRepository) => void;
   onDataChange: OnboardingDataChange;
   onInferRepository: (repository: WorkspaceGitHubRepository) => void;
@@ -1994,7 +1984,7 @@ function StepBody({
     controls = (
       <OnboardingPipelineEditor
         canManage={data.canManage}
-        onCompleted={onCompleteStep}
+        onCompleted={onPipelineCompleted}
         pipeline={data.pipeline}
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
@@ -2068,7 +2058,7 @@ function StepRail({
             disabled={!canSelect || !step.isNavigable}
             onClick={() => onSelect(step.id)}
           >
-            <StepStateIcon state={step.displayState} />
+            <OnboardingStepStatus state={step.displayState} />
             <span className="min-w-0 flex-1">
               <span className="block truncate">{step.title}</span>
             </span>
@@ -2125,7 +2115,7 @@ function MobileStepControl({
             disabled={!canSelect || !step.isNavigable}
             onClick={() => onSelect(step.id)}
           >
-            <StepStateIcon state={step.displayState} />
+            <OnboardingStepStatus state={step.displayState} />
             <span className="truncate">{step.shortTitle}</span>
           </button>
         ))}
@@ -2145,7 +2135,10 @@ function SetupHealthSummary({ health }: { health: OnboardingSetupHealth }) {
               <p className="text-xs font-medium text-foreground">{item.label}</p>
               <p className="mt-0.5 truncate type-annotation text-muted">{item.detail}</p>
             </div>
-            <HealthBadge tone={item.tone}>{item.value}</HealthBadge>
+            <Status
+              label={item.value}
+              value={item.value === "Running" ? "running" : configurationStatusFromTone(item.tone)}
+            />
           </div>
         ))}
       </div>
@@ -2163,6 +2156,7 @@ export function isRepositorySelectionCurrent(
 export function applySavedRepositoryProfileToData(
   currentData: WorkspaceOnboardingData,
   profile: EditableProfile,
+  latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null,
 ): WorkspaceOnboardingData {
   const nextGithub: WorkspaceGitHubData = {
     ...currentData.github,
@@ -2182,10 +2176,32 @@ export function applySavedRepositoryProfileToData(
     ...currentData,
     github: nextGithub,
     setupHealth: applyGithubHealth(
-      currentData.setupHealth,
+      {
+        ...currentData.setupHealth,
+        latestSandboxCapabilityCheck,
+      },
       nextGithub,
       currentData.onboarding.selectedGithubRepositoryId,
     ),
+  };
+}
+
+export function applySavedPipelineToData(
+  currentData: WorkspaceOnboardingData,
+  pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+): WorkspaceOnboardingData {
+  return {
+    ...currentData,
+    pipeline,
+    setupHealth: {
+      ...currentData.setupHealth,
+      defaultPipeline: {
+        configured: pipeline.stages.length > 0,
+        pipelineId: pipeline.id,
+        stageCount: pipeline.stages.length,
+        status: pipeline.stages.length > 0 ? "ready" : "missing",
+      },
+    },
   };
 }
 
@@ -2356,29 +2372,49 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     scrollOnboardingSetupToTop();
   }, [onboarding.currentStep]);
 
-  async function persistOnboarding(payload: WorkspaceOnboardingUpdatePayload, action: string) {
+  async function persistOnboarding(
+    changes: WorkspaceOnboardingUpdatePayload,
+    mutation: PersistOnboardingAction,
+  ) {
     if (!data.canManage || saveInFlightRef.current) return null;
 
     saveInFlightRef.current = true;
-    setSavingAction(action);
+    setSavingAction(mutation.savingAction);
     setError(null);
 
     try {
       const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding`, {
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          action: mutation.action,
+          changes,
+          expectedUpdatedAt: latestDataRef.current.onboarding.updatedAt,
+          step: mutation.step,
+        }),
         headers: { "content-type": "application/json" },
         method: "PATCH",
       });
 
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Failed to save onboarding state.");
+      const body = (await response.json().catch(() => null)) as
+        | WorkspaceOnboardingConflictResponse
+        | WorkspaceOnboardingMutationDelta
+        | WorkspaceOnboardingMutationErrorResponse
+        | null;
+
+      if (body?.kind === "onboarding-conflict") {
+        const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
+        latestDataRef.current = nextData;
+        setData(nextData);
+        throw new Error(body.error);
       }
 
-      const nextData = (await response.json()) as WorkspaceOnboardingData;
+      if (!response.ok || body?.kind !== "onboarding-mutation") {
+        const message = body && "error" in body ? body.error : "Failed to save onboarding state.";
+        throw new Error(message);
+      }
+
+      const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
       latestDataRef.current = nextData;
       setData(nextData);
-      router.refresh();
       return nextData;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to save onboarding state.");
@@ -2408,7 +2444,6 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       const nextData = (await response.json()) as WorkspaceOnboardingData;
       latestDataRef.current = nextData;
       setData(nextData);
-      router.refresh();
       return nextData;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to refresh onboarding state.");
@@ -2422,10 +2457,24 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     const patch = buildOnboardingStepCompletionPatch(latestDataRef.current.onboarding);
     if (!patch) return;
 
-    const nextData = await persistOnboarding(patch, action);
+    const nextData = await persistOnboarding(patch, {
+      action: "step-complete",
+      savingAction: action,
+      step: latestDataRef.current.onboarding.currentStep,
+    });
     if (!nextData) {
       throw new Error("Failed to save onboarding state.");
     }
+  }
+
+  async function completePipelineStep(
+    action: string,
+    pipeline: NonNullable<WorkspaceOnboardingData["pipeline"]>,
+  ) {
+    const nextData = applySavedPipelineToData(latestDataRef.current, pipeline);
+    latestDataRef.current = nextData;
+    setData(nextData);
+    await completeCurrentStep(action);
   }
 
   async function continueSetup() {
@@ -2437,11 +2486,19 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     if (inlineCompletionUnavailable) {
       const patch = buildOnboardingAdvancePatch(onboarding);
       if (!patch) return;
-      await persistOnboarding(patch, "continue");
+      await persistOnboarding(patch, {
+        action: "continue",
+        savingAction: "continue",
+        step: onboarding.currentStep,
+      });
       return;
     }
 
-    await persistOnboarding(buildOnboardingContinuePatch(onboarding), "continue");
+    await persistOnboarding(buildOnboardingContinuePatch(onboarding), {
+      action: "continue",
+      savingAction: "continue",
+      step: onboarding.currentStep,
+    });
   }
 
   async function completeOnboarding() {
@@ -2453,26 +2510,38 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
 
     try {
       const response = await fetch(`/api/workspaces/${data.workspace.id}/onboarding/complete`, {
+        body: JSON.stringify({ expectedUpdatedAt: latestDataRef.current.onboarding.updatedAt }),
+        headers: { "content-type": "application/json" },
         method: "POST",
       });
       const body = (await response.json().catch(() => null)) as
-        | (WorkspaceOnboardingData & {
+        | (WorkspaceOnboardingMutationErrorResponse & {
             blockers?: ReturnType<typeof verifyBlockersFromChecklist>;
-            error?: string;
           })
+        | WorkspaceOnboardingConflictResponse
+        | WorkspaceOnboardingMutationDelta
         | null;
 
-      if (!response.ok || !body || "error" in body) {
-        const blockerText = body?.blockers?.length
-          ? ` Blocked: ${body.blockers.map((blocker) => blocker.label).join(", ")}.`
-          : "";
-        throw new Error((body?.error ?? "Failed to complete onboarding.") + blockerText);
+      if (body?.kind === "onboarding-conflict") {
+        const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
+        latestDataRef.current = nextData;
+        setData(nextData);
+        throw new Error(body.error);
       }
 
-      latestDataRef.current = body;
-      setData(body);
-      router.refresh();
-      router.push(workspaceBasePath(body.workspace.slug));
+      if (!response.ok || body?.kind !== "onboarding-mutation") {
+        const blockerText =
+          body && "blockers" in body && body.blockers?.length
+            ? ` Blocked: ${body.blockers.map((blocker) => blocker.label).join(", ")}.`
+            : "";
+        const message = body && "error" in body ? body.error : "Failed to complete onboarding.";
+        throw new Error(message + blockerText);
+      }
+
+      const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
+      latestDataRef.current = nextData;
+      setData(nextData);
+      router.push(workspaceBasePath(data.workspace.slug));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to complete onboarding.");
     } finally {
@@ -2484,7 +2553,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   async function skipStep() {
     const patch = buildOnboardingSkipPatch(onboarding);
     if (!patch) return;
-    await persistOnboarding(patch, "skip");
+    await persistOnboarding(patch, {
+      action: "skip",
+      savingAction: "skip",
+      step: onboarding.currentStep,
+    });
   }
 
   async function goBack() {
@@ -2492,7 +2565,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
     if (!previousStep) return;
     const patch = buildOnboardingRailNavigationPatch(onboarding, previousStep);
     if (!patch) return;
-    await persistOnboarding(patch, "back");
+    await persistOnboarding(patch, {
+      action: "navigate",
+      savingAction: "back",
+      step: previousStep,
+    });
   }
 
   async function selectStep(step: WorkspaceOnboardingStep) {
@@ -2504,12 +2581,22 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       setData(nextData);
     }
     if (!data.canManage || !patch) return;
-    await persistOnboarding(patch, `rail:${step}`);
+    await persistOnboarding(patch, {
+      action: "navigate",
+      savingAction: `rail:${step}`,
+      step,
+    });
   }
 
   async function exitSetup() {
     const patch = data.canManage ? buildOnboardingExitPatch(onboarding) : null;
-    const nextData = patch ? await persistOnboarding(patch, "exit") : data;
+    const nextData = patch
+      ? await persistOnboarding(patch, {
+          action: "exit",
+          savingAction: "exit",
+          step: onboarding.currentStep,
+        })
+      : data;
     if (nextData) {
       router.push(workspaceBasePath(data.workspace.slug));
     }
@@ -2571,7 +2658,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
       return true;
     }
 
-    const nextData = await persistOnboarding(patch, "repository-selection");
+    const nextData = await persistOnboarding(patch, {
+      action: "repository-selection",
+      savingAction: "repository-selection",
+      step: "repository",
+    });
     if (!nextData) return false;
 
     selectedRepositoryIdRef.current = repository.id;
@@ -2654,8 +2745,15 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         throw new Error(body?.error ?? "Failed to save repository profile.");
       }
 
-      const body = (await response.json()) as { profile: EditableProfile };
-      const nextData = applySavedRepositoryProfileToData(latestDataRef.current, body.profile);
+      const body = (await response.json()) as {
+        latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+        profile: EditableProfile;
+      };
+      const nextData = applySavedRepositoryProfileToData(
+        latestDataRef.current,
+        body.profile,
+        body.latestSandboxCapabilityCheck,
+      );
       latestDataRef.current = nextData;
       setData(nextData);
 
@@ -2668,7 +2766,11 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         ? buildRepositoryProfileCompletionPatch(latestDataRef.current.onboarding)
         : null;
       if (completionPatch) {
-        await persistOnboarding(completionPatch, "repository-profile");
+        await persistOnboarding(completionPatch, {
+          action: "step-complete",
+          savingAction: "repository-profile",
+          step: "repository",
+        });
       }
     } catch (caught) {
       setProfileError(
@@ -2689,7 +2791,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!data.canManage ? <Badge tone="neutral">Read only</Badge> : null}
+          {!data.canManage ? <Status label="Read only" value="not_started" /> : null}
           <button
             type="button"
             className="ui-button"
@@ -2737,6 +2839,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
               data={data}
               isSaving={isSaving}
               onCompleteStep={completeCurrentStep}
+              onPipelineCompleted={completePipelineStep}
               onAnalyzeRepository={(repository) => void analyzeRepository(repository)}
               onDataChange={updateData}
               onInferRepository={(repository) => void inferRepositoryProfile(repository)}

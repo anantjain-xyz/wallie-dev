@@ -3,12 +3,13 @@
 import { useState, type FormEvent } from "react";
 
 import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { Status } from "@/components/ui/status";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { dateFormatter, Section, StatusBadge } from "@/features/settings/settings-ui";
+import { dateFormatter, Section } from "@/features/settings/settings-ui";
 import { readResponseJson } from "@/features/settings/use-api-action";
 import type { WorkspaceMemberResponse } from "@/lib/workspace-members/contracts";
 import type {
@@ -381,9 +382,7 @@ export function WorkspaceMembersSection({
                       />
                     </div>
                   ) : (
-                    <StatusBadge tone={isOwner ? "accent" : "neutral"}>
-                      {roleLabel(member.role)}
-                    </StatusBadge>
+                    <Status label={roleLabel(member.role)} value="not_started" />
                   )}
                 </li>
               );
@@ -414,8 +413,8 @@ export function WorkspaceMembersSection({
                           <p className="truncate text-sm font-medium text-foreground">
                             {invitation.email}
                           </p>
-                          <StatusBadge tone="warning">Pending</StatusBadge>
-                          <StatusBadge tone="neutral">{roleLabel(invitation.role)}</StatusBadge>
+                          <Status label="Pending" value="queued" />
+                          <Status label={roleLabel(invitation.role)} value="not_started" />
                         </div>
                         <p className="mt-1 text-xs leading-5 text-muted">
                           Sent {formatDate(invitation.lastSentAt)}. Expires{" "}

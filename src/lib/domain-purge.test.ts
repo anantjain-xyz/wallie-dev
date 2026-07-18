@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -22,6 +22,7 @@ function listTrackedTextFiles() {
     .toString("utf8")
     .split("\0")
     .filter(Boolean)
+    .filter((path) => existsSync(join(process.cwd(), path)))
     .filter((path) => statSync(join(process.cwd(), path)).isFile())
     .filter((path) => !skippedExtensions.has(extname(path).toLowerCase()));
 }

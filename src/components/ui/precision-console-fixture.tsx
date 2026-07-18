@@ -10,21 +10,21 @@ import {
   PageHeader,
   PageSection,
   Sheet,
-  Status,
 } from "@/components/ui/page-shell";
+import { Status, type StatusValue } from "@/components/ui/status";
 import { cn } from "@/lib/utils";
 
 const stages = [
-  { count: 3, name: "Plan", status: "Ready" },
-  { count: 2, name: "Build", status: "Running" },
-  { count: 1, name: "Land", status: "Queued" },
-] as const;
+  { count: 3, name: "Plan", status: "approved" },
+  { count: 2, name: "Build", status: "running" },
+  { count: 1, name: "Land", status: "queued" },
+] as const satisfies readonly { count: number; name: string; status: StatusValue }[];
 
 const sessions = [
-  { id: "#341", status: "Awaiting review", title: "Establish Precision Console hierarchy" },
-  { id: "#339", status: "Running", title: "Label filters and form controls" },
-  { id: "#337", status: "Complete", title: "Stream repository setup health" },
-] as const;
+  { id: "#341", status: "awaiting_review", title: "Establish Precision Console hierarchy" },
+  { id: "#339", status: "running", title: "Label filters and form controls" },
+  { id: "#337", status: "complete", title: "Stream repository setup health" },
+] as const satisfies readonly { id: string; status: StatusValue; title: string }[];
 
 export function PrecisionConsoleFixture({
   displayMode = "desktop",
@@ -97,9 +97,7 @@ export function PrecisionConsoleFixture({
                       {stage.count} session{stage.count === 1 ? "" : "s"} in this stage
                     </p>
                   </div>
-                  <Status tone={stage.status === "Running" ? "accent" : "neutral"}>
-                    {stage.status}
-                  </Status>
+                  <Status compact value={stage.status} />
                 </div>
               ))}
             </div>
@@ -116,17 +114,7 @@ export function PrecisionConsoleFixture({
                     </div>
                     <p className="mt-1 type-secondary text-muted">Updated 4 minutes ago</p>
                   </div>
-                  <Status
-                    tone={
-                      session.status === "Complete"
-                        ? "success"
-                        : session.status === "Awaiting review"
-                          ? "warning"
-                          : "accent"
-                    }
-                  >
-                    {session.status}
-                  </Status>
+                  <Status compact value={session.status} />
                 </li>
               ))}
             </ul>
@@ -145,7 +133,7 @@ export function PrecisionConsoleFixture({
 
           <FixtureSheet compact={isMobileFixture} eyebrow="Session detail" title="Build artifact">
             <PageSection
-              statusBadge={<Status tone="warning">Awaiting review</Status>}
+              statusBadge={<Status value="awaiting_review" />}
               tagline="Version 2 · generated 4 minutes ago"
               title="Implementation"
             >
