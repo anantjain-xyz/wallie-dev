@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const migrationPath = join(
   process.cwd(),
-  "supabase/migrations/20260717000002_add_workspace_usage_aggregate.sql",
+  "supabase/migrations/20260717000003_add_workspace_usage_aggregate.sql",
 );
 const migration = readFileSync(migrationPath, "utf8");
 const initMigration = readFileSync(

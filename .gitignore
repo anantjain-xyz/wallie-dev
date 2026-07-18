@@ -40,4 +40,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 .gstack/
+.omo/
 .playwright-mcp/
