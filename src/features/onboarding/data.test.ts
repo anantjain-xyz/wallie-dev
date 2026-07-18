@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  access: vi.fn(),
   admin: { from: vi.fn(), rpc: vi.fn() },
   github: vi.fn(),
   vercel: vi.fn(),
@@ -8,6 +9,10 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: () => mocked.admin,
+}));
+
+vi.mock("@/lib/workspaces/access", () => ({
+  requireWorkspaceAccessById: mocked.access,
 }));
 
 vi.mock("@/features/github/data", () => ({
@@ -22,6 +27,7 @@ import {
   buildWorkspaceOnboardingUpdatePayload,
   loadWorkspaceOnboardingDataForContext,
   normalizeWorkspaceOnboardingUpdatePayload,
+  updateWorkspaceOnboardingData,
 } from "@/features/onboarding/data";
 
 const NOW = "2026-07-17T12:00:00.000Z";
@@ -157,7 +163,8 @@ function createFixture(options: {
     increment(table);
     return query({ data: adminRows[table], error: null });
   });
-  mocked.admin.rpc.mockImplementation((functionName: string) => {
+  mocked.admin.rpc.mockImplementation(function (this: unknown, functionName: string) {
+    if (this !== mocked.admin) throw new Error("Supabase RPC client receiver was lost.");
     increment(functionName);
     return Promise.resolve({ data: rpcRows[functionName], error: null });
   });
@@ -536,6 +543,119 @@ describe("canonical onboarding snapshot", () => {
         "snapshot.members",
       ]),
     );
+  });
+});
+
+describe("updateWorkspaceOnboardingData", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns a minimal delta without rebuilding the workspace snapshot", async () => {
+    const currentRow = onboardingRow();
+    const updatedRow = {
+      ...currentRow,
+      completed_steps: ["github"],
+      current_step: "repository",
+      status: "in_progress",
+      updated_at: "2026-07-17T12:01:00.000Z",
+    };
+    const readQuery = {
+      eq() {
+        return this;
+      },
+      select() {
+        return this;
+      },
+      single: async () => ({ data: currentRow, error: null }),
+    };
+    const updateQuery = {
+      eq() {
+        return this;
+      },
+      maybeSingle: async () => ({ data: updatedRow, error: null }),
+      select() {
+        return this;
+      },
+      update() {
+        return this;
+      },
+    };
+    const supabase = {
+      from: vi.fn().mockReturnValueOnce(readQuery).mockReturnValueOnce(updateQuery),
+    };
+    mocked.access.mockResolvedValue({
+      context: { supabase, workspace },
+      ok: true,
+    });
+
+    const result = await updateWorkspaceOnboardingData(workspace.id, {
+      action: "continue",
+      changes: {
+        completedSteps: ["github"],
+        currentStep: "repository",
+        status: "in_progress",
+      },
+      expectedUpdatedAt: NOW,
+      step: "github",
+    });
+
+    expect(result).toEqual({
+      data: {
+        action: "continue",
+        kind: "onboarding-mutation",
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github"],
+          currentStep: "repository",
+          dismissedAt: null,
+          selectedGithubRepositoryId: null,
+          skippedSteps: [],
+          status: "in_progress",
+        },
+        setupHealth: {},
+        step: "github",
+        updatedAt: "2026-07-17T12:01:00.000Z",
+        validationErrors: [],
+      },
+      ok: true,
+    });
+    expect(mocked.github).not.toHaveBeenCalled();
+    expect(mocked.admin.from).not.toHaveBeenCalled();
+    expect(supabase.from).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a stale expected version before updating", async () => {
+    const currentRow = { ...onboardingRow(), updated_at: "2026-07-17T12:02:00.000Z" };
+    const readQuery = {
+      eq() {
+        return this;
+      },
+      select() {
+        return this;
+      },
+      single: async () => ({ data: currentRow, error: null }),
+    };
+    const supabase = { from: vi.fn(() => readQuery) };
+    mocked.access.mockResolvedValue({ context: { supabase, workspace }, ok: true });
+
+    const result = await updateWorkspaceOnboardingData(workspace.id, {
+      action: "navigate",
+      changes: { currentStep: "repository", status: "in_progress" },
+      expectedUpdatedAt: NOW,
+      step: "repository",
+    });
+
+    expect(result).toMatchObject({
+      conflict: {
+        authoritative: { updatedAt: "2026-07-17T12:02:00.000Z" },
+        kind: "onboarding-conflict",
+        retryable: true,
+      },
+      ok: false,
+      status: 409,
+    });
+    expect(supabase.from).toHaveBeenCalledTimes(1);
   });
 });
 

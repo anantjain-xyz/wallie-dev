@@ -24,6 +24,7 @@ import {
   isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
+  reduceOnboardingMutationData,
   RepositoryProfileEditor,
   scrollOnboardingSetupToTop,
   setupHealthItems,
@@ -356,6 +357,80 @@ function onboardingWithSelectedRepository(
     },
   });
 }
+
+describe("reduceOnboardingMutationData", () => {
+  it("installs step progress immediately without replacing unrelated setup data", () => {
+    const current = onboardingData();
+    const next = reduceOnboardingMutationData(current, {
+      action: "continue",
+      kind: "onboarding-mutation",
+      onboarding: {
+        completedAt: null,
+        completedSteps: ["github", "repository", "pipeline"],
+        currentStep: "linear",
+        dismissedAt: null,
+        selectedGithubRepositoryId: null,
+        skippedSteps: [],
+        status: "in_progress",
+      },
+      setupHealth: {},
+      step: "pipeline",
+      updatedAt: "2026-05-16T18:01:00.000Z",
+      validationErrors: [],
+    });
+
+    expect(next.onboarding).toMatchObject({
+      completedSteps: ["github", "repository", "pipeline"],
+      currentStep: "linear",
+      updatedAt: "2026-05-16T18:01:00.000Z",
+    });
+    expect(next.pipeline).toBe(current.pipeline);
+    expect(next.workspaceSecrets).toBe(current.workspaceSecrets);
+    expect(next.setupHealth).toBe(current.setupHealth);
+  });
+
+  it("applies only repository-selection health fields and restores authoritative conflicts", () => {
+    const current = onboardingData();
+    const next = reduceOnboardingMutationData(current, {
+      action: "repository-selection",
+      authoritative: {
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github"],
+          currentStep: "repository",
+          dismissedAt: null,
+          selectedGithubRepositoryId: "repo-a",
+          skippedSteps: [],
+          status: "in_progress",
+        },
+        setupHealth: {
+          selectedRepository: {
+            configured: true,
+            fullName: "acme/repo-a",
+            repositoryId: "repo-a",
+            status: "ready",
+          },
+        },
+        updatedAt: "2026-05-16T18:02:00.000Z",
+      },
+      error: "Latest progress was restored; retry your action.",
+      kind: "onboarding-conflict",
+      retryable: true,
+      step: "repository",
+      validationErrors: [],
+    });
+
+    expect(next.onboarding.selectedGithubRepositoryId).toBe("repo-a");
+    expect(next.onboarding.updatedAt).toBe("2026-05-16T18:02:00.000Z");
+    expect(next.setupHealth.selectedRepository).toEqual({
+      configured: true,
+      fullName: "acme/repo-a",
+      repositoryId: "repo-a",
+      status: "ready",
+    });
+    expect(next.setupHealth.agentConfig).toBe(current.setupHealth.agentConfig);
+  });
+});
 
 describe("OnboardingPageClient", () => {
   it("uses red for health errors and grey for initial health states", () => {
