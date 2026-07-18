@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("provider action menus", () => {
-  it.each([
+  const providers = [
     {
       label: "Codex credential actions",
       response: {
@@ -39,7 +39,9 @@ describe("provider action menus", () => {
       response: { connected: true, updatedAt: "2026-07-18T12:00:00.000Z" },
       view: <ClaudeCodeConnectionPanel />,
     },
-  ])(
+  ];
+
+  it.each(providers)(
     "opens $label on its first enabled item and restores focus",
     async ({ label, response, view }) => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(response)));
@@ -54,6 +56,36 @@ describe("provider action menus", () => {
       await user.keyboard("{Escape}");
       await waitFor(() => expect(screen.queryByRole("menu", { name: label })).toBeNull());
       expect(trigger).toHaveFocus();
+    },
+  );
+
+  it.each(providers)(
+    "shows and announces disconnect progress for $label",
+    async ({ label, response, view }) => {
+      let resolveDisconnect: ((response: Response) => void) | undefined;
+      const disconnectResponse = new Promise<Response>((resolve) => {
+        resolveDisconnect = resolve;
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+          init?.method === "DELETE" ? disconnectResponse : Promise.resolve(Response.json(response)),
+        ),
+      );
+      const user = userEvent.setup();
+      render(<OverlayProvider>{view}</OverlayProvider>);
+
+      await user.click(await screen.findByRole("button", { name: label }));
+      await user.click(await screen.findByRole("menuitem", { name: "Disconnect" }));
+
+      const progress = await screen.findByText("Disconnecting…");
+      expect(progress).toBeVisible();
+      expect(progress).toHaveAttribute("aria-live", "polite");
+      expect(progress).toHaveAttribute("role", "status");
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+
+      resolveDisconnect?.(new Response(null, { status: 204 }));
+      await waitFor(() => expect(screen.queryByText("Disconnecting…")).toBeNull());
     },
   );
 });

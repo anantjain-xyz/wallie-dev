@@ -2,6 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status, type StatusValue } from "@/components/ui/status";
@@ -163,6 +164,7 @@ export function CodexConnectionPanel({
   const [expiresOn, setExpiresOn] = useState("");
   const [deviceFlow, setDeviceFlow] = useState<CodexDeviceFlow | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [disconnectPending, setDisconnectPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -365,6 +367,7 @@ export function CodexConnectionPanel({
 
   const handleDisconnect = async () => {
     setIsBusy(true);
+    setDisconnectPending(true);
     setError(null);
     setNotice(null);
     try {
@@ -380,6 +383,7 @@ export function CodexConnectionPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to disconnect Codex.");
     } finally {
+      setDisconnectPending(false);
       setIsBusy(false);
     }
   };
@@ -433,11 +437,22 @@ export function CodexConnectionPanel({
             <span className="text-muted">·</span>
             <span className="truncate text-muted">{statusSecondary(status)}</span>
           </div>
-          <ActionMenu disabled={isBusy} label="Codex credential actions">
-            <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
-              Disconnect
-            </DropdownMenuItem>
-          </ActionMenu>
+          {disconnectPending ? (
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 text-xs text-muted"
+              role="status"
+            >
+              <Spinner />
+              Disconnecting…
+            </span>
+          ) : (
+            <ActionMenu disabled={isBusy} label="Codex credential actions">
+              <DropdownMenuItem className="text-danger" onSelect={() => void handleDisconnect()}>
+                Disconnect
+              </DropdownMenuItem>
+            </ActionMenu>
+          )}
         </div>
       ) : null}
 

@@ -10,6 +10,7 @@ import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
 import { PlusIcon } from "@/components/shared/icons";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
@@ -221,15 +222,17 @@ export function ShellHeader({
             <span aria-hidden="true" className="shrink-0 text-muted">
               /
             </span>
-            <Link
-              href={pipelineHref}
-              className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
-            >
-              <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
-              <span className="min-w-0 truncate text-[15px] font-medium text-foreground">
-                {workspace.name}
-              </span>
-            </Link>
+            <Tooltip content={workspace.name}>
+              <Link
+                href={pipelineHref}
+                className="flex min-w-0 items-center gap-1.5 hover:opacity-80"
+              >
+                <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
+                <span className="min-w-0 truncate text-[15px] font-medium text-foreground">
+                  {workspace.name}
+                </span>
+              </Link>
+            </Tooltip>
           </div>
           <nav className="hidden min-w-0 flex-1 sm:block" aria-label="Workspace navigation">
             <div className="flex min-w-0 items-center gap-1">{renderNavLinks()}</div>

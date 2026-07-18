@@ -102,6 +102,7 @@ describe("ShellHeader", () => {
     expect(html).toContain("Acme Corp");
     // No avatar URL → initial fallback badge.
     expect(html).toContain(">A<");
+    expect(html).not.toContain('title="Acme Corp"');
   });
 
   it("renders an account menu exposing the signed-in email and sign-out", () => {
