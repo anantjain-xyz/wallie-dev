@@ -252,6 +252,36 @@ describe("loadSettingsPageData", () => {
     await Promise.all([loader.initialData, loader.setupData, loader.usage]);
   });
 
+  it("observes below-fold failures before the above-fold section resolves", async () => {
+    const githubResult = deferred<typeof github>();
+    const usageResult = deferred<{ data: unknown; error: unknown }>();
+    const { supabase } = buildSupabase({
+      member: { id: "member-1", is_active: true, kind: "human", role: "member" },
+      usageResult: usageResult.promise,
+    });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({ supabase, user, workspace });
+    mocked.createWorkspaceOnboardingSnapshot.mockReturnValue({
+      data: Promise.resolve(onboardingData("member")),
+      github: githubResult.promise,
+    });
+    const unhandledRejection = vi.fn();
+    process.on("unhandledRejection", unhandledRejection);
+
+    try {
+      const loader = await loadSettingsPageData(workspace.slug);
+      usageResult.reject(new Error("usage unavailable"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(unhandledRejection).not.toHaveBeenCalled();
+
+      githubResult.resolve(github);
+      await expect(loader.initialData).resolves.toMatchObject({ github });
+      await expect(loader.usage).rejects.toThrow("usage unavailable");
+    } finally {
+      process.off("unhandledRejection", unhandledRejection);
+    }
+  });
+
   it("rejects inactive memberships before starting setup or below-fold queries", async () => {
     const { supabase } = buildSupabase({
       member: { id: "member-1", is_active: false, kind: "human", role: "member" },

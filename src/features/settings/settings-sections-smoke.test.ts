@@ -16,6 +16,7 @@ import { resolveLegacySettingsAnchorHash } from "@/features/settings/settings-an
 import {
   applyLinearRoutingToSettingsData,
   SettingsPageClient,
+  updateGithubInData,
 } from "@/features/settings/settings-page-client";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
@@ -193,6 +194,34 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
 }
 
 describe("Settings integration sections", () => {
+  it("recomputes setup health when a refreshed GitHub snapshot is applied", () => {
+    const currentData = settingsData();
+    const updatedAt = "2026-07-17T18:00:00.000Z";
+    const updated = updateGithubInData(currentData, {
+      ...currentData.github,
+      installation: {
+        appId: 123,
+        id: "installation-1",
+        installationId: 456,
+        installationUrl: "https://github.com/settings/installations/456",
+        permissions: {},
+        suspended: false,
+        targetName: "acme",
+        targetType: "Organization",
+        updatedAt,
+      },
+    });
+
+    expect(updated.setupHealth.githubInstallation).toEqual({
+      connected: true,
+      installationId: 456,
+      status: "present",
+      suspended: false,
+      targetName: "acme",
+      updatedAt,
+    });
+  });
+
   it("smoke-renders the Settings pipeline editor wrapper after extraction", () => {
     const html = renderToStaticMarkup(
       createElement(PipelineEditor, {

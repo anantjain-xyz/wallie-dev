@@ -116,6 +116,14 @@ export function mapWorkspaceUsageRow(row: WorkspaceUsageRow | null): WorkspaceUs
   };
 }
 
+function observeDeferredSection<T>(promise: Promise<T>): Promise<T> {
+  // The page awaits only above-fold data before it renders. Observe failures
+  // now so a fast below-fold rejection is handled until React consumes the
+  // original promise inside its Suspense boundary.
+  void promise.catch(() => undefined);
+  return promise;
+}
+
 function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): SettingsSetupData {
   return {
     agentConfig: onboardingData.agentConfig,
@@ -263,6 +271,11 @@ export async function loadSettingsPageData(workspaceSlug: string): Promise<Setti
       },
     );
 
-    return { initialData, setupData, usage, workspaceInvitations };
+    return {
+      initialData,
+      setupData: observeDeferredSection(setupData),
+      usage: observeDeferredSection(usage),
+      workspaceInvitations: observeDeferredSection(workspaceInvitations),
+    };
   });
 }

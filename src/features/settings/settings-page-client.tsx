@@ -105,7 +105,7 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
   }
 }
 
-function updateGithubInData(
+export function updateGithubInData(
   currentData: SettingsPageData,
   github: SettingsPageData["github"],
 ): SettingsPageData {
@@ -582,13 +582,15 @@ function SettingsDeferredPage({
   workspaceInvitations: Promise<WorkspaceInvitation[]>;
 }) {
   const resolvedSetupData = use(setupData);
-  const completeData: SettingsPageData = {
-    ...initialData,
-    ...resolvedSetupData,
+  const completeData = updateGithubInData(
+    {
+      ...initialData,
+      ...resolvedSetupData,
+      usage: { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0, totalRuns: 0 },
+      workspaceInvitations: [],
+    },
     github,
-    usage: { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0, totalRuns: 0 },
-    workspaceInvitations: [],
-  };
+  );
 
   return (
     <SettingsCompletePage
