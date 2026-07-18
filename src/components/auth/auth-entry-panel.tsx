@@ -82,7 +82,7 @@ export function AuthEntryPanel({
               action="/auth/code"
               method="post"
               aria-labelledby="email-code-heading"
-              className="space-y-2"
+              className="email-code-form space-y-2"
             >
               <input type="hidden" name="next" value={next} />
               <EmailCodeInputs />

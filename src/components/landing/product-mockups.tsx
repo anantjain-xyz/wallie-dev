@@ -235,7 +235,7 @@ function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTi
   const activeIndex = onboardingStepTitles.indexOf(activeTitle);
 
   return (
-    <aside className="border-r border-border pr-4 max-md:hidden">
+    <div className="border-r border-border pr-4 max-md:hidden">
       <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup</p>
       <ol className="space-y-1">
         {onboardingStepTitles.map((title, index) => {
@@ -267,13 +267,13 @@ function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTi
           );
         })}
       </ol>
-    </aside>
+    </div>
   );
 }
 
 function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
   return (
-    <aside className="border-l border-border pl-4 max-md:hidden">
+    <div className="border-l border-border pl-4 max-md:hidden">
       <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup health</p>
       <div className="space-y-3">
         {rows.map((row) => (
@@ -289,7 +289,7 @@ function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
           </div>
         ))}
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -297,7 +297,7 @@ export function HeroWorkspaceMockup() {
   return (
     <BrowserFrame title="wallie.dev/w/acme">
       <div className="grid min-h-[520px] grid-cols-[190px_minmax(0,1fr)] bg-surface text-left max-md:min-h-0 max-md:grid-cols-1">
-        <aside className="border-r border-border bg-surface-strong p-4 max-md:hidden">
+        <div className="border-r border-border bg-surface-strong p-4 max-md:hidden">
           <div className="mb-7 flex items-center gap-2">
             <Image
               src="/wallie-logo-minimal.png"
@@ -325,7 +325,7 @@ export function HeroWorkspaceMockup() {
               </div>
             ))}
           </nav>
-        </aside>
+        </div>
 
         <div className="min-w-0">
           <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
@@ -405,9 +405,9 @@ export function SandboxExecutionMockup() {
 
           <div className="space-y-3 rounded-[10px] border border-border bg-[#111827] p-4 font-mono text-xs leading-5 text-[#dbeafe]">
             <p>$ pnpm install</p>
-            <p className="text-success">resolved 742 packages in isolated workspace</p>
+            <p className="text-[#4ade80]">resolved 742 packages in isolated workspace</p>
             <p>$ pnpm test -- realtime</p>
-            <p className="text-success">12 tests passed</p>
+            <p className="text-[#4ade80]">12 tests passed</p>
             <p>$ git diff -- src/features/auth/saml.ts</p>
             <p className="text-[#93c5fd]">artifact written: build-output.v3.json</p>
           </div>
@@ -425,7 +425,7 @@ export function SandboxExecutionMockup() {
           </div>
         </div>
 
-        <aside className="bg-surface-strong p-5">
+        <div className="bg-surface-strong p-5">
           <p className="text-xs font-semibold text-foreground">Team activity</p>
           <div className="mt-4 space-y-4">
             {[
@@ -445,7 +445,7 @@ export function SandboxExecutionMockup() {
               </div>
             ))}
           </div>
-        </aside>
+        </div>
       </div>
     </BrowserFrame>
   );

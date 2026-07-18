@@ -109,7 +109,7 @@ export function EmailCodeInputs() {
   }
 
   return (
-    <div className="grid grid-cols-6 gap-2" aria-label="Six-digit code">
+    <div className="email-code-grid grid gap-1" aria-label="Six-digit code">
       {Array.from({ length: CODE_LENGTH }, (_, index) => (
         <input
           key={index}
@@ -124,7 +124,7 @@ export function EmailCodeInputs() {
           pattern="[0-9]*"
           maxLength={1}
           aria-label={`Digit ${index + 1} of ${CODE_LENGTH}`}
-          className="ui-input aspect-square min-h-0 min-w-0 px-0 text-center font-mono text-[22px] leading-none"
+          className="ui-input h-11 min-w-11 px-0 text-center font-mono text-[22px] leading-none"
           onChange={(event) => {
             const value = event.currentTarget.value;
 

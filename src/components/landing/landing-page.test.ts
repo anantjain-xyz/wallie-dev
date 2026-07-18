@@ -34,6 +34,7 @@ describe("LandingPage", () => {
 
     expect(html).toContain('href="/login"');
     expect(html).toContain("Get started");
+    expect(html.match(/ui-touch-target/g)).toHaveLength(2);
   });
 
   it("renders the footer with author attribution", () => {
