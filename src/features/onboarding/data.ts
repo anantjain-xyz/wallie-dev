@@ -64,6 +64,11 @@ export type WorkspaceOnboardingData = {
   workspaceSecrets: WorkspaceSecretPreview[];
 };
 
+export type WorkspaceOnboardingSnapshot = {
+  data: Promise<WorkspaceOnboardingData>;
+  github: Promise<WorkspaceGitHubData>;
+};
+
 type OnboardingDataResult =
   | {
       data: WorkspaceOnboardingData;
@@ -489,67 +494,103 @@ async function loadAgentConfig(
   );
 }
 
-async function buildWorkspaceOnboardingData(
+export function createWorkspaceOnboardingSnapshot(
+  context: WorkspaceAccessContext,
+  options?: {
+    onboardingRow?: Tables<"workspace_onboarding">;
+  },
+): WorkspaceOnboardingSnapshot {
+  const admin = createSupabaseAdminClient();
+  const canManage =
+    context.currentMember.role === "owner" || context.currentMember.role === "admin";
+  const workspaceId = context.workspace.id;
+  const onboardingRowPromise = options?.onboardingRow
+    ? Promise.resolve(options.onboardingRow)
+    : loadOrCreateOnboardingRow(context, admin);
+  const githubPromise = loadWorkspaceGitHubData(admin, workspaceId);
+
+  // Start every independent summary as soon as permission is known. The setup
+  // health promise alone waits for the onboarding row and GitHub summary that
+  // determine repository-specific health.
+  const pipelinePromise = loadDefaultPipeline(context);
+  const workspaceMembersPromise = loadWorkspaceMembers(context);
+  const linearRoutingPromise = loadLinearRoutingConfig(admin, workspaceId);
+  const linearSecretPromise = canManage
+    ? loadLinearSecretPreview(admin, workspaceId)
+    : Promise.resolve(null);
+  const workspaceSecretsPromise = canManage
+    ? loadWorkspaceSecretPreviews(admin, workspaceId)
+    : Promise.resolve([]);
+  const agentConfigPromise = loadAgentConfig(admin, workspaceId);
+  const vercelSandboxConnectionPromise = loadVercelSandboxConnectionPreview(admin, workspaceId);
+  const setupHealthPromise = Promise.all([onboardingRowPromise, githubPromise]).then(
+    ([onboardingRow, github]) =>
+      loadSetupHealth(
+        context,
+        github,
+        mapOnboardingRow(onboardingRow).selectedGithubRepositoryId,
+        admin,
+        { includeSecretKeyInventory: canManage },
+      ),
+  );
+
+  const data = Promise.all([
+    onboardingRowPromise,
+    githubPromise,
+    setupHealthPromise,
+    pipelinePromise,
+    workspaceMembersPromise,
+    linearRoutingPromise,
+    linearSecretPromise,
+    workspaceSecretsPromise,
+    agentConfigPromise,
+    vercelSandboxConnectionPromise,
+  ]).then(
+    ([
+      onboardingRow,
+      github,
+      setupHealth,
+      pipeline,
+      workspaceMembers,
+      linearRouting,
+      linearSecret,
+      workspaceSecrets,
+      agentConfig,
+      vercelSandboxConnection,
+    ]) => ({
+      agentConfig,
+      canManage,
+      currentMember: {
+        id: context.currentMember.id,
+        role: context.currentMember.role,
+      },
+      github,
+      linearRouting,
+      linearSecret,
+      onboarding: mapOnboardingRow(onboardingRow),
+      pipeline,
+      setupHealth,
+      vercelSandboxConnection,
+      workspace: {
+        id: context.workspace.id,
+        name: context.workspace.name,
+        slug: context.workspace.slug,
+      },
+      workspaceMembers,
+      workspaceSecrets,
+    }),
+  );
+
+  return { data, github: githubPromise };
+}
+
+export function loadWorkspaceOnboardingDataForContext(
   context: WorkspaceAccessContext,
   options?: {
     onboardingRow?: Tables<"workspace_onboarding">;
   },
 ): Promise<WorkspaceOnboardingData> {
-  let onboardingRow = options?.onboardingRow;
-  const admin = createSupabaseAdminClient();
-
-  if (!onboardingRow) {
-    onboardingRow = await loadOrCreateOnboardingRow(context, admin);
-  }
-
-  const onboarding = mapOnboardingRow(onboardingRow);
-  const canManage =
-    context.currentMember.role === "owner" || context.currentMember.role === "admin";
-  const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
-  const [
-    setupHealth,
-    pipeline,
-    workspaceMembers,
-    linearRouting,
-    linearSecret,
-    workspaceSecrets,
-    agentConfig,
-    vercelSandboxConnection,
-  ] = await Promise.all([
-    loadSetupHealth(context, github, onboarding.selectedGithubRepositoryId, admin, {
-      includeSecretKeyInventory: canManage,
-    }),
-    loadDefaultPipeline(context),
-    loadWorkspaceMembers(context),
-    loadLinearRoutingConfig(admin, context.workspace.id),
-    canManage ? loadLinearSecretPreview(admin, context.workspace.id) : Promise.resolve(null),
-    canManage ? loadWorkspaceSecretPreviews(admin, context.workspace.id) : Promise.resolve([]),
-    loadAgentConfig(admin, context.workspace.id),
-    loadVercelSandboxConnectionPreview(admin, context.workspace.id),
-  ]);
-
-  return {
-    agentConfig,
-    canManage,
-    currentMember: {
-      id: context.currentMember.id,
-      role: context.currentMember.role,
-    },
-    github,
-    linearRouting,
-    linearSecret,
-    onboarding,
-    pipeline,
-    setupHealth,
-    vercelSandboxConnection,
-    workspace: {
-      id: context.workspace.id,
-      name: context.workspace.name,
-      slug: context.workspace.slug,
-    },
-    workspaceMembers,
-    workspaceSecrets,
-  };
+  return createWorkspaceOnboardingSnapshot(context, options).data;
 }
 
 export async function loadWorkspaceOnboardingData(
@@ -566,7 +607,7 @@ export async function loadWorkspaceOnboardingData(
   }
 
   return {
-    data: await buildWorkspaceOnboardingData(access.context),
+    data: await loadWorkspaceOnboardingDataForContext(access.context),
     ok: true,
   };
 }
@@ -617,7 +658,7 @@ export async function updateWorkspaceOnboardingData(
   if (error) throw error;
 
   return {
-    data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
+    data: await loadWorkspaceOnboardingDataForContext(access.context, { onboardingRow: data }),
     ok: true,
   };
 }
@@ -758,7 +799,9 @@ export async function completeWorkspaceOnboarding(
 
   if (onboardingError) throw onboardingError;
 
-  const currentData = await buildWorkspaceOnboardingData(access.context, { onboardingRow });
+  const currentData = await loadWorkspaceOnboardingDataForContext(access.context, {
+    onboardingRow,
+  });
   const blockers = verifyBlockersFromChecklist(
     buildVerifyChecklist({
       agentConfig: currentData.agentConfig,
@@ -793,7 +836,7 @@ export async function completeWorkspaceOnboarding(
   if (error) throw error;
 
   return {
-    data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
+    data: await loadWorkspaceOnboardingDataForContext(access.context, { onboardingRow: data }),
     ok: true,
   };
 }

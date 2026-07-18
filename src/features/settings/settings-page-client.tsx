@@ -1,15 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, use, useState } from "react";
 
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
-import type { SettingsPageData } from "@/features/settings/data";
+import type {
+  SettingsInitialData,
+  SettingsPageData,
+  SettingsSetupData,
+  WorkspaceUsageData,
+} from "@/features/settings/data";
 import { GitHubInstallSection } from "@/features/settings/github-install-section";
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
+import { SettingsDeferredSectionsSkeleton } from "@/features/settings/loading-skeleton";
 import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { PipelineEditor } from "@/features/settings/pipeline-editor";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
@@ -30,6 +36,7 @@ import { WorkspaceMembersSection } from "@/features/settings/workspace-members-s
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readiness";
 import type { AgentConfigKey } from "@/lib/agent-config/contracts";
+import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
   {
@@ -255,30 +262,47 @@ function updateVercelConnectionInData(
   };
 }
 
-export function SettingsPageClient({ initialData, searchState }: SettingsPageClientProps) {
+function SettingsCompletePage({
+  deferredMode = false,
+  initialData,
+  searchState,
+  streamedUsage,
+  streamedWorkspaceInvitations,
+}: {
+  deferredMode?: boolean;
+  initialData: SettingsPageData;
+  searchState: SettingsPageClientProps["searchState"];
+  streamedUsage?: Promise<WorkspaceUsageData>;
+  streamedWorkspaceInvitations?: Promise<WorkspaceInvitation[]>;
+}) {
   const [data, setData] = useState(initialData);
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(
-    initialFlashMessage(searchState),
+    deferredMode ? null : initialFlashMessage(searchState),
   );
+
   const pageData = applySecretsToData(data, secrets);
   const isManager = pageData.canManage;
   const isOwner = pageData.currentMember.role === "owner";
   const linearSecret = pageData.linearSecret;
 
   return (
-    <div className="min-h-full">
-      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
-        <header className="mb-8 sm:mb-10">
-          <div className="min-w-0 space-y-2">
-            <h1 className="text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
-              Settings
-            </h1>
-            <p className="max-w-2xl text-[14px] leading-6 text-muted">
-              Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
-            </p>
-          </div>
-        </header>
+    <div className={deferredMode ? "" : "min-h-full"}>
+      <div
+        className={deferredMode ? "" : "mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10"}
+      >
+        {deferredMode ? null : (
+          <header className="mb-8 sm:mb-10">
+            <div className="min-w-0 space-y-2">
+              <h1 className="text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
+                Settings
+              </h1>
+              <p className="max-w-2xl text-[14px] leading-6 text-muted">
+                Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
+              </p>
+            </div>
+          </header>
+        )}
 
         {flashMessage ? (
           <div
@@ -290,19 +314,27 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
-          <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
+        <div
+          className={
+            deferredMode ? "" : "grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]"
+          }
+        >
+          {deferredMode ? null : (
+            <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
+          )}
 
           <div className="space-y-16 min-w-0">
-            <GitHubInstallSection
-              canManage={isManager}
-              github={pageData.github}
-              onGithubChange={(github) =>
-                setData((currentData) => updateGithubInData(currentData, github))
-              }
-              setFlashMessage={setFlashMessage}
-              workspaceId={pageData.workspace.id}
-            />
+            {deferredMode ? null : (
+              <GitHubInstallSection
+                canManage={isManager}
+                github={pageData.github}
+                onGithubChange={(github) =>
+                  setData((currentData) => updateGithubInData(currentData, github))
+                }
+                setFlashMessage={setFlashMessage}
+                workspaceId={pageData.workspace.id}
+              />
+            )}
             <RepositoryAnalysisSection
               data={pageData}
               setData={setData}
@@ -396,7 +428,13 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               tagline="Aggregate token usage and costs across all agent runs in this workspace."
               title="Usage"
             >
-              <UsageSummary usage={pageData.usage} />
+              {streamedUsage ? (
+                <Suspense fallback={<p className="text-sm text-muted">Loading usage…</p>}>
+                  <StreamedUsageSummary usage={streamedUsage} />
+                </Suspense>
+              ) : (
+                <UsageSummary usage={pageData.usage} />
+              )}
               <MaintenancePanel
                 canManage={isManager}
                 setFlashMessage={setFlashMessage}
@@ -440,14 +478,27 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
               setFlashMessage={setFlashMessage}
               workspace={pageData.workspace}
             />
-            <WorkspaceMembersSection
-              canManage={isManager}
-              currentMemberId={pageData.currentMember.id}
-              initialInvitations={pageData.workspaceInvitations}
-              setFlashMessage={setFlashMessage}
-              workspaceId={pageData.workspace.id}
-              workspaceMembers={pageData.workspaceMembers}
-            />
+            {streamedWorkspaceInvitations ? (
+              <Suspense fallback={<WorkspaceMembersLoadingFallback />}>
+                <StreamedWorkspaceMembersSection
+                  canManage={isManager}
+                  currentMemberId={pageData.currentMember.id}
+                  setFlashMessage={setFlashMessage}
+                  workspaceId={pageData.workspace.id}
+                  workspaceInvitations={streamedWorkspaceInvitations}
+                  workspaceMembers={pageData.workspaceMembers}
+                />
+              </Suspense>
+            ) : (
+              <WorkspaceMembersSection
+                canManage={isManager}
+                currentMemberId={pageData.currentMember.id}
+                initialInvitations={pageData.workspaceInvitations}
+                setFlashMessage={setFlashMessage}
+                workspaceId={pageData.workspace.id}
+                workspaceMembers={pageData.workspaceMembers}
+              />
+            )}
             <DangerZoneSection
               canDelete={isOwner}
               setFlashMessage={setFlashMessage}
@@ -458,5 +509,192 @@ export function SettingsPageClient({ initialData, searchState }: SettingsPageCli
         </div>
       </div>
     </div>
+  );
+}
+
+function isCompleteSettingsData(
+  data: SettingsInitialData | SettingsPageData,
+): data is SettingsPageData {
+  return "usage" in data && "workspaceInvitations" in data;
+}
+
+function StreamedUsageSummary({ usage }: { usage: Promise<WorkspaceUsageData> }) {
+  return <UsageSummary usage={use(usage)} />;
+}
+
+function WorkspaceMembersLoadingFallback() {
+  return (
+    <section aria-busy="true" aria-label="Loading workspace invitations" id="members">
+      <header className="settings-section-header mb-6">
+        <div className="min-w-0 flex-1 space-y-2">
+          <h2 className="text-[18px] font-semibold tracking-tight text-foreground">Members</h2>
+          <p className="text-[12px] leading-5 text-muted">Loading workspace invitations…</p>
+        </div>
+      </header>
+    </section>
+  );
+}
+
+function StreamedWorkspaceMembersSection({
+  canManage,
+  currentMemberId,
+  setFlashMessage,
+  workspaceId,
+  workspaceInvitations,
+  workspaceMembers,
+}: {
+  canManage: boolean;
+  currentMemberId: string;
+  setFlashMessage: (message: FlashMessage) => void;
+  workspaceId: string;
+  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+  workspaceMembers: SettingsPageData["workspaceMembers"];
+}) {
+  return (
+    <WorkspaceMembersSection
+      canManage={canManage}
+      currentMemberId={currentMemberId}
+      initialInvitations={use(workspaceInvitations)}
+      setFlashMessage={setFlashMessage}
+      workspaceId={workspaceId}
+      workspaceMembers={workspaceMembers}
+    />
+  );
+}
+
+function githubRenderKey(github: SettingsPageData["github"]) {
+  return JSON.stringify(github);
+}
+
+function SettingsDeferredPage({
+  github,
+  initialData,
+  searchState,
+  setupData,
+  usage,
+  workspaceInvitations,
+}: {
+  github: SettingsPageData["github"];
+  initialData: SettingsInitialData;
+  searchState: SettingsPageClientProps["searchState"];
+  setupData: Promise<SettingsSetupData>;
+  usage: Promise<WorkspaceUsageData>;
+  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+}) {
+  const resolvedSetupData = use(setupData);
+  const completeData: SettingsPageData = {
+    ...initialData,
+    ...resolvedSetupData,
+    github,
+    usage: { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0, totalRuns: 0 },
+    workspaceInvitations: [],
+  };
+
+  return (
+    <SettingsCompletePage
+      deferredMode
+      initialData={completeData}
+      key={githubRenderKey(github)}
+      searchState={searchState}
+      streamedUsage={usage}
+      streamedWorkspaceInvitations={workspaceInvitations}
+    />
+  );
+}
+
+function SettingsStreamingPage({
+  initialData,
+  searchState,
+  setupData,
+  usage,
+  workspaceInvitations,
+}: {
+  initialData: SettingsInitialData;
+  searchState: SettingsPageClientProps["searchState"];
+  setupData: Promise<SettingsSetupData>;
+  usage: Promise<WorkspaceUsageData>;
+  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+}) {
+  const [github, setGithub] = useState(initialData.github);
+  const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(() =>
+    initialFlashMessage(searchState),
+  );
+
+  return (
+    <div className="min-h-full">
+      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
+        <header className="mb-8 sm:mb-10">
+          <div className="min-w-0 space-y-2">
+            <h1 className="text-[26px] font-semibold tracking-tight text-foreground sm:text-[28px]">
+              Settings
+            </h1>
+            <p className="max-w-2xl text-[14px] leading-6 text-muted">
+              Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
+            </p>
+          </div>
+        </header>
+
+        {flashMessage ? (
+          <div
+            aria-live="polite"
+            className={`mb-8 rounded-[10px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
+            role="status"
+          >
+            {flashMessage.text}
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
+          <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
+
+          <div className="space-y-16 min-w-0">
+            <GitHubInstallSection
+              canManage={initialData.canManage}
+              github={github}
+              onGithubChange={setGithub}
+              setFlashMessage={setFlashMessage}
+              workspaceId={initialData.workspace.id}
+            />
+
+            <Suspense fallback={<SettingsDeferredSectionsSkeleton />}>
+              <SettingsDeferredPage
+                github={github}
+                initialData={initialData}
+                searchState={searchState}
+                setupData={setupData}
+                usage={usage}
+                workspaceInvitations={workspaceInvitations}
+              />
+            </Suspense>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SettingsPageClient({
+  initialData,
+  searchState,
+  setupData,
+  usage,
+  workspaceInvitations,
+}: SettingsPageClientProps) {
+  if (isCompleteSettingsData(initialData)) {
+    return <SettingsCompletePage initialData={initialData} searchState={searchState} />;
+  }
+
+  if (!setupData || !usage || !workspaceInvitations) {
+    throw new Error("Streaming Settings data promises are required.");
+  }
+
+  return (
+    <SettingsStreamingPage
+      initialData={initialData}
+      searchState={searchState}
+      setupData={setupData}
+      usage={usage}
+      workspaceInvitations={workspaceInvitations}
+    />
   );
 }

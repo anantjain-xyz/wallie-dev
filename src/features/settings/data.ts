@@ -3,13 +3,15 @@ import "server-only";
 import { notFound } from "next/navigation";
 
 import {
-  loadWorkspaceOnboardingData,
+  createWorkspaceOnboardingSnapshot,
   type WorkspaceOnboardingData,
 } from "@/features/onboarding/data";
 import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { describeRateLimits } from "@/lib/rate-limit";
+import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { getWorkspaceAvatarUrl } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { WorkspaceAccessContext } from "@/lib/workspaces/access";
 import {
   mapWorkspaceInvitationRow,
   type WorkspaceInvitation,
@@ -25,6 +27,13 @@ export type WorkspaceUsageData = {
   totalOutputTokens: number;
   totalCostUsd: number;
   totalRuns: number;
+};
+
+type WorkspaceUsageRow = {
+  total_cost_usd: number | null;
+  total_input_tokens: number | null;
+  total_output_tokens: number | null;
+  total_runs: number | null;
 };
 
 export type RateLimitDisplay = {
@@ -63,6 +72,23 @@ export type SettingsPageData = {
   workspaceSecrets: WorkspaceOnboardingData["workspaceSecrets"];
 };
 
+export type SettingsInitialData = Pick<
+  SettingsPageData,
+  "canManage" | "currentMember" | "github" | "workspace"
+>;
+
+export type SettingsSetupData = Omit<
+  SettingsPageData,
+  "canManage" | "currentMember" | "github" | "usage" | "workspace" | "workspaceInvitations"
+>;
+
+export type SettingsPageDataLoader = {
+  initialData: Promise<SettingsInitialData>;
+  setupData: Promise<SettingsSetupData>;
+  usage: Promise<WorkspaceUsageData>;
+  workspaceInvitations: Promise<WorkspaceInvitation[]>;
+};
+
 async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceInvitation[]> {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
@@ -81,88 +107,162 @@ async function loadWorkspaceInvitations(workspaceId: string): Promise<WorkspaceI
   return ((data ?? []) as WorkspaceInvitationRow[]).map(mapWorkspaceInvitationRow);
 }
 
-export async function loadSettingsPageData(workspaceSlug: string) {
-  const { supabase, user, workspace } = await loadAuthenticatedWorkspaceContext(workspaceSlug);
-
-  const { data: currentMember, error: currentMemberError } = await supabase
-    .from("workspace_members")
-    .select(currentMemberSelect)
-    .eq("workspace_id", workspace.id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (currentMemberError) {
-    throw currentMemberError;
-  }
-
-  if (!currentMember || !currentMember.is_active) {
-    notFound();
-  }
-
-  const onboardingResult = await loadWorkspaceOnboardingData(workspace.id);
-  if (!onboardingResult.ok) {
-    notFound();
-  }
-  const onboardingData = onboardingResult.data;
-  const workspaceInvitations = onboardingData.canManage
-    ? await loadWorkspaceInvitations(workspace.id)
-    : [];
-
-  // Load aggregate token usage for the workspace.
-  const { data: usageRows } = await supabase
-    .from("agent_runs")
-    .select("input_tokens, output_tokens, total_cost_usd")
-    .eq("workspace_id", workspace.id)
-    .eq("status", "success");
-
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let totalCostUsd = 0;
-  const totalRuns = (usageRows ?? []).length;
-
-  for (const row of usageRows ?? []) {
-    totalInputTokens += row.input_tokens ?? 0;
-    totalOutputTokens += row.output_tokens ?? 0;
-    totalCostUsd += row.total_cost_usd ?? 0;
-  }
-
-  const usage: WorkspaceUsageData = {
-    totalInputTokens,
-    totalOutputTokens,
-    totalCostUsd,
-    totalRuns,
+export function mapWorkspaceUsageRow(row: WorkspaceUsageRow | null): WorkspaceUsageData {
+  return {
+    totalInputTokens: Number(row?.total_input_tokens ?? 0),
+    totalOutputTokens: Number(row?.total_output_tokens ?? 0),
+    totalCostUsd: Number(row?.total_cost_usd ?? 0),
+    totalRuns: Number(row?.total_runs ?? 0),
   };
+}
 
-  const rateLimits: RateLimitDisplay[] = describeRateLimits().map((entry) => ({
-    description: entry.description,
-    endpoint: entry.endpoint,
-    max: entry.max,
-    windowMs: entry.windowMs,
-  }));
-
+function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): SettingsSetupData {
   return {
     agentConfig: onboardingData.agentConfig,
-    canManage: onboardingData.canManage,
-    rateLimits,
-    usage,
-    currentMember: onboardingData.currentMember,
-    github: onboardingData.github,
     latestSandboxCapabilityCheck: onboardingData.setupHealth.latestSandboxCapabilityCheck,
     linearRouting: onboardingData.linearRouting,
     linearSecret: onboardingData.linearSecret,
     onboarding: onboardingData.onboarding,
+    pipeline: onboardingData.pipeline,
+    rateLimits: describeRateLimits().map((entry) => ({
+      description: entry.description,
+      endpoint: entry.endpoint,
+      max: entry.max,
+      windowMs: entry.windowMs,
+    })),
     setupHealth: onboardingData.setupHealth,
     vercelSandboxConnection: onboardingData.vercelSandboxConnection,
-    workspace: {
+    workspaceMembers: onboardingData.workspaceMembers,
+    workspaceSecrets: onboardingData.workspaceSecrets,
+  };
+}
+
+export async function loadSettingsPageData(workspaceSlug: string): Promise<SettingsPageDataLoader> {
+  return withServerTiming("settings.loader", { workspaceSlug }, async (timing) => {
+    const authenticatedContext = await timing.segment(
+      "authenticated-workspace-context",
+      () => loadAuthenticatedWorkspaceContext(workspaceSlug),
+      (context) => ({
+        rows: 1,
+        workspaceId: context.workspace.id,
+      }),
+    );
+    const { supabase, user, workspace } = authenticatedContext;
+
+    const { data: currentMember, error: currentMemberError } = await timing.segment(
+      "current-member",
+      () =>
+        supabase
+          .from("workspace_members")
+          .select(currentMemberSelect)
+          .eq("workspace_id", workspace.id)
+          .eq("user_id", user.id)
+          .maybeSingle(),
+      (result) => ({ rows: result.data ? 1 : 0 }),
+    );
+
+    if (currentMemberError) {
+      throw currentMemberError;
+    }
+
+    if (!currentMember || !currentMember.is_active || currentMember.kind !== "human") {
+      notFound();
+    }
+
+    const canManage = currentMember.role === "owner" || currentMember.role === "admin";
+    const accessContext: WorkspaceAccessContext = {
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    };
+    const onboardingSnapshot = createWorkspaceOnboardingSnapshot(accessContext);
+    const workspaceSummary = {
       avatarPath: workspace.avatar_path,
       avatarUrl: getWorkspaceAvatarUrl(workspace.avatar_path),
       id: workspace.id,
       name: workspace.name,
       slug: workspace.slug,
-    },
-    workspaceInvitations,
-    pipeline: onboardingData.pipeline,
-    workspaceMembers: onboardingData.workspaceMembers,
-    workspaceSecrets: onboardingData.workspaceSecrets,
-  } satisfies SettingsPageData;
+    };
+
+    const initialData = withServerTiming(
+      "settings.section.github",
+      { workspaceId: workspace.id },
+      async (sectionTiming) => {
+        const github = await sectionTiming.segment(
+          "summary",
+          () => onboardingSnapshot.github,
+          (value) => ({
+            payloadBytes: approximatePayloadSizeBytes(value),
+            rows: value.repositories.length,
+          }),
+        );
+
+        return {
+          canManage,
+          currentMember: {
+            id: currentMember.id,
+            role: currentMember.role,
+          },
+          github,
+          workspace: workspaceSummary,
+        };
+      },
+    );
+
+    const setupData = withServerTiming(
+      "settings.section.setup",
+      { workspaceId: workspace.id },
+      async (sectionTiming) => {
+        const data = await sectionTiming.segment(
+          "canonical-onboarding-snapshot",
+          () => onboardingSnapshot.data,
+          (value) => ({
+            payloadBytes: approximatePayloadSizeBytes(value),
+            rows: 1,
+          }),
+        );
+        return mapSettingsSetupData(data);
+      },
+    );
+
+    const usage = withServerTiming(
+      "settings.section.usage",
+      { workspaceId: workspace.id },
+      async (sectionTiming) => {
+        const { data, error } = await sectionTiming.segment(
+          "workspace-usage-rpc",
+          () =>
+            supabase
+              .rpc("get_workspace_usage", { target_workspace_id: workspace.id })
+              .maybeSingle(),
+          (result) => ({
+            payloadBytes: approximatePayloadSizeBytes(result.data),
+            rows: result.data ? 1 : 0,
+          }),
+        );
+
+        if (error) throw error;
+        return mapWorkspaceUsageRow(data);
+      },
+    );
+
+    const workspaceInvitations = withServerTiming(
+      "settings.section.invitations",
+      { workspaceId: workspace.id },
+      async (sectionTiming) => {
+        if (!canManage) return [];
+        return sectionTiming.segment(
+          "pending-invitations",
+          () => loadWorkspaceInvitations(workspace.id),
+          (invitations) => ({
+            payloadBytes: approximatePayloadSizeBytes(invitations),
+            rows: invitations.length,
+          }),
+        );
+      },
+    );
+
+    return { initialData, setupData, usage, workspaceInvitations };
+  });
 }

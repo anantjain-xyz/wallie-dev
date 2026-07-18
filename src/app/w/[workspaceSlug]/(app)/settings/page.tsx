@@ -15,14 +15,18 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
   const data = await loadSettingsPageData(workspaceSlug);
+  const initialData = await data.initialData;
 
   return (
     <SettingsPageClient
-      initialData={data}
+      initialData={initialData}
       searchState={{
         githubStatus: resolvedSearchParams.github ?? null,
         codexStatus: resolvedSearchParams.codex_connect ?? null,
       }}
+      setupData={data.setupData}
+      usage={data.usage}
+      workspaceInvitations={data.workspaceInvitations}
     />
   );
 }
