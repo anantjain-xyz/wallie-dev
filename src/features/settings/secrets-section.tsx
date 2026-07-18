@@ -146,7 +146,7 @@ export function WorkspaceSecretsPanel({
       ) : otherSecrets.length === 0 ? (
         <p className="text-[13px] text-muted">No workspace secrets yet.</p>
       ) : (
-        <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+        <ul className="divide-y divide-border rounded-[6px] border border-border bg-sheet">
           {otherSecrets.map((secret) => (
             <li
               className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"

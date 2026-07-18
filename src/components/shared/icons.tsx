@@ -161,12 +161,19 @@ export function SlidersIcon({ className, ...props }: IconProps) {
     >
       <path d="M4 4h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       <path d="M4 12h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <circle cx="6" cy="4" r="1.5" fill="var(--surface)" stroke="currentColor" strokeWidth="1.2" />
+      <circle
+        cx="6"
+        cy="4"
+        r="1.5"
+        fill="var(--surface-sheet)"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
       <circle
         cx="10"
         cy="12"
         r="1.5"
-        fill="var(--surface)"
+        fill="var(--surface-sheet)"
         stroke="currentColor"
         strokeWidth="1.2"
       />

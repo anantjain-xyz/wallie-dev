@@ -49,7 +49,7 @@ export function AuthEntryPanel({
 
   return (
     <div className="w-full max-w-[360px]">
-      <div className="ui-panel-elevated p-5">
+      <div className="ui-sheet p-5">
         {statusMessage ? (
           <div
             aria-live="polite"
@@ -92,7 +92,7 @@ export function AuthEntryPanel({
             </form>
             <Link
               href={requestAnotherCodeHref}
-              className="mt-3 inline-flex w-full items-center justify-center text-xs font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              className="mt-3 inline-flex w-full items-center justify-center text-xs font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
             >
               Request another code
             </Link>

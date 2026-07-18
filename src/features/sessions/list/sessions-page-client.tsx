@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
-import { PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { CommandBar, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import {
   archiveSessionFromClient,
   unarchiveSessionFromClient,
@@ -199,7 +199,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
     <PageContainer>
       <PageHeader title="Sessions" />
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
+      <CommandBar className="mb-6">
         <form
           onSubmit={handleSearchSubmit}
           className="relative w-full flex-none sm:max-w-md sm:flex-1 sm:min-w-[220px]"
@@ -260,7 +260,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
             </button>
           ))}
         </div>
-      </div>
+      </CommandBar>
 
       {sessions.length === 0 ? (
         !initialData.hasAnySession ? (
@@ -270,7 +270,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
             newSessionHref={workspaceSessionsPath(workspaceSlug, { create: 1 })}
           />
         ) : (
-          <div className="flex flex-col items-center rounded-[10px] border border-dashed border-border bg-surface-strong px-6 py-16 text-center">
+          <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
             <p className="text-[14px] font-semibold text-foreground">
               No sessions match these filters
             </p>
@@ -281,7 +281,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
         )
       ) : (
         <SessionDetailLinkPrefetchBoundary>
-          <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
+          <ul className="ui-sheet divide-y divide-border overflow-hidden">
             {sessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -481,10 +481,10 @@ function SessionRow({
   }
 
   return (
-    <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-surface-strong sm:px-5 md:flex-row md:items-center">
+    <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center">
       <SessionDetailLink
         href={detailHref}
-        className="absolute inset-0 z-10 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
       >
         <span className="sr-only">
           Open session #{session.number}: {displayTitle}

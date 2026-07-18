@@ -32,7 +32,7 @@ export function SessionsZeroState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center rounded-[10px] border border-dashed border-border bg-surface-strong px-6 py-16 text-center",
+        "ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center",
         className,
       )}
     >

@@ -27,8 +27,8 @@ export default async function WorkspaceOnboardingPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border bg-surface">
+    <div className="flex min-h-screen flex-col bg-sheet text-foreground">
+      <header className="sticky top-0 z-20 border-b border-border bg-sheet">
         <div className="mx-auto flex h-14 w-full max-w-[640px] items-center justify-between gap-3 px-6 sm:px-8">
           <Link
             href="/"
@@ -40,7 +40,7 @@ export default async function WorkspaceOnboardingPage() {
               alt=""
               width={32}
               height={32}
-              className="h-8 w-8 rounded-[8px] object-contain dark:invert"
+              className="h-8 w-8 rounded-[6px] object-contain dark:invert"
               priority
             />
             <span className="text-[16px] font-semibold tracking-tight text-foreground">Wallie</span>
