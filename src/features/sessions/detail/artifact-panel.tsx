@@ -139,7 +139,15 @@ function ArtifactPanelStage({
     : null;
 
   useEffect(() => {
+    const previousLatestVersion = latestVersionCache.get(currentStageKey);
+
     if (latestArtifact) {
+      if (previousLatestVersion !== undefined && latestArtifact.version < previousLatestVersion) {
+        metadataCache.delete(currentStageKey);
+        bodyCache.delete(artifactBodyCacheKey(sessionId, stageSlug, previousLatestVersion));
+        queueMicrotask(() => setMetadata(null));
+      }
+
       const bodyKey = artifactBodyCacheKey(
         sessionId,
         latestArtifact.stageSlug,
@@ -162,13 +170,25 @@ function ArtifactPanelStage({
         metadataCache.set(currentStageKey, nextMetadata);
         queueMicrotask(() => setMetadata(nextMetadata));
       }
+    } else if (previousLatestVersion !== undefined) {
+      queueMicrotask(() => {
+        setLatestBody(null);
+        setLatestLoading(false);
+        setLatestError(null);
+      });
+      metadataCache.delete(currentStageKey);
+      latestVersionCache.delete(currentStageKey);
+      queueMicrotask(() => setMetadata(null));
     }
-
-    return () => {
-      metadataController.current?.abort();
-      bodyController.current?.abort();
-    };
-  }, [bodyCache, currentStageKey, latestArtifact, latestVersionCache, metadataCache, sessionId]);
+  }, [
+    bodyCache,
+    currentStageKey,
+    latestArtifact,
+    latestVersionCache,
+    metadataCache,
+    sessionId,
+    stageSlug,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "artifact") return;
@@ -208,6 +228,7 @@ function ArtifactPanelStage({
     bodyController.current = controller;
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
+      setLatestBody(null);
       setLatestLoading(true);
       setLatestError(null);
     });
@@ -240,6 +261,10 @@ function ArtifactPanelStage({
       .finally(() => {
         if (!controller.signal.aborted) setLatestLoading(false);
       });
+
+    return () => {
+      controller.abort();
+    };
   }, [
     activeTab,
     currentStageKey,
@@ -286,9 +311,18 @@ function ArtifactPanelStage({
       })
       .then((artifacts) => {
         if (controller.signal.aborted) return;
-        metadataCache.set(currentStageKey, artifacts);
-        setMetadata(artifacts);
-        setSelectedVersion(artifacts[0]?.version ?? null);
+        const existing = metadataCache.get(currentStageKey);
+        let result = artifacts;
+        if (existing) {
+          const apiVersions = new Set(artifacts.map((a) => a.version));
+          const realtimeOnly = existing.filter((a) => !apiVersions.has(a.version));
+          if (realtimeOnly.length > 0) {
+            result = [...artifacts, ...realtimeOnly].sort((a, b) => b.version - a.version);
+          }
+        }
+        metadataCache.set(currentStageKey, result);
+        setMetadata(result);
+        setSelectedVersion(result[0]?.version ?? null);
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -299,6 +333,10 @@ function ArtifactPanelStage({
       .finally(() => {
         if (!controller.signal.aborted) setMetadataLoading(false);
       });
+
+    return () => {
+      controller.abort();
+    };
   }, [activeTab, currentStageKey, metadataCache, metadataRetry, sessionId, stageSlug]);
 
   useEffect(() => {
@@ -350,6 +388,10 @@ function ArtifactPanelStage({
       .finally(() => {
         if (!controller.signal.aborted) setSelectedBodyLoading(false);
       });
+
+    return () => {
+      controller.abort();
+    };
   }, [
     activeTab,
     bodyCache,
