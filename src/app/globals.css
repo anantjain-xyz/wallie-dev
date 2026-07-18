@@ -920,7 +920,7 @@
 }
 
 .email-code-grid {
-  grid-template-columns: repeat(6, minmax(44px, 1fr));
+  grid-template-columns: repeat(6, minmax(2.75rem, 1fr));
 }
 
 .email-code-form {
@@ -928,9 +928,11 @@
   container-type: inline-size;
 }
 
-@container email-code-form (max-width: 283px) {
+/* Six h-11 targets plus five gap-1 spaces total 17.75rem. Keep the tracks and
+   wrap threshold root-relative so browser text scaling cannot cause overflow. */
+@container email-code-form (max-width: 17.75rem) {
   .email-code-grid {
-    grid-template-columns: repeat(3, minmax(44px, 1fr));
+    grid-template-columns: repeat(3, minmax(2.75rem, 1fr));
   }
 }
 
