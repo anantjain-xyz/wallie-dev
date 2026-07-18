@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -14,6 +14,7 @@ import {
   type SessionRepositorySnapshot,
 } from "@/features/sessions/session-repository-cache";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
+import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 
 type CreateSessionDialogProps = {
   onClose: () => void;
@@ -68,6 +69,10 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 
 function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSessionDialogProps) {
   const router = useRouter();
+
+  useEffect(() => {
+    finishInteraction("open_create_dialog", "success");
+  }, []);
 
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");

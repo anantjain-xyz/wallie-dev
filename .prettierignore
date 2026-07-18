@@ -7,7 +7,9 @@ AGENTS.md
 .vercel
 build
 coverage
+test-results
 out
 pnpm-lock.yaml
 .pnpm-store
+.github/CODEOWNERS
 src/lib/supabase/database.types.ts
