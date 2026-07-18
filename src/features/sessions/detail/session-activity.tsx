@@ -79,7 +79,7 @@ export function SessionActivityFallback() {
 
 export function SessionActivityFailure() {
   return (
-    <div className="rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning">
+    <div className="rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning">
       Run activity is temporarily unavailable. Session review is still available.
     </div>
   );

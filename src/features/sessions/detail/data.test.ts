@@ -1,6 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocked = vi.hoisted(() => ({
+  createSupabaseServerClient: vi.fn(),
+  getSupabaseUserOrNull: vi.fn(),
+  notFound: vi.fn(() => {
+    throw new Error("not-found");
+  }),
+  redirect: vi.fn((path: string) => {
+    throw new Error(`redirect:${path}`);
+  }),
+}));
+
+vi.mock("next/navigation", () => ({
+  notFound: mocked.notFound,
+  redirect: mocked.redirect,
+}));
+
+vi.mock("@/lib/supabase/auth", () => ({
+  getSupabaseUserOrNull: mocked.getSupabaseUserOrNull,
+}));
+
+vi.mock("@/lib/supabase/server", () => ({
+  createSupabaseServerClient: mocked.createSupabaseServerClient,
+}));
 
 import {
+  loadSessionDetailPageData,
   SESSION_REVIEW_PAYLOAD_TARGET_BYTES,
   serializeSessionReviewData,
   type SessionReviewData,
@@ -75,6 +100,10 @@ function makeRpcPayload() {
 }
 
 describe("session review RSC contract", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("constructs only the documented client fields without database spreads", () => {
     const review: SessionReviewData = serializeSessionReviewData(makeRpcPayload());
 
@@ -116,5 +145,32 @@ describe("session review RSC contract", () => {
     expect(reviewBytes).not.toBeNull();
     expect(reviewBytes!).toBeLessThanOrEqual(SESSION_REVIEW_PAYLOAD_TARGET_BYTES);
     expect(reviewBytes!).toBeLessThanOrEqual(SEEDED_SESSION_18_BASELINE_RPC_BYTES * 0.75);
+  });
+});
+
+describe("session detail loader", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("redirects signed-out deep links while starting auth and the detail RPC together", async () => {
+    let resolveUser!: (user: null) => void;
+    const userPromise = new Promise<null>((resolve) => {
+      resolveUser = resolve;
+    });
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+
+    mocked.createSupabaseServerClient.mockResolvedValue({ rpc });
+    mocked.getSupabaseUserOrNull.mockReturnValue(userPromise);
+
+    const loadPromise = loadSessionDetailPageData("acme-corp", "18");
+
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    resolveUser(null);
+
+    await expect(loadPromise).rejects.toThrow(
+      "redirect:/login?next=%2Fw%2Facme-corp%2Fsessions%2F18",
+    );
+    expect(mocked.redirect).toHaveBeenCalledWith("/login?next=%2Fw%2Facme-corp%2Fsessions%2F18");
   });
 });

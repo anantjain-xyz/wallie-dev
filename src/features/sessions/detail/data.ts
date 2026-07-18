@@ -1,6 +1,6 @@
 import "server-only";
 
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import type { SessionConnectionPullRequest } from "@/features/sessions/components/session-connections";
 import type {
@@ -9,6 +9,8 @@ import type {
   SessionPhaseStatus,
 } from "@/features/sessions/types";
 import type { WallieSessionRepository } from "@/features/wallie/types";
+import { loginPath, workspaceSessionDetailPath } from "@/lib/routes";
+import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   approximatePayloadSizeBytes,
@@ -106,18 +108,29 @@ async function loadSessionDetailPageDataWithTiming(
   timing: ServerTimingCollector,
 ): Promise<SessionDetailPageData> {
   const supabase = await createSupabaseServerClient();
-  const { data: rpcData, error: rpcError } = await timing.segment(
-    "session-detail-rpc",
-    () =>
-      supabase.rpc("get_session_detail_page", {
-        target_session_number: sessionNumber,
-        target_workspace_slug: workspaceSlug,
+  const [user, { data: rpcData, error: rpcError }] = await Promise.all([
+    timing.segment(
+      "auth.get-user",
+      () => getSupabaseUserOrNull(supabase),
+      (resolvedUser) => ({ rows: resolvedUser ? 1 : 0 }),
+    ),
+    timing.segment(
+      "session-detail-rpc",
+      () =>
+        supabase.rpc("get_session_detail_page", {
+          target_session_number: sessionNumber,
+          target_workspace_slug: workspaceSlug,
+        }),
+      (result) => ({
+        payloadBytes: approximatePayloadSizeBytes(result.data),
+        rows: result.data ? 1 : 0,
       }),
-    (result) => ({
-      payloadBytes: approximatePayloadSizeBytes(result.data),
-      rows: result.data ? 1 : 0,
-    }),
-  );
+    ),
+  ]);
+
+  if (!user) {
+    redirect(loginPath(workspaceSessionDetailPath(workspaceSlug, sessionNumber)));
+  }
 
   if (rpcError) throw rpcError;
   if (!rpcData) notFound();
