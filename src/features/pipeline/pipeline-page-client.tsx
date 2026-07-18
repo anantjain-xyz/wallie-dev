@@ -234,10 +234,8 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
       <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
         <div className="mx-auto w-full" style={{ maxWidth: boardContainerWidth }}>
           <div className="max-w-2xl space-y-2">
-            <h1 className="text-[28px] font-semibold tracking-tight text-balance text-foreground">
-              Pipeline
-            </h1>
-            <p className="text-[14px] leading-6 text-muted">
+            <h1 className="type-page-title">Pipeline</h1>
+            <p className="type-body text-muted">
               Sessions move through these stages in order, gated by approval at each step.
             </p>
           </div>
@@ -270,21 +268,21 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                         <h2 className="truncate text-[15px] font-semibold text-foreground">
                           {lane.name}
                         </h2>
-                        <span className="font-mono text-[11px] tabular-nums text-muted">
+                        <span className="font-mono type-annotation tabular-nums text-muted">
                           {lane.totalCount}
                         </span>
                       </div>
                       {!lane.pipeline.isDefault ? (
-                        <p className="mt-1 text-[11px] font-medium text-muted">
+                        <p className="mt-1 type-annotation font-medium text-muted">
                           {lane.pipeline.name}
                         </p>
                       ) : null}
-                      <p className="mt-1 text-[12px] leading-5 text-muted">{lane.description}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted">{lane.description}</p>
                     </header>
 
                     <div className="space-y-2">
                       {items.length === 0 ? (
-                        <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-[12px] text-muted">
+                        <p className="rounded-[8px] border border-dashed border-border px-4 py-5 text-xs text-muted">
                           No sessions
                         </p>
                       ) : null}
@@ -324,17 +322,17 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                         <h2 className="truncate text-[14px] font-semibold text-foreground">
                           {lane.name}
                         </h2>
-                        <span className="font-mono text-[11px] tabular-nums text-muted">
+                        <span className="font-mono type-annotation tabular-nums text-muted">
                           {lane.totalCount}
                         </span>
                       </div>
                       <div className="min-w-0">
                         {!lane.pipeline.isDefault ? (
-                          <p className="mt-1 truncate text-[10px] font-medium text-muted">
+                          <p className="mt-1 truncate type-annotation font-medium text-muted">
                             {lane.pipeline.name}
                           </p>
                         ) : null}
-                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted">
+                        <p className="mt-1 line-clamp-2 type-annotation leading-4 text-muted">
                           {lane.description}
                         </p>
                       </div>
@@ -342,7 +340,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
 
                     <div className="flex flex-1 flex-col gap-2">
                       {items.length === 0 ? (
-                        <p className="py-8 text-[12px] text-muted">No sessions</p>
+                        <p className="py-8 text-xs text-muted">No sessions</p>
                       ) : null}
 
                       {items.map((card) => (
@@ -400,14 +398,14 @@ function PipelineLanePagination({
   return (
     <div className="pt-1">
       {error ? (
-        <p className="mb-2 text-[11px] leading-4 text-danger" role="alert">
+        <p className="mb-2 text-xs leading-4 text-danger" role="alert">
           {error}
         </p>
       ) : null}
       {lane.cursor ? (
         <button
           aria-label={`Load more ${lane.name} sessions`}
-          className="ui-button w-full text-[12px]"
+          className="ui-button w-full"
           disabled={isLoading}
           onClick={() => void onLoadMore(lane)}
           type="button"
@@ -455,11 +453,11 @@ function PipelineCard({
         </h3>
         <SessionPhaseStatusLabel
           status={card.phaseStatus}
-          className="mt-[3px] max-w-[72px] shrink-0 text-right text-[11px] font-medium leading-4"
+          className="mt-[3px] max-w-[72px] shrink-0 text-right text-xs font-medium leading-4"
         />
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted">
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 type-annotation text-muted">
         <SessionConnections
           className="relative z-20"
           compact

@@ -277,10 +277,10 @@ export function WorkspaceMembersSection({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground">
                       {memberDisplayName(member)}
-                      {isSelf ? <span className="ml-2 text-[12px] text-muted">(you)</span> : null}
+                      {isSelf ? <span className="ml-2 text-xs text-muted">(you)</span> : null}
                     </p>
                     {member.email ? (
-                      <p className="truncate text-[12px] leading-5 text-muted">{member.email}</p>
+                      <p className="truncate text-xs leading-5 text-muted">{member.email}</p>
                     ) : null}
                   </div>
                   {canManageRow ? (
@@ -342,7 +342,7 @@ export function WorkspaceMembersSection({
                           <StatusBadge tone="warning">Pending</StatusBadge>
                           <StatusBadge tone="neutral">{roleLabel(invitation.role)}</StatusBadge>
                         </div>
-                        <p className="mt-1 text-[12px] leading-5 text-muted">
+                        <p className="mt-1 text-xs leading-5 text-muted">
                           Sent {formatDate(invitation.lastSentAt)}. Expires{" "}
                           {formatDate(invitation.expiresAt)}.
                         </p>

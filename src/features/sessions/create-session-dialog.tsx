@@ -220,7 +220,7 @@ function CreateSessionDialogBody({
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-title">
-              Title <span className="text-[11px] font-normal text-muted">(optional)</span>
+              Title <span className="type-annotation font-normal text-muted">(optional)</span>
             </label>
             <input
               id="session-title"
@@ -241,11 +241,11 @@ function CreateSessionDialogBody({
               value={selectedGithubRepositoryId}
             />
           ) : repositoryLoading ? (
-            <div className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted">
+            <div className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-xs text-muted">
               Loading repositories...
             </div>
           ) : repositoryLoadError ? (
-            <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning">
+            <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning">
               {repositoryLoadError}
             </div>
           ) : null}
@@ -253,7 +253,7 @@ function CreateSessionDialogBody({
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
               Linear issue URL{" "}
-              <span className="text-[11px] font-normal text-muted">(optional)</span>
+              <span className="type-annotation font-normal text-muted">(optional)</span>
             </label>
             <input
               id="session-linear"
@@ -266,7 +266,7 @@ function CreateSessionDialogBody({
               placeholder="https://linear.app/acme/issue/TEAM-123"
               type="url"
             />
-            {linearError ? <p className="text-[11px] text-danger">{linearError}</p> : null}
+            {linearError ? <p className="text-xs text-danger">{linearError}</p> : null}
           </div>
 
           {errorMessage ? (

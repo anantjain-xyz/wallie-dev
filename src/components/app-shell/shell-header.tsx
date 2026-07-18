@@ -85,7 +85,7 @@ function WorkspaceAvatar({ name, url }: { name: string; url: string | null }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-border bg-surface-strong text-[11px] font-semibold text-foreground"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-border bg-surface-strong type-annotation font-semibold text-foreground"
     >
       {initial}
     </span>

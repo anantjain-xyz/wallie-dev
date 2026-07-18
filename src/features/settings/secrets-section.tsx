@@ -147,7 +147,7 @@ export function WorkspaceSecretsPanel({
             >
               <div className="space-y-0.5">
                 <p className="text-[13px] font-medium text-foreground">{secret.key}</p>
-                <p className="font-mono text-[12px] text-muted">
+                <p className="font-mono text-xs text-muted">
                   {secret.valuePreview ?? "preview unavailable"}
                 </p>
               </div>

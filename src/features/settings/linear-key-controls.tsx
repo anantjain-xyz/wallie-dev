@@ -145,7 +145,7 @@ export function LinearKeyControls({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
             <p className="text-[13px] font-medium text-foreground">Linear API key configured</p>
-            <p className="font-mono text-[12px] text-muted">
+            <p className="font-mono text-xs text-muted">
               {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
               {dateFormatter.format(new Date(linearSecret.updatedAt))}
             </p>

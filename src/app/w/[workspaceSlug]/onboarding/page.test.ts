@@ -6,8 +6,8 @@ import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 const mocked = vi.hoisted(() => ({
   OnboardingPageClient: vi.fn(() => null),
-  loadWorkspaceLayoutContext: vi.fn(),
-  loadWorkspaceOnboardingData: vi.fn(),
+  loadAuthenticatedWorkspaceContext: vi.fn(),
+  loadWorkspaceOnboardingDataForContext: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error("not-found");
   }),
@@ -21,12 +21,12 @@ vi.mock("next/navigation", () => ({
   redirect: mocked.redirect,
 }));
 
-vi.mock("@/features/workspaces/workspace-layout-data", () => ({
-  loadWorkspaceLayoutContext: mocked.loadWorkspaceLayoutContext,
+vi.mock("@/features/workspaces/authenticated-context", () => ({
+  loadAuthenticatedWorkspaceContext: mocked.loadAuthenticatedWorkspaceContext,
 }));
 
 vi.mock("@/features/onboarding/data", () => ({
-  loadWorkspaceOnboardingData: mocked.loadWorkspaceOnboardingData,
+  loadWorkspaceOnboardingDataForContext: mocked.loadWorkspaceOnboardingDataForContext,
 }));
 
 vi.mock("@/features/onboarding/onboarding-page-client", () => ({
@@ -156,10 +156,14 @@ const onboardingData = {
 
 describe("workspace onboarding page", () => {
   it("renders member-accessible onboarding data without the app shell", async () => {
-    mocked.loadWorkspaceLayoutContext.mockResolvedValue({
+    const authenticatedContext = {
       workspace: { id: "workspace-1", name: "Northwind", slug: "northwind" },
+    };
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue(authenticatedContext);
+    mocked.loadWorkspaceOnboardingDataForContext.mockResolvedValue({
+      data: onboardingData,
+      ok: true,
     });
-    mocked.loadWorkspaceOnboardingData.mockResolvedValue({ data: onboardingData, ok: true });
 
     const element = (await WorkspaceOnboardingPage({
       params: Promise.resolve({ workspaceSlug: "northwind" }),
@@ -167,14 +171,14 @@ describe("workspace onboarding page", () => {
 
     expect(element.type).toBe(mocked.OnboardingPageClient);
     expect(element.props.initialData).toBe(onboardingData);
-    expect(mocked.loadWorkspaceOnboardingData).toHaveBeenCalledWith("workspace-1");
+    expect(mocked.loadWorkspaceOnboardingDataForContext).toHaveBeenCalledWith(authenticatedContext);
   });
 
   it("redirects when onboarding data reports an unauthenticated request", async () => {
-    mocked.loadWorkspaceLayoutContext.mockResolvedValue({
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
       workspace: { id: "workspace-2", name: "Southwind", slug: "southwind" },
     });
-    mocked.loadWorkspaceOnboardingData.mockResolvedValue({
+    mocked.loadWorkspaceOnboardingDataForContext.mockResolvedValue({
       error: "Sign in before managing workspace settings.",
       ok: false,
       status: 401,
@@ -188,10 +192,10 @@ describe("workspace onboarding page", () => {
   });
 
   it("returns not found when onboarding data cannot load for the workspace", async () => {
-    mocked.loadWorkspaceLayoutContext.mockResolvedValue({
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
       workspace: { id: "workspace-3", name: "Eastwind", slug: "eastwind" },
     });
-    mocked.loadWorkspaceOnboardingData.mockResolvedValue({
+    mocked.loadWorkspaceOnboardingDataForContext.mockResolvedValue({
       error: "Workspace not found.",
       ok: false,
       status: 404,

@@ -107,17 +107,17 @@ export function VercelSandboxConnectionSection({
               </StatusBadge>
             </div>
             {connection ? (
-              <p className="text-[12px] leading-5 text-muted">
+              <p className="text-xs leading-5 text-muted">
                 {connection.projectName ?? connection.projectId} on {connection.teamId}
                 {connection.tokenPreview ? ` - ${connection.tokenPreview}` : ""}
               </p>
             ) : (
-              <p className="text-[12px] leading-5 text-muted">
+              <p className="text-xs leading-5 text-muted">
                 Connect a Vercel project before running Wallie sessions.
               </p>
             )}
             {connection?.lastValidationError ? (
-              <p className="text-[12px] leading-5 text-danger">{connection.lastValidationError}</p>
+              <p className="text-xs leading-5 text-danger">{connection.lastValidationError}</p>
             ) : null}
           </div>
           {connection && canManage ? (

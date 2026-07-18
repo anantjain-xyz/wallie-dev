@@ -99,7 +99,7 @@ function CreatorAvatar({ displayName }: { displayName: string }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong text-[9px] font-semibold text-foreground"
+      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-surface-strong type-annotation font-semibold text-foreground"
     >
       {initial}
     </span>
@@ -471,7 +471,7 @@ export function SessionDetailPageClient({
         </button>
       </div>
       {archiveError ? (
-        <span className="text-[11px] text-danger" role="alert">
+        <span className="text-xs text-danger" role="alert">
           {archiveError}
         </span>
       ) : null}
@@ -480,7 +480,7 @@ export function SessionDetailPageClient({
     <div className="flex flex-col items-end gap-1">
       {archiveConfirming ? (
         <div className="flex items-center gap-2">
-          <span className="text-[12px] text-muted">Archive this session?</span>
+          <span className="text-xs text-muted">Archive this session?</span>
           <button
             type="button"
             className="ui-button-danger gap-1.5"
@@ -522,7 +522,7 @@ export function SessionDetailPageClient({
         </button>
       )}
       {archiveError ? (
-        <span className="text-[11px] text-danger" role="alert">
+        <span className="text-xs text-danger" role="alert">
           {archiveError}
         </span>
       ) : null}
@@ -558,7 +558,7 @@ export function SessionDetailPageClient({
         actions={headerActions}
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-muted">
+      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
         {creatorDisplayName ? (
           <>
             <span className="inline-flex items-center gap-1.5">
@@ -608,7 +608,7 @@ export function SessionDetailPageClient({
               <h2 className="text-[13px] font-semibold text-foreground">
                 {selectedStage?.name ?? selectedStageSlug} artifact
               </h2>
-              <p className="mt-0.5 text-[11px] text-muted">
+              <p className="mt-0.5 type-annotation text-muted">
                 {latestArtifact && canActOnCurrent
                   ? "Review this output before approving."
                   : (selectedStage?.description ?? "")}
@@ -617,7 +617,7 @@ export function SessionDetailPageClient({
             {selectedStageSlug === session.currentStageSlug ? (
               <SessionPhaseStatusLabel
                 status={session.phaseStatus}
-                className="shrink-0 text-[11px] leading-4 sm:text-right"
+                className="shrink-0 type-annotation leading-4 sm:text-right"
               />
             ) : null}
           </div>
@@ -645,7 +645,7 @@ export function SessionDetailPageClient({
                 <div
                   role="status"
                   aria-live="polite"
-                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger"
                 >
                   {actionError}
                 </div>
@@ -676,7 +676,7 @@ export function SessionDetailPageClient({
                 <div
                   role="status"
                   aria-live="polite"
-                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-[12px] text-danger"
+                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger"
                 >
                   {actionError}
                 </div>
@@ -685,7 +685,7 @@ export function SessionDetailPageClient({
               {feedbackOpen ? (
                 <div className="space-y-3">
                   <label
-                    className="block text-[12px] font-semibold text-foreground"
+                    className="block text-xs font-semibold text-foreground"
                     htmlFor="session-feedback"
                   >
                     Feedback for Wallie
@@ -760,16 +760,14 @@ export function SessionDetailPageClient({
         </section>
 
         <section className="rounded-[8px] border border-border bg-surface p-4">
-          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">Prompt</h2>
-          <pre className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-5 text-foreground">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Prompt</h2>
+          <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
             {session.promptMd || "No prompt recorded."}
           </pre>
         </section>
 
         <section className="rounded-[8px] border border-border bg-surface p-4">
-          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">
-            Run activity
-          </h2>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Run activity</h2>
           <div className="mt-3">{activity}</div>
         </section>
       </div>
@@ -901,7 +899,7 @@ function EditableSessionTitle({
           </div>
         </div>
         {error ? (
-          <p className="text-[12px] leading-4 text-danger" role="alert">
+          <p className="text-xs leading-4 text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -960,7 +958,7 @@ function StageRail({
               type="button"
               onClick={() => onSelect(entry.stage.slug)}
               className={cn(
-                "group flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
+                "group flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                 isSelected
                   ? "border-accent/40 bg-accent-soft text-accent"
                   : "border-border bg-surface text-foreground hover:bg-surface-muted",

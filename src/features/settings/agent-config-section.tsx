@@ -111,11 +111,11 @@ function AgentConfigField({
         </>
       )}
       {error ? (
-        <p className="text-[12px] leading-5 text-danger" role="alert">
+        <p className="text-xs leading-5 text-danger" role="alert">
           {error}
         </p>
       ) : (
-        <p className="text-[12px] leading-5 text-muted">{description}</p>
+        <p className="text-xs leading-5 text-muted">{description}</p>
       )}
     </div>
   );
@@ -320,7 +320,7 @@ export function AgentConfigSection({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-            <p className="text-[12px] text-muted">
+            <p className="text-xs text-muted">
               {dirtyFields.length === 0
                 ? "No unsaved changes."
                 : `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}.`}

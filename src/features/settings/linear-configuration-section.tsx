@@ -48,7 +48,7 @@ export function LinearConfigurationSection({
         <div className="space-y-4">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Linear API key</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Used for reading issues referenced in sessions and syncing status updates.
             </p>
           </div>
@@ -69,7 +69,7 @@ export function LinearConfigurationSection({
         <div className="space-y-4 border-t border-border pt-6">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Linear routing</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Map Linear workflow states to pipeline stages so Wallie syncs status correctly.
             </p>
           </div>

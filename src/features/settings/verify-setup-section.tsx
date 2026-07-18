@@ -54,7 +54,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             >
               <div className="min-w-0">
                 <p className="text-[13px] font-medium text-foreground">{item.label}</p>
-                <p className="mt-0.5 text-[12px] leading-5 text-muted">{item.detail}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <StatusBadge tone={item.statusTone ?? (item.passed ? "success" : "warning")}>
@@ -73,7 +73,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
         <div className="border-t border-border pt-6">
           <div className="mb-4 min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
-            <p className="mt-1 text-[12px] leading-5 text-muted">
+            <p className="mt-1 text-xs leading-5 text-muted">
               Run the check against the selected repository.
             </p>
           </div>
