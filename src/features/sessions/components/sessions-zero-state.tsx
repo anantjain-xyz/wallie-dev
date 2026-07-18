@@ -4,7 +4,7 @@ import { PlusIcon } from "@/components/shared/icons";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,
-} from "@/features/onboarding/flow";
+} from "@/features/onboarding/resume";
 import { workspaceOnboardingPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 

@@ -2,10 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  mergeFetchedArtifacts,
-  SessionDetailPageClient,
-} from "@/features/sessions/detail/session-detail-page-client";
+import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 
 const mocked = vi.hoisted(() => ({
@@ -107,6 +104,8 @@ describe("SessionDetailPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
         initialData: makeSessionDetailData(),
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
       }),
     );
 
@@ -120,6 +119,8 @@ describe("SessionDetailPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
         initialData: makeSessionDetailData(),
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
       }),
     );
 
@@ -134,6 +135,8 @@ describe("SessionDetailPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
         initialData: makeSessionDetailData(),
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
       }),
     );
 
@@ -148,6 +151,8 @@ describe("SessionDetailPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
         initialData: makeSessionDetailData(),
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
       }),
     );
 
@@ -163,6 +168,8 @@ describe("SessionDetailPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
         initialData: makeSessionDetailData(),
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
       }),
     );
 
@@ -185,53 +192,11 @@ describe("SessionDetailPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(SessionDetailPageClient, {
         initialData: data,
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
       }),
     );
 
     expect(html).toContain("Ada Lovelace");
-  });
-});
-
-describe("mergeFetchedArtifacts", () => {
-  it("keeps realtime artifacts when a stale history fetch returns", () => {
-    expect(
-      mergeFetchedArtifacts(
-        [
-          {
-            createdAt: "2026-06-07T11:01:00.000Z",
-            payload: { markdown: "realtime artifact" },
-            stageSlug: "build",
-            version: 2,
-          },
-        ],
-        [
-          {
-            createdAt: "2026-06-07T11:00:00.000Z",
-            payload: { markdown: "stale fetched artifact" },
-            stageSlug: "build",
-            version: 2,
-          },
-          {
-            createdAt: "2026-06-07T10:00:00.000Z",
-            payload: { markdown: "older fetched artifact" },
-            stageSlug: "build",
-            version: 1,
-          },
-        ],
-      ),
-    ).toEqual([
-      {
-        createdAt: "2026-06-07T11:01:00.000Z",
-        payload: { markdown: "realtime artifact" },
-        stageSlug: "build",
-        version: 2,
-      },
-      {
-        createdAt: "2026-06-07T10:00:00.000Z",
-        payload: { markdown: "older fetched artifact" },
-        stageSlug: "build",
-        version: 1,
-      },
-    ]);
   });
 });

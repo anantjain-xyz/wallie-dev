@@ -1,8 +1,5 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-
-import { createSessionPayloadSchema } from "@/features/sessions/create";
+import type { SessionTitleMutationResult } from "@/features/sessions/mutation-contracts";
 import { updateSessionTitleClientInputSchema } from "@/features/sessions/update-title";
-import type { Database } from "@/lib/supabase/database.types";
 import type { SessionRepositoryOption } from "@/features/sessions/types";
 
 export type CreateSessionInput = {
@@ -22,11 +19,7 @@ export type UpdateSessionTitleInput = {
   title: string;
 };
 
-export type UpdateSessionTitleResult = {
-  id: string;
-  title: string;
-  updatedAt: string;
-};
+export type UpdateSessionTitleResult = SessionTitleMutationResult;
 
 export type SessionArchiveResult = {
   archivedAt: string | null;
@@ -65,7 +58,6 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
 }
 
 export async function createSessionFromClient(
-  _supabase: SupabaseClient<Database>,
   input: CreateSessionInput,
 ): Promise<CreateSessionResult> {
   const trimmedPrompt = input.promptMd.trim();
@@ -73,13 +65,13 @@ export async function createSessionFromClient(
     throw new Error("Prompt is required.");
   }
 
-  const payload = createSessionPayloadSchema.parse({
+  const payload = {
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl: input.linearIssueUrl?.trim() || null,
     promptMd: trimmedPrompt,
     title: input.title?.trim() || null,
     workspaceId: input.workspaceId,
-  });
+  };
 
   const response = await fetch("/api/sessions", {
     body: JSON.stringify(payload),
