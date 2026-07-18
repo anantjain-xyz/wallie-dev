@@ -13,7 +13,6 @@ import {
   type SessionRepositoryOption,
 } from "@/features/sessions/types";
 import { workspaceSessionDetailPath } from "@/lib/routes";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 type CreateSessionDialogProps = {
   defaultGithubRepositoryId: string | null;
@@ -27,6 +26,15 @@ const LINEAR_URL_RE = /^https?:\/\/(?:[\w-]+\.)?linear\.app\//i;
 
 export function isSessionSubmitShortcut(event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey">) {
   return (event.metaKey || event.ctrlKey) && event.key === "Enter";
+}
+
+export function getLinearUrlError(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || LINEAR_URL_RE.test(trimmed)) {
+    return null;
+  }
+
+  return "Must be a linear.app URL.";
 }
 
 // When `open` is false the body does not mount, so all of its local state is
@@ -47,7 +55,6 @@ function CreateSessionDialogBody({
 }: CreateSessionDialogProps) {
   const titleId = useId();
   const router = useRouter();
-  const [supabase] = useState(() => createSupabaseBrowserClient());
 
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
@@ -59,19 +66,6 @@ function CreateSessionDialogBody({
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
 
   useEffect(() => {
     let canceled = false;
@@ -115,16 +109,7 @@ function CreateSessionDialogBody({
   }, [workspaceId]);
 
   function handleLinearBlur() {
-    const trimmed = linearUrl.trim();
-    if (!trimmed) {
-      setLinearError(null);
-      return;
-    }
-    if (!LINEAR_URL_RE.test(trimmed)) {
-      setLinearError("Must be a linear.app URL.");
-      return;
-    }
-    setLinearError(null);
+    setLinearError(getLinearUrlError(linearUrl));
   }
 
   const derivedTitle = deriveSessionTitleFromPrompt(prompt);
@@ -156,7 +141,9 @@ function CreateSessionDialogBody({
       return;
     }
 
-    if (linearUrl.trim() && linearError) {
+    const nextLinearError = getLinearUrlError(linearUrl);
+    if (nextLinearError) {
+      setLinearError(nextLinearError);
       setErrorMessage("Fix the Linear URL before submitting.");
       return;
     }
@@ -165,7 +152,7 @@ function CreateSessionDialogBody({
     setIsSubmitting(true);
 
     try {
-      const result = await createSessionFromClient(supabase, {
+      const result = await createSessionFromClient({
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
