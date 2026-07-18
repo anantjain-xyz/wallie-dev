@@ -190,6 +190,13 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
       ),
     [committedMutations, initialData.queryState.scope, initialData.sessions],
   );
+  const visibleSessions = useMemo(
+    () =>
+      initialData.queryState.scope === "archived"
+        ? sessions
+        : sessions.filter((session) => !hiddenArchivedSessionIds.has(session.id)),
+    [hiddenArchivedSessionIds, initialData.queryState.scope, sessions],
+  );
 
   function handleTitleCommitted(result: { id: string; title: string; updatedAt: string }) {
     setCommittedMutations((current) => [...current, { kind: "title", result }]);
@@ -417,7 +424,7 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
         </fieldset>
       </CommandBar>
 
-      {sessions.length === 0 ? (
+      {visibleSessions.length === 0 ? (
         !initialData.hasAnySession ? (
           <SessionsZeroState
             onboarding={initialData.onboarding}
@@ -434,25 +441,23 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
             </p>
           </div>
         )
-        ) : (
-          <SessionDetailLinkPrefetchBoundary>
-            <ul className="ui-sheet divide-y divide-border overflow-hidden">
-              {sessions
-                .filter((session) => !hiddenArchivedSessionIds.has(session.id))
-                .map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    initialNow={renderNow}
-                    onArchiveCommitted={handleArchiveCommitted}
-                    onArchiveRequested={handleArchiveRequested}
-                    onTitleCommitted={handleTitleCommitted}
-                    scope={initialData.queryState.scope}
-                    session={session}
-                    workspaceSlug={workspaceSlug}
-                  />
-                ))}
-            </ul>
-          </SessionDetailLinkPrefetchBoundary>
+      ) : (
+        <SessionDetailLinkPrefetchBoundary>
+          <ul className="ui-sheet divide-y divide-border overflow-hidden">
+            {visibleSessions.map((session) => (
+              <SessionRow
+                key={session.id}
+                initialNow={renderNow}
+                onArchiveCommitted={handleArchiveCommitted}
+                onArchiveRequested={handleArchiveRequested}
+                onTitleCommitted={handleTitleCommitted}
+                scope={initialData.queryState.scope}
+                session={session}
+                workspaceSlug={workspaceSlug}
+              />
+            ))}
+          </ul>
+        </SessionDetailLinkPrefetchBoundary>
       )}
 
       {initialData.hasMore && initialData.nextCursor ? (

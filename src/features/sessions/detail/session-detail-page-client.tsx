@@ -64,6 +64,18 @@ type SessionDetailPageClientProps = {
   initialNow?: string;
 };
 
+type ArchiveUndoVersion = {
+  archivedAt: string | null;
+  updatedAt: string;
+};
+
+function isCurrentArchiveVersion(
+  session: Pick<SessionReviewSession, "archivedAt" | "updatedAt">,
+  version: ArchiveUndoVersion,
+) {
+  return session.archivedAt === version.archivedAt && session.updatedAt === version.updatedAt;
+}
+
 function CreatorAvatar({ displayName }: { displayName: string }) {
   const initial = displayName.trim().charAt(0).toUpperCase() || "?";
   return (
@@ -185,6 +197,7 @@ export function SessionDetailPageClient({
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
@@ -579,6 +592,7 @@ export function SessionDetailPageClient({
 
   async function handleArchive() {
     if (archivePending !== null || phaseActionPending !== null) return;
+    archiveUndoVersionRef.current = null;
     setArchiveError(null);
     setArchivePending("archive");
     const optimisticPatch: SessionMutationPatch = {
@@ -592,7 +606,7 @@ export function SessionDetailPageClient({
     };
 
     try {
-      await runOptimisticMutation({
+      const result = await runOptimisticMutation({
         optimistic: () =>
           setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
         mutate: () => archiveSessionFromClient({ sessionId: session.id }),
@@ -609,11 +623,24 @@ export function SessionDetailPageClient({
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           ),
       });
+      const undoVersion = {
+        archivedAt: result.archivedAt,
+        updatedAt: result.updatedAt,
+      } satisfies ArchiveUndoVersion;
+      archiveUndoVersionRef.current = undoVersion;
       pushToast({
         action: {
           altText: `Undo archive for session #${session.number}`,
           label: "Undo",
-          onClick: () => void handleUnarchive(),
+          onClick: () => {
+            if (
+              archiveUndoVersionRef.current !== undoVersion ||
+              !isCurrentArchiveVersion(latestSessionRef.current, undoVersion)
+            ) {
+              return;
+            }
+            void handleUnarchive();
+          },
         },
         duration: 7000,
         priority: "polite",
@@ -636,6 +663,7 @@ export function SessionDetailPageClient({
 
   async function handleUnarchive() {
     if (phaseActionPending !== null || archivePending !== null) return;
+    archiveUndoVersionRef.current = null;
     const currentSession = latestSessionRef.current;
     setArchiveError(null);
     setArchivePending("unarchive");
