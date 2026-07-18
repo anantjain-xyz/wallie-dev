@@ -2,6 +2,7 @@
 
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 
+import { Status } from "@/components/ui/status";
 import { buildOnboardingRepositorySelectionPatch } from "@/features/onboarding/flow";
 import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
@@ -13,11 +14,11 @@ import {
   RepositoryMetadata,
   RepositorySetupControls,
   RepositorySetupMessages,
-  RepositorySetupStatusBadge,
+  RepositorySetupStatus,
 } from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import type {
   WorkspaceOnboardingConflictResponse,
   WorkspaceOnboardingMutationDelta,
@@ -353,8 +354,8 @@ export function RepositoryAnalysisSection({
                       >
                         {repository.fullName}
                       </a>
-                      {selected ? <StatusBadge tone="accent">Selected</StatusBadge> : null}
-                      <RepositorySetupStatusBadge status={repository.onboarding.status} />
+                      {selected ? <Status label="Selected" value="approved" /> : null}
+                      <RepositorySetupStatus status={repository.onboarding.status} />
                     </div>
                     <RepositoryMetadata repository={repository} />
                     {repository.description ? (

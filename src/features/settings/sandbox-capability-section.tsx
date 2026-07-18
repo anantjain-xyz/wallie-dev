@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { SelectField } from "@/components/ui/select";
+import { Status, type StatusValue } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { dateFormatter } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import type {
   SandboxCapabilityCheckLatestResponse,
   SandboxCapabilityCheckResponse,
@@ -24,6 +24,12 @@ type SandboxCapabilitySectionProps = {
   vercelSandboxConnected: boolean;
   workspaceId: string;
 };
+
+const sandboxStatusValues = {
+  error: "blocked",
+  running: "running",
+  success: "healthy",
+} satisfies Record<SandboxCapabilityCheckState["status"], StatusValue>;
 
 export function resolveSandboxRepositorySelection({
   currentRepositoryId,
@@ -222,20 +228,10 @@ export function SandboxCapabilitySection({
       {check ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[13px] font-medium text-foreground">
-              Latest check:{" "}
-              <span
-                className={
-                  check.status === "success"
-                    ? "text-success"
-                    : check.status === "error"
-                      ? "text-danger"
-                      : "text-muted"
-                }
-              >
-                {formatSentenceCaseLabel(check.status)}
-              </span>
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-[13px] font-medium text-foreground">Latest check</p>
+              <Status compact value={sandboxStatusValues[check.status]} />
+            </div>
             <p className="text-xs text-muted">{dateFormatter.format(new Date(check.checkedAt))}</p>
           </div>
           {check.errorText ? (
@@ -243,19 +239,20 @@ export function SandboxCapabilitySection({
           ) : null}
           <div className="grid gap-2 md:grid-cols-2">
             {Object.entries(check.capabilities).map(([name, result]) => {
-              const hasDetail = Boolean(result?.detail);
-              const tone = result?.ok
-                ? "border-success/20 bg-success-soft text-success"
-                : hasDetail
-                  ? "border-danger/20 bg-danger-soft text-danger"
-                  : "border-border bg-control-muted text-muted";
+              const value: StatusValue = result?.ok
+                ? "healthy"
+                : result?.detail
+                  ? "blocked"
+                  : "not_started";
               return (
-                <div
-                  className={`rounded-[6px] border px-3 py-2 text-xs leading-5 ${tone}`}
-                  key={name}
-                >
-                  <p className="font-semibold">{name}</p>
-                  <p>{result?.detail ?? "No detail recorded."}</p>
+                <div className="rounded-[6px] border border-border px-3 py-2" key={name}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-foreground">{name}</p>
+                    <Status compact value={value} />
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    {result?.detail ?? "No detail recorded."}
+                  </p>
                 </div>
               );
             })}

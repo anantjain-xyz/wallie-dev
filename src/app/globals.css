@@ -614,39 +614,61 @@
     border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
   }
 
-  /* Fully rounded treatment is reserved for state/status. */
+  /* Fully rounded treatment is reserved for product status. */
   .ui-status {
-    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply rounded-full;
   }
 
-  .ui-status-success {
-    background: var(--success-soft);
-    color: var(--success);
+  .ui-status-progress-value {
+    width: var(--status-progress);
   }
 
-  .ui-status-warning {
-    background: var(--warning-soft);
-    color: var(--warning);
+  [data-status-simulation="achromatopsia"] {
+    filter: grayscale(1);
   }
 
-  .ui-status-danger {
-    background: var(--danger-soft);
-    color: var(--danger);
+  [data-status-simulation="deuteranopia"] {
+    filter: url("#status-deuteranopia");
   }
 
-  .ui-status-neutral {
-    background: var(--control-muted);
-    color: var(--muted);
+  [data-status-simulation="protanopia"] {
+    filter: url("#status-protanopia");
   }
 
-  .ui-status-accent {
-    background: var(--accent-soft);
-    color: var(--accent);
+  [data-status-simulation="tritanopia"] {
+    filter: url("#status-tritanopia");
   }
 
-  .ui-status-dot {
-    @apply inline-block h-1.5 w-1.5 rounded-full;
-    background: currentColor;
+  [data-status-zoom="200"] {
+    zoom: 2;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="attention"],
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="progress"] {
+    border-color: Highlight;
+    color: Highlight;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="danger"],
+  [data-status-simulation="forced-colors"] .ui-status[data-tone="warning"] {
+    border-style: double;
+    border-width: 3px;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status-progress {
+    border: 1px solid currentColor;
+    background: Canvas;
+  }
+
+  [data-status-simulation="forced-colors"] .ui-status-progress-value {
+    background: Highlight;
   }
 
   .settings-anchor-group {
@@ -861,6 +883,36 @@
 
   .issue-textarea:focus {
     @apply border-border bg-sheet px-3 py-2;
+  }
+}
+
+@media (forced-colors: active) {
+  .ui-status {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .ui-status[data-tone="attention"],
+  .ui-status[data-tone="progress"] {
+    border-color: Highlight;
+    color: Highlight;
+  }
+
+  .ui-status[data-tone="danger"],
+  .ui-status[data-tone="warning"] {
+    border-style: double;
+    border-width: 3px;
+  }
+
+  .ui-status-progress {
+    border: 1px solid currentColor;
+    background: Canvas;
+  }
+
+  .ui-status-progress-value {
+    background: Highlight;
   }
 }
 

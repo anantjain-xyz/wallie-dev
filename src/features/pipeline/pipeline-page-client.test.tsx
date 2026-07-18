@@ -28,10 +28,6 @@ vi.mock("@/features/sessions/components/session-connections", () => ({
   SessionConnections: () => null,
 }));
 
-vi.mock("@/features/sessions/components/session-phase-status-label", () => ({
-  SessionPhaseStatusLabel: ({ status }: { status: string }) => <span>{status}</span>,
-}));
-
 vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
   SessionsZeroState: () => <p>No sessions</p>,
 }));

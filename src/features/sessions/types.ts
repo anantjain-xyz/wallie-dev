@@ -7,13 +7,6 @@ import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 
 export type SessionPhaseStatus = PipelinePhaseStatus;
 
-export const SESSION_PHASE_STATUS_LABELS: Record<SessionPhaseStatus, string> = {
-  agent_generating: "Drafting",
-  awaiting_review: "Awaiting review",
-  approved: "Approved",
-  rejected: "Rejected",
-};
-
 export type PipelineStage = {
   approverMemberIds: string[];
   description: string;
@@ -119,22 +112,6 @@ export function stageIndex(pipeline: SessionPipeline, stageSlug: string): number
 export function isTerminalStage(pipeline: SessionPipeline, stageSlug: string): boolean {
   if (pipeline.stages.length === 0) return false;
   return pipeline.stages[pipeline.stages.length - 1]!.slug === stageSlug;
-}
-
-export function sessionPhaseStatusTone(
-  status: SessionPhaseStatus,
-): "attention" | "blocked" | "planned" | "ready" {
-  if (status === "approved") return "ready";
-  // Awaiting review is the one state that needs a human to act, so it gets its
-  // own call-to-action tone rather than sharing the passive "planned" muted
-  // styling with agent_generating ("Drafting").
-  if (status === "awaiting_review") return "attention";
-  if (status === "rejected") return "blocked";
-  return "planned";
-}
-
-export function formatSessionPhaseStatus(status: SessionPhaseStatus): string {
-  return SESSION_PHASE_STATUS_LABELS[status];
 }
 
 export function deriveSessionTitleFromPrompt(prompt: string): string {

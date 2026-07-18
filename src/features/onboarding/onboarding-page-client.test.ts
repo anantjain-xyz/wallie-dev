@@ -472,12 +472,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(noCheckHtml).toMatch(
-      /class="ui-status whitespace-nowrap ui-status-neutral"><span class="ui-status-dot"><\/span>No check/,
-    );
-    expect(errorHtml).toMatch(
-      /class="ui-status whitespace-nowrap ui-status-danger"><span class="ui-status-dot"><\/span>Error/,
-    );
+    expect(noCheckHtml).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*No check/);
+    expect(errorHtml).toMatch(/data-status="blocked" data-tone="danger"[^>]*>.*Error/);
   });
 
   it("renders sandbox health check times as relative copy", () => {
@@ -1292,7 +1288,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('aria-label="New variable name"');
     expect(html).not.toContain("border-t border-border bg-control-hover px-4 py-4");
     expect(html).toContain("Not set");
-    expect(html).toContain('ui-status-neutral"><span class="ui-status-dot"></span>Not set');
+    expect(html).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*Not set/);
     expect(html).not.toContain("Needs value");
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
@@ -1700,6 +1696,7 @@ describe("OnboardingPageClient", () => {
 
     expect(running).toContain("Checking…");
     expect(running).toContain(">Running</span>");
+    expect(running).toMatch(/data-status="running" data-tone="progress"/);
     expect(running).toContain("disabled");
     expect(failed).toContain(">Failed</span>");
     expect(failed).toContain("Retry capability check");

@@ -2,9 +2,10 @@
 
 import type { Dispatch, SetStateAction } from "react";
 
+import { Status } from "@/components/ui/status";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
-import { interactiveLinkClass, Section, StatusBadge } from "@/features/settings/settings-ui";
+import { interactiveLinkClass, Section } from "@/features/settings/settings-ui";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
 type LinearKeySectionProps = {
@@ -24,9 +25,9 @@ export function LinearKeySection({
 }: LinearKeySectionProps) {
   const statusBadge = canManage ? (
     linearSecret ? (
-      <StatusBadge tone="success">Connected</StatusBadge>
+      <Status label="Connected" value="healthy" />
     ) : (
-      <StatusBadge tone="neutral">Not connected</StatusBadge>
+      <Status label="Not connected" value="not_started" />
     )
   ) : null;
 

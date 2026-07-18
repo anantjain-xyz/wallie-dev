@@ -2,8 +2,8 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { Status, type StatusValue } from "@/components/ui/status";
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
-import { formatSentenceCaseLabel } from "@/lib/labels";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 export interface CodexConnectionStatus {
@@ -40,11 +40,37 @@ interface CodexConnectionPanelProps {
   workspaceId?: string;
 }
 
+const codexDeviceFlowStatusValues = {
+  authenticated: "complete",
+  canceled: "canceled",
+  error: "failed",
+  expired: "failed",
+  prompted: "running",
+  starting: "running",
+} satisfies Record<CodexDeviceFlow["status"], StatusValue>;
+
 const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "chatgpt_auth_json",
   "codex_access_token",
   "platform_api_key",
 ];
+
+function deviceFlowMessage(deviceFlow: CodexDeviceFlow) {
+  switch (deviceFlow.status) {
+    case "starting":
+      return "Waiting for sign-in code…";
+    case "prompted":
+      return deviceFlow.userCode ? "Enter this code in ChatGPT" : "Waiting for sign-in code…";
+    case "authenticated":
+      return "ChatGPT sign-in succeeded.";
+    case "canceled":
+      return "ChatGPT sign-in was canceled.";
+    case "error":
+      return deviceFlow.error ?? "ChatGPT sign-in failed. Try again.";
+    case "expired":
+      return "ChatGPT sign-in expired. Start again.";
+  }
+}
 
 export function ChatGptSubscriptionControls({
   blocked,
@@ -88,15 +114,8 @@ export function ChatGptSubscriptionControls({
 
       {deviceFlow ? (
         <div className="space-y-2 rounded-[6px] border border-border bg-sheet p-3">
-          <p className="text-xs font-medium text-foreground">
-            {deviceFlow.status === "starting"
-              ? "Waiting for sign-in code…"
-              : deviceFlow.status === "prompted"
-                ? deviceFlow.userCode
-                  ? "Enter this code in ChatGPT"
-                  : "Waiting for sign-in code…"
-                : formatSentenceCaseLabel(deviceFlow.status)}
-          </p>
+          <Status compact value={codexDeviceFlowStatusValues[deviceFlow.status]} />
+          <p className="text-xs font-medium text-foreground">{deviceFlowMessage(deviceFlow)}</p>
           {deviceFlow.userCode ? (
             <p className="font-mono text-[22px] font-semibold tracking-normal text-foreground">
               {deviceFlow.userCode}
@@ -371,13 +390,13 @@ export function CodexConnectionPanel({
   const chatGptBlocked =
     !workspaceId || !vercelSandboxConnection || vercelSandboxConnection.status !== "connected";
 
-  const connectionTone: "connected" | "expired" | "reconnect" | null = status
+  const connectionValue: StatusValue | null = status
     ? status.reconnectRequired
-      ? "reconnect"
+      ? "needs_attention"
       : status.expired
-        ? "expired"
+        ? "blocked"
         : status.connected
-          ? "connected"
+          ? "healthy"
           : null
     : null;
   const showForm = !status?.connected;
@@ -388,21 +407,30 @@ export function CodexConnectionPanel({
       {notice ? <p className="text-[13px] leading-5 text-success">{notice}</p> : null}
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
-      {status === null ? <p className="text-[13px] text-muted">Checking connection…</p> : null}
+      {status === null ? <Status label="Checking connection" value="running" /> : null}
 
-      {status && connectionTone ? (
+      {status && !connectionValue ? <Status label="Not connected" value="not_started" /> : null}
+
+      {status && connectionValue ? (
         <div className="flex items-center justify-between gap-3">
-          <p className="flex min-w-0 items-center gap-2 text-[13px]">
-            <span
-              aria-hidden
-              className={`h-2 w-2 shrink-0 rounded-full ${dotClass(connectionTone)}`}
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-[13px]">
+            <Status
+              compact
+              label={
+                status.reconnectRequired
+                  ? "Needs attention"
+                  : status.expired
+                    ? "Expired"
+                    : "Connected"
+              }
+              value={connectionValue}
             />
             <span className="truncate font-medium text-foreground">
               {activeCredentialLabel ?? "Codex credential"}
             </span>
             <span className="text-muted">·</span>
             <span className="truncate text-muted">{statusSecondary(status)}</span>
-          </p>
+          </div>
           <button
             type="button"
             className="text-xs text-muted underline-offset-2 transition-colors hover:text-danger hover:underline disabled:cursor-not-allowed disabled:opacity-50"
@@ -512,17 +540,6 @@ export function CodexConnectionPanel({
       ) : null}
     </div>
   );
-}
-
-function dotClass(tone: "connected" | "expired" | "reconnect"): string {
-  switch (tone) {
-    case "connected":
-      return "bg-accent";
-    case "expired":
-      return "bg-danger";
-    case "reconnect":
-      return "bg-warning";
-  }
 }
 
 function statusSecondary(status: CodexConnectionStatus): string {

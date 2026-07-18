@@ -3,9 +3,10 @@
 import { useState } from "react";
 
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { Section, StatusBadge } from "@/features/settings/settings-ui";
+import { Section } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
 import type {
   VercelSandboxConnectionPreview,
@@ -111,9 +112,10 @@ export function VercelSandboxConnectionSection({
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-[13px] font-medium text-foreground">Vercel Sandbox</p>
-              <StatusBadge tone={connectionStatusTone(connection)}>
-                {connectionStatusLabel(connection)}
-              </StatusBadge>
+              <Status
+                label={connectionStatusLabel(connection)}
+                value={configurationStatusFromTone(connectionStatusTone(connection))}
+              />
             </div>
             {connection ? (
               <p className="text-xs leading-5 text-muted">

@@ -382,6 +382,34 @@ describe("Settings integration sections", () => {
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in with ChatGPT<\/button>/);
   });
 
+  it.each([
+    ["authenticated", "ChatGPT sign-in succeeded."],
+    ["canceled", "ChatGPT sign-in was canceled."],
+    ["error", "ChatGPT sign-in failed. Try again."],
+    ["expired", "ChatGPT sign-in expired. Start again."],
+  ] as const)("renders explicit %s device-flow copy", (status, expectedCopy) => {
+    const html = renderToStaticMarkup(
+      createElement(ChatGptSubscriptionControls, {
+        blocked: false,
+        deviceFlow: {
+          error: null,
+          expiresAt: "2026-05-16T18:05:00.000Z",
+          flowId: "flow-1",
+          instructions: null,
+          status,
+          userCode: null,
+          verificationUri: null,
+        },
+        isBusy: false,
+        onCancel: vi.fn(),
+        onStart: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain(expectedCopy);
+    expect(html).not.toContain("ChatGPT sign-in finished.");
+  });
+
   it("renders Settings anchors grouped under noun labels", () => {
     const html = renderToStaticMarkup(
       createElement(SettingsPageClient, {

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
 import {
   appendPipelineBoardLanePage,
   reconcilePipelineDashboardLanes,
@@ -20,7 +21,6 @@ import {
   SessionDetailLink,
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
-import { SessionPhaseStatusLabel } from "@/features/sessions/components/session-phase-status-label";
 import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import { type SessionPhaseStatus } from "@/features/sessions/types";
 import { workspaceBasePath, workspaceSessionDetailPath } from "@/lib/routes";
@@ -436,9 +436,8 @@ function PipelineCard({
         // the board for work that needs them.
         card.phaseStatus === "awaiting_review" &&
           "border-accent/40 border-l-2 border-l-accent bg-accent-soft hover:bg-accent-soft",
-        // Rejection is a routine part of the loop (it just reruns the stage), so
-        // calm it down: a thin muted danger edge instead of the old full red
-        // border. The red "Rejected" chip still carries the status.
+        // Changes requested is a routine part of the loop, so use a thin warning
+        // edge while the typed status carries the explicit text and icon.
         card.phaseStatus === "rejected" && "border-l-2 border-l-danger/40",
       )}
     >
@@ -451,9 +450,10 @@ function PipelineCard({
         <h3 className="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground">
           <span className="line-clamp-3 break-words">{card.title}</span>
         </h3>
-        <SessionPhaseStatusLabel
-          status={card.phaseStatus}
-          className="mt-[3px] max-w-[72px] shrink-0 text-right text-xs font-medium leading-4"
+        <Status
+          compact
+          value={sessionPhaseStatusValue(card.phaseStatus)}
+          className="mt-[1px] shrink-0"
         />
       </div>
 
