@@ -8,6 +8,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import { enqueueWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
+import { workspaceSessionDetailPath } from "@/lib/routes";
 
 export const preferredRegion = "home";
 
@@ -278,6 +279,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
+        canonicalUrl: workspaceSessionDetailPath(access.context.workspace.slug, sessionRow.number),
         number: sessionRow.number,
         processScheduled: result.created && result.jobId !== null,
       },

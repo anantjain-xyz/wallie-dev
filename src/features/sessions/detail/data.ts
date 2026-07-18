@@ -53,6 +53,8 @@ export type SessionReviewSession = {
   pipeline: SessionReviewPipeline;
   promptMd: string;
   pullRequests: SessionConnectionPullRequest[];
+  /** Client-only reconciliation metadata populated by mutation/realtime responses. */
+  rejectionCount?: number;
   title: string;
   updatedAt: string;
 };
