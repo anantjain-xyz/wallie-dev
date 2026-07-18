@@ -44,7 +44,7 @@ function successText(payload: MaintenanceTickResponse): string {
 
 function SummaryCell({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-[6px] border border-border bg-background px-3 py-2">
+    <div className="flex flex-col gap-1 rounded-[6px] border border-border bg-canvas px-3 py-2">
       <span className="type-label text-muted">{label}</span>
       <span className="text-[13px] font-semibold text-foreground">{value}</span>
     </div>
@@ -73,7 +73,7 @@ export function MaintenancePanel({
   }
 
   return (
-    <div className="mt-6 rounded-[10px] border border-border bg-surface px-5 py-4">
+    <div className="mt-6 rounded-[6px] border border-border bg-sheet px-5 py-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-foreground">Maintenance</h3>

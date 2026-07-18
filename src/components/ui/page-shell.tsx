@@ -1,6 +1,12 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+
+/**
+ * Precision Console layout vocabulary. Canvas comes from the page, Sheet is
+ * the sole routine content surface, and floating overlay primitives live in
+ * their dedicated modules. Rules and spacing subdivide a Sheet; never nest it.
+ */
 
 type PageContainerProps = {
   children: ReactNode;
@@ -63,6 +69,87 @@ export function PageHeader({
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </header>
+  );
+}
+
+type CommandBarProps = HTMLAttributes<HTMLDivElement> & {
+  children: ReactNode;
+};
+
+export function CommandBar({ children, className, ...props }: CommandBarProps) {
+  return (
+    <div className={cn("ui-command-bar", className)} {...props}>
+      {children}
+    </div>
+  );
+}
+
+type SheetProps = HTMLAttributes<HTMLElement> & {
+  children: ReactNode;
+};
+
+/** Primary content surface. Do not nest Sheet inside Sheet. */
+export function Sheet({ children, className, ...props }: SheetProps) {
+  return (
+    <section className={cn("ui-sheet", className)} {...props}>
+      {children}
+    </section>
+  );
+}
+
+type MetadataListProps = HTMLAttributes<HTMLDListElement> & {
+  children: ReactNode;
+};
+
+export function MetadataList({ children, className, ...props }: MetadataListProps) {
+  return (
+    <dl className={cn("ui-metadata-list", className)} {...props}>
+      {children}
+    </dl>
+  );
+}
+
+type MetadataItemProps = HTMLAttributes<HTMLDivElement> & {
+  label: ReactNode;
+  monospace?: boolean;
+  value: ReactNode;
+};
+
+export function MetadataItem({
+  className,
+  label,
+  monospace = false,
+  value,
+  ...props
+}: MetadataItemProps) {
+  return (
+    <div className={cn("ui-metadata-item", className)} {...props}>
+      <dt className="ui-metadata-term">{label}</dt>
+      <dd className={cn("ui-metadata-value", monospace && "font-mono")}>{value}</dd>
+    </div>
+  );
+}
+
+export type StatusTone = "accent" | "danger" | "neutral" | "success" | "warning";
+
+type StatusProps = HTMLAttributes<HTMLSpanElement> & {
+  children: ReactNode;
+  tone?: StatusTone;
+  withDot?: boolean;
+};
+
+export function Status({
+  children,
+  className,
+  tone = "neutral",
+  withDot = true,
+  ...props
+}: StatusProps) {
+  return (
+    <span className={cn("ui-status", `ui-status-${tone}`, className)} {...props}>
+      {withDot ? <span aria-hidden="true" className="ui-status-dot" /> : null}
+      {children}
+    </span>
   );
 }
 

@@ -190,7 +190,7 @@ export function GitHubConnectionPanel({
     return (
       <div className="space-y-6">
         {hasGitHubAppConfig ? null : (
-          <div className="space-y-3 rounded-[8px] border border-border bg-surface-strong px-5 py-4">
+          <div className="space-y-3 rounded-[6px] border border-border bg-control-hover px-5 py-4">
             <p className="text-[14px] font-semibold text-foreground">
               Wallie needs a GitHub App to read your repositories
             </p>

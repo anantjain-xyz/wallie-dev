@@ -42,7 +42,7 @@ describe("SandboxCapabilitySection capability tiles", () => {
 
     // The missing-detail tile must not be styled as a danger/failure tile.
     expect(markup).toContain("No detail recorded.");
-    expect(markup).toContain("bg-surface-muted");
+    expect(markup).toContain("bg-control-muted");
     expect(markup).not.toContain("bg-danger-soft");
   });
 

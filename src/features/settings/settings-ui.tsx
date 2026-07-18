@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { PageSection } from "@/components/ui/page-shell";
+import { PageSection, Status } from "@/components/ui/page-shell";
 import type { WorkspaceUsageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { formatSentenceCaseLabel } from "@/lib/labels";
@@ -29,19 +29,10 @@ export function StatusBadge({
   tone: BadgeTone;
   withDot?: boolean;
 }) {
-  const toneClassName = {
-    success: "ui-badge-success",
-    warning: "ui-badge-warning",
-    danger: "ui-badge-danger",
-    neutral: "ui-badge-neutral",
-    accent: "ui-badge-accent",
-  }[tone];
-
   return (
-    <span className={`ui-badge ${toneClassName}`}>
-      {withDot ? <span className="ui-badge-dot" /> : null}
+    <Status tone={tone} withDot={withDot}>
       {typeof children === "string" ? formatSentenceCaseLabel(children) : children}
-    </span>
+    </Status>
   );
 }
 
@@ -95,7 +86,7 @@ export function AvatarFallback({ name }: { name: string }) {
   const initial = name.trim().charAt(0).toUpperCase() || "W";
 
   return (
-    <div className="flex h-16 w-16 items-center justify-center rounded-[10px] border border-border bg-surface-strong text-xl font-semibold text-foreground">
+    <div className="flex h-16 w-16 items-center justify-center rounded-[6px] border border-border bg-control-hover text-xl font-semibold text-foreground">
       {initial}
     </div>
   );
@@ -118,7 +109,7 @@ function UsageCell({ label, value }: { label: string; value: string }) {
 
 export function UsageSummary({ usage }: { usage: WorkspaceUsageData }) {
   return (
-    <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface sm:grid-cols-4 sm:divide-y-0">
+    <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-[6px] border border-border bg-sheet sm:grid-cols-4 sm:divide-y-0">
       <UsageCell label="Total runs" value={String(usage.totalRuns)} />
       <UsageCell label="Input tokens" value={formatTokens(usage.totalInputTokens)} />
       <UsageCell label="Output tokens" value={formatTokens(usage.totalOutputTokens)} />

@@ -36,7 +36,7 @@ export function ProviderAccessPanel({
 }: ProviderAccessPanelProps) {
   const className =
     variant === "card"
-      ? "rounded-[6px] border border-border bg-surface p-4"
+      ? "rounded-[6px] border border-border bg-sheet p-4"
       : "border-t border-border pt-4";
 
   switch (provider) {

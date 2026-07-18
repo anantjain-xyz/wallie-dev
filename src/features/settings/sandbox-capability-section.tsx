@@ -248,7 +248,7 @@ export function SandboxCapabilitySection({
                 ? "border-success/20 bg-success-soft text-success"
                 : hasDetail
                   ? "border-danger/20 bg-danger-soft text-danger"
-                  : "border-border bg-surface-muted text-muted";
+                  : "border-border bg-control-muted text-muted";
               return (
                 <div
                   className={`rounded-[6px] border px-3 py-2 text-xs leading-5 ${tone}`}

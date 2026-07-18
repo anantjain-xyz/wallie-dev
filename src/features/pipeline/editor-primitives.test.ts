@@ -41,6 +41,20 @@ describe("pipeline editor primitives", () => {
       code: "missing-stage-name",
       ok: false,
     });
+
+    const multiStage = validatePipelineDraft({
+      name: "Default",
+      stages: [stage(), stage({ id: "stage-2", name: "", slug: "Bad Slug" })],
+    });
+    expect(multiStage).toMatchObject({
+      code: "missing-stage-name",
+      field: "stage-name",
+      ok: false,
+      stageIndex: 1,
+    });
+    if (!multiStage.ok) {
+      expect(multiStage.issues.map((issue) => issue.field)).toEqual(["stage-name", "stage-slug"]);
+    }
   });
 
   it("validates kebab-case slugs and duplicate stage slugs", () => {

@@ -473,10 +473,10 @@ describe("OnboardingPageClient", () => {
     );
 
     expect(noCheckHtml).toMatch(
-      /class="ui-badge whitespace-nowrap ui-badge-neutral"><span class="ui-badge-dot"><\/span>No check/,
+      /class="ui-status whitespace-nowrap ui-status-neutral"><span class="ui-status-dot"><\/span>No check/,
     );
     expect(errorHtml).toMatch(
-      /class="ui-badge whitespace-nowrap ui-badge-danger"><span class="ui-badge-dot"><\/span>Error/,
+      /class="ui-status whitespace-nowrap ui-status-danger"><span class="ui-status-dot"><\/span>Error/,
     );
   });
 
@@ -1290,9 +1290,9 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
     expect(html).toContain("Add variable");
     expect(html).not.toContain('aria-label="New variable name"');
-    expect(html).not.toContain("border-t border-border bg-surface-strong px-4 py-4");
+    expect(html).not.toContain("border-t border-border bg-control-hover px-4 py-4");
     expect(html).toContain("Not set");
-    expect(html).toContain('ui-badge-neutral"><span class="ui-badge-dot"></span>Not set');
+    expect(html).toContain('ui-status-neutral"><span class="ui-status-dot"></span>Not set');
     expect(html).not.toContain("Needs value");
     expect(html).not.toContain("Public/deployment");
     expect(html).not.toContain("Server env");
@@ -1470,7 +1470,7 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain("Runtime readiness");
     expect(html).not.toMatch(
-      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-badge/,
+      /Runtime readiness<\/h3><p[^>]*>Provider-specific requirements must pass before this step can complete\.<\/p><\/div><span class="ui-status/,
     );
   });
 

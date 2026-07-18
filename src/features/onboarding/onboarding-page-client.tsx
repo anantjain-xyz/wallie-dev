@@ -49,7 +49,7 @@ import { RepositoryProfileEditor } from "@/features/repository-profile/repositor
 import {
   mergeRepositoryOnboardingState,
   hasCurrentWallieSkills,
-  RepositoryMetadataPills,
+  RepositoryMetadata,
   RepositorySetupControls,
   RepositorySetupMessages,
   repositorySetupCanAdvance,
@@ -152,19 +152,19 @@ type NewSecretDraftRow = {
 };
 
 const badgeToneClasses: Record<HealthTone, string> = {
-  accent: "ui-badge-neutral",
-  danger: "ui-badge-danger",
-  neutral: "ui-badge-neutral",
-  success: "ui-badge-success",
-  warning: "ui-badge-warning",
+  accent: "ui-status-neutral",
+  danger: "ui-status-danger",
+  neutral: "ui-status-neutral",
+  success: "ui-status-success",
+  warning: "ui-status-warning",
 };
 
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   active: "bg-accent-soft text-accent",
-  available: "text-muted hover:bg-surface-strong hover:text-foreground",
+  available: "text-muted hover:bg-control-hover hover:text-foreground",
   blocked: "text-muted opacity-55",
-  completed: "text-muted hover:bg-surface-strong hover:text-foreground",
-  skipped: "text-muted hover:bg-surface-strong hover:text-foreground",
+  completed: "text-muted hover:bg-control-hover hover:text-foreground",
+  skipped: "text-muted hover:bg-control-hover hover:text-foreground",
 };
 
 function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
@@ -182,8 +182,8 @@ function StepStateIcon({ state }: { state: OnboardingStepDisplayState }) {
 
 function Badge({ children, tone }: { children: string; tone: HealthTone }) {
   return (
-    <span className={cn("ui-badge whitespace-nowrap", badgeToneClasses[tone])}>
-      <span className="ui-badge-dot" />
+    <span className={cn("ui-status whitespace-nowrap", badgeToneClasses[tone])}>
+      <span className="ui-status-dot" />
       {formatSentenceCaseLabel(children)}
     </span>
   );
@@ -217,14 +217,14 @@ function SecretValueInput({
 function HealthBadge({ children, tone }: { children: string; tone: HealthTone }) {
   const toneClassName =
     tone === "danger"
-      ? "ui-badge-danger"
+      ? "ui-status-danger"
       : tone === "success"
-        ? "ui-badge-success"
-        : "ui-badge-neutral";
+        ? "ui-status-success"
+        : "ui-status-neutral";
 
   return (
-    <span className={cn("ui-badge whitespace-nowrap", toneClassName)}>
-      <span className="ui-badge-dot" />
+    <span className={cn("ui-status whitespace-nowrap", toneClassName)}>
+      <span className="ui-status-dot" />
       {formatSentenceCaseLabel(children)}
     </span>
   );
@@ -728,7 +728,7 @@ function RuntimeRequirementList({
     <div className="space-y-2">
       {requirements.map((requirement) => (
         <div
-          className="flex items-start justify-between gap-3 rounded-[6px] border border-border bg-surface px-3 py-2"
+          className="flex items-start justify-between gap-3 rounded-[6px] border border-border bg-sheet px-3 py-2"
           key={requirement.id}
         >
           <div className="min-w-0">
@@ -837,7 +837,7 @@ export function OnboardingVercelSandboxPanel({
   }
 
   return (
-    <div className="rounded-[6px] border border-border bg-surface p-4" id="onboarding-vercel">
+    <div className="rounded-[6px] border border-border bg-sheet p-4" id="onboarding-vercel">
       <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-foreground">Vercel Sandbox</h3>
@@ -1290,7 +1290,7 @@ function RuntimeStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Agent config</h3>
@@ -1425,7 +1425,7 @@ function RuntimeStep({
       />
 
       <div className="space-y-4">
-        <div className="rounded-[6px] border border-border bg-surface">
+        <div className="rounded-[6px] border border-border bg-sheet">
           <div className="border-b border-border px-4 py-3">
             <h3 className="text-[14px] font-semibold text-foreground">
               Repository environment variables
@@ -1534,7 +1534,7 @@ function RuntimeStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div>
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Runtime readiness</h3>
@@ -1661,7 +1661,7 @@ function VerifyStep({
         </div>
       ) : null}
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Readiness checklist</h3>
@@ -1674,7 +1674,7 @@ function VerifyStep({
         <div className="mt-4 space-y-2">
           {checklist.map((item) => (
             <div
-              className="flex flex-col gap-3 rounded-[6px] border border-border bg-surface px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
+              className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
               key={item.id}
             >
               <div className="min-w-0">
@@ -1701,7 +1701,7 @@ function VerifyStep({
         </div>
       </div>
 
-      <div className="rounded-[6px] border border-border bg-surface p-4">
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold text-foreground">Sandbox capability</h3>
@@ -1792,7 +1792,7 @@ function RepositoryAnalysisStep({
 
   if (repositories.length === 0) {
     return (
-      <div className="rounded-[6px] border border-border bg-surface p-4">
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] leading-5 text-muted">
             Connect GitHub and sync repositories before analyzing repository setup.
@@ -1806,7 +1806,7 @@ function RepositoryAnalysisStep({
   }
 
   return (
-    <ul className="divide-y divide-border rounded-[10px] border border-border bg-surface">
+    <ul className="divide-y divide-border rounded-[6px] border border-border bg-sheet">
       {repositories.map((repository) => {
         const selected = selectedRepository?.id === repository.id;
         const showProfileEditor = selected && Boolean(profileDraft);
@@ -1834,7 +1834,7 @@ function RepositoryAnalysisStep({
                 {selected ? <Badge tone="accent">Selected</Badge> : null}
                 <RepositorySetupStatusBadge status={repository.onboarding.status} />
               </div>
-              <RepositoryMetadataPills repository={repository} />
+              <RepositoryMetadata repository={repository} />
               {repository.description ? (
                 <p className="text-[13px] leading-5 text-muted">{repository.description}</p>
               ) : null}
@@ -1888,7 +1888,7 @@ function RepositoryAnalysisStep({
                 profile={profileDraft}
               />
             ) : selected && profileAnalyzing ? (
-              <div className="rounded-[6px] border border-border bg-surface px-3 py-2 text-[13px] text-muted">
+              <div className="rounded-[6px] border border-border bg-sheet px-3 py-2 text-[13px] text-muted">
                 Analyzing repository…
               </div>
             ) : null}
@@ -2042,7 +2042,7 @@ function StepBody({
     controls = <VerifyStep data={data} onDataChange={onDataChange} onSelectStep={onSelectStep} />;
   } else {
     controls = (
-      <div className="rounded-[6px] border border-border bg-surface p-4">
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="min-w-0 text-[13px] leading-5 text-muted">
             Open the linked settings area to finish this step.
@@ -2119,7 +2119,7 @@ function MobileStepControl({
   }, [activeStepId]);
 
   return (
-    <div className="border-y border-border bg-surface px-4 py-2 lg:hidden">
+    <div className="border-y border-border bg-sheet px-4 py-2 lg:hidden">
       <div className="flex snap-x gap-2 overflow-x-auto scroll-px-4 pb-1" aria-label="Setup steps">
         {items.map((step) => (
           <button
@@ -2805,7 +2805,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
   }
 
   return (
-    <div className="flex min-h-[100svh] flex-col bg-surface text-foreground">
+    <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
       <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10">
         <div className="min-w-0 space-y-2">
           <h1 className="type-page-title">Set up {data.workspace.name}</h1>
@@ -2891,7 +2891,7 @@ export function OnboardingPageClient({ initialData }: OnboardingPageClientProps)
         <SetupHealthSummary health={data.setupHealth} />
       </main>
 
-      <footer className="sticky bottom-0 z-20 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur sm:px-6">
+      <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="mx-auto flex max-w-[1180px] justify-end">
           <div className="flex flex-wrap items-center gap-2">
             <button

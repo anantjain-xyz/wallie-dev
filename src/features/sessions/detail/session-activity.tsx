@@ -69,8 +69,8 @@ export async function SessionActivity({
 export function SessionActivityFallback() {
   return (
     <div aria-label="Loading run activity" className="space-y-2" role="status">
-      <div className="h-4 w-40 animate-pulse rounded bg-surface-muted" />
-      <div className="h-12 animate-pulse rounded border border-border bg-surface-muted" />
+      <div className="h-4 w-40 animate-pulse rounded bg-control-muted" />
+      <div className="h-12 animate-pulse rounded border border-border bg-control-muted" />
     </div>
   );
 }
