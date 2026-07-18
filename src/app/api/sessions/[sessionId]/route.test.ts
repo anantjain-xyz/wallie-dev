@@ -1,14 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
-  createSupabaseAdminClient: vi.fn(),
   createSupabaseServerClient: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
-  requireWorkspaceAccessById: vi.fn(),
-}));
-
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdminClient: mocked.createSupabaseAdminClient,
 }));
 
 vi.mock("@/lib/supabase/auth", () => ({
@@ -19,17 +13,11 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocked.createSupabaseServerClient,
 }));
 
-vi.mock("@/lib/workspaces/access", () => ({
-  requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
-}));
-
 import { PATCH } from "./route";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const UPDATED_AT = "2026-06-07T12:00:00.000Z";
-
-let currentAdminMock: ReturnType<typeof buildAdminMock>;
 
 function makeRequest(body: Record<string, unknown>) {
   return new Request(`http://localhost/api/sessions/${SESSION_ID}`, {
@@ -47,39 +35,6 @@ function buildSupabaseMock(
   opts: {
     sessionError?: { message: string } | null;
     sessionRow?: { id: string; workspace_id: string } | null;
-  } = {},
-) {
-  const sessionFilters: Array<[string, unknown]> = [];
-
-  return {
-    from(table: string) {
-      if (table !== "sessions") {
-        throw new Error(`unexpected supabase table ${table}`);
-      }
-
-      return {
-        select: () => ({
-          eq: (column: string, value: unknown) => {
-            sessionFilters.push([column, value]);
-            return {
-              maybeSingle: async () => ({
-                data:
-                  opts.sessionRow === undefined
-                    ? { id: SESSION_ID, workspace_id: WORKSPACE_ID }
-                    : opts.sessionRow,
-                error: opts.sessionError ?? null,
-              }),
-            };
-          },
-        }),
-      };
-    },
-    sessionFilters,
-  };
-}
-
-function buildAdminMock(
-  opts: {
     updateError?: { message: string } | null;
   } = {},
 ) {
@@ -89,17 +44,25 @@ function buildAdminMock(
   }> = [];
 
   return {
-    admin: {
+    client: {
       from(table: string) {
-        if (table !== "sessions") {
-          throw new Error(`unexpected admin table ${table}`);
-        }
+        if (table !== "sessions") throw new Error(`unexpected supabase table ${table}`);
 
         return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data:
+                  opts.sessionRow === undefined
+                    ? { id: SESSION_ID, workspace_id: WORKSPACE_ID }
+                    : opts.sessionRow,
+                error: opts.sessionError ?? null,
+              }),
+            }),
+          }),
           update: (row: Record<string, unknown>) => {
             const call = { filters: [] as Array<[string, unknown]>, row };
             updateCalls.push(call);
-
             const builder = {
               eq: (column: string, value: unknown) => {
                 call.filters.push([column, value]);
@@ -109,16 +72,11 @@ function buildAdminMock(
                 single: async () => ({
                   data: opts.updateError
                     ? null
-                    : {
-                        id: SESSION_ID,
-                        title: row.title,
-                        updated_at: UPDATED_AT,
-                      },
+                    : { id: SESSION_ID, title: row.title, updated_at: UPDATED_AT },
                   error: opts.updateError ?? null,
                 }),
               }),
             };
-
             return builder;
           },
         };
@@ -128,29 +86,18 @@ function buildAdminMock(
   };
 }
 
-function setupAccess() {
-  mocked.requireWorkspaceAccessById.mockResolvedValue({
-    context: {
-      currentMember: { id: "member-1", is_active: true, kind: "human", role: "member" },
-      supabase: {},
-      user: { id: "user-1" },
-      workspace: { id: WORKSPACE_ID, name: "Acme", slug: "acme" },
-    },
-    ok: true,
-  });
-}
-
 describe("PATCH /api/sessions/[sessionId]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    currentAdminMock = buildAdminMock();
-    mocked.createSupabaseAdminClient.mockReturnValue(currentAdminMock.admin);
-    mocked.createSupabaseServerClient.mockResolvedValue(buildSupabaseMock());
+    const supabase = buildSupabaseMock();
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
-    setupAccess();
   });
 
-  it("updates the trimmed title through a workspace-scoped admin write", async () => {
+  it("updates through the same authenticated RLS client and returns the reconciliation row", async () => {
+    const supabase = buildSupabaseMock();
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+
     const response = await PATCH(makeRequest({ title: "  Better title  " }), routeContext());
 
     expect(response.status).toBe(200);
@@ -159,8 +106,9 @@ describe("PATCH /api/sessions/[sessionId]", () => {
       title: "Better title",
       updatedAt: UPDATED_AT,
     });
-    expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith(WORKSPACE_ID);
-    expect(currentAdminMock.updateCalls).toEqual([
+    expect(mocked.createSupabaseServerClient).toHaveBeenCalledTimes(1);
+    expect(mocked.getSupabaseUserOrNull).toHaveBeenCalledTimes(1);
+    expect(supabase.updateCalls).toEqual([
       {
         filters: [
           ["id", SESSION_ID],
@@ -175,55 +123,62 @@ describe("PATCH /api/sessions/[sessionId]", () => {
     const response = await PATCH(makeRequest({ title: "   " }), routeContext());
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: "Title is required." });
+    await expect(response.json()).resolves.toMatchObject({
+      code: "invalid_input",
+      error: "Title is required.",
+    });
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid session ids before updating", async () => {
+  it("rejects invalid session ids before authenticating", async () => {
     const response = await PATCH(makeRequest({ title: "Better title" }), routeContext("not-uuid"));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: "Session id is invalid." });
+    await expect(response.json()).resolves.toMatchObject({ code: "invalid_input" });
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
-  it("rejects unauthenticated updates", async () => {
+  it("preserves unauthenticated semantics with a canonical code", async () => {
     mocked.getSupabaseUserOrNull.mockResolvedValue(null);
 
     const response = await PATCH(makeRequest({ title: "Better title" }), routeContext());
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toMatchObject({ error: "Unauthorized" });
-    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ code: "unauthorized", error: "Unauthorized" });
   });
 
-  it("returns not found for unknown or non-member-visible sessions", async () => {
-    mocked.createSupabaseServerClient.mockResolvedValue(buildSupabaseMock({ sessionRow: null }));
+  it("returns 404 for a cross-workspace session hidden by RLS without attempting a write", async () => {
+    const supabase = buildSupabaseMock({ sessionRow: null });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
 
     const response = await PATCH(makeRequest({ title: "Better title" }), routeContext());
 
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toMatchObject({ error: "Session not found" });
-    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      code: "not_found",
+      error: "Session not found",
+    });
+    expect(supabase.updateCalls).toHaveLength(0);
   });
 
-  it("requires active human workspace access before the admin update", async () => {
-    mocked.requireWorkspaceAccessById.mockResolvedValue({
-      error: "Only human workspace members can use this route.",
-      ok: false,
-      status: 403,
-    });
+  it("records auth, lookup, authorization, and mutation timing spans", async () => {
+    vi.stubEnv("WALLIE_TIMING_LOGS", "1");
+    const timingLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
-    const response = await PATCH(makeRequest({ title: "Better title" }), routeContext());
+    await PATCH(makeRequest({ title: "Better title" }), routeContext());
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      error: "Only human workspace members can use this route.",
-    });
-    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(timingLog).toHaveBeenCalledWith(
+      "[server-timing]",
+      expect.objectContaining({
+        name: "session.update-title",
+        segments: expect.arrayContaining([
+          expect.objectContaining({ name: "auth" }),
+          expect.objectContaining({ name: "lookup" }),
+          expect.objectContaining({ name: "authorization" }),
+          expect.objectContaining({ name: "mutation" }),
+        ]),
+      }),
+    );
+    vi.unstubAllEnvs();
   });
 });

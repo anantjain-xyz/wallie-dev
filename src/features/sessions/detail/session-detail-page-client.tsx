@@ -1,13 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useTransition } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
-import { MarkdownContent } from "@/components/shared/markdown-content";
 import { Spinner } from "@/components/shared/spinner";
 import {
   archiveSessionFromClient,
@@ -15,6 +22,7 @@ import {
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
+import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
 import {
   mergeArtifactRealtimeRow,
@@ -43,6 +51,8 @@ import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
   initialData: SessionDetailPageData;
+  initialFormattedArtifact: ReactNode | null;
+  initialFormattedArtifactKey: string | null;
 };
 
 const dateTimeFormatOptions: Intl.DateTimeFormatOptions = {
@@ -141,33 +151,15 @@ function buildStageRail(session: SessionDetail): StageRailEntry[] {
   });
 }
 
-export function mergeFetchedArtifacts(
-  currentArtifacts: readonly SessionArtifactSummary[],
-  fetchedArtifacts: readonly SessionArtifactSummary[],
-) {
-  const artifactIndex = new Map<string, SessionArtifactSummary>();
-
-  for (const artifact of fetchedArtifacts) {
-    artifactIndex.set(`${artifact.stageSlug}:${artifact.version}`, artifact);
-  }
-
-  for (const artifact of currentArtifacts) {
-    artifactIndex.set(`${artifact.stageSlug}:${artifact.version}`, artifact);
-  }
-
-  return [...artifactIndex.values()];
-}
-
-export function SessionDetailPageClient({ initialData }: SessionDetailPageClientProps) {
+export function SessionDetailPageClient({
+  initialData,
+  initialFormattedArtifact,
+  initialFormattedArtifactKey,
+}: SessionDetailPageClientProps) {
   const router = useRouter();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
   const sessionCreator = initialData.sessionCreator;
-  const [fullyLoadedArtifactStages, setFullyLoadedArtifactStages] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [artifactLoadingStageSlug, setArtifactLoadingStageSlug] = useState<string | null>(null);
-  const [artifactLoadError, setArtifactLoadError] = useState<string | null>(null);
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
@@ -217,6 +209,11 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
   const activeArtifacts = artifactsByStage.get(selectedStageSlug) ?? [];
   const latestArtifact = activeArtifacts[0] ?? null;
   const selectedStageIsCurrent = selectedStageSlug === session.currentStageSlug;
+  const selectedStagePosition = stageIndex(session.pipeline, selectedStageSlug);
+  const currentStagePosition = stageIndex(session.pipeline, session.currentStageSlug);
+  const shouldLoadLatestArtifact =
+    selectedStagePosition < currentStagePosition ||
+    (selectedStageIsCurrent && (session.currentArtifactVersion ?? 0) > 0);
   const isDraftingSelectedStage =
     selectedStageIsCurrent && session.phaseStatus === "agent_generating" && !session.archivedAt;
 
@@ -226,9 +223,6 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
 
   useEffect(() => {
     setSession(initialData.session);
-    setFullyLoadedArtifactStages(new Set());
-    setArtifactLoadingStageSlug(null);
-    setArtifactLoadError(null);
     setSelectedStageSlug((currentSlug) => {
       const stageStillExists = initialData.session.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
@@ -237,66 +231,6 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
       return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
     });
   }, [initialData.session]);
-
-  useEffect(() => {
-    if (fullyLoadedArtifactStages.has(selectedStageSlug)) {
-      return;
-    }
-
-    let canceled = false;
-    setArtifactLoadingStageSlug(selectedStageSlug);
-    setArtifactLoadError(null);
-
-    async function loadArtifacts() {
-      try {
-        const response = await fetch(
-          `/api/sessions/${session.id}/artifacts?stage=${encodeURIComponent(selectedStageSlug)}`,
-        );
-        const payload = (await response.json().catch(() => null)) as {
-          artifacts?: SessionArtifactSummary[];
-          error?: string;
-        } | null;
-
-        if (!response.ok) {
-          throw new Error(payload?.error ?? "Could not load artifacts.");
-        }
-
-        if (!Array.isArray(payload?.artifacts)) {
-          throw new Error("Artifact response was invalid.");
-        }
-
-        if (canceled) return;
-
-        setSession((currentSession) => ({
-          ...currentSession,
-          artifacts: mergeFetchedArtifacts(currentSession.artifacts, payload.artifacts!),
-        }));
-        setFullyLoadedArtifactStages((currentStages) => {
-          const nextStages = new Set(currentStages);
-          nextStages.add(selectedStageSlug);
-          return nextStages;
-        });
-      } catch (error) {
-        if (!canceled) {
-          setArtifactLoadError(
-            error instanceof Error ? error.message : "Could not load artifacts.",
-          );
-        }
-      } finally {
-        if (!canceled) {
-          setArtifactLoadingStageSlug((currentStageSlug) =>
-            currentStageSlug === selectedStageSlug ? null : currentStageSlug,
-          );
-        }
-      }
-    }
-
-    void loadArtifacts();
-
-    return () => {
-      canceled = true;
-    };
-  }, [fullyLoadedArtifactStages, selectedStageSlug, session.id]);
 
   const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
     let previousCurrentStageSlug: string | null = null;
@@ -688,60 +622,20 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           </div>
 
           <div aria-busy={isDraftingSelectedStage} aria-live="polite" className="p-4">
-            {latestArtifact && isDraftingSelectedStage ? (
-              <ProgressHint text="Wallie is drafting the next artifact version." />
-            ) : null}
-            {artifactLoadError ? (
-              <div
-                role="status"
-                className="mb-3 rounded-[4px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
-              >
-                {artifactLoadError}
-              </div>
-            ) : null}
-
-            {artifactLoadingStageSlug === selectedStageSlug && !latestArtifact ? (
-              <ProgressHint text="Loading artifacts for this stage." />
-            ) : null}
-
-            {latestArtifact ? (
-              <ArtifactView artifact={latestArtifact} />
-            ) : artifactLoadingStageSlug === selectedStageSlug ? null : selectedStageSlug ===
-                session.currentStageSlug && session.phaseStatus === "agent_generating" ? (
-              <ProgressHint text="Wallie is drafting the artifact for this stage." />
-            ) : (
-              <EmptyHint
-                text={
-                  stageIndex(session.pipeline, selectedStageSlug) >
-                  stageIndex(session.pipeline, session.currentStageSlug)
-                    ? "This stage has not started yet."
-                    : "No artifact recorded for this stage."
-                }
-              />
-            )}
-
-            {activeArtifacts.length > 1 ? (
-              <details className="mt-4 text-[12px] text-muted">
-                <summary className="cursor-pointer hover:text-foreground">
-                  {activeArtifacts.length - 1} earlier version
-                  {activeArtifacts.length - 1 === 1 ? "" : "s"}
-                </summary>
-                <ul className="mt-2 space-y-2">
-                  {activeArtifacts.slice(1).map((artifact) => (
-                    <li
-                      key={`${artifact.stageSlug}-${artifact.version}`}
-                      className="rounded-[4px] border border-border bg-background p-3"
-                    >
-                      <p className="text-[11px] uppercase text-muted">
-                        v{artifact.version} ·{" "}
-                        {dateTimeFormatter.format(new Date(artifact.createdAt))}
-                      </p>
-                      <ArtifactView artifact={artifact} compact />
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
+            <ArtifactPanel
+              emptyText={
+                selectedStagePosition > currentStagePosition
+                  ? "This stage has not started yet."
+                  : "No artifact recorded for this stage."
+              }
+              initialFormattedArtifact={initialFormattedArtifact}
+              initialFormattedArtifactKey={initialFormattedArtifactKey}
+              isDrafting={isDraftingSelectedStage}
+              latestArtifact={latestArtifact}
+              loadLatest={shouldLoadLatestArtifact}
+              sessionId={session.id}
+              stageSlug={selectedStageSlug}
+            />
           </div>
 
           {isDraftingSelectedStage ? (
@@ -1113,85 +1007,4 @@ function StageDot({ entry }: { entry: StageRailEntry }) {
     className = cn(className, "bg-accent");
   }
   return <span className={className} aria-hidden="true" />;
-}
-
-function ArtifactView({
-  artifact,
-  compact = false,
-}: {
-  artifact: SessionArtifactSummary;
-  compact?: boolean;
-}) {
-  const [showRaw, setShowRaw] = useState(false);
-
-  // String payloads are markdown; structured (JSON) payloads are shown verbatim.
-  const isMarkdown = typeof artifact.payload === "string";
-
-  const formatted = useMemo(() => {
-    if (typeof artifact.payload === "string") {
-      return artifact.payload;
-    }
-    try {
-      return JSON.stringify(artifact.payload, null, 2);
-    } catch {
-      return String(artifact.payload);
-    }
-  }, [artifact.payload]);
-
-  const showHeaderRow = !compact || isMarkdown;
-
-  return (
-    <div>
-      {showHeaderRow ? (
-        <div className="mb-2 flex items-center justify-between gap-2">
-          {!compact ? (
-            <p className="text-[11px] uppercase tracking-wide text-muted">
-              v{artifact.version} · {dateTimeFormatter.format(new Date(artifact.createdAt))}
-            </p>
-          ) : (
-            <span />
-          )}
-          {isMarkdown ? (
-            <button
-              type="button"
-              className="text-[11px] font-medium text-muted hover:text-foreground"
-              aria-pressed={showRaw}
-              onClick={() => setShowRaw((value) => !value)}
-            >
-              {showRaw ? "View formatted" : "View raw"}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {isMarkdown && !showRaw ? (
-        <MarkdownContent className="max-h-[480px] overflow-auto">{formatted}</MarkdownContent>
-      ) : (
-        <pre
-          className={`max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-[12px] leading-5 text-foreground ${isMarkdown ? "" : "bg-background"}`}
-        >
-          {formatted}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-function EmptyHint({ text }: { text: string }) {
-  return (
-    <p className="rounded-[4px] border border-dashed border-border px-3 py-6 text-center text-[12px] text-muted">
-      {text}
-    </p>
-  );
-}
-
-function ProgressHint({ text }: { text: string }) {
-  return (
-    <div
-      className="mb-3 flex items-center justify-center gap-2 rounded-[4px] border border-accent/20 bg-accent-soft px-3 py-4 text-[12px] font-medium text-accent"
-      role="status"
-    >
-      <Spinner />
-      <span>{text}</span>
-    </div>
-  );
 }
