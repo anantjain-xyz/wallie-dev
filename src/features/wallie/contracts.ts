@@ -12,7 +12,7 @@ export const runHistoryParamsSchema = z.object({
 
 export const runHistoryQuerySchema = z
   .object({
-    createdAt: z.string().datetime().optional(),
+    createdAt: z.string().datetime({ offset: true }).optional(),
     id: runIdSchema.optional(),
   })
   .refine((value) => Boolean(value.createdAt) === Boolean(value.id), {

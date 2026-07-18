@@ -145,8 +145,10 @@ export async function loadWallieSessionData(input: {
       started_at: run.startedAt,
       status: run.status,
       triggered_by_member_id: run.requestedByMemberId,
+      updated_at: run.updatedAt,
     })),
     vercelSandboxConnection,
+    workspaceMembers: members,
   });
 }
 
@@ -178,7 +180,7 @@ async function loadWallieVercelSandboxConnection(
 }
 
 const runSelect =
-  "id, created_at, finished_at, model_name, model_provider, run_type, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id";
+  "id, created_at, finished_at, model_name, model_provider, run_type, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at";
 const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";
 
 type AgentRunRow = Pick<
@@ -195,6 +197,7 @@ type AgentRunRow = Pick<
   | "stage_slug"
   | "status"
   | "triggered_by_member_id"
+  | "updated_at"
 >;
 
 const missingVercelSandboxConnection: WallieVercelSandboxConnectionStatus = {

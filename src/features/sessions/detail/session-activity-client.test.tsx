@@ -34,6 +34,7 @@ const initialData: WallieSessionData = {
     status: "connected",
     teamId: "team-1",
   },
+  workspaceMembers: [],
 };
 
 function activityPanel() {

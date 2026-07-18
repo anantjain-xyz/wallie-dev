@@ -87,6 +87,7 @@ export function mapAgentRunRow(
     | "stage_slug"
     | "status"
     | "triggered_by_member_id"
+    | "updated_at"
   >,
   memberIndex: ReadonlyMap<string, WorkspaceMember>,
   messages: WallieRunMessage[],
@@ -112,6 +113,7 @@ export function mapAgentRunRow(
     stageName: row.stage_name,
     stageSlug: row.stage_slug,
     status: row.status,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -129,9 +131,14 @@ export function mergeWallieRuns(runs: readonly WallieRun[], incomingRuns: readon
   for (const incomingRun of incomingRuns) {
     const previousRun = nextRuns.find((run) => run.id === incomingRun.id);
 
+    if (previousRun && previousRun.updatedAt.localeCompare(incomingRun.updatedAt) > 0) {
+      continue;
+    }
+
     nextRuns = upsertWallieRun(nextRuns, {
       ...incomingRun,
       messages: previousRun?.messages ?? incomingRun.messages,
+      requestedByMember: incomingRun.requestedByMember ?? previousRun?.requestedByMember ?? null,
     });
   }
 
@@ -191,8 +198,10 @@ export function buildWallieSessionData(input: {
     | "stage_slug"
     | "status"
     | "triggered_by_member_id"
+    | "updated_at"
   >[];
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+  workspaceMembers?: readonly WorkspaceMember[];
 }) {
   const messagesByRunId = new Map<string, WallieRunMessage[]>();
 
@@ -235,5 +244,6 @@ export function buildWallieSessionData(input: {
     requiredSecretKeys: [...WALLIE_REQUIRED_SECRET_KEYS],
     runs,
     vercelSandboxConnection: input.vercelSandboxConnection,
+    workspaceMembers: [...(input.workspaceMembers ?? input.memberIndex.values())],
   } satisfies WallieSessionData;
 }

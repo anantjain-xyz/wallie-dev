@@ -71,6 +71,21 @@ describe("GET /api/sessions/[sessionId]/runs", () => {
     await expect(response.json()).resolves.toEqual({ nextCursor: null, runs: [] });
   });
 
+  it("accepts PostgREST offset timestamps in the stable cursor", async () => {
+    const createdAt = "2026-07-18T12:00:00.000+00:00";
+    const response = await GET(
+      new Request(
+        `http://localhost/api/sessions/${sessionId}/runs?createdAt=${encodeURIComponent(createdAt)}&id=${runId}`,
+      ),
+      { params: Promise.resolve({ sessionId }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocked.loadWallieRunPage).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: { createdAt, id: runId }, sessionId }),
+    );
+  });
+
   it("rejects partial cursors", async () => {
     const response = await GET(
       new Request(`http://localhost/api/sessions/${sessionId}/runs?id=${runId}`),

@@ -7,7 +7,11 @@ import {
 } from "@/features/wallie/data";
 import type { WallieRun } from "@/features/wallie/types";
 
-function run(id: string, createdAt = "2026-07-18T12:00:00.000Z"): WallieRun {
+function run(
+  id: string,
+  createdAt = "2026-07-18T12:00:00.000Z",
+  overrides: Partial<WallieRun> = {},
+): WallieRun {
   return {
     canCancel: false,
     canRetry: false,
@@ -27,6 +31,8 @@ function run(id: string, createdAt = "2026-07-18T12:00:00.000Z"): WallieRun {
     stageName: "Build",
     stageSlug: "build",
     status: "success",
+    updatedAt: createdAt,
+    ...overrides,
   };
 }
 
@@ -66,10 +72,26 @@ describe("Wallie run history data", () => {
         },
       ],
     };
-    const reconciled = mergeWallieRuns([cached], [{ ...run("run-1"), status: "error" }]);
+    const reconciled = mergeWallieRuns(
+      [cached],
+      [run("run-1", cached.createdAt, { status: "error", updatedAt: "2026-07-18T12:02:00.000Z" })],
+    );
 
     expect(reconciled).toHaveLength(1);
     expect(reconciled[0]?.status).toBe("error");
     expect(reconciled[0]?.messages).toEqual(cached.messages);
+  });
+
+  it("ignores stale reconciliation snapshots that lose to newer realtime updates", () => {
+    const live = run("run-1", "2026-07-18T12:00:00.000Z", {
+      status: "success",
+      updatedAt: "2026-07-18T12:05:00.000Z",
+    });
+    const stale = run("run-1", "2026-07-18T12:00:00.000Z", {
+      status: "running",
+      updatedAt: "2026-07-18T12:04:00.000Z",
+    });
+
+    expect(mergeWallieRuns([live], [stale])[0]?.status).toBe("success");
   });
 });

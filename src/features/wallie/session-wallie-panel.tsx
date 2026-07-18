@@ -164,6 +164,10 @@ export function SessionWalliePanel({
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
 
+    for (const member of initialData.workspaceMembers) {
+      nextIndex.set(member.id, member);
+    }
+
     for (const run of initialData.runs) {
       if (run.requestedByMember) {
         nextIndex.set(run.requestedByMember.id, run.requestedByMember);
@@ -171,7 +175,7 @@ export function SessionWalliePanel({
     }
 
     return nextIndex;
-  }, [initialData.runs]);
+  }, [initialData.runs, initialData.workspaceMembers]);
   useEffect(() => {
     setRuns(initialData.runs);
     setNextRunCursor(initialData.nextRunCursor);
@@ -262,6 +266,7 @@ export function SessionWalliePanel({
       }
 
       setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
+      setNextRunCursor(payload.nextCursor);
     } catch (error) {
       console.error("Wallie could not reconcile run history", { error, sessionId: session.id });
     }

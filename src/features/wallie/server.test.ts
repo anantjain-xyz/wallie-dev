@@ -20,6 +20,7 @@ function row(index: number) {
     started_at: "2026-07-18T12:00:10.000Z",
     status: "success" as const,
     triggered_by_member_id: null,
+    updated_at: "2026-07-18T12:01:00.000Z",
   };
 }
 

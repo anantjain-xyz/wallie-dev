@@ -46,6 +46,7 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
     stageSlug: "product",
     startedAt: "2026-05-20T20:01:00.000Z",
     status: "success",
+    updatedAt: "2026-05-20T20:05:00.000Z",
     ...overrides,
   };
 }
@@ -77,6 +78,7 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
       status: "connected",
       teamId: "team_123",
     },
+    workspaceMembers: [baseMember],
     ...overrides,
     loadedMessageRunIds: overrides.loadedMessageRunIds ?? runs.map((entry) => entry.id),
     nextRunCursor: overrides.nextRunCursor ?? null,

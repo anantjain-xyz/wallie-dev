@@ -5,8 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
+import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+const offlineMember: WorkspaceMember = {
+  avatarUrl: null,
+  fullName: "Riley Offline",
+  id: "member-offline",
+  isActive: true,
+  kind: "human",
+  role: "member",
+  userId: "user-offline",
+  username: "riley",
+};
 
 function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
   const id = `run-${index}`;
@@ -29,11 +41,16 @@ function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
     stageName: `Stage ${index}`,
     stageSlug: `stage-${index}`,
     status: "success",
+    updatedAt: "2026-07-18T13:00:00.000Z",
     ...overrides,
   };
 }
 
-function data(runs: WallieRun[], hasOlder = false): WallieSessionData {
+function data(
+  runs: WallieRun[],
+  hasOlder = false,
+  overrides: Partial<WallieSessionData> = {},
+): WallieSessionData {
   return {
     blockingReasons: [],
     canEnqueue: true,
@@ -66,6 +83,8 @@ function data(runs: WallieRun[], hasOlder = false): WallieSessionData {
       status: "missing",
       teamId: null,
     },
+    workspaceMembers: [],
+    ...overrides,
   };
 }
 
@@ -280,6 +299,89 @@ describe("SessionWalliePanel run history lifecycle", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(view.container.querySelectorAll('[data-run-id="run-21"]')).toHaveLength(1);
+  });
+
+  it("updates the pagination cursor when reconcile returns a newer first page", async () => {
+    const initialRuns = Array.from({ length: 20 }, (_, index) => run(index + 21));
+    const reconciledRuns = Array.from({ length: 20 }, (_, index) => run(index + 1));
+    const reconciledCursor = {
+      createdAt: reconciledRuns.at(-1)!.createdAt,
+      id: reconciledRuns.at(-1)!.id,
+    };
+    const gapPage = [run(41)];
+    const fake = fakeSupabase();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("createdAt=")) {
+        return new Response(JSON.stringify({ nextCursor: null, runs: gapPage }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ nextCursor: reconciledCursor, runs: reconciledRuns }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = panel(data(initialRuns, true), fake.supabase);
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-run-id="run-1"]')).not.toBeNull(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-run-id="run-41"]')).not.toBeNull(),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `createdAt=${encodeURIComponent(reconciledCursor.createdAt)}&id=${reconciledCursor.id}`,
+      ),
+    );
+  });
+
+  it("hydrates requesters for realtime runs using workspace members outside the first page", async () => {
+    const initialRun = run(1);
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [initialRun] }), { status: 200 }),
+      ),
+    );
+    const view = panel(
+      data([initialRun], false, { workspaceMembers: [offlineMember] }),
+      fake.supabase,
+    );
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => {
+      sessionChannel?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          created_at: "2026-07-18T14:00:00.000Z",
+          finished_at: null,
+          id: "run-new",
+          model_name: "gpt-5",
+          model_provider: "codex",
+          run_type: "code",
+          stage_id: null,
+          stage_name: "Build",
+          stage_slug: "build",
+          started_at: "2026-07-18T14:00:00.000Z",
+          status: "queued",
+          triggered_by_member_id: offlineMember.id,
+          updated_at: "2026-07-18T14:00:00.000Z",
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-run-id="run-new"]')).not.toBeNull(),
+    );
+    expect(screen.getByText("Requested by Riley Offline")).not.toBeNull();
   });
 
   it("cancels the selected paginated row in place without a route refresh", async () => {
