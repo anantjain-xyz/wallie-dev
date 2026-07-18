@@ -281,7 +281,7 @@ function loadOnboardingSnapshotRows(
   workspaceId: string,
 ) {
   // These forward-migration RPCs are intentionally not hand-added to generated database.types.ts.
-  const rpc = admin.rpc as unknown as (
+  const rpc = admin.rpc.bind(admin) as unknown as (
     name: OnboardingSnapshotRpcName,
     args: { target_workspace_id: string },
   ) => OnboardingSnapshotRpcResult;

@@ -157,7 +157,10 @@ function createFixture(options: {
     increment(table);
     return query({ data: adminRows[table], error: null });
   });
-  mocked.admin.rpc.mockImplementation((functionName: string) => {
+  mocked.admin.rpc.mockImplementation(function (this: typeof mocked.admin, functionName: string) {
+    if (this !== mocked.admin) {
+      throw new TypeError("RPC called without Supabase client context.");
+    }
     increment(functionName);
     return Promise.resolve({ data: rpcRows[functionName], error: null });
   });
