@@ -6,6 +6,7 @@ import {
   mergeSessionRealtimeRow,
   removeArtifactRealtimeRow,
   removeCompletionRealtimeRow,
+  removePullRequestRealtimeRow,
 } from "@/features/sessions/detail/realtime";
 import type { SessionReviewSession } from "@/features/sessions/detail/data";
 
@@ -162,5 +163,20 @@ describe("session detail realtime helpers", () => {
     expect(removeCompletionRealtimeRow(withRows, { id: "completion-1" }).phaseCompletions).toEqual(
       [],
     );
+  });
+
+  it("removes a pull request DELETE by id without reading absent timestamp fields", () => {
+    const withPullRequest: SessionReviewSession = {
+      ...baseSession,
+      pullRequests: [
+        {
+          id: "pr-1",
+          pullRequestNumber: 42,
+          pullRequestUrl: "https://github.com/acme/app/pull/42",
+        },
+      ],
+    };
+
+    expect(removePullRequestRealtimeRow(withPullRequest, { id: "pr-1" }).pullRequests).toEqual([]);
   });
 });

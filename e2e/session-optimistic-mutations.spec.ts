@@ -79,6 +79,13 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
       json: {
         archivedAt: null,
         artifactVersion: 0,
+        currentStage: {
+          description: "Synthetic next stage",
+          id: "synthetic-next-stage",
+          name: "Next stage",
+          position: 1,
+          slug: "synthetic-next",
+        },
         currentStageId: "synthetic-next-stage",
         id: "a2b2c3d4-0001-4000-8000-000000000001",
         phaseStatus: "agent_generating",
@@ -104,6 +111,13 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
       json: {
         archivedAt: null,
         artifactVersion: 1,
+        currentStage: {
+          description: "Synthetic current stage",
+          id: "synthetic-current-stage",
+          name: "Current stage",
+          position: 0,
+          slug: "synthetic-current",
+        },
         currentStageId: "synthetic-current-stage",
         id: "a2b2c3d4-0003-4000-8000-000000000003",
         phaseStatus: "rejected",

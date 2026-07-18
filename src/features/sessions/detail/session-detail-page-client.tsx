@@ -10,6 +10,8 @@ import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/i
 import { Spinner } from "@/components/shared/spinner";
 import {
   archiveSessionFromClient,
+  isSessionPhaseMutationResult,
+  loadSessionStateFromClient,
   unarchiveSessionFromClient,
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
@@ -22,13 +24,17 @@ import type {
   SessionReviewSession,
   SessionReviewStage,
 } from "@/features/sessions/detail/data";
-import type { SessionPhaseMutationResult } from "@/features/sessions/mutation-contracts";
+import type {
+  SessionMutationStage,
+  SessionPhaseMutationResult,
+} from "@/features/sessions/mutation-contracts";
 import {
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
   removeArtifactRealtimeRow,
   removeCompletionRealtimeRow,
+  removePullRequestRealtimeRow,
 } from "@/features/sessions/detail/realtime";
 import {
   applySessionMutationPatch,
@@ -158,6 +164,42 @@ function buildStageRail(session: SessionReviewSession): StageRailEntry[] {
   });
 }
 
+function mergeSessionReviewStage(
+  session: SessionReviewSession,
+  stage: SessionMutationStage,
+): SessionReviewSession {
+  const existingStage = session.pipeline.stages.find((current) => current.id === stage.id);
+  if (
+    existingStage?.description === stage.description &&
+    existingStage.name === stage.name &&
+    existingStage.position === stage.position &&
+    existingStage.slug === stage.slug
+  ) {
+    return session;
+  }
+
+  const stages = session.pipeline.stages
+    .filter((current) => current.id !== stage.id)
+    .concat(stage)
+    .sort((left, right) => left.position - right.position);
+
+  return { ...session, pipeline: { stages } };
+}
+
+export function reconcilePhaseMutationResult(
+  session: SessionReviewSession,
+  result: SessionPhaseMutationResult,
+): SessionReviewSession {
+  return reconcileSessionMutationPatch(mergeSessionReviewStage(session, result.currentStage), {
+    archivedAt: result.archivedAt,
+    currentArtifactVersion: result.artifactVersion,
+    currentStageId: result.currentStageId,
+    phaseStatus: result.phaseStatus,
+    rejectionCount: result.rejectionCount,
+    updatedAt: result.updatedAt,
+  });
+}
+
 export function SessionDetailPageClient({
   activity,
   initialData,
@@ -246,6 +288,24 @@ export function SessionDetailPageClient({
   }, [initialData.session]);
 
   const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
+    const stageIsKnown = session.pipeline.stages.some((stage) => stage.id === row.current_stage_id);
+    if (!stageIsKnown && compareSessionTimestamps(row.updated_at, session.updatedAt) >= 0) {
+      const previousCurrentStageSlug = session.currentStageSlug;
+      void loadSessionStateFromClient({ sessionId: session.id })
+        .then((result) => {
+          setSession((current) => reconcilePhaseMutationResult(current, result));
+          setSelectedStageSlug((currentSlug) =>
+            currentSlug === previousCurrentStageSlug ? result.currentStage.slug : currentSlug,
+          );
+        })
+        .catch((error) => {
+          setActionError(
+            error instanceof Error ? error.message : "Could not reconcile the updated stage.",
+          );
+        });
+      return;
+    }
+
     let previousCurrentStageSlug: string | null = null;
     let nextCurrentStageSlug: string | null = null;
 
@@ -347,13 +407,10 @@ export function SessionDetailPageClient({
           >;
           setSession((current) => {
             const existing = current.pullRequests.find((pullRequest) => pullRequest.id === row.id);
-            const pullRequests = current.pullRequests.filter(
-              (pullRequest) => pullRequest.id !== row.id,
-            );
 
             if (payload.eventType === "DELETE") {
               pullRequestUpdatedAtRef.current.delete(row.id);
-              return existing ? { ...current, pullRequests } : current;
+              return removePullRequestRealtimeRow(current, row);
             }
 
             const previousUpdatedAt = pullRequestUpdatedAtRef.current.get(row.id);
@@ -364,6 +421,9 @@ export function SessionDetailPageClient({
               return current;
             }
 
+            const pullRequests = current.pullRequests.filter(
+              (pullRequest) => pullRequest.id !== row.id,
+            );
             pullRequestUpdatedAtRef.current.set(row.id, row.updated_at);
             if (
               existing?.pullRequestNumber === row.pull_request_number &&
@@ -464,29 +524,15 @@ export function SessionDetailPageClient({
             | null;
 
           if (!response.ok) throw new Error(body?.error ?? "Action failed.");
-          if (
-            !body ||
-            typeof body.archivedAt === "undefined" ||
-            typeof body.artifactVersion !== "number" ||
-            typeof body.currentStageId !== "string" ||
-            typeof body.phaseStatus !== "string" ||
-            typeof body.rejectionCount !== "number" ||
-            typeof body.updatedAt !== "string"
-          ) {
+          if (!isSessionPhaseMutationResult(body)) {
             throw new Error("Action response was invalid.");
           }
-          return body as SessionPhaseMutationResult;
+          return body;
         },
         commit: (result) => {
-          setSession((current) =>
-            reconcileSessionMutationPatch(current, {
-              archivedAt: result.archivedAt,
-              currentArtifactVersion: result.artifactVersion,
-              currentStageId: result.currentStageId,
-              phaseStatus: result.phaseStatus,
-              rejectionCount: result.rejectionCount,
-              updatedAt: result.updatedAt,
-            }),
+          setSession((current) => reconcilePhaseMutationResult(current, result));
+          setSelectedStageSlug((currentSlug) =>
+            currentSlug === previousStageSlug ? result.currentStage.slug : currentSlug,
           );
         },
         rollback: () => {
@@ -544,30 +590,12 @@ export function SessionDetailPageClient({
             | (Partial<SessionPhaseMutationResult> & { error?: string })
             | null;
           if (!response.ok) throw new Error(body?.error ?? "Could not stop the run.");
-          if (
-            !body ||
-            typeof body.archivedAt === "undefined" ||
-            typeof body.artifactVersion !== "number" ||
-            typeof body.currentStageId !== "string" ||
-            typeof body.phaseStatus !== "string" ||
-            typeof body.rejectionCount !== "number" ||
-            typeof body.updatedAt !== "string"
-          ) {
+          if (!isSessionPhaseMutationResult(body)) {
             throw new Error("Stop response was invalid.");
           }
-          return body as SessionPhaseMutationResult;
+          return body;
         },
-        commit: (result) =>
-          setSession((current) =>
-            reconcileSessionMutationPatch(current, {
-              archivedAt: result.archivedAt,
-              currentArtifactVersion: result.artifactVersion,
-              currentStageId: result.currentStageId,
-              phaseStatus: result.phaseStatus,
-              rejectionCount: result.rejectionCount,
-              updatedAt: result.updatedAt,
-            }),
-          ),
+        commit: (result) => setSession((current) => reconcilePhaseMutationResult(current, result)),
         rollback: () =>
           setSession((current) =>
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),

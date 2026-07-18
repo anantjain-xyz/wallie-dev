@@ -1,4 +1,8 @@
-import type { SessionTitleMutationResult } from "@/features/sessions/mutation-contracts";
+import type {
+  SessionMutationStage,
+  SessionPhaseMutationResult,
+  SessionTitleMutationResult,
+} from "@/features/sessions/mutation-contracts";
 import { updateSessionTitleClientInputSchema } from "@/features/sessions/update-title";
 import type { SessionRepositoryOption } from "@/features/sessions/types";
 
@@ -33,6 +37,49 @@ export type SessionRepositoryOptionsResult = {
   defaultGithubRepositoryId: string | null;
   repositoryOptions: SessionRepositoryOption[];
 };
+
+export async function loadSessionStateFromClient(input: {
+  sessionId: string;
+}): Promise<SessionPhaseMutationResult> {
+  const response = await fetch(`/api/sessions/${input.sessionId}/state`, { method: "GET" });
+  const payload = (await response.json().catch(() => null)) as
+    | (Partial<SessionPhaseMutationResult> & { error?: string })
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to reconcile the session stage.");
+  }
+
+  if (!isSessionPhaseMutationResult(payload)) {
+    throw new Error("Session state response was invalid.");
+  }
+
+  return payload;
+}
+
+export function isSessionPhaseMutationResult(
+  payload: Partial<SessionPhaseMutationResult> | null,
+): payload is SessionPhaseMutationResult {
+  const stage = payload?.currentStage as Partial<SessionMutationStage> | undefined;
+
+  return Boolean(
+    payload &&
+    typeof payload.archivedAt !== "undefined" &&
+    typeof payload.artifactVersion === "number" &&
+    typeof payload.currentStageId === "string" &&
+    stage &&
+    typeof stage.description === "string" &&
+    typeof stage.id === "string" &&
+    typeof stage.name === "string" &&
+    typeof stage.position === "number" &&
+    typeof stage.slug === "string" &&
+    stage.id === payload.currentStageId &&
+    typeof payload.id === "string" &&
+    typeof payload.phaseStatus === "string" &&
+    typeof payload.rejectionCount === "number" &&
+    typeof payload.updatedAt === "string",
+  );
+}
 
 export async function loadSessionRepositoryOptionsFromClient(input: {
   workspaceId: string;

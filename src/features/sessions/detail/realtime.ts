@@ -166,3 +166,14 @@ export function removeCompletionRealtimeRow(
     ? session
     : { ...session, phaseCompletions };
 }
+
+export function removePullRequestRealtimeRow(
+  session: SessionReviewSession,
+  row: Pick<Tables<"session_pull_requests">, "id">,
+): SessionReviewSession {
+  const pullRequests = session.pullRequests.filter((pullRequest) => pullRequest.id !== row.id);
+
+  return pullRequests.length === session.pullRequests.length
+    ? session
+    : { ...session, pullRequests };
+}

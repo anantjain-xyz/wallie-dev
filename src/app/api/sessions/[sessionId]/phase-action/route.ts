@@ -177,13 +177,13 @@ async function loadMutationResult(
     supabase
       .from("sessions")
       .select(
-        "id, archived_at, phase_status, current_stage_id, current_artifact_version, rejection_count, updated_at",
+        "id, archived_at, phase_status, current_stage_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
       )
       .eq("id", sessionId)
       .single(),
   );
 
-  if (error || !data) {
+  if (error || !data || !data.currentStage) {
     return errorResponse(
       "mutation_failed",
       error?.message ?? "Wallie could not reconcile that session action.",
@@ -194,6 +194,7 @@ async function loadMutationResult(
   return NextResponse.json<SessionPhaseMutationResult>({
     archivedAt: data.archived_at,
     artifactVersion: data.current_artifact_version,
+    currentStage: data.currentStage,
     currentStageId: data.current_stage_id,
     id: data.id,
     phaseStatus: data.phase_status,

@@ -159,6 +159,13 @@ describe("optimistic session interactions", () => {
               Response.json({
                 archivedAt: null,
                 artifactVersion: 0,
+                currentStage: {
+                  description: "Build",
+                  id: "stage-build",
+                  name: "Build",
+                  position: 1,
+                  slug: "build",
+                },
                 currentStageId: "stage-build",
                 id: session.id,
                 phaseStatus: "agent_generating",
@@ -204,6 +211,13 @@ describe("optimistic session interactions", () => {
               Response.json({
                 archivedAt: "2026-07-17T12:00:00.000Z",
                 artifactVersion: 1,
+                currentStage: {
+                  description: "Build",
+                  id: "stage-build",
+                  name: "Build",
+                  position: 1,
+                  slug: "build",
+                },
                 currentStageId: "stage-build",
                 id: session.id,
                 phaseStatus: "approved",
@@ -250,6 +264,13 @@ describe("optimistic session interactions", () => {
       Response.json({
         archivedAt: null,
         artifactVersion: 2,
+        currentStage: {
+          description: "Plan",
+          id: "stage-plan",
+          name: "Plan",
+          position: 0,
+          slug: "plan",
+        },
         currentStageId: "stage-plan",
         id: session.id,
         phaseStatus: "awaiting_review",
