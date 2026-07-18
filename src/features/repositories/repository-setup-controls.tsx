@@ -1,6 +1,10 @@
 "use client";
 
-import { ArchiveIcon, BranchIcon, CodeIcon, GlobeIcon, LockIcon } from "@/components/shared/icons";
+import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
+import { BranchIcon } from "@/components/shared/icons/branch-icon";
+import { CodeIcon } from "@/components/shared/icons/code-icon";
+import { GlobeIcon } from "@/components/shared/icons/globe-icon";
+import { LockIcon } from "@/components/shared/icons/lock-icon";
 import { Status, type StatusValue } from "@/components/ui/status";
 import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
