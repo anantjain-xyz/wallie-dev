@@ -1,685 +1,134 @@
 import type { ReactNode } from "react";
-import Image from "next/image";
 
-type StageCard = {
-  count: number;
-  description: string;
-  items: Array<{
-    status: "approved" | "drafting" | "review" | "rejected";
-    title: string;
-  }>;
-  name: string;
-};
-
-const stageCards: StageCard[] = [
-  {
-    count: 3,
-    description: "Spec, acceptance criteria, and technical approach.",
-    name: "Plan",
-    items: [
-      { status: "review", title: "Usage limits for sandbox minutes" },
-      { status: "drafting", title: "Live artifact version history" },
-      { status: "approved", title: "Repository import for monorepos" },
-    ],
-  },
-  {
-    count: 4,
-    description: "Implementation runs inside connected sandboxes.",
-    name: "Build",
-    items: [
-      { status: "drafting", title: "SAML SSO for enterprise workspaces" },
-      { status: "review", title: "Session activity timeline" },
-      { status: "rejected", title: "GitHub app permission fallback" },
-      { status: "approved", title: "Mobile onboarding flow" },
-    ],
-  },
-  {
-    count: 3,
-    description: "Merge once CI is green, then capture the rollout.",
-    name: "Land",
-    items: [
-      { status: "review", title: "Enterprise audit log export" },
-      { status: "approved", title: "Slack alerts for blocked runs" },
-      { status: "approved", title: "Linear duplicate issue handling" },
-    ],
-  },
-];
-
-const runLog = [
-  { label: "sandbox", value: "vercel://acme-sso-4921" },
-  { label: "agent", value: "codex / gpt-5-codex" },
-  { label: "session branch", value: "wallie/saml-sso-google" },
-  { label: "artifact", value: "build-output.v3.json" },
-];
-
-const onboardingStageRows = [
-  {
-    approvers: "Ava Patel, Jordan Kim",
-    description:
-      "Frame the problem and lock the plan: spec, acceptance criteria, technical approach, and reproduction signal.",
-    name: "Plan",
-    prompt: "Produce a reviewable plan only. Do not modify files.",
-    slug: "plan",
-  },
-  {
-    approvers: "Owners and admins (default)",
-    description:
-      "Implement the approved plan, validate, open a PR, sweep feedback, and verify for sign-off.",
-    name: "Build",
-    prompt: "Implement: {{session.title}}",
-    slug: "build",
-  },
-  {
-    approvers: "Release captain",
-    description: "Merge the approved change once CI is green, and capture the rollout.",
-    name: "Land",
-    prompt: "Land the approved change for {{session.title}}.",
-    slug: "land",
-  },
-];
-
-const onboardingStepTitles = [
-  "GitHub",
-  "Analyze",
-  "Pipeline",
-  "Linear",
-  "Agent",
-  "Verify",
-] as const;
-
-type HealthTone = "neutral" | "success" | "warning";
-
-type HealthRow = {
-  detail: string;
-  label: string;
-  tone: HealthTone;
-};
-
-type StatusRow = HealthRow & {
-  value: string;
-};
-
-const pipelineSetupHealthRows: HealthRow[] = [
-  {
-    detail: "Connected",
-    label: "GitHub",
-    tone: "success",
-  },
-  {
-    detail: "3 stages",
-    label: "Pipeline",
-    tone: "success",
-  },
-  {
-    detail: "Optional",
-    label: "Linear",
-    tone: "neutral",
-  },
-  {
-    detail: "Ready",
-    label: "Runtime",
-    tone: "success",
-  },
-];
-
-const runtimeSetupHealthRows: HealthRow[] = [
-  {
-    detail: "Connected",
-    label: "GitHub",
-    tone: "success",
-  },
-  {
-    detail: "Ready",
-    label: "Repository",
-    tone: "success",
-  },
-  {
-    detail: "Connected",
-    label: "Vercel Sandbox",
-    tone: "success",
-  },
-  {
-    detail: "Ready",
-    label: "Runtime",
-    tone: "success",
-  },
-];
-
-const agentConfigRows = [
-  { detail: "Provider", label: "Agent provider", value: "Codex" },
-  { detail: "Model", label: "Agent model", value: "gpt-5.5" },
-  { detail: "Parallel jobs per workspace", label: "Concurrency limit", value: "1" },
-  { detail: "Stalled run timeout", label: "Stall timeout (minutes)", value: "15" },
-];
-
-const providerAccessRows: StatusRow[] = [
-  {
-    detail: "Current user has a connected Codex credential.",
-    label: "Codex credential",
-    tone: "success",
-    value: "Connected",
-  },
-  {
-    detail: "wallie-sandboxes",
-    label: "Vercel Sandbox",
-    tone: "success",
-    value: "Ready",
-  },
-];
-
-const repositoryVariableRows = [
-  { key: "DATABASE_URL", status: "Stored" },
-  { key: "STRIPE_SECRET_KEY", status: "Stored" },
-  { key: "NEXT_PUBLIC_APP_URL", status: "Not set" },
-];
-
-const runtimeRequirementRows: StatusRow[] = [
-  {
-    detail: "Agent configuration values are valid.",
-    label: "Agent config",
-    tone: "success",
-    value: "Ready",
-  },
-  {
-    detail: "Current user has a connected Codex credential.",
-    label: "Codex credential",
-    tone: "success",
-    value: "Ready",
-  },
-];
-
-function statusClasses(status: StageCard["items"][number]["status"]) {
-  if (status === "approved") return "bg-success-soft text-success";
-  if (status === "rejected") return "bg-danger-soft text-danger";
-  if (status === "drafting") return "bg-accent-soft text-accent";
-  return "bg-warning-soft text-warning";
-}
-
-function statusLabel(status: StageCard["items"][number]["status"]) {
-  if (status === "approved") return "Approved";
-  if (status === "rejected") return "Rerun";
-  if (status === "drafting") return "Drafting";
-  return "Review";
-}
-
-function BrowserFrame({ children, title }: { children: ReactNode; title: string }) {
+function ProductCrop({ children, label }: { children: ReactNode; label: string }) {
   return (
-    <div className="overflow-hidden rounded-[6px] border border-border bg-sheet">
-      <div className="flex h-10 items-center justify-between border-b border-border bg-control-hover px-4">
-        <div className="flex items-center gap-1.5" aria-hidden="true">
-          <span className="h-2.5 w-2.5 rounded-full bg-danger/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-warning/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-success/70" />
-        </div>
-        <p className="type-annotation font-medium text-muted">{title}</p>
-        <div className="h-2.5 w-[46px]" aria-hidden="true" />
-      </div>
-      {children}
-    </div>
+    <figure className="overflow-hidden rounded-[10px] border border-border bg-sheet shadow-[var(--shadow-elevated)]">
+      <figcaption className="border-b border-border bg-control-hover px-4 py-3 font-mono text-xs font-medium text-muted">
+        {label}
+      </figcaption>
+      <div className="p-4 sm:p-5">{children}</div>
+    </figure>
   );
 }
 
-function toneDotClassName(tone: HealthTone) {
-  if (tone === "success") return "bg-success";
-  if (tone === "warning") return "bg-warning";
-  return "bg-muted/60";
+export function IssueInputMockup() {
+  return (
+    <ProductCrop label="New session · Source">
+      <div aria-hidden="true">
+        <p className="text-[13px] font-semibold text-foreground">Linear issue URL</p>
+        <div className="mt-2 overflow-hidden rounded-[6px] border border-border bg-canvas px-3 py-3 font-mono text-xs leading-5 text-foreground">
+          <span className="block truncate">linear.app/wallie/issue/OP-349</span>
+        </div>
+        <div className="mt-4 rounded-[6px] border border-border bg-sheet p-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-mono text-xs font-semibold text-accent">OP-349</span>
+            <span className="rounded-full bg-control-muted px-2.5 py-1 text-xs font-medium text-muted">
+              Todo
+            </span>
+          </div>
+          <p className="mt-3 text-[13px] font-semibold leading-5 text-foreground">
+            Replace the overlong landing page with a focused mobile-first product narrative
+          </p>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <span className="rounded-[6px] bg-accent px-4 py-2.5 text-[13px] font-semibold text-accent-foreground">
+            Create session
+          </span>
+        </div>
+      </div>
+    </ProductCrop>
+  );
 }
 
-function toneBadgeClassName(tone: HealthTone) {
-  if (tone === "success") return "bg-success-soft text-success";
-  if (tone === "warning") return "bg-warning-soft text-warning";
-  return "bg-control-muted text-muted";
-}
-
-function OnboardingRail({ activeTitle }: { activeTitle: (typeof onboardingStepTitles)[number] }) {
-  const activeIndex = onboardingStepTitles.indexOf(activeTitle);
+export function PipelineProgressMockup() {
+  const stages = [
+    { detail: "Approved", name: "Plan", tone: "success" },
+    { detail: "Artifact v2 ready", name: "Build", tone: "accent" },
+    { detail: "Waiting", name: "Land", tone: "muted" },
+  ] as const;
 
   return (
-    <div className="border-r border-border pr-4 max-md:hidden">
-      <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup</p>
-      <ol className="space-y-1">
-        {onboardingStepTitles.map((title, index) => {
-          const state =
-            index < activeIndex ? "completed" : index === activeIndex ? "active" : "available";
-          return (
+    <ProductCrop label="Session · Pipeline">
+      <div aria-hidden="true">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-mono text-xs font-semibold text-accent">OP-349</p>
+            <p className="mt-1 text-[13px] font-semibold text-foreground">Landing page narrative</p>
+          </div>
+          <span className="rounded-full bg-warning-soft px-2.5 py-1 text-xs font-medium text-warning">
+            Review
+          </span>
+        </div>
+
+        <ol className="mt-5 grid gap-3">
+          {stages.map((stage, index) => (
             <li
-              key={title}
-              className={`flex items-center gap-2 rounded-[6px] px-3 py-2 text-xs font-medium ${
-                state === "active"
-                  ? "bg-accent-soft text-accent"
-                  : state === "completed"
-                    ? "text-foreground"
-                    : "text-muted"
+              key={stage.name}
+              className={`grid grid-cols-[30px_minmax(0,1fr)] gap-3 rounded-[6px] border p-3.5 ${
+                index === 1 ? "border-accent bg-accent-soft" : "border-border bg-sheet"
               }`}
             >
               <span
-                className={`h-2 w-2 rounded-full ${
-                  state === "active"
-                    ? "bg-accent"
-                    : state === "completed"
-                      ? "bg-success"
-                      : "bg-muted/60"
-                }`}
-                aria-hidden="true"
-              />
-              {title}
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-}
-
-function SetupHealthSidebar({ rows }: { rows: HealthRow[] }) {
-  return (
-    <div className="border-l border-border pl-4 max-md:hidden">
-      <p className="mb-4 type-annotation font-semibold uppercase text-muted">Setup health</p>
-      <div className="space-y-3">
-        {rows.map((row) => (
-          <div key={row.label} className="rounded-[6px] border border-border bg-sheet p-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-medium text-foreground">{row.label}</p>
-              <span
-                className={`h-2 w-2 rounded-full ${toneDotClassName(row.tone)}`}
-                aria-hidden="true"
-              />
-            </div>
-            <p className="mt-1 type-annotation text-muted">{row.detail}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function HeroWorkspaceMockup() {
-  return (
-    <BrowserFrame title="wallie.dev/w/acme">
-      <div className="grid min-h-[520px] grid-cols-[190px_minmax(0,1fr)] bg-sheet text-left max-md:min-h-0 max-md:grid-cols-1">
-        <div className="border-r border-border bg-control-hover p-4 max-md:hidden">
-          <div className="mb-7 flex items-center gap-2">
-            <Image
-              src="/wallie-logo-minimal.png"
-              alt=""
-              width={32}
-              height={32}
-              className="h-8 w-8 rounded-[6px] object-contain dark:invert"
-            />
-            <div>
-              <p className="text-[13px] font-semibold text-foreground">Wallie</p>
-              <p className="type-annotation text-muted">Acme Corp</p>
-            </div>
-          </div>
-          <nav className="space-y-1 text-xs font-medium">
-            {["Pipeline", "Sessions", "Settings"].map((item, index) => (
-              <div
-                key={item}
-                className={`rounded-[6px] px-3 py-2 ${
-                  index === 0 ? "bg-sheet text-foreground" : "text-muted"
+                className={`flex h-7 w-7 items-center justify-center rounded-full font-mono text-xs font-semibold ${
+                  stage.tone === "success"
+                    ? "bg-success-soft text-success"
+                    : stage.tone === "accent"
+                      ? "bg-accent text-accent-foreground"
+                      : "bg-control-muted text-muted"
                 }`}
               >
-                {item}
+                {index + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-foreground">{stage.name}</p>
+                <p className="mt-0.5 truncate text-xs text-muted">{stage.detail}</p>
               </div>
-            ))}
-          </nav>
-        </div>
-
-        <div className="min-w-0">
-          <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
-            <div>
-              <p className="text-xs text-muted">Default pipeline</p>
-              <h2 className="text-[20px] font-semibold text-foreground">Sessions</h2>
-            </div>
-            <div className="rounded-full border border-border bg-sheet px-3 py-1.5 text-xs font-medium text-muted">
-              Realtime sync active
-            </div>
-          </header>
-
-          <div className="overflow-hidden p-4">
-            <div className="grid min-w-[620px] grid-cols-3 gap-3 max-md:min-w-0 max-md:grid-cols-1">
-              {stageCards.map((stage) => (
-                <section
-                  key={stage.name}
-                  className="min-h-[380px] border-l border-border pl-3 first:border-l-0 first:pl-0 max-md:min-h-0"
-                >
-                  <div className="mb-3 flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-[13px] font-semibold text-foreground">{stage.name}</h3>
-                      <p className="mt-1 line-clamp-2 type-annotation leading-4 text-muted">
-                        {stage.description}
-                      </p>
-                    </div>
-                    <span className="font-mono type-annotation text-muted">{stage.count}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {stage.items.map((item) => (
-                      <article
-                        key={item.title}
-                        className="rounded-[6px] border border-border bg-sheet p-3"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-xs font-medium leading-5 text-foreground">
-                            {item.title}
-                          </p>
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClasses(item.status)}`}
-                          >
-                            {statusLabel(item.status)}
-                          </span>
-                        </div>
-                        <div className="mt-3 h-1.5 rounded-full bg-control-muted">
-                          <div className="h-full w-2/3 rounded-full bg-accent/70" />
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          </div>
-        </div>
+            </li>
+          ))}
+        </ol>
       </div>
-    </BrowserFrame>
+    </ProductCrop>
   );
 }
 
-export function SandboxExecutionMockup() {
+export function ArtifactDecisionMockup() {
   return (
-    <BrowserFrame title="wallie.dev/w/acme/sessions/42">
-      <div className="grid min-h-[430px] grid-cols-[1fr_320px] bg-sheet max-md:grid-cols-1">
-        <div className="border-r border-border p-5 max-md:border-b max-md:border-r-0">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+    <ProductCrop label="Build · Artifact v2">
+      <div aria-hidden="true">
+        <div className="rounded-[6px] border border-border bg-canvas p-4">
+          <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
             <div>
-              <p className="text-xs text-muted">Build stage</p>
-              <h3 className="text-[18px] font-semibold text-foreground">
-                SAML SSO for enterprise workspaces
-              </h3>
+              <p className="font-mono text-xs font-semibold text-accent">landing-page.md</p>
+              <p className="mt-1 text-xs text-muted">Build artifact · version 2</p>
             </div>
-            <span className="rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent">
-              Running in sandbox
+            <span className="rounded-full bg-warning-soft px-2.5 py-1 text-xs font-medium text-warning">
+              Awaiting review
             </span>
           </div>
-
-          <div className="space-y-3 rounded-[6px] border border-border bg-foreground p-4 font-mono text-xs leading-5 text-sheet">
-            <p>$ pnpm install</p>
-            <p className="text-success">resolved 742 packages in isolated workspace</p>
-            <p>$ pnpm test -- realtime</p>
-            <p className="text-success">12 tests passed</p>
-            <p>$ git diff -- src/features/auth/saml.ts</p>
-            <p className="text-accent">artifact written: build-output.v3.json</p>
-          </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {runLog.map((item) => (
-              <div
-                key={item.label}
-                className="rounded-[6px] border border-border bg-control-hover p-3"
-              >
-                <p className="type-annotation font-semibold uppercase text-muted">{item.label}</p>
-                <p className="mt-1 truncate font-mono text-xs text-foreground">{item.value}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-control-hover p-5">
-          <p className="text-xs font-semibold text-foreground">Team activity</p>
-          <div className="mt-4 space-y-4">
-            {[
-              ["Wallie", "Started a Vercel Sandbox for Build."],
-              ["Maya", "Approved Plan v2."],
-              ["Codex", "Opened PR #184 for the session branch."],
-              ["Jordan", "Reviewing the latest artifact."],
-            ].map(([actor, text]) => (
-              <div key={text} className="flex gap-3">
-                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sheet type-annotation font-semibold text-muted">
-                  {actor.slice(0, 2).toUpperCase()}
-                </span>
-                <div>
-                  <p className="text-xs font-medium text-foreground">{actor}</p>
-                  <p className="text-xs leading-5 text-muted">{text}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </BrowserFrame>
-  );
-}
-
-export function ApprovalGatesMockup() {
-  return (
-    <BrowserFrame title="wallie.dev/w/acme/onboarding?step=pipeline">
-      <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-sheet p-5 text-left max-md:grid-cols-1">
-        <OnboardingRail activeTitle="Pipeline" />
-
-        <div className="min-w-0 px-5 max-md:px-0">
-          <div className="mb-5">
-            <h3 className="text-[18px] font-semibold text-foreground">Review pipeline</h3>
-            <p className="mt-1 text-xs leading-5 text-muted">
-              Review the default phase pipeline before sessions start.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="block min-w-[190px] flex-1 space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Pipeline name</span>
-                <div className="ui-input h-9 px-3 py-2 text-xs">Default</div>
-              </label>
-              <div className="rounded-[6px] border border-border bg-control-hover px-3 py-2 text-xs text-foreground">
-                Template variables
-              </div>
-            </div>
-
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-foreground">Operating rules</span>
-              <div className="ui-textarea min-h-[76px] overflow-hidden font-mono type-annotation leading-5 text-muted">
-                Stay in scope. Sync before coding. Validate every acceptance criterion and report
-                honestly.
-              </div>
-            </label>
-
-            <ol className="space-y-3">
-              {onboardingStageRows.map((stage, index) => (
-                <li
-                  key={stage.slug}
-                  className="relative rounded-[6px] border border-border bg-sheet p-4"
-                >
-                  <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-control-muted type-annotation font-semibold text-muted">
-                    {index + 1}
-                  </div>
-                  <div className="space-y-3 pl-9">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 gap-2">
-                        <div className="ui-input h-9 min-w-0 flex-1 px-3 py-2 text-xs font-medium">
-                          {stage.name}
-                        </div>
-                        <div className="ui-input h-9 w-[96px] px-3 py-2 font-mono type-annotation">
-                          {stage.slug}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 gap-1 text-xs text-muted">
-                        <span className="ui-icon-button h-8 w-8">↑</span>
-                        <span className="ui-icon-button h-8 w-8">↓</span>
-                      </div>
-                    </div>
-
-                    <div className="ui-input h-9 truncate px-3 py-2 text-xs text-muted">
-                      {stage.description}
-                    </div>
-
-                    <div>
-                      <p className="mb-1.5 text-xs font-medium text-foreground">Prompt template</p>
-                      <div className="ui-textarea min-h-[58px] overflow-hidden font-mono type-annotation leading-5 text-muted">
-                        {stage.prompt}
-                      </div>
-                    </div>
-
-                    <p className="type-annotation text-muted">Approvers: {stage.approvers} ▸</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-              <button className="ui-button pointer-events-none h-8 text-xs" type="button">
-                + Add stage
-              </button>
-              <button className="ui-button-primary pointer-events-none h-8 text-xs" type="button">
-                Save pipeline
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <SetupHealthSidebar rows={pipelineSetupHealthRows} />
-      </div>
-    </BrowserFrame>
-  );
-}
-
-export function RuntimeChoiceMockup() {
-  return (
-    <BrowserFrame title="wallie.dev/w/acme/onboarding?step=runtime">
-      <div className="grid min-h-[500px] grid-cols-[150px_minmax(0,1fr)_210px] bg-sheet p-5 text-left max-md:grid-cols-1">
-        <OnboardingRail activeTitle="Agent" />
-
-        <div className="min-w-0 px-5 max-md:px-0">
-          <div className="mb-5">
-            <h3 className="text-[18px] font-semibold text-foreground">Connect Agent</h3>
-            <p className="mt-1 text-xs leading-5 text-muted">
-              Check coding-agent and sandbox runtime readiness.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <section className="rounded-[6px] border border-border bg-sheet p-4">
-              <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <h4 className="text-[14px] font-semibold text-foreground">Agent config</h4>
-                  <p className="mt-1 text-xs leading-5 text-muted">
-                    Unset fields use Wallie&apos;s recommended defaults until saved.
-                  </p>
-                </div>
-                <button className="ui-button pointer-events-none h-8 text-xs" type="button">
-                  Apply recommended defaults
-                </button>
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {agentConfigRows.map((row) => (
-                  <div key={row.label} className="space-y-1.5">
-                    <p className="text-xs font-medium text-muted">{row.label}</p>
-                    <div className="ui-input h-9 truncate px-3 py-2 font-mono text-xs">
-                      {row.value}
-                    </div>
-                    <p className="type-annotation leading-4 text-muted">{row.detail}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-                <p className="text-xs leading-5 text-muted">No unsaved changes.</p>
-                <button className="ui-button-primary pointer-events-none h-8 text-xs" type="button">
-                  Save config
-                </button>
-              </div>
-
-              <div className="mt-4 border-t border-border pt-4">
-                <div className="mb-3 min-w-0">
-                  <h4 className="text-[14px] font-semibold text-foreground">Provider access</h4>
-                  <p className="mt-1 text-xs leading-5 text-muted">
-                    Sessions run with the Codex credential saved by the session creator.
-                  </p>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {providerAccessRows.map((row) => (
-                    <div
-                      key={row.label}
-                      className="rounded-[6px] border border-border bg-sheet p-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs font-medium text-foreground">{row.label}</p>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneBadgeClassName(row.tone)}`}
-                        >
-                          {row.value}
-                        </span>
-                      </div>
-                      <p className="mt-1 type-annotation leading-4 text-muted">{row.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-[6px] border border-border bg-sheet">
-              <div className="border-b border-border px-4 py-3">
-                <h4 className="text-[14px] font-semibold text-foreground">
-                  Repository environment variables
-                </h4>
-                <p className="mt-1 text-xs leading-5 text-muted">
-                  Detected keys and saved workspace secrets are editable from this list.
-                </p>
-              </div>
-              <div className="divide-y divide-border">
-                {repositoryVariableRows.map((row) => (
-                  <div
-                    key={row.key}
-                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-                  >
-                    <code className="font-mono text-xs font-medium text-foreground">{row.key}</code>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        row.status === "Stored"
-                          ? "bg-success-soft text-success"
-                          : "bg-control-muted text-muted"
-                      }`}
-                    >
-                      {row.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-4">
-                <button className="ui-button pointer-events-none h-8 text-xs" type="button">
-                  + Add variable
-                </button>
-                <button className="ui-button-primary pointer-events-none h-8 text-xs" type="button">
-                  Save config
-                </button>
-              </div>
-            </section>
-
-            <section className="rounded-[6px] border border-border bg-sheet p-4">
-              <h4 className="text-[14px] font-semibold text-foreground">Runtime readiness</h4>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Provider-specific requirements must pass before this step can complete.
+          <div className="mt-4 space-y-3">
+            <div>
+              <p className="font-mono text-xs font-semibold text-foreground">## Validation</p>
+              <p className="mt-1 text-[13px] leading-5 text-muted">
+                Landing tests, accessibility checks, and responsive views are complete.
               </p>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                {runtimeRequirementRows.map((row) => (
-                  <div key={row.label} className="rounded-[6px] border border-border bg-sheet p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-medium text-foreground">{row.label}</p>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${toneBadgeClassName(row.tone)}`}
-                      >
-                        {row.value}
-                      </span>
-                    </div>
-                    <p className="mt-1 type-annotation leading-4 text-muted">{row.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
+            </div>
+            <div>
+              <p className="font-mono text-xs font-semibold text-foreground">## Review note</p>
+              <p className="mt-1 text-[13px] leading-5 text-muted">
+                Confirm the mobile narrative before advancing to Land.
+              </p>
+            </div>
           </div>
         </div>
-
-        <SetupHealthSidebar rows={runtimeSetupHealthRows} />
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <span className="rounded-[6px] border border-border bg-sheet px-3 py-2.5 text-center text-[13px] font-semibold text-foreground">
+            Return with feedback
+          </span>
+          <span className="rounded-[6px] bg-accent px-3 py-2.5 text-center text-[13px] font-semibold text-accent-foreground">
+            Approve artifact
+          </span>
+        </div>
       </div>
-    </BrowserFrame>
+    </ProductCrop>
   );
 }
