@@ -38,7 +38,10 @@ export function preloadCreateSessionDialogOnce(
   }
 
   started.current = true;
-  void load();
+  // Reset on failure so a transient chunk error allows retry, not a permanent preload lockout.
+  load().catch(() => {
+    started.current = false;
+  });
 }
 
 export function CreateSessionDialogLoading() {

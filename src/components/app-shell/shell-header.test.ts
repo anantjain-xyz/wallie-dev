@@ -142,6 +142,21 @@ describe("create-session dialog loading", () => {
 
     expect(load).toHaveBeenCalledTimes(1);
   });
+
+  it("resets the guard so a failed preload can retry", async () => {
+    const started = { current: false };
+    const load = vi.fn(async () => {
+      throw new Error("chunk failed");
+    });
+
+    preloadCreateSessionDialogOnce(started, load);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    preloadCreateSessionDialogOnce(started, load);
+
+    expect(load).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("theme helpers", () => {
