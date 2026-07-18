@@ -3,23 +3,10 @@
 import { useEffect, useState } from "react";
 
 import { Status, STATUS_VALUES } from "@/components/ui/status";
+import { STATUS_SIMULATIONS, type StatusSimulation } from "@/components/ui/status-showcase-config";
 import { cn } from "@/lib/utils";
 
 const themes = ["light", "dark"] as const;
-const simulations = [
-  { label: "Standard color", value: "standard" },
-  { label: "Forced colors preview", value: "forced-colors" },
-  { label: "Protanopia", value: "protanopia" },
-  { label: "Deuteranopia", value: "deuteranopia" },
-  { label: "Tritanopia", value: "tritanopia" },
-  { label: "Achromatopsia", value: "achromatopsia" },
-] as const;
-
-export type StatusSimulation = (typeof simulations)[number]["value"];
-
-export function isStatusSimulation(value: string | undefined): value is StatusSimulation {
-  return simulations.some((simulation) => simulation.value === value);
-}
 
 export function StatusShowcase({
   displayMode = "desktop",
@@ -90,7 +77,7 @@ export function StatusShowcase({
             </button>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            {simulations.map((option) => (
+            {STATUS_SIMULATIONS.map((option) => (
               <button
                 aria-pressed={simulation === option.value}
                 className={simulation === option.value ? "ui-button-primary" : "ui-button"}

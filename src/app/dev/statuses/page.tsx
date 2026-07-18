@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
-import { StatusShowcase, isStatusSimulation } from "@/components/ui/status-showcase";
+import { StatusShowcase } from "@/components/ui/status-showcase";
+import { isStatusSimulation } from "@/components/ui/status-showcase-config";
 import { isProductionDeploy } from "@/env/deploy";
 
 type StatusesPageProps = {
