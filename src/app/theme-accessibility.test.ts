@@ -75,6 +75,12 @@ function contrastRatio(first: string, second: string): number {
   );
 }
 
+function focusVisibleRules(selector: string): string[] {
+  return [...stylesheet.matchAll(/:where\(([\s\S]*?)\):focus-visible\s*{([\s\S]*?)\}/g)]
+    .filter((match) => match[1].includes(selector))
+    .map((match) => match[2]);
+}
+
 describe.each(["light", "dark"] as const)("%s semantic theme", (theme) => {
   const tokens = themeTokens(theme);
 
@@ -108,6 +114,22 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toContain("outline-offset: -4px;");
     expect(stylesheet).toContain("box-shadow: inset 0 0 0 2px var(--focus-ring-contrast);");
   });
+
+  it.each([".ui-menu-item", ".ui-select-item"])(
+    "keeps the primary outline and inset contrast layer on %s",
+    (selector) => {
+      const rules = focusVisibleRules(selector);
+
+      expect(rules.some((rule) => rule.includes("outline: 2px solid var(--focus-ring);"))).toBe(
+        true,
+      );
+      expect(
+        rules.some((rule) =>
+          rule.includes("box-shadow: inset 0 0 0 2px var(--focus-ring-contrast);"),
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("provides pressed feedback and responsive desktop/touch targets", () => {
     expect(stylesheet).toContain(":active:not(:disabled)");
