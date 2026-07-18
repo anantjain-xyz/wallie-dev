@@ -1,14 +1,20 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
-import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
+import type {
+  AgentConfigEntry,
+  AgentConfigFieldErrors,
+  BatchUpsertAgentConfigErrorResponse,
+  BatchUpsertAgentConfigRequest,
+  BatchUpsertAgentConfigResponse,
+} from "@/app/api/agent-config/route";
 import {
   AGENT_PROVIDER_EMPTY_OPTION,
   AGENT_PROVIDER_SELECT_OPTIONS,
 } from "@/components/shared/agent-provider-options";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
@@ -16,7 +22,6 @@ import type { CodexConnectionStatus } from "@/features/settings/codex-connection
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
-import { useApiAction } from "@/features/settings/use-api-action";
 import {
   type AgentConfigKey,
   type AgentProvider,
@@ -39,7 +44,9 @@ type AgentConfigSectionProps = {
   codexConnectFlash?: string | null;
   extraContent?: ReactNode;
   initialAgentConfig: AgentConfigMap;
-  onAgentConfigSaved?: (entry: UpsertAgentConfigResponse["entry"]) => void;
+  initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
+  initialCodexStatus?: CodexConnectionStatus;
+  onAgentConfigSaved?: (entries: AgentConfigEntry[]) => void;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   setFlashMessage: (message: FlashMessage) => void;
@@ -128,6 +135,8 @@ export function AgentConfigSection({
   codexConnectFlash,
   extraContent,
   initialAgentConfig,
+  initialClaudeCodeStatus,
+  initialCodexStatus,
   onAgentConfigSaved,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
@@ -151,27 +160,9 @@ export function AgentConfigSection({
     ),
     max_retries: agentConfigValueToDraft("max_retries", initialAgentConfig.max_retries),
   }));
-
-  const saveAgentConfig = useApiAction<UpsertAgentConfigResponse, [AgentConfigKey, unknown], true>({
-    call: (key, value) =>
-      fetch("/api/agent-config", {
-        body: JSON.stringify({
-          key,
-          value,
-          workspaceId,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      }),
-    errorText: "Agent config save failed.",
-    onSuccess: (payload) => {
-      setAgentConfig((current) => ({ ...current, [payload.entry.key]: payload.entry.value }));
-      onAgentConfigSaved?.(payload.entry);
-      return true;
-    },
-    setFlashMessage,
-    successText: null,
-  });
+  const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
+  const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
 
   const selectedAgentProvider: AgentProvider =
     normalizeAgentProviderName(drafts.agent_provider) ?? "codex";
@@ -228,7 +219,14 @@ export function AgentConfigSection({
     const validation = draftIsEmpty
       ? null
       : parseAgentConfigDraft(field.configKey, field.type, draft);
-    const validationError = validation && !validation.ok ? validation.error : null;
+    const validationError =
+      (isDirty && draftIsEmpty
+        ? `${field.label} is required.`
+        : validation && !validation.ok
+          ? validation.error
+          : null) ??
+      serverFieldErrors[field.configKey] ??
+      null;
     return { field, draft, isDirty, validation, validationError };
   });
   const providerFieldStatuses = fieldStatuses.filter(
@@ -243,34 +241,78 @@ export function AgentConfigSection({
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
-  const canSave = !saveAgentConfig.isBusy && saveableFields.length > 0 && !hasErrors;
+  const canSave = !isSaving && saveableFields.length > 0 && !hasErrors;
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
+    setServerFieldErrors((current) => {
+      if (!current[key]) return current;
+      const nextErrors = { ...current };
+      delete nextErrors[key];
+      return nextErrors;
+    });
   }
 
   async function handleSaveAll() {
-    if (saveableFields.length === 0) return;
+    if (saveInFlightRef.current || saveableFields.length === 0) return;
+    saveInFlightRef.current = true;
+    setIsSaving(true);
+    setServerFieldErrors({});
 
-    let successCount = 0;
+    const config: BatchUpsertAgentConfigRequest["config"] = {};
     for (const status of saveableFields) {
-      if (!status.validation || !status.validation.ok) continue;
-      const result = await saveAgentConfig.run(status.field.configKey, status.validation.value);
-      if (result === true) successCount++;
+      if (status.validation?.ok) {
+        config[status.field.configKey] = status.validation.value;
+      }
     }
 
-    if (successCount === saveableFields.length) {
+    try {
+      const response = await fetch("/api/agent-config", {
+        body: JSON.stringify({ config, workspaceId } satisfies BatchUpsertAgentConfigRequest),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | BatchUpsertAgentConfigErrorResponse
+        | BatchUpsertAgentConfigResponse
+        | null;
+      if (!response.ok || !payload || !("entries" in payload)) {
+        if (payload && "fieldErrors" in payload) {
+          setServerFieldErrors(payload.fieldErrors ?? {});
+        }
+        throw new Error(
+          payload && "error" in payload ? payload.error : "Agent config save failed.",
+        );
+      }
+
+      setAgentConfig((current) => {
+        const next = { ...current };
+        for (const entry of payload.entries) {
+          next[entry.key] = entry.value;
+        }
+        return next;
+      });
+      setDrafts((current) => {
+        const next = { ...current };
+        for (const entry of payload.entries) {
+          next[entry.key] = agentConfigValueToDraft(entry.key, entry.value);
+        }
+        return next;
+      });
+      onAgentConfigSaved?.(payload.entries);
       setFlashMessage({
         kind: "success",
         text: "Saved.",
       });
-    } else if (successCount > 0) {
+    } catch (error) {
       setFlashMessage({
         kind: "error",
-        text: `Saved ${successCount} of ${saveableFields.length} agent settings — see errors above.`,
+        text: error instanceof Error ? error.message : "Agent config save failed.",
       });
+    } finally {
+      saveInFlightRef.current = false;
+      setIsSaving(false);
     }
-    // If successCount === 0, useApiAction already surfaced the per-call error flash.
   }
 
   return (
@@ -282,7 +324,7 @@ export function AgentConfigSection({
               <AgentConfigField
                 key={status.field.configKey}
                 description={status.field.description}
-                disabled={saveAgentConfig.isBusy}
+                disabled={isSaving}
                 draft={status.draft}
                 error={status.validationError}
                 label={status.field.label}
@@ -296,6 +338,8 @@ export function AgentConfigSection({
 
           <ProviderAccessPanel
             connectFlash={codexConnectFlash}
+            initialClaudeCodeStatus={initialClaudeCodeStatus}
+            initialCodexStatus={initialCodexStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             provider={selectedAgentProvider}
@@ -308,7 +352,7 @@ export function AgentConfigSection({
               <AgentConfigField
                 key={status.field.configKey}
                 description={status.field.description}
-                disabled={saveAgentConfig.isBusy}
+                disabled={isSaving}
                 draft={status.draft}
                 error={status.validationError}
                 label={status.field.label}
@@ -334,7 +378,7 @@ export function AgentConfigSection({
             >
               <ActionButtonLabel
                 idle="Save changes"
-                pending={saveAgentConfig.isBusy}
+                pending={isSaving}
                 pendingLabel="Saving…"
               />
             </button>
@@ -349,6 +393,8 @@ export function AgentConfigSection({
           </p>
           <ProviderAccessPanel
             connectFlash={codexConnectFlash}
+            initialClaudeCodeStatus={initialClaudeCodeStatus}
+            initialCodexStatus={initialCodexStatus}
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             provider={selectedAgentProvider}

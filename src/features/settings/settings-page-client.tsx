@@ -2,8 +2,8 @@
 
 import { Suspense, use, useCallback, useEffect, useState, type SetStateAction } from "react";
 
+import type { AgentConfigEntry } from "@/app/api/agent-config/route";
 import { useOptionalToast } from "@/components/ui/toast";
-import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
@@ -36,7 +36,6 @@ import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-sec
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { configuredAgentConfigKeys } from "@/features/onboarding/runtime-readiness";
-import type { AgentConfigKey } from "@/lib/agent-config/contracts";
 import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
 
 const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
@@ -153,10 +152,12 @@ export function updateGithubInData(
 
 function updateAgentConfigInData(
   currentData: SettingsPageData,
-  entry: UpsertAgentConfigResponse["entry"],
+  entries: AgentConfigEntry[],
 ): SettingsPageData {
   const agentConfig = { ...currentData.agentConfig };
-  agentConfig[entry.key as AgentConfigKey] = entry.value;
+  for (const entry of entries) {
+    agentConfig[entry.key] = entry.value;
+  }
   const configuredKeys = configuredAgentConfigKeys(agentConfig);
 
   return {
@@ -184,9 +185,13 @@ function updateCodexConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       codexConnection: {
+        accountEmail: status.accountEmail ?? null,
+        checkedAt: status.checkedAt,
         connected: status.connected,
         credentialType: status.credentialType ?? null,
         expiresAt: status.expiresAt ?? null,
+        reconnectReason: status.reconnectReason ?? null,
+        reconnectRequired: status.reconnectRequired ?? false,
         status: status.connected ? "connected" : expiredOrReconnect ? "expired" : "missing",
         updatedAt: status.updatedAt ?? null,
       },
@@ -203,6 +208,7 @@ function updateClaudeCodeConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       claudeCodeConnection: {
+        checkedAt: status.checkedAt,
         connected: status.connected,
         status: status.connected ? "connected" : "missing",
         updatedAt: status.updatedAt ?? null,
@@ -417,8 +423,24 @@ function SettingsCompletePage({
                 </div>
               }
               initialAgentConfig={pageData.agentConfig}
-              onAgentConfigSaved={(entry) =>
-                setData((currentData) => updateAgentConfigInData(currentData, entry))
+              initialClaudeCodeStatus={{
+                checkedAt: pageData.setupHealth.claudeCodeConnection.checkedAt,
+                connected: pageData.setupHealth.claudeCodeConnection.connected,
+                updatedAt: pageData.setupHealth.claudeCodeConnection.updatedAt,
+              }}
+              initialCodexStatus={{
+                accountEmail: pageData.setupHealth.codexConnection.accountEmail,
+                checkedAt: pageData.setupHealth.codexConnection.checkedAt,
+                connected: pageData.setupHealth.codexConnection.connected,
+                credentialType: pageData.setupHealth.codexConnection.credentialType,
+                expired: pageData.setupHealth.codexConnection.status === "expired",
+                expiresAt: pageData.setupHealth.codexConnection.expiresAt,
+                reconnectReason: pageData.setupHealth.codexConnection.reconnectReason,
+                reconnectRequired: pageData.setupHealth.codexConnection.reconnectRequired,
+                updatedAt: pageData.setupHealth.codexConnection.updatedAt,
+              }}
+              onAgentConfigSaved={(entries) =>
+                setData((currentData) => updateAgentConfigInData(currentData, entries))
               }
               onClaudeCodeStatusChange={(status) =>
                 setData((currentData) => updateClaudeCodeConnectionInData(currentData, status))

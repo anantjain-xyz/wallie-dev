@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
+  AgentConfigFieldErrors,
   ApplyAgentConfigDefaultsResponse,
-  UpsertAgentConfigResponse,
+  BatchUpsertAgentConfigErrorResponse,
+  BatchUpsertAgentConfigRequest,
+  BatchUpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { PlusIcon, XIcon } from "@/components/shared/icons";
@@ -374,9 +377,13 @@ function updateCodexConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       codexConnection: {
+        accountEmail: status.accountEmail ?? null,
+        checkedAt: status.checkedAt,
         connected: status.connected,
         credentialType: status.credentialType ?? null,
         expiresAt: status.expiresAt ?? null,
+        reconnectReason: status.reconnectReason ?? null,
+        reconnectRequired: status.reconnectRequired ?? false,
         status: status.connected ? "connected" : expiredOrReconnect ? "expired" : "missing",
         updatedAt: status.updatedAt ?? null,
       },
@@ -393,6 +400,7 @@ function updateClaudeCodeConnectionInData(
     setupHealth: {
       ...currentData.setupHealth,
       claudeCodeConnection: {
+        checkedAt: status.checkedAt,
         connected: status.connected,
         status: status.connected ? "connected" : "missing",
         updatedAt: status.updatedAt ?? null,
@@ -954,6 +962,7 @@ function RuntimeStep({
   const [newSecretRows, setNewSecretRows] = useState<NewSecretDraftRow[]>([]);
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const nextNewSecretRowId = useRef(1);
   const handleCodexStatusChange = useCallback(
@@ -987,7 +996,9 @@ function RuntimeStep({
       field,
       isDirty,
       validation,
-      validationError: validation.ok ? null : validation.error,
+      validationError: validation.ok
+        ? (serverFieldErrors[field.configKey] ?? null)
+        : validation.error,
     };
   });
   const providerFieldStatuses = fieldStatuses.filter(
@@ -1055,6 +1066,12 @@ function RuntimeStep({
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));
+    setServerFieldErrors((current) => {
+      if (!current[key]) return current;
+      const nextErrors = { ...current };
+      delete nextErrors[key];
+      return nextErrors;
+    });
   }
 
   async function handleSaveConfig() {
@@ -1062,44 +1079,46 @@ function RuntimeStep({
     setBusyAction("config");
     setRuntimeError(null);
     setRuntimeMessage(null);
-    let savedCount = 0;
-    let nextData = data;
+    setServerFieldErrors({});
 
     try {
+      const config: BatchUpsertAgentConfigRequest["config"] = {};
       for (const status of fieldStatuses) {
         if (!status.isDirty || !status.validation.ok) continue;
-        const response = await fetch("/api/agent-config", {
-          body: JSON.stringify({
-            key: status.field.configKey,
-            value: status.validation.value,
-            workspaceId: data.workspace.id,
-          }),
-          headers: { "content-type": "application/json" },
-          method: "POST",
-        });
-        const body = (await response.json().catch(() => null)) as
-          | (UpsertAgentConfigResponse & { error?: string })
-          | null;
-        if (!response.ok || !body) {
-          throw new Error(body?.error ?? "Agent config save failed.");
-        }
-        savedCount += 1;
-        nextData = updateAgentConfigInData(nextData, [body.entry]);
-        if (ALLOWED_AGENT_CONFIG_KEYS.includes(body.entry.key as AgentConfigKey)) {
-          setDrafts((current) => ({
-            ...current,
-            [body.entry.key]: agentConfigValueToDraft(
-              body.entry.key as AgentConfigKey,
-              body.entry.value,
-            ),
-          }));
-        }
-        onDataChange(nextData);
+        config[status.field.configKey] = status.validation.value;
       }
 
-      if (savedCount > 0) {
-        setRuntimeMessage("Saved.");
+      const response = await fetch("/api/agent-config", {
+        body: JSON.stringify({
+          config,
+          workspaceId: data.workspace.id,
+        } satisfies BatchUpsertAgentConfigRequest),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | BatchUpsertAgentConfigErrorResponse
+        | BatchUpsertAgentConfigResponse
+        | null;
+      if (!response.ok || !body || !("entries" in body)) {
+        if (body && "fieldErrors" in body) {
+          setServerFieldErrors(body.fieldErrors ?? {});
+        }
+        throw new Error(body && "error" in body ? body.error : "Agent config save failed.");
       }
+
+      const nextData = updateAgentConfigInData(data, body.entries);
+      setDrafts((current) => {
+        const next = { ...current };
+        for (const entry of body.entries) {
+          if (!ALLOWED_AGENT_CONFIG_KEYS.includes(entry.key as AgentConfigKey)) continue;
+          const key = entry.key as AgentConfigKey;
+          next[key] = agentConfigValueToDraft(key, entry.value);
+        }
+        return next;
+      });
+      onDataChange(nextData);
+      setRuntimeMessage("Saved.");
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Agent config save failed.");
     } finally {
@@ -1375,6 +1394,22 @@ function RuntimeStep({
 
         <div className="mt-4">
           <ProviderAccessPanel
+            initialClaudeCodeStatus={{
+              checkedAt: data.setupHealth.claudeCodeConnection.checkedAt,
+              connected: data.setupHealth.claudeCodeConnection.connected,
+              updatedAt: data.setupHealth.claudeCodeConnection.updatedAt,
+            }}
+            initialCodexStatus={{
+              accountEmail: data.setupHealth.codexConnection.accountEmail,
+              checkedAt: data.setupHealth.codexConnection.checkedAt,
+              connected: data.setupHealth.codexConnection.connected,
+              credentialType: data.setupHealth.codexConnection.credentialType,
+              expired: data.setupHealth.codexConnection.status === "expired",
+              expiresAt: data.setupHealth.codexConnection.expiresAt,
+              reconnectReason: data.setupHealth.codexConnection.reconnectReason,
+              reconnectRequired: data.setupHealth.codexConnection.reconnectRequired,
+              updatedAt: data.setupHealth.codexConnection.updatedAt,
+            }}
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
             onCodexStatusChange={handleCodexStatusChange}
             provider={selectedProvider}

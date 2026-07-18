@@ -82,13 +82,18 @@ const onboardingData = {
   setupHealth: {
     agentConfig: { configured: false, configuredKeys: [], status: "missing", values: {} },
     codexConnection: {
+      accountEmail: null,
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       credentialType: null,
       expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "missing",
       updatedAt: null,
     },
     claudeCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       status: "missing",
       updatedAt: null,

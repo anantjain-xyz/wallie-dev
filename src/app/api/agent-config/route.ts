@@ -7,6 +7,7 @@ import {
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
   type AgentConfigKey,
   getRecommendedAgentConfigDefault,
+  isAgentConfigKey,
   normalizeAgentProviderName,
   parseAgentConfigValue,
 } from "@/lib/agent-config/contracts";
@@ -18,13 +19,31 @@ const listQuerySchema = z.object({
   workspaceId: z.string().uuid("Workspace id is invalid."),
 });
 
-const upsertEnvelopeSchema = z.object({
-  key: z.enum(ALLOWED_AGENT_CONFIG_KEYS, {
-    errorMap: () => ({ message: `key must be one of: ${ALLOWED_AGENT_CONFIG_KEYS.join(", ")}` }),
-  }),
-  value: z.unknown(),
-  workspaceId: z.string().uuid("Workspace id is invalid."),
-});
+const batchUpsertEnvelopeSchema = z
+  .object({
+    config: z.record(z.unknown()),
+    workspaceId: z.string().uuid("Workspace id is invalid."),
+  })
+  .superRefine((value, context) => {
+    const keys = Object.keys(value.config);
+    if (keys.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one agent configuration field is required.",
+        path: ["config"],
+      });
+    }
+
+    for (const key of keys) {
+      if (!isAgentConfigKey(key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Field must be one of: ${ALLOWED_AGENT_CONFIG_KEYS.join(", ")}.`,
+          path: ["config", key],
+        });
+      }
+    }
+  });
 
 const defaultsEnvelopeSchema = z.object({
   skipKeys: z
@@ -40,7 +59,7 @@ const defaultsEnvelopeSchema = z.object({
 });
 
 export type AgentConfigEntry = {
-  key: string;
+  key: AgentConfigKey;
   value: unknown;
 };
 
@@ -48,8 +67,20 @@ export type ListAgentConfigResponse = {
   config: AgentConfigEntry[];
 };
 
-export type UpsertAgentConfigResponse = {
-  entry: AgentConfigEntry;
+export type BatchUpsertAgentConfigRequest = {
+  config: Partial<Record<AgentConfigKey, unknown>>;
+  workspaceId: string;
+};
+
+export type AgentConfigFieldErrors = Partial<Record<AgentConfigKey, string>>;
+
+export type BatchUpsertAgentConfigResponse = {
+  entries: AgentConfigEntry[];
+};
+
+export type BatchUpsertAgentConfigErrorResponse = {
+  error: string;
+  fieldErrors?: AgentConfigFieldErrors;
 };
 
 export type ApplyAgentConfigDefaultsResponse = {
@@ -89,13 +120,15 @@ export async function GET(request: NextRequest) {
   }
 
   const response: ListAgentConfigResponse = {
-    config: (data ?? []).map((row) => ({
-      key: row.key,
-      value:
-        row.key === "agent_provider" && typeof row.value_json === "string"
-          ? (normalizeAgentProviderName(row.value_json) ?? row.value_json)
-          : row.value_json,
-    })),
+    config: (data ?? [])
+      .filter((row): row is typeof row & { key: AgentConfigKey } => isAgentConfigKey(row.key))
+      .map((row) => ({
+        key: row.key,
+        value:
+          row.key === "agent_provider" && typeof row.value_json === "string"
+            ? (normalizeAgentProviderName(row.value_json) ?? row.value_json)
+            : row.value_json,
+      })),
   };
 
   return NextResponse.json(response, { status: 200 });
@@ -109,7 +142,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const envelope = upsertEnvelopeSchema.safeParse(body);
+  const envelope = batchUpsertEnvelopeSchema.safeParse(body);
 
   if (!envelope.success) {
     return NextResponse.json(
@@ -118,9 +151,27 @@ export async function POST(request: Request) {
     );
   }
 
-  const valueResult = parseAgentConfigValue(envelope.data.key, envelope.data.value);
-  if (!valueResult.ok) {
-    return NextResponse.json({ error: valueResult.error }, { status: 400 });
+  const fieldErrors: AgentConfigFieldErrors = {};
+  const entries: AgentConfigEntry[] = [];
+
+  for (const [key, value] of Object.entries(envelope.data.config)) {
+    if (!isAgentConfigKey(key)) continue;
+    const valueResult = parseAgentConfigValue(key, value);
+    if (!valueResult.ok) {
+      fieldErrors[key] = valueResult.error;
+      continue;
+    }
+    entries.push({ key, value: valueResult.value });
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return NextResponse.json(
+      {
+        error: "Agent configuration contains invalid fields.",
+        fieldErrors,
+      } satisfies BatchUpsertAgentConfigErrorResponse,
+      { status: 400 },
+    );
   }
 
   const access = await requireWorkspaceAccessById(envelope.data.workspaceId, {
@@ -132,12 +183,15 @@ export async function POST(request: Request) {
   }
 
   const admin = createSupabaseAdminClient();
+  // PostgREST sends this bulk upsert as one SQL statement. PostgreSQL executes
+  // the entire statement in a transaction, so a constraint failure on any row
+  // rolls back every submitted field.
   const { error } = await admin.from("workspace_agent_config").upsert(
-    {
-      key: envelope.data.key,
-      value_json: valueResult.value as Json,
+    entries.map((entry) => ({
+      key: entry.key,
+      value_json: entry.value as Json,
       workspace_id: access.context.workspace.id,
-    },
+    })),
     { onConflict: "workspace_id,key" },
   );
 
@@ -145,8 +199,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const response: UpsertAgentConfigResponse = {
-    entry: { key: envelope.data.key, value: valueResult.value },
+  const response: BatchUpsertAgentConfigResponse = {
+    entries,
   };
 
   return NextResponse.json(response, { status: 200 });
