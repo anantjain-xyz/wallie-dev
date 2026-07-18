@@ -154,8 +154,9 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Updated");
     expect(html).toContain('dateTime="2026-06-07T10:00:00.000Z"');
     expect(html).toContain('dateTime="2026-06-07T11:00:00.000Z"');
-    expect(html).toContain('class="sr-only">Updated Jun 7, 2026, 11:00 AM</span>');
-    expect(html).not.toContain('aria-label="Updated');
+    expect(html).toContain('aria-label="2026-06-07 10:00 UTC"');
+    expect(html).toContain('aria-label="2026-06-07 11:00 UTC"');
+    expect(html).not.toContain('title="Jun 7, 2026');
   });
 
   it("renders the created date deterministically (UTC) on the server", () => {
@@ -172,7 +173,7 @@ describe("SessionDetailPageClient", () => {
       }),
     );
 
-    expect(html).toContain("Created Jun 7, 10:00");
+    expect(html).toContain(">2026-06-07 10:00 UTC</time>");
   });
 
   it("renders the session creator when present", () => {
