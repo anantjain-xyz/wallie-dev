@@ -7,6 +7,7 @@ import type {
   PipelineDashboardPullRequest,
 } from "@/features/pipeline/types";
 import { PIPELINE_DASHBOARD_PAGE_SIZE } from "@/features/pipeline/types";
+import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 
 export type PipelineBoardAction =
   | {
@@ -99,6 +100,12 @@ function sameLaneMetadata(left: PipelineBoardLane, right: PipelineBoardLane) {
     left.position === right.position &&
     left.slug === right.slug &&
     left.totalCount === right.totalCount
+  );
+}
+
+function continuationCursor(lane: PipelineBoardLane) {
+  return (
+    lane.cursor ?? encodePipelineDashboardCursor({ pipelineId: lane.pipeline.id, stageId: lane.id })
   );
 }
 
@@ -226,6 +233,7 @@ function upsertPipelineCard(
         ? {
             ...lane,
             cardIds: hasRoom ? sortCardIds([...lane.cardIds, card.id], cardsById) : lane.cardIds,
+            cursor: hasRoom ? lane.cursor : continuationCursor(lane),
             totalCount: lane.totalCount + 1,
           }
         : lane,
@@ -270,6 +278,7 @@ function upsertPipelineCard(
     return {
       ...lane,
       cardIds: targetHasRoom ? sortCardIds([...lane.cardIds, card.id], cardsById) : lane.cardIds,
+      cursor: targetHasRoom ? lane.cursor : continuationCursor(lane),
       totalCount: lane.totalCount + 1,
     };
   });

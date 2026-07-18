@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import { createPipelineBoardState, pipelineBoardReducer } from "@/features/pipeline/model";
 import type { PipelineDashboardCard, PipelineDashboardLane } from "@/features/pipeline/types";
 
@@ -162,6 +163,21 @@ describe("pipelineBoardReducer", () => {
     const removed = pipelineBoardReducer(next, { cardId: inserted.id, type: "remove" });
     expect(removed.lanes[0]?.totalCount).toBe(25);
     expect(removed.offPageCardLaneKeys[inserted.id]).toBeUndefined();
+  });
+
+  it("restores lane pagination when a realtime insert follows an exhausted full slice", () => {
+    const cards = Array.from({ length: 25 }, (_, index) => card(index + 1));
+    const exhaustedLane = { ...lane(PLAN_STAGE_ID, "Plan", cards), cursor: null };
+    const initial = createPipelineBoardState([exhaustedLane]);
+    const inserted = card(99, PLAN_STAGE_ID, "awaiting_review");
+    const next = pipelineBoardReducer(initial, { card: inserted, isInsert: true, type: "upsert" });
+
+    expect(next.lanes[0]?.cardIds).toEqual(initial.lanes[0]?.cardIds);
+    expect(next.lanes[0]?.cursor).toBe(
+      encodePipelineDashboardCursor({ pipelineId: PIPELINE_ID, stageId: PLAN_STAGE_ID }),
+    );
+    expect(next.lanes[0]?.totalCount).toBe(26);
+    expect(next.offPageCardLaneKeys[inserted.id]).toBe(`${PIPELINE_ID}:${PLAN_STAGE_ID}`);
   });
 
   it("keeps a full destination slice bounded when a loaded card moves into it", () => {

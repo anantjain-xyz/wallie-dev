@@ -44,6 +44,7 @@ vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
 }));
 
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
+import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/types";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -222,6 +223,52 @@ describe("PipelinePageClient", () => {
       stageId: PLAN_STAGE_ID,
     });
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
+  });
+
+  it("exposes a realtime insert after an exhausted full lane through lane-local pagination", async () => {
+    const supabase = installSupabaseMock();
+    const inserted = card(99, BUILD_STAGE_ID);
+    const buildCards = Array.from({ length: 25 }, (_, index) => card(index + 10, BUILD_STAGE_ID));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          lane: {
+            cards: [inserted],
+            cursor: null,
+            id: BUILD_STAGE_ID,
+            pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+            totalCount: 26,
+          },
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PipelinePageClient initialData={initialData(undefined, buildCards)} />);
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+
+    act(() => {
+      supabase.getSessionsHandler()?.({ eventType: "INSERT", new: sessionRow(inserted) });
+    });
+
+    const loadMore = await screen.findByRole("button", {
+      name: "Load more Build sessions",
+    });
+    expect(screen.queryByText("Session 99")).toBeNull();
+    await userEvent.click(loadMore);
+
+    await waitFor(() => expect(screen.getByText("Session 99")).toBeTruthy());
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      cursor: encodePipelineDashboardCursor({
+        pipelineId: PIPELINE_ID,
+        stageId: BUILD_STAGE_ID,
+      }),
+      pipelineId: PIPELINE_ID,
+      seenIds: buildCards.map((session) => session.id).reverse(),
+      stageId: BUILD_STAGE_ID,
+    });
+    expect(screen.queryByRole("button", { name: "Load more Build sessions" })).toBeNull();
   });
 
   it("preserves keyboard focus when realtime moves a card between known stages", async () => {
