@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-const sessionCookieName = "sb-127-auth-token";
+function sessionCookieNameFromEnv() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:54321";
+  const hostnamePrefix = new URL(supabaseUrl).hostname.split(".")[0];
+
+  return `sb-${hostnamePrefix}-auth-token`;
+}
 
 function encodeJwtPart(value: unknown) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -9,8 +14,9 @@ function encodeJwtPart(value: unknown) {
 test("missing sessions preserve the protected-page login redirect", async ({ page }) => {
   await page.goto("/w/acme-corp/sessions");
 
-  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp%2Fsessions$/);
-  await expect(page.getByText("Dev password")).toBeVisible();
+  // Unauthenticated workspace loaders redirect to the workspace base path as `next`.
+  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp$/);
+  await expect(page.getByText("Development alternative")).toBeVisible();
 });
 
 test("logout without a mutable user record clears the flow back to login", async ({ page }) => {
@@ -27,6 +33,7 @@ test("an expired JWT fails closed, clears its cookie, and redirects to login", a
   context,
   page,
 }) => {
+  const sessionCookieName = sessionCookieNameFromEnv();
   const expiredToken = `${encodeJwtPart({ alg: "ES256", kid: "expired-key", typ: "JWT" })}.${encodeJwtPart(
     {
       exp: Math.floor(Date.now() / 1_000) - 60,
@@ -41,10 +48,10 @@ test("an expired JWT fails closed, clears its cookie, and redirects to login", a
       token_type: "bearer",
     }),
   ).toString("base64url")}`;
+  // Playwright requires either `url` or a `domain`/`path` pair — not `url` + `path`.
   await context.addCookies([
     {
       name: sessionCookieName,
-      path: "/",
       url: baseURL,
       value: encodedSession,
     },
@@ -52,7 +59,7 @@ test("an expired JWT fails closed, clears its cookie, and redirects to login", a
 
   await page.goto("/w/acme-corp/sessions");
 
-  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp%2Fsessions$/);
+  await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp$/);
   await expect
     .poll(async () => (await context.cookies()).some(({ name }) => name === sessionCookieName))
     .toBe(false);
