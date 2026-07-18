@@ -116,6 +116,8 @@ export type OnboardingSetupHealth = {
     connected: boolean;
     credentialType: CodexCredentialType | null;
     expiresAt: string | null;
+    reconnectReason: string | null;
+    reconnectRequired: boolean;
     status: "connected" | "expired" | "missing";
     updatedAt: string | null;
   };

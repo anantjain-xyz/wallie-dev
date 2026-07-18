@@ -95,6 +95,8 @@ const onboardingData: WorkspaceOnboardingData = {
       connected: true,
       credentialType: "codex_access_token",
       expiresAt: "2026-05-16T20:00:00.000Z",
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
     },

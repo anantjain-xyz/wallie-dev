@@ -86,6 +86,8 @@ const onboardingData = {
       connected: false,
       credentialType: null,
       expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "missing",
       updatedAt: null,
     },

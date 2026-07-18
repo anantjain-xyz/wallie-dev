@@ -165,6 +165,8 @@ function updateCodexConnectionInData(
         connected: status.connected,
         credentialType: status.credentialType ?? null,
         expiresAt: status.expiresAt ?? null,
+        reconnectReason: status.reconnectReason ?? null,
+        reconnectRequired: status.reconnectRequired ?? false,
         status: status.connected ? "connected" : expiredOrReconnect ? "expired" : "missing",
         updatedAt: status.updatedAt ?? null,
       },
@@ -419,6 +421,8 @@ function SettingsCompletePage({
                 credentialType: pageData.setupHealth.codexConnection.credentialType,
                 expired: pageData.setupHealth.codexConnection.status === "expired",
                 expiresAt: pageData.setupHealth.codexConnection.expiresAt,
+                reconnectReason: pageData.setupHealth.codexConnection.reconnectReason,
+                reconnectRequired: pageData.setupHealth.codexConnection.reconnectRequired,
                 updatedAt: pageData.setupHealth.codexConnection.updatedAt,
               }}
               onAgentConfigSaved={(entries) =>

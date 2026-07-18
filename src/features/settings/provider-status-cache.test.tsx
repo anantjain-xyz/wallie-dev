@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClaudeCodeConnectionPanel } from "@/features/settings/claude-code-connection-panel";
@@ -40,6 +40,42 @@ describe("provider status cache", () => {
       </>,
     );
 
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("seeds the reconnect form and status details from fresh server data", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <CodexConnectionPanel
+        initialStatus={{
+          checkedAt: new Date().toISOString(),
+          connected: false,
+          credentialType: "codex_access_token",
+          expired: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText("Paste access token")).toBeTruthy();
+    cleanup();
+
+    render(
+      <CodexConnectionPanel
+        initialStatus={{
+          checkedAt: new Date().toISOString(),
+          connected: false,
+          credentialType: "chatgpt_auth_json",
+          reconnectReason: "Refresh token was rejected.",
+          reconnectRequired: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+    expect(screen.getByText("Refresh token was rejected.")).toBeTruthy();
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
   });

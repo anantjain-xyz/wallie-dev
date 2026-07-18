@@ -227,6 +227,7 @@ function mapSecretPreview(row: SecretPreviewRow): WorkspaceSecretPreview {
 function codexConnectionStatus(
   row: {
     access_token_expires_at: string | null;
+    auth_reconnect_reason: string | null;
     auth_reconnect_required: boolean;
     credential_type: string;
     updated_at: string;
@@ -239,6 +240,8 @@ function codexConnectionStatus(
       connected: false,
       credentialType: null,
       expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
       status: "missing" as const,
       updatedAt: null,
     };
@@ -253,6 +256,8 @@ function codexConnectionStatus(
     connected: !isExpired && !reconnectRequired,
     credentialType: row.credential_type,
     expiresAt: row.access_token_expires_at,
+    reconnectReason: row.auth_reconnect_reason,
+    reconnectRequired,
     status: isExpired || reconnectRequired ? ("expired" as const) : ("connected" as const),
     updatedAt: row.updated_at,
   };
@@ -366,6 +371,7 @@ type OnboardingSnapshot = {
   claudeCodeCredentials: { updated_at: string } | null;
   codexCredentials: {
     access_token_expires_at: string | null;
+    auth_reconnect_reason: string | null;
     auth_reconnect_required: boolean;
     credential_type: string;
     updated_at: string;
@@ -464,7 +470,9 @@ function createOnboardingSnapshot(
         Promise.all([
           admin
             .from("user_codex_credentials")
-            .select("access_token_expires_at, auth_reconnect_required, credential_type, updated_at")
+            .select(
+              "access_token_expires_at, auth_reconnect_reason, auth_reconnect_required, credential_type, updated_at",
+            )
             .eq("user_id", context.user.id)
             .maybeSingle(),
           admin

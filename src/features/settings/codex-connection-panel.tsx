@@ -162,7 +162,9 @@ export function CodexConnectionPanel({
 }: CodexConnectionPanelProps) {
   const initialStatusRef = useRef(initialStatus);
   const [status, setStatus] = useState<CodexConnectionStatus | null>(() => initialStatus ?? null);
-  const [credentialType, setCredentialType] = useState<CodexCredentialType>("chatgpt_auth_json");
+  const [credentialType, setCredentialType] = useState<CodexCredentialType>(
+    () => initialStatus?.credentialType ?? "chatgpt_auth_json",
+  );
   const [credential, setCredential] = useState("");
   const [expiresOn, setExpiresOn] = useState("");
   const [deviceFlow, setDeviceFlow] = useState<CodexDeviceFlow | null>(null);

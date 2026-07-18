@@ -375,6 +375,8 @@ function updateCodexConnectionInData(
         connected: status.connected,
         credentialType: status.credentialType ?? null,
         expiresAt: status.expiresAt ?? null,
+        reconnectReason: status.reconnectReason ?? null,
+        reconnectRequired: status.reconnectRequired ?? false,
         status: status.connected ? "connected" : expiredOrReconnect ? "expired" : "missing",
         updatedAt: status.updatedAt ?? null,
       },
@@ -1398,6 +1400,8 @@ function RuntimeStep({
               credentialType: data.setupHealth.codexConnection.credentialType,
               expired: data.setupHealth.codexConnection.status === "expired",
               expiresAt: data.setupHealth.codexConnection.expiresAt,
+              reconnectReason: data.setupHealth.codexConnection.reconnectReason,
+              reconnectRequired: data.setupHealth.codexConnection.reconnectRequired,
               updatedAt: data.setupHealth.codexConnection.updatedAt,
             }}
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
