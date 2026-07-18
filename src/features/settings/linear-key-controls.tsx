@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { dateFormatter, InlineActionMessage } from "@/features/settings/settings-ui";
@@ -212,7 +213,11 @@ export function LinearKeyControls({
                   onClick={handleSaveLinearKey}
                   type="button"
                 >
-                  {saveLinearKeyLabel}
+                  <ActionButtonLabel
+                    idle="Save key"
+                    pending={isSavingLinearKey}
+                    pendingLabel={saveLinearKeyLabel}
+                  />
                 </button>
               </div>
               {feedbackSlot === "replace" ? (
@@ -248,7 +253,11 @@ export function LinearKeyControls({
             onClick={handleSaveLinearKey}
             type="button"
           >
-            {saveLinearKeyLabel}
+            <ActionButtonLabel
+              idle="Save key"
+              pending={isSavingLinearKey}
+              pendingLabel={saveLinearKeyLabel}
+            />
           </button>
         </div>
         {feedbackSlot === "initial" || feedbackSlot === "configured" ? (

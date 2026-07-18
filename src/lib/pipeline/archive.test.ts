@@ -215,4 +215,28 @@ describe("unarchiveSession", () => {
       updatedAt: "2026-06-07T12:00:00.000Z",
     });
   });
+
+  it("only clears the archive version that created an Undo action", async () => {
+    const expectedArchivedAt = "2026-06-07T12:00:00.000Z";
+    const newerArchivedAt = "2026-06-07T13:00:00.000Z";
+    const { admin, calls } = buildAdmin({
+      updateRow: null,
+      selectRow: {
+        archived_at: newerArchivedAt,
+        id: "s1",
+        phase_status: "awaiting_review",
+        updated_at: newerArchivedAt,
+      },
+    });
+
+    const result = await unarchiveSession(admin as never, {
+      expectedArchivedAt,
+      sessionId: "s1",
+    });
+
+    const update = calls.find((call) => call.op === "update");
+    expect(update?.filters["eq.archived_at"]).toBe(expectedArchivedAt);
+    expect(update?.filters["not.archived_at"]).toBeUndefined();
+    expect(result.archivedAt).toBe(newerArchivedAt);
+  });
 });

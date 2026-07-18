@@ -74,6 +74,7 @@
   --overlay-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
   --z-overlay-backdrop: 60;
   --z-overlay-content: 70;
+  --z-route-progress: 75;
   --z-toast: 80;
   --z-tooltip: 90;
 }
@@ -644,6 +645,32 @@
     border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
   }
 
+  .ui-toast-action {
+    @apply mt-3 inline-flex min-h-8 items-center rounded-[6px] border border-border bg-sheet px-3 text-[13px] font-semibold text-foreground outline-none transition-[color,background-color,border-color,box-shadow] duration-150;
+  }
+
+  .ui-toast-action:hover {
+    @apply border-border-strong bg-control-hover;
+  }
+
+  .ui-route-progress {
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: var(--z-route-progress);
+    height: 3px;
+    overflow: hidden;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .ui-route-progress-value {
+    display: block;
+    width: 42%;
+    height: 100%;
+    background: var(--accent);
+    animation: wallie-route-progress 1.1s ease-in-out infinite;
+  }
+
   /* Fully rounded treatment is reserved for product status. */
   .ui-status {
     @apply rounded-full;
@@ -1127,6 +1154,16 @@ html:has([data-precision-console-fixture]) nextjs-portal {
   }
 }
 
+@keyframes wallie-route-progress {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(340%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1135,6 +1172,11 @@ html:has([data-precision-console-fixture]) nextjs-portal {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .ui-route-progress-value {
+    width: 68%;
+    transform: none;
   }
 }
 
@@ -1145,4 +1187,9 @@ html:has([data-precision-console-fixture]) nextjs-portal {
   animation-iteration-count: 1 !important;
   scroll-behavior: auto !important;
   transition-duration: 0.01ms !important;
+}
+
+:root[data-reduced-motion="reduce"] .ui-route-progress-value {
+  width: 68%;
+  transform: none;
 }

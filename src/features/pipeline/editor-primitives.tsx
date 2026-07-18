@@ -2,6 +2,7 @@
 
 import { useId } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { MultiSelectField } from "@/components/ui/multi-select-field";
 import type { PipelineStage } from "@/features/sessions/types";
 
@@ -560,7 +561,7 @@ export function PipelineEditorControls({
         disabled={isPending || saveDisabled}
         onClick={onSave}
       >
-        {isPending ? savingLabel : saveLabel}
+        <ActionButtonLabel idle={saveLabel} pending={isPending} pendingLabel={savingLabel} />
       </button>
     </div>
   );

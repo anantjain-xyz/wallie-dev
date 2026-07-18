@@ -373,6 +373,37 @@ describe("accessible overlay primitives", () => {
     expect(await screen.findByText("Connection failed")).toBeTruthy();
   });
 
+  it("offers an accessible toast action without duplicating the visible message", async () => {
+    const user = userEvent.setup();
+    const undo = vi.fn();
+
+    function ArchiveNotice() {
+      const { pushToast } = useToast();
+      return (
+        <button
+          onClick={() =>
+            pushToast({
+              action: { altText: "Undo session archive", label: "Undo", onClick: undo },
+              duration: 7000,
+              priority: "polite",
+              title: "Session archived.",
+              tone: "success",
+            })
+          }
+          type="button"
+        >
+          Archive
+        </button>
+      );
+    }
+
+    renderWithOverlays(<ArchiveNotice />);
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    expect(screen.getAllByText("Session archived.")).toHaveLength(1);
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+    expect(undo).toHaveBeenCalledTimes(1);
+  });
+
   it("exercises light, dark, and reduced-motion display states", async () => {
     const user = userEvent.setup();
     renderWithOverlays(<UiPrimitivesShowcase />);

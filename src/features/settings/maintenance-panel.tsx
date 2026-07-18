@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { Spinner } from "@/components/shared/spinner";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -87,14 +87,11 @@ export function MaintenancePanel({
           disabled={runMaintenance.isBusy}
           onClick={() => void runMaintenance.run()}
         >
-          {runMaintenance.isBusy ? (
-            <>
-              <Spinner />
-              <span>Running…</span>
-            </>
-          ) : (
-            "Run maintenance"
-          )}
+          <ActionButtonLabel
+            idle="Run maintenance"
+            pending={runMaintenance.isBusy}
+            pendingLabel="Running…"
+          />
         </button>
       </div>
 
