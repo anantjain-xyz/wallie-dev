@@ -168,7 +168,7 @@ describe("SessionDetailPageClient", () => {
       }),
     );
 
-    expect(html).toContain("Created Jun 7, 10:00");
+    expect(html).toContain(">2026-06-07 10:00 UTC</time>");
   });
 
   it("renders the session creator when present", () => {

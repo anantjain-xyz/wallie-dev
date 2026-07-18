@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { TimeDisplay } from "@/components/shared/time-display";
 import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
 import {
   appendPipelineBoardLanePage,
@@ -30,32 +31,23 @@ import { cn } from "@/lib/utils";
 
 type PipelinePageClientProps = {
   initialData: PipelineDashboardData;
+  initialNow?: string;
 };
 
 const LANE_WIDTH_PX = 260;
 
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (Number.isNaN(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
+const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
 
-export function PipelinePageClient({ initialData }: PipelinePageClientProps) {
+export function PipelinePageClient({ initialData, initialNow }: PipelinePageClientProps) {
   return (
     <SessionDetailLinkPrefetchBoundary>
-      <PipelinePageContent initialData={initialData} />
+      <PipelinePageContent initialData={initialData} initialNow={initialNow} />
     </SessionDetailLinkPrefetchBoundary>
   );
 }
 
-function PipelinePageContent({ initialData }: PipelinePageClientProps) {
+function PipelinePageContent({ initialData, initialNow }: PipelinePageClientProps) {
+  const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const [lanes, setLanes] = useState<PipelineDashboardLane[]>(initialData.lanes);
   const [loadingLaneId, setLoadingLaneId] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
@@ -291,6 +283,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                         <PipelineCard
                           key={card.id}
                           card={card}
+                          initialNow={renderNow}
                           workspaceSlug={initialData.workspace.slug}
                         />
                       ))}
@@ -347,6 +340,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
                         <PipelineCard
                           key={card.id}
                           card={card}
+                          initialNow={renderNow}
                           workspaceSlug={initialData.workspace.slug}
                         />
                       ))}
@@ -419,9 +413,11 @@ function PipelineLanePagination({
 
 function PipelineCard({
   card,
+  initialNow,
   workspaceSlug,
 }: {
   card: PipelineDashboardCard;
+  initialNow: string;
   workspaceSlug: string;
 }) {
   const pullRequests = card.pullRequests ?? [];
@@ -480,7 +476,9 @@ function PipelineCard({
 
           <div className="flex items-center gap-1">
             <dt className="sr-only">Updated</dt>
-            <dd>{relativeTime(card.updatedAt)}</dd>
+            <dd>
+              <TimeDisplay initialNow={initialNow} value={card.updatedAt} variant="relative" />
+            </dd>
           </div>
         </dl>
       </div>

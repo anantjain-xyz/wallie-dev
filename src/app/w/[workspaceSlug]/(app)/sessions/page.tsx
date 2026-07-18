@@ -12,6 +12,7 @@ export default async function SessionsPage({ params, searchParams }: SessionsPag
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
   const data = await loadSessionListPageData(workspaceSlug, resolvedSearchParams);
+  const initialNow = new Date().toISOString();
 
-  return <SessionsPageClient initialData={data} />;
+  return <SessionsPageClient initialData={data} initialNow={initialNow} />;
 }
