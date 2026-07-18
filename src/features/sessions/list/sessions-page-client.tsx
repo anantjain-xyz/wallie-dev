@@ -657,7 +657,13 @@ function SessionRow({
   }
 
   return (
-    <li className="group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center">
+    <li
+      className={cn(
+        "session-list-row group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center",
+        (isEditing || archivePending !== null || error || archiveError) &&
+          "content-visibility-interacting",
+      )}
+    >
       <Tooltip content={displayTitle}>
         <SessionDetailLink
           href={detailHref}
