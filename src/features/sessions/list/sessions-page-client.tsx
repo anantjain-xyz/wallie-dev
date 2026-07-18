@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
+import { TimeDisplay } from "@/components/shared/time-display";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { CommandBar, PageContainer, PageHeader } from "@/components/ui/page-shell";
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 
 type SessionsPageClientProps = {
   initialData: SessionListPageData;
+  initialNow?: string;
 };
 
 type ListCommittedMutation =
@@ -61,18 +63,7 @@ function buildHref(
   return qs ? `${base}?${qs}` : base;
 }
 
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (Number.isNaN(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
+const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
 
 const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
   { key: "all", label: "All" },
@@ -135,7 +126,8 @@ export function reconcileListMutations(
     >((current, mutation) => (mutation.kind === "title" ? commitListTitle(current, mutation.result) : commitListArchive(current, scope, mutation.result)), [...sessions]);
 }
 
-export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
+export function SessionsPageClient({ initialData, initialNow }: SessionsPageClientProps) {
+  const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const router = useRouter();
   const { startNavigation } = useOptionalRouteProgress();
   const { dismissToast, pushToast } = useOptionalToast();
@@ -442,24 +434,25 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
             </p>
           </div>
         )
-      ) : (
-        <SessionDetailLinkPrefetchBoundary>
-          <ul className="ui-sheet divide-y divide-border overflow-hidden">
-            {sessions
-              .filter((session) => !hiddenArchivedSessionIds.has(session.id))
-              .map((session) => (
-                <SessionRow
-                  key={session.id}
-                  onArchiveCommitted={handleArchiveCommitted}
-                  onArchiveRequested={handleArchiveRequested}
-                  onTitleCommitted={handleTitleCommitted}
-                  scope={initialData.queryState.scope}
-                  session={session}
-                  workspaceSlug={workspaceSlug}
-                />
-              ))}
-          </ul>
-        </SessionDetailLinkPrefetchBoundary>
+        ) : (
+          <SessionDetailLinkPrefetchBoundary>
+            <ul className="ui-sheet divide-y divide-border overflow-hidden">
+              {sessions
+                .filter((session) => !hiddenArchivedSessionIds.has(session.id))
+                .map((session) => (
+                  <SessionRow
+                    key={session.id}
+                    initialNow={renderNow}
+                    onArchiveCommitted={handleArchiveCommitted}
+                    onArchiveRequested={handleArchiveRequested}
+                    onTitleCommitted={handleTitleCommitted}
+                    scope={initialData.queryState.scope}
+                    session={session}
+                    workspaceSlug={workspaceSlug}
+                  />
+                ))}
+            </ul>
+          </SessionDetailLinkPrefetchBoundary>
       )}
 
       {initialData.hasMore && initialData.nextCursor ? (
@@ -480,6 +473,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 }
 
 function SessionRow({
+  initialNow,
   onArchiveCommitted,
   onArchiveRequested,
   onTitleCommitted,
@@ -487,6 +481,7 @@ function SessionRow({
   session,
   workspaceSlug,
 }: {
+  initialNow: string;
   onArchiveCommitted: (result: {
     archivedAt: string | null;
     id: string;
@@ -753,7 +748,10 @@ function SessionRow({
           <span>·</span>
           <Status compact value={sessionPhaseStatusValue(phaseStatus)} />
           <span>·</span>
-          <span>updated {relativeTime(session.updatedAt)}</span>
+          <span>
+            updated{" "}
+            <TimeDisplay initialNow={initialNow} value={session.updatedAt} variant="relative" />
+          </span>
           {archivedAt ? (
             <>
               <span>·</span>

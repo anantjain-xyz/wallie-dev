@@ -3,6 +3,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { Spinner } from "@/components/shared/spinner";
+import { TimeDisplay } from "@/components/shared/time-display";
 import type {
   SessionArtifactBody,
   SessionArtifactMetadata,
@@ -14,6 +15,7 @@ type ArtifactPanelProps = {
   emptyText: string;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
+  initialNow?: string;
   isDrafting: boolean;
   latestArtifact: SessionArtifactSummary | null;
   loadLatest: boolean;
@@ -95,6 +97,7 @@ function ArtifactPanelStage({
   emptyText,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
+  initialNow = "1970-01-01T00:00:00.000Z",
   isDrafting,
   latestArtifact,
   loadLatest,
@@ -473,6 +476,7 @@ function ArtifactPanelStage({
               artifact={latestBody}
               initialFormattedArtifact={initialFormattedArtifact}
               initialFormattedArtifactKey={initialFormattedArtifactKey}
+              initialNow={initialNow}
               sessionId={sessionId}
             />
           ) : latestLoading ? null : isDrafting ? (
@@ -527,6 +531,7 @@ function ArtifactPanelStage({
                   artifact={visibleSelectedBody}
                   initialFormattedArtifact={initialFormattedArtifact}
                   initialFormattedArtifactKey={initialFormattedArtifactKey}
+                  initialNow={initialNow}
                   sessionId={sessionId}
                 />
               ) : null}
@@ -574,11 +579,13 @@ function ArtifactBodyView({
   artifact,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
+  initialNow,
   sessionId,
 }: {
   artifact: CachedArtifactBody;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
+  initialNow: string;
   sessionId: string;
 }) {
   const [displayMode, setDisplayMode] = useState<ArtifactDisplayMode>("formatted");
@@ -604,7 +611,7 @@ function ArtifactBodyView({
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="type-annotation uppercase tracking-wide text-muted">
-          v{artifact.version} · {new Date(artifact.createdAt).toLocaleString()}
+          v{artifact.version} · <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
         </p>
         {isMarkdown ? (
           <div aria-label="Artifact format" className="flex gap-1" role="tablist">

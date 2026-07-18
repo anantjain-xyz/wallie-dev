@@ -24,5 +24,5 @@ export default async function WorkspaceOnboardingPage({ params }: WorkspaceOnboa
     notFound();
   }
 
-  return <OnboardingPageClient initialData={result.data} />;
+  return <OnboardingPageClient initialData={result.data} initialNow={new Date().toISOString()} />;
 }

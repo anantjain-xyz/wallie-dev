@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
+import { TimeDisplay } from "@/components/shared/time-display";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
@@ -60,52 +61,8 @@ type SessionDetailPageClientProps = {
   initialData: SessionReviewData;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
+  initialNow?: string;
 };
-
-const dateTimeFormatOptions: Intl.DateTimeFormatOptions = {
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  month: "short",
-};
-
-const fullDateTimeFormatOptions: Intl.DateTimeFormatOptions = {
-  dateStyle: "medium",
-  timeStyle: "short",
-};
-
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, dateTimeFormatOptions);
-
-const fullDateTimeFormatter = new Intl.DateTimeFormat(undefined, fullDateTimeFormatOptions);
-
-// Deterministic formatters (fixed locale + UTC) for the initial server render.
-// `Intl.DateTimeFormat(undefined, …)` resolves to the environment timezone —
-// UTC on Vercel, local in the browser — so an always-visible absolute date
-// would mismatch on hydration and could even show the wrong calendar day near
-// midnight UTC. We render these UTC-pinned values during SSR/first paint, then
-// swap to the viewer's local formatters after mount (see `mounted` below).
-const ssrDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  ...dateTimeFormatOptions,
-  timeZone: "UTC",
-});
-
-const ssrFullDateTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  ...fullDateTimeFormatOptions,
-  timeZone: "UTC",
-});
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (Number.isNaN(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
 
 function CreatorAvatar({ displayName }: { displayName: string }) {
   const initial = displayName.trim().charAt(0).toUpperCase() || "?";
@@ -208,7 +165,9 @@ export function SessionDetailPageClient({
   initialData,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
+  initialNow,
 }: SessionDetailPageClientProps) {
+  const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
   const { pushToast } = useOptionalToast();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
@@ -227,19 +186,6 @@ export function SessionDetailPageClient({
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
-
-  // Gate locale/timezone-sensitive timestamps so the absolute "Created" date
-  // renders identically on the server and during the first client paint, then
-  // re-renders in the viewer's local timezone once mounted.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const createdAtDate = new Date(session.createdAt);
-  const createdAtLabel = (mounted ? dateTimeFormatter : ssrDateTimeFormatter).format(createdAtDate);
-  const createdAtFull = (mounted ? fullDateTimeFormatter : ssrFullDateTimeFormatter).format(
-    createdAtDate,
-  );
 
   const stageRail = useMemo(() => buildStageRail(session), [session]);
   const hasConnectionLinks =
@@ -814,18 +760,14 @@ export function SessionDetailPageClient({
             <span aria-hidden="true">·</span>
           </>
         ) : null}
-        <span title={createdAtFull} suppressHydrationWarning>
-          Created {createdAtLabel}
+        <span>
+          Created{" "}
+          <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={session.createdAt} />
         </span>
         <span aria-hidden="true">·</span>
-        {/* Relative time derives from Date.now(), which differs between the
-            server render and hydration; suppress the resulting text mismatch
-            (the label is approximate by nature). */}
-        <span
-          title={fullDateTimeFormatter.format(new Date(session.updatedAt))}
-          suppressHydrationWarning
-        >
-          Updated {relativeTime(session.updatedAt)}
+        <span>
+          Updated{" "}
+          <TimeDisplay initialNow={renderNow} value={session.updatedAt} variant="relative" />
         </span>
         {hasConnectionLinks ? (
           <>
@@ -874,6 +816,7 @@ export function SessionDetailPageClient({
               }
               initialFormattedArtifact={initialFormattedArtifact}
               initialFormattedArtifactKey={initialFormattedArtifactKey}
+              initialNow={renderNow}
               isDrafting={isDraftingSelectedStage}
               latestArtifact={latestArtifact}
               loadLatest={shouldLoadLatestArtifact}

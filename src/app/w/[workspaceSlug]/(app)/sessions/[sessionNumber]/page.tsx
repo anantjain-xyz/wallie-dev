@@ -18,6 +18,7 @@ type SessionDetailPageProps = {
 export default async function SessionDetailPage({ params }: SessionDetailPageProps) {
   const { sessionNumber, workspaceSlug } = await params;
   const data = await loadSessionDetailPageData(workspaceSlug, sessionNumber);
+  const initialNow = new Date().toISOString();
   const latestArtifact = data.review.session.artifacts[0] ?? null;
   const initialFormattedArtifactKey = latestArtifact
     ? `${data.review.session.id}:${latestArtifact.stageSlug}:${latestArtifact.version}`
@@ -36,11 +37,13 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
           <SessionActivity
             archivedAt={data.review.session.archivedAt}
             context={data.activityContext}
+            initialNow={initialNow}
             workspaceSlug={data.review.workspaceSlug}
           />
         </Suspense>
       }
       initialData={data.review}
+      initialNow={initialNow}
       initialFormattedArtifact={initialFormattedArtifact}
       initialFormattedArtifactKey={initialFormattedArtifactKey}
     />
