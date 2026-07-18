@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Profiler, type ProfilerOnRenderCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  cardLinkRenders: new Map<string, number>(),
   createSupabaseBrowserClient: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -18,9 +20,18 @@ vi.mock("@/lib/supabase/browser", () => ({
 }));
 
 vi.mock("@/features/sessions/components/session-detail-link", () => ({
-  SessionDetailLink: ({ "aria-label": ariaLabel }: { "aria-label": string }) => (
-    <a aria-label={ariaLabel} href="#" />
-  ),
+  SessionDetailLink: ({
+    "aria-label": ariaLabel,
+    className,
+    href,
+  }: {
+    "aria-label": string;
+    className?: string;
+    href: string;
+  }) => {
+    mocked.cardLinkRenders.set(ariaLabel, (mocked.cardLinkRenders.get(ariaLabel) ?? 0) + 1);
+    return <a aria-label={ariaLabel} className={className} href={href} />;
+  },
   SessionDetailLinkPrefetchBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
 
@@ -33,6 +44,8 @@ vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
 }));
 
 import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
+import { formatUtcTimestamp } from "@/components/shared/time-display";
+import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/types";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -41,9 +54,12 @@ const PLAN_STAGE_ID = "20000000-0000-4000-8000-000000000001";
 const BUILD_STAGE_ID = "30000000-0000-4000-8000-000000000001";
 const REVIEW_STAGE_ID = "50000000-0000-4000-8000-000000000001";
 
+type RealtimePayload = { eventType: string; new: unknown; old?: unknown };
+
 function card(number: number, stageId: string): PipelineDashboardCard {
+  const updatedAt = new Date(Date.UTC(2026, 6, 17) + number * 1_000).toISOString();
   return {
-    createdAt: "2026-07-17T00:00:00.000Z",
+    createdAt: updatedAt,
     currentStageId: stageId,
     id: `40000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
     linearIssueId: null,
@@ -54,16 +70,19 @@ function card(number: number, stageId: string): PipelineDashboardCard {
     pullRequests: [],
     rejectionCount: 0,
     title: `Session ${number}`,
-    updatedAt: `2026-07-17T00:0${number}:00.000Z`,
+    updatedAt,
     workspaceId: WORKSPACE_ID,
   };
 }
 
-function initialData(): PipelineDashboardData {
+function initialData(
+  planCards = [card(1, PLAN_STAGE_ID)],
+  buildCards = [card(3, BUILD_STAGE_ID)],
+): PipelineDashboardData {
   return {
     lanes: [
       {
-        cards: [card(1, PLAN_STAGE_ID)],
+        cards: planCards,
         cursor: "opaque-plan-cursor",
         description: "Plan the work.",
         id: PLAN_STAGE_ID,
@@ -71,10 +90,10 @@ function initialData(): PipelineDashboardData {
         pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
         position: 1,
         slug: "plan",
-        totalCount: 2,
+        totalCount: Math.max(2, planCards.length),
       },
       {
-        cards: [card(3, BUILD_STAGE_ID)],
+        cards: buildCards,
         cursor: null,
         description: "Build the work.",
         id: BUILD_STAGE_ID,
@@ -82,7 +101,7 @@ function initialData(): PipelineDashboardData {
         pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
         position: 2,
         slug: "build",
-        totalCount: 1,
+        totalCount: buildCards.length,
       },
     ],
     onboarding: null,
@@ -90,24 +109,90 @@ function initialData(): PipelineDashboardData {
   };
 }
 
+function sessionRow(session: PipelineDashboardCard) {
+  return {
+    archived_at: null,
+    created_at: session.createdAt,
+    creator_member_id: null,
+    current_artifact_version: 1,
+    current_stage_id: session.currentStageId,
+    github_repository_id: null,
+    id: session.id,
+    linear_issue_id: session.linearIssueId,
+    linear_issue_url: session.linearIssueUrl,
+    number: session.number,
+    phase_status: session.phaseStatus,
+    pipeline_id: session.pipelineId,
+    prompt_md: "",
+    rejection_count: session.rejectionCount,
+    search_document: null,
+    search_text: null,
+    title: session.title,
+    updated_at: session.updatedAt,
+    workspace_id: session.workspaceId,
+  };
+}
+
+function installSupabaseMock() {
+  let sessionsHandler: ((payload: RealtimePayload) => void) | undefined;
+  const channel = {
+    on: vi.fn(),
+    subscribe: vi.fn(),
+  };
+  channel.on.mockImplementation(
+    (_event: string, filter: { table: string }, handler: (payload: RealtimePayload) => void) => {
+      if (filter.table === "sessions") sessionsHandler = handler;
+      return channel;
+    },
+  );
+  channel.subscribe.mockReturnValue(channel);
+  mocked.createSupabaseBrowserClient.mockReturnValue({
+    channel: () => channel,
+    removeChannel: vi.fn(),
+  });
+
+  return {
+    getSessionsHandler: () => sessionsHandler,
+  };
+}
+
 describe("PipelinePageClient", () => {
   afterEach(() => {
     cleanup();
+    mocked.cardLinkRenders.clear();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
 
+  it("renders one semantic card tree with the same mobile selector names and destinations", async () => {
+    installSupabaseMock();
+    render(<PipelinePageClient initialData={initialData()} />);
+
+    expect(screen.getAllByText("Session 1")).toHaveLength(1);
+    expect(screen.getAllByText("Session 3")).toHaveLength(1);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "Open session Session 1" }).getAttribute("href")).toBe(
+      "/w/wallie/sessions/1",
+    );
+
+    const selector = screen.getByRole("combobox", { name: "Pipeline stage" });
+    expect(within(selector).getByRole("option", { name: "Plan (2)" })).toBeTruthy();
+    await userEvent.selectOptions(selector, `${PIPELINE_ID}:${BUILD_STAGE_ID}`);
+
+    expect(
+      screen
+        .getByRole("heading", { name: "Plan" })
+        .closest("section")
+        ?.classList.contains("hidden"),
+    ).toBe(true);
+    expect(
+      screen.getByRole("heading", { name: "Build" }).closest("section")?.classList.contains("flex"),
+    ).toBe(true);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+  });
+
   it("appends Load more results without refetching or replacing another lane", async () => {
-    const channel = {
-      on: vi.fn(),
-      subscribe: vi.fn(),
-    };
-    channel.on.mockReturnValue(channel);
-    channel.subscribe.mockReturnValue(channel);
-    mocked.createSupabaseBrowserClient.mockReturnValue({
-      channel: () => channel,
-      removeChannel: vi.fn(),
-    });
+    installSupabaseMock();
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -125,11 +210,11 @@ describe("PipelinePageClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<PipelinePageClient initialData={initialData()} />);
-    await userEvent.click(screen.getAllByRole("button", { name: "Load more Plan sessions" })[0]!);
+    await userEvent.click(screen.getByRole("button", { name: "Load more Plan sessions" }));
 
-    await waitFor(() => expect(screen.getAllByText("Session 2").length).toBeGreaterThan(0));
-    expect(screen.getAllByText("Session 1").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Session 3").length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByText("Session 2")).toBeTruthy());
+    expect(screen.getByText("Session 1")).toBeTruthy();
+    expect(screen.getByText("Session 3")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard`);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
@@ -141,62 +226,104 @@ describe("PipelinePageClient", () => {
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
   });
 
-  it("refreshes unknown realtime lanes and reconciles the authoritative lane metadata", async () => {
-    let sessionsHandler: ((payload: { eventType: string; new: unknown }) => void) | undefined;
-    const channel = {
-      on: vi.fn(),
-      subscribe: vi.fn(),
-    };
-    channel.on.mockImplementation(
-      (
-        _event: string,
-        filter: { table: string },
-        handler: (payload: { eventType: string; new: unknown }) => void,
-      ) => {
-        if (filter.table === "sessions") sessionsHandler = handler;
-        return channel;
-      },
+  it("exposes a realtime insert after an exhausted full lane through lane-local pagination", async () => {
+    const supabase = installSupabaseMock();
+    const inserted = card(99, BUILD_STAGE_ID);
+    const buildCards = Array.from({ length: 25 }, (_, index) => card(index + 10, BUILD_STAGE_ID));
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          lane: {
+            cards: [inserted],
+            cursor: null,
+            id: BUILD_STAGE_ID,
+            pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+            totalCount: 26,
+          },
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      ),
     );
-    channel.subscribe.mockReturnValue(channel);
-    mocked.createSupabaseBrowserClient.mockReturnValue({
-      channel: () => channel,
-      removeChannel: vi.fn(),
-    });
+    vi.stubGlobal("fetch", fetchMock);
 
-    const originalData = initialData();
-    const view = render(<PipelinePageClient initialData={originalData} />);
-    await waitFor(() => expect(sessionsHandler).toBeDefined());
-
-    const movedCard = card(1, REVIEW_STAGE_ID);
-    const row = {
-      archived_at: null,
-      created_at: movedCard.createdAt,
-      creator_member_id: null,
-      current_artifact_version: 1,
-      current_stage_id: movedCard.currentStageId,
-      github_repository_id: null,
-      id: movedCard.id,
-      linear_issue_id: movedCard.linearIssueId,
-      linear_issue_url: movedCard.linearIssueUrl,
-      number: movedCard.number,
-      phase_status: movedCard.phaseStatus,
-      pipeline_id: movedCard.pipelineId,
-      prompt_md: "",
-      rejection_count: movedCard.rejectionCount,
-      search_document: null,
-      search_text: null,
-      title: movedCard.title,
-      updated_at: movedCard.updatedAt,
-      workspace_id: movedCard.workspaceId,
-    };
+    render(<PipelinePageClient initialData={initialData(undefined, buildCards)} />);
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
 
     act(() => {
-      sessionsHandler?.({ eventType: "UPDATE", new: row });
-      sessionsHandler?.({ eventType: "UPDATE", new: row });
+      supabase.getSessionsHandler()?.({ eventType: "INSERT", new: sessionRow(inserted) });
+    });
+
+    const loadMore = await screen.findByRole("button", {
+      name: "Load more Build sessions",
+    });
+    expect(screen.queryByText("Session 99")).toBeNull();
+    await userEvent.click(loadMore);
+
+    await waitFor(() => expect(screen.getByText("Session 99")).toBeTruthy());
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      cursor: encodePipelineDashboardCursor({
+        pipelineId: PIPELINE_ID,
+        stageId: BUILD_STAGE_ID,
+      }),
+      pipelineId: PIPELINE_ID,
+      seenIds: buildCards.map((session) => session.id).reverse(),
+      stageId: BUILD_STAGE_ID,
+    });
+    expect(screen.queryByRole("button", { name: "Load more Build sessions" })).toBeNull();
+  });
+
+  it("preserves keyboard focus when realtime moves a card between known stages", async () => {
+    const supabase = installSupabaseMock();
+    render(<PipelinePageClient initialData={initialData()} />);
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+
+    const sessionLink = screen.getByRole("link", { name: "Open session Session 1" });
+    sessionLink.focus();
+    expect(document.activeElement).toBe(sessionLink);
+
+    const moved = {
+      ...card(1, BUILD_STAGE_ID),
+      updatedAt: "2026-07-18T06:00:00.000Z",
+    };
+    const unrelatedMove = {
+      ...card(3, PLAN_STAGE_ID),
+      updatedAt: "2026-07-18T06:01:00.000Z",
+    };
+    act(() => {
+      supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(moved) });
+      supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(unrelatedMove) });
+    });
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("link", { name: "Open session Session 1" }),
+      ),
+    );
+    expect(
+      (screen.getByRole("combobox", { name: "Pipeline stage" }) as HTMLSelectElement).value,
+    ).toBe(`${PIPELINE_ID}:${BUILD_STAGE_ID}`);
+    expect(
+      within(screen.getByRole("heading", { name: "Build" }).closest("section")!).getByText(
+        "Session 1",
+      ),
+    ).toBeTruthy();
+    expect(screen.getAllByText("Session 1")).toHaveLength(1);
+  });
+
+  it("refreshes unknown realtime lanes and reconciles authoritative lane metadata", async () => {
+    const supabase = installSupabaseMock();
+    const originalData = initialData();
+    const view = render(<PipelinePageClient initialData={originalData} />);
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+
+    const movedCard = card(1, REVIEW_STAGE_ID);
+    act(() => {
+      supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(movedCard) });
+      supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(movedCard) });
     });
 
     expect(mocked.refresh).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByText("Session 1").length).toBeGreaterThan(0);
+    expect(screen.getByText("Session 1")).toBeTruthy();
 
     const refreshedData: PipelineDashboardData = {
       ...originalData,
@@ -219,8 +346,52 @@ describe("PipelinePageClient", () => {
 
     view.rerender(<PipelinePageClient initialData={refreshedData} />);
 
-    await waitFor(() => expect(screen.getAllByText("Review").length).toBeGreaterThan(0));
-    expect(screen.getAllByText("Session 1")).toHaveLength(2);
-    expect(screen.getAllByText("Session 3").length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Review" })).toBeTruthy());
+    expect(screen.getAllByText("Session 1")).toHaveLength(1);
+    expect(screen.getByText("Session 3")).toBeTruthy();
+  });
+
+  it("keeps Profiler commits bounded to one card with 100 seeded sessions", async () => {
+    const supabase = installSupabaseMock();
+    const planCards = Array.from({ length: 50 }, (_, index) => card(index + 1, PLAN_STAGE_ID));
+    const buildCards = Array.from({ length: 50 }, (_, index) => card(index + 51, BUILD_STAGE_ID));
+    const commits: Array<{ id: string; phase: string }> = [];
+    const onRender: ProfilerOnRenderCallback = (id, phase) => {
+      commits.push({ id, phase });
+    };
+
+    render(
+      <Profiler id="pipeline-board" onRender={onRender}>
+        <PipelinePageClient initialData={initialData(planCards, buildCards)} />
+      </Profiler>,
+    );
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+    expect(screen.getAllByRole("article")).toHaveLength(100);
+    await waitFor(() =>
+      expect(document.querySelector("time")?.getAttribute("aria-label")).not.toBe(
+        formatUtcTimestamp(planCards[0]!.updatedAt),
+      ),
+    );
+    commits.length = 0;
+    mocked.cardLinkRenders.clear();
+
+    const updated = {
+      ...planCards[0]!,
+      phaseStatus: "awaiting_review" as const,
+      title: "Session 1 updated",
+      updatedAt: "2026-07-18T08:00:00.000Z",
+    };
+    act(() => {
+      supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(updated) });
+    });
+
+    await waitFor(() => expect(screen.getByText("Session 1 updated")).toBeTruthy());
+    expect(commits.length).toBeGreaterThan(0);
+    expect(commits.length).toBeLessThanOrEqual(2);
+    expect(commits.every(({ id, phase }) => id === "pipeline-board" && phase === "update")).toBe(
+      true,
+    );
+    expect([...mocked.cardLinkRenders.entries()]).toEqual([["Open session Session 1 updated", 1]]);
+    expect(screen.getAllByRole("article")).toHaveLength(100);
   });
 });

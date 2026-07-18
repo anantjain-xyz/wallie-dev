@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { mapOnboardingResumeState } from "@/features/onboarding/flow";
+import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type {
   PipelineDashboardData,
   PipelineDashboardLane,
@@ -51,11 +52,6 @@ const cursorSchema = z.object({
   stageId: z.string().uuid(),
 });
 
-function encodeCursor(cursor: PipelineDashboardRpcCursor | null) {
-  if (!cursor) return null;
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
 export function decodePipelineDashboardCursor(raw: string | null): PipelineDashboardCursor | null {
   if (!raw) return null;
 
@@ -69,7 +65,7 @@ export function decodePipelineDashboardCursor(raw: string | null): PipelineDashb
 function normalizeLane(lane: PipelineDashboardRpcLane): PipelineDashboardLane {
   return {
     cards: Array.isArray(lane.cards) ? lane.cards.slice(0, PIPELINE_DASHBOARD_PAGE_SIZE) : [],
-    cursor: encodeCursor(lane.cursor),
+    cursor: lane.cursor ? encodePipelineDashboardCursor(lane.cursor) : null,
     description: lane.description,
     id: lane.id,
     name: lane.name,
