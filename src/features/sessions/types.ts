@@ -62,6 +62,13 @@ export type SessionArtifactSummary = {
   version: number;
 };
 
+export type SessionArtifactMetadata = Omit<SessionArtifactSummary, "payload">;
+
+export type SessionArtifactBody = SessionArtifactSummary & {
+  /** Sanitized server-rendered markup for Markdown payloads; null for structured payloads. */
+  sanitizedHtml: string | null;
+};
+
 export type SessionSummary = {
   archivedAt: string | null;
   createdAt: string;
