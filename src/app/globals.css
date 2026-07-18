@@ -348,7 +348,11 @@
   }
 
   .ui-select-content {
-    min-width: var(--radix-select-trigger-width);
+    width: max(12rem, var(--radix-select-trigger-width));
+    max-width: min(
+      var(--radix-select-content-available-width),
+      calc(100vw - (var(--overlay-gutter) * 2))
+    );
     max-height: min(22rem, var(--radix-select-content-available-height));
     transform-origin: var(--radix-select-content-transform-origin);
   }

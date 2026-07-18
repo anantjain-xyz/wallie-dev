@@ -1,7 +1,7 @@
 "use client";
 
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { useId, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useId, useState, type ComponentProps, type ReactNode } from "react";
 
 import { CheckIcon, ChevronDownIcon } from "@/components/shared/icons";
 import { useOverlayContainer } from "@/components/ui/portal-root";
@@ -57,11 +57,13 @@ export function SelectContent({
   children,
   className,
   collisionPadding = 8,
+  portalContainer,
   position = "popper",
   sideOffset = 6,
   ...props
-}: ComponentProps<typeof SelectPrimitive.Content>) {
-  const container = useOverlayContainer();
+}: ComponentProps<typeof SelectPrimitive.Content> & { portalContainer?: HTMLElement | null }) {
+  const overlayContainer = useOverlayContainer();
+  const container = portalContainer ?? overlayContainer;
 
   if (!container) return null;
 
@@ -90,7 +92,9 @@ export function SelectItem({
       <SelectPrimitive.ItemIndicator className="absolute left-2.5">
         <CheckIcon />
       </SelectPrimitive.ItemIndicator>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemText asChild>
+        <span className="min-w-0 truncate">{children}</span>
+      </SelectPrimitive.ItemText>
     </SelectPrimitive.Item>
   );
 }
@@ -106,6 +110,10 @@ export function SelectField({
   value,
 }: SelectFieldProps) {
   const labelId = useId();
+  const [modalContainer, setModalContainer] = useState<HTMLElement | null>(null);
+  const setFieldNode = useCallback((node: HTMLDivElement | null) => {
+    setModalContainer(node?.closest<HTMLElement>('[aria-modal="true"]') ?? null);
+  }, []);
   const selectOptions = emptyOption ? [emptyOption, ...options] : [...options];
   const selectedOption = selectOptions.find((option) => option.value === value);
   const hasOptionIcons = selectOptions.some((option) => option.icon);
@@ -114,7 +122,7 @@ export function SelectField({
     selectedOption?.label ?? (value || fallbackLabel || emptyOption?.label || "None");
 
   return (
-    <div className={cn("block space-y-1.5", className)}>
+    <div className={cn("block space-y-1.5", className)} ref={setFieldNode}>
       <span className="text-[13px] font-medium text-foreground" id={labelId}>
         {label}
       </span>
@@ -147,7 +155,7 @@ export function SelectField({
             <ChevronDownIcon className="text-muted" />
           </SelectPrimitive.Icon>
         </SelectPrimitive.Trigger>
-        <SelectContent>
+        <SelectContent portalContainer={modalContainer}>
           {selectOptions.map((option) => (
             <SelectPrimitive.Item
               className="ui-select-item"
@@ -165,7 +173,9 @@ export function SelectField({
                   {option.icon}
                 </span>
               ) : null}
-              <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+              <SelectPrimitive.ItemText asChild>
+                <span className="min-w-0 truncate">{option.label}</span>
+              </SelectPrimitive.ItemText>
             </SelectPrimitive.Item>
           ))}
         </SelectContent>

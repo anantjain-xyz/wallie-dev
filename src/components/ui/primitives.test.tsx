@@ -401,7 +401,8 @@ describe("accessible overlay primitives", () => {
     expect(toastAnnouncement?.closest("[aria-hidden='true']")).toBeNull();
   });
 
-  it("truncates long SelectField values so the trigger does not overflow", () => {
+  it("constrains long SelectField values and options so they do not overflow", async () => {
+    const user = userEvent.setup();
     const longLabel =
       "anantjain-xyz/wallie-dev-very-long-repository-full-name-that-exceeds-the-trigger";
     renderWithOverlays(
@@ -418,5 +419,28 @@ describe("accessible overlay primitives", () => {
     expect(valueText).not.toBeNull();
     expect(valueText).toHaveClass("truncate");
     expect(valueText).toHaveClass("min-w-0");
+
+    await user.click(trigger);
+    const option = await screen.findByRole("option", { name: longLabel });
+    expect(option.querySelector(".truncate")).toHaveClass("min-w-0", "truncate");
+    expect(screen.getByRole("listbox")).toHaveClass("ui-select-content");
+  });
+
+  it("keeps SelectField content inside an existing custom modal", async () => {
+    const user = userEvent.setup();
+    renderWithOverlays(
+      <div aria-label="Legacy modal" aria-modal="true" role="dialog">
+        <SelectField
+          label="Repository"
+          onValueChange={() => {}}
+          options={[{ label: "wallie-dev", value: "repo" }]}
+          value="repo"
+        />
+      </div>,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Repository" }));
+    const modal = screen.getByRole("dialog", { name: "Legacy modal" });
+    expect(modal).toContainElement(await screen.findByRole("listbox"));
   });
 });
