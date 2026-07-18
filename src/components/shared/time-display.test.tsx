@@ -130,8 +130,10 @@ describe("TimeDisplay", () => {
       );
     });
     expect(container.textContent).toBe("1s");
+    expect(container.querySelector("time")?.getAttribute("aria-label")).toMatch(/^1s, started /);
 
     act(() => vi.advanceTimersByTime(1000));
     expect(container.textContent).toBe("2s");
+    expect(container.querySelector("time")?.getAttribute("aria-label")).toMatch(/^2s, started /);
   });
 });

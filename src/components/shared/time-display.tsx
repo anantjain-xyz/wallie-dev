@@ -183,7 +183,9 @@ export function TimeDisplay({
 
   return (
     <time
-      aria-label={absoluteLabel}
+      aria-label={
+        variant === "elapsed" ? `${displayLabel}, started ${absoluteLabel}` : absoluteLabel
+      }
       className={className}
       data-time-display={variant}
       dateTime={value}
