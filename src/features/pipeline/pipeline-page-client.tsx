@@ -219,7 +219,8 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
           const targetLaneKey = `${next.pipelineId}:${next.currentStageId}`;
 
           if (!hasTargetLane) {
-            pendingCardFocus.current = captureCardFocus(next.id, targetLaneKey);
+            const focus = captureCardFocus(next.id, targetLaneKey);
+            if (focus) pendingCardFocus.current = focus;
             invalidatedCardIds.current.add(next.id);
             if (!laneRefreshPending.current) {
               laneRefreshPending.current = true;
@@ -234,7 +235,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
               existing.currentStageId !== next.currentStageId);
           if (moved) {
             const focus = captureCardFocus(next.id, targetLaneKey);
-            pendingCardFocus.current = focus;
+            if (focus) pendingCardFocus.current = focus;
             startTransition(() => {
               if (focus) setActiveLaneKey(focus.targetLaneKey);
               dispatch({ card: next, isInsert: payload.eventType === "INSERT", type: "upsert" });

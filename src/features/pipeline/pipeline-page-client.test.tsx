@@ -237,8 +237,13 @@ describe("PipelinePageClient", () => {
       ...card(1, BUILD_STAGE_ID),
       updatedAt: "2026-07-18T06:00:00.000Z",
     };
+    const unrelatedMove = {
+      ...card(3, PLAN_STAGE_ID),
+      updatedAt: "2026-07-18T06:01:00.000Z",
+    };
     act(() => {
       supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(moved) });
+      supabase.getSessionsHandler()?.({ eventType: "UPDATE", new: sessionRow(unrelatedMove) });
     });
 
     await waitFor(() =>
