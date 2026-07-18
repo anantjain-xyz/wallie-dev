@@ -318,4 +318,70 @@ describe("accessible overlay primitives", () => {
     results = await axe.run(document.body, axeOptions);
     expect(results.violations).toEqual([]);
   });
+
+  it("keeps live-region announcements audible while a modal dialog is open", async () => {
+    const user = userEvent.setup();
+
+    function Notices() {
+      const { announce } = useLiveRegion();
+      const { pushToast } = useToast();
+      return (
+        <>
+          <Dialog>
+            <DialogTrigger asChild>
+              <button type="button">Open modal</button>
+            </DialogTrigger>
+            <DialogContent description="Modal is open." title="Modal">
+              <DialogClose asChild>
+                <button type="button">Close</button>
+              </DialogClose>
+            </DialogContent>
+          </Dialog>
+          <button onClick={() => announce("Saved while modal open", "polite")} type="button">
+            Announce
+          </button>
+          <button
+            onClick={() =>
+              pushToast({ priority: "assertive", title: "Failed while modal open", tone: "danger" })
+            }
+            type="button"
+          >
+            Toast
+          </button>
+        </>
+      );
+    }
+
+    renderWithOverlays(<Notices />);
+    const announceButton = screen.getByRole("button", { name: "Announce", hidden: true });
+    await user.click(screen.getByRole("button", { name: "Open modal" }));
+    await screen.findByRole("dialog", { name: "Modal" });
+
+    await user.click(announceButton);
+    const politeRegion = await waitFor(() => document.querySelector("[data-live-region='polite']"));
+    expect(politeRegion?.closest("[aria-hidden='true']")).toBeNull();
+    await waitFor(() => expect(politeRegion).toHaveTextContent("Saved while modal open"));
+
+    const assertiveRegion = document.querySelector("[data-live-region='assertive']");
+    expect(assertiveRegion?.closest("[aria-hidden='true']")).toBeNull();
+  });
+
+  it("truncates long SelectField values so the trigger does not overflow", () => {
+    const longLabel =
+      "anantjain-xyz/wallie-dev-very-long-repository-full-name-that-exceeds-the-trigger";
+    renderWithOverlays(
+      <SelectField
+        label="Repository"
+        onValueChange={() => {}}
+        options={[{ label: longLabel, value: "repo" }]}
+        value="repo"
+      />,
+    );
+
+    const trigger = screen.getByRole("combobox", { name: "Repository" });
+    const valueText = trigger.querySelector(".min-w-0.truncate");
+    expect(valueText).not.toBeNull();
+    expect(valueText).toHaveClass("truncate");
+    expect(valueText).toHaveClass("min-w-0");
+  });
 });

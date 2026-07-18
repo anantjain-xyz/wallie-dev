@@ -12,7 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { useOverlayContainer } from "@/components/ui/portal-root";
+import { useAnnouncementContainer } from "@/components/ui/portal-root";
 
 export type AnnouncementPriority = "polite" | "assertive";
 
@@ -33,7 +33,7 @@ export function useLiveRegion() {
 }
 
 export function LiveRegionProvider({ children }: { children: ReactNode }) {
-  const container = useOverlayContainer();
+  const container = useAnnouncementContainer();
   const [politeMessage, setPoliteMessage] = useState("");
   const [assertiveMessage, setAssertiveMessage] = useState("");
   const politeTimer = useRef<number | null>(null);

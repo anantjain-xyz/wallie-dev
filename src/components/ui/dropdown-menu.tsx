@@ -112,13 +112,19 @@ export function DropdownMenuSubContent({
   sideOffset = 6,
   ...props
 }: ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  const container = useOverlayContainer();
+
+  if (!container) return null;
+
   return (
-    <DropdownMenuPrimitive.SubContent
-      className={cn("ui-menu-content", className)}
-      collisionPadding={collisionPadding}
-      sideOffset={sideOffset}
-      {...props}
-    />
+    <DropdownMenuPrimitive.Portal container={container}>
+      <DropdownMenuPrimitive.SubContent
+        className={cn("ui-menu-content", className)}
+        collisionPadding={collisionPadding}
+        sideOffset={sideOffset}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
   );
 }
 

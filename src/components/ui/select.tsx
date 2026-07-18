@@ -41,7 +41,11 @@ export function SelectTrigger({
       className={cn("ui-select-trigger", className)}
       {...props}
     >
-      {children ?? <SelectPrimitive.Value />}
+      {children ?? (
+        <span className="min-w-0 truncate">
+          <SelectPrimitive.Value />
+        </span>
+      )}
       <SelectPrimitive.Icon asChild>
         <ChevronDownIcon className="text-muted" />
       </SelectPrimitive.Icon>
@@ -135,7 +139,9 @@ export function SelectField({
                 {selectedOption.icon}
               </span>
             ) : null}
-            <SelectPrimitive.Value>{selectedLabel}</SelectPrimitive.Value>
+            <span className="min-w-0 truncate">
+              <SelectPrimitive.Value>{selectedLabel}</SelectPrimitive.Value>
+            </span>
           </span>
           <SelectPrimitive.Icon asChild>
             <ChevronDownIcon className="text-muted" />

@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { createPortal } from "react-dom";
 
 import { XIcon } from "@/components/shared/icons";
-import { useOverlayContainer } from "@/components/ui/portal-root";
+import { useAnnouncementContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 export type ToastPriority = "polite" | "assertive";
@@ -34,7 +34,7 @@ export function useToast() {
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const container = useOverlayContainer();
+  const container = useAnnouncementContainer();
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
   const pushToast = useCallback((toast: ToastInput) => {
     const id = ++toastId;
