@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
+import { useRef, useState } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -188,6 +189,56 @@ describe("accessible overlay primitives", () => {
     expect(screen.getByRole("menuitem", { hidden: true, name: "Duplicate" })).toHaveFocus();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(document.querySelector("[role='menu']")).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("restores a nested menu-to-dialog flow to the originating menu trigger", async () => {
+    const user = userEvent.setup();
+
+    function MenuDialogFlow() {
+      const [dialogOpen, setDialogOpen] = useState(false);
+      const menuTriggerRef = useRef<HTMLButtonElement>(null);
+
+      return (
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button ref={menuTriggerRef} type="button">
+                Member actions
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent label="Member actions">
+              <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
+                Change member role
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogContent
+              description="Choose the member's workspace access."
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                menuTriggerRef.current?.focus();
+              }}
+              title="Change member role"
+            >
+              <button onClick={() => setDialogOpen(false)} type="button">
+                Cancel role change
+              </button>
+            </DialogContent>
+          </Dialog>
+        </>
+      );
+    }
+
+    renderWithOverlays(<MenuDialogFlow />);
+    const trigger = screen.getByRole("button", { name: "Member actions" });
+    await user.click(trigger);
+    await user.click(await screen.findByRole("menuitem", { name: "Change member role" }));
+    expect(await screen.findByRole("dialog", { name: "Change member role" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(trigger).toHaveFocus();
   });
 

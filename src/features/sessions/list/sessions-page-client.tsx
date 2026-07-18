@@ -254,7 +254,7 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
               onClick={() => updateQueryState({ stageSlug: stage.slug })}
             >
               {stage.name}
-              <span className="ml-1 text-[10px] text-muted">
+              <span className="ml-1 type-annotation text-muted">
                 {stageGroups.counts.get(stage.slug) ?? 0}
               </span>
             </button>
@@ -495,7 +495,7 @@ function SessionRow({
         {isEditing ? (
           <form className="pointer-events-auto relative z-30" onSubmit={handleEditSubmit}>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-              <span className="font-mono text-[11px] text-muted">#{session.number}</span>
+              <span className="font-mono type-annotation text-muted">#{session.number}</span>
               <input
                 ref={editInputRef}
                 aria-label={`Session #${session.number} title`}
@@ -542,7 +542,7 @@ function SessionRow({
           </form>
         ) : (
           <div className="flex min-w-0 items-start gap-2 md:items-center">
-            <span className="font-mono text-[11px] text-muted">#{session.number}</span>
+            <span className="font-mono type-annotation text-muted">#{session.number}</span>
             <span
               className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground md:block md:truncate"
               title={displayTitle}
@@ -613,7 +613,7 @@ function SessionRow({
             )}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+        <div className="flex flex-wrap items-center gap-2 type-annotation text-muted">
           <span>{session.currentStageName}</span>
           <span>·</span>
           <SessionPhaseStatusLabel status={phaseStatus} />
@@ -627,12 +627,12 @@ function SessionRow({
           ) : null}
         </div>
         {error ? (
-          <p className="pointer-events-auto text-[11px] leading-4 text-danger" role="alert">
+          <p className="pointer-events-auto text-xs leading-4 text-danger" role="alert">
             {error}
           </p>
         ) : null}
         {archiveError ? (
-          <p className="pointer-events-auto text-[11px] leading-4 text-danger" role="alert">
+          <p className="pointer-events-auto text-xs leading-4 text-danger" role="alert">
             {archiveError}
           </p>
         ) : null}

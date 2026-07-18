@@ -3,6 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -32,6 +33,8 @@ export function WorkspaceSecretsPanel({
 }: SecretsSectionProps) {
   const [secretKey, setSecretKey] = useState("");
   const [secretValue, setSecretValue] = useState("");
+  const [secretPendingDeletion, setSecretPendingDeletion] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const otherSecrets = secrets.filter((secret) => secret.key !== "LINEAR_API_KEY");
 
   const saveSecret = useApiAction<UpsertWorkspaceSecretResponse, [string, string]>({
@@ -57,7 +60,7 @@ export function WorkspaceSecretsPanel({
     successText: (payload) => `Saved preview for ${payload.secret.key}.`,
   });
 
-  const deleteSecret = useApiAction<DeleteWorkspaceSecretResponse, [string]>({
+  const deleteSecret = useApiAction<DeleteWorkspaceSecretResponse, [string], boolean>({
     call: (key) =>
       fetch(
         `/api/secrets/${encodeURIComponent(key)}?workspaceId=${encodeURIComponent(workspaceId)}`,
@@ -66,12 +69,19 @@ export function WorkspaceSecretsPanel({
         },
       ),
     errorText: "Workspace secret deletion failed.",
+    onError: (message) => {
+      setDeleteError(message);
+      return false;
+    },
     onSuccess: (payload) => {
       setSecrets((currentSecrets) =>
         currentSecrets.filter((secret) => secret.key !== payload.deletedKey),
       );
+      return true;
     },
-    setFlashMessage,
+    setFlashMessage: (message) => {
+      if (message.kind === "success") setFlashMessage(message);
+    },
     successText: (payload) => `Deleted ${payload.deletedKey}.`,
   });
 
@@ -87,12 +97,9 @@ export function WorkspaceSecretsPanel({
     void saveSecret.run(secretKey.trim().toUpperCase(), secretValue);
   }
 
-  function handleDeleteSecret(key: string) {
-    if (!window.confirm(`Delete ${key}?`)) {
-      return;
-    }
-
-    void deleteSecret.run(key);
+  async function handleDeleteSecret(key: string) {
+    setDeleteError(null);
+    if (await deleteSecret.run(key)) setSecretPendingDeletion(null);
   }
 
   return canManage ? (
@@ -147,18 +154,34 @@ export function WorkspaceSecretsPanel({
             >
               <div className="space-y-0.5">
                 <p className="text-[13px] font-medium text-foreground">{secret.key}</p>
-                <p className="font-mono text-[12px] text-muted">
+                <p className="font-mono text-xs text-muted">
                   {secret.valuePreview ?? "preview unavailable"}
                 </p>
               </div>
-              <button
-                className="ui-button-danger"
-                disabled={deleteSecret.isBusy}
-                onClick={() => void handleDeleteSecret(secret.key)}
-                type="button"
-              >
-                Delete
-              </button>
+              <DestructiveConfirmationDialog
+                actionLabel={`Delete ${secret.key}`}
+                description={`Deleting ${secret.key} permanently removes its encrypted value. Any integration or agent that depends on it will stop working until the secret is saved again.`}
+                errorMessage={secretPendingDeletion === secret.key ? deleteError : null}
+                onConfirm={() => void handleDeleteSecret(secret.key)}
+                onOpenChange={(open) => {
+                  setDeleteError(null);
+                  setSecretPendingDeletion(open ? secret.key : null);
+                }}
+                open={secretPendingDeletion === secret.key}
+                pending={deleteSecret.isBusy && secretPendingDeletion === secret.key}
+                pendingLabel="Deleting…"
+                title={`Delete ${secret.key}?`}
+                trigger={
+                  <button
+                    aria-label={`Delete ${secret.key}`}
+                    className="ui-button-danger"
+                    disabled={deleteSecret.isBusy}
+                    type="button"
+                  >
+                    Delete
+                  </button>
+                }
+              />
             </li>
           ))}
         </ul>
