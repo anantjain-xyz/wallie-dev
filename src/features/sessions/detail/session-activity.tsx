@@ -10,12 +10,14 @@ import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timi
 type SessionActivityProps = {
   archivedAt: string | null;
   context: SessionActivityContext;
+  initialNow: string;
   workspaceSlug: string;
 };
 
 export async function SessionActivity({
   archivedAt,
   context,
+  initialNow,
   workspaceSlug,
 }: SessionActivityProps) {
   let data: WallieSessionData | null = null;
@@ -59,6 +61,7 @@ export async function SessionActivity({
     <SessionActivityPanel
       initialArchivedAt={archivedAt}
       initialData={data}
+      initialNow={initialNow}
       sessionId={context.sessionId}
       workspaceId={context.workspaceId}
       workspaceSlug={workspaceSlug}

@@ -30,6 +30,7 @@ const props = {
     sessionId: "session-18",
     workspaceId: "workspace-1",
   },
+  initialNow: "2026-07-18T12:00:00.000Z",
   workspaceSlug: "acme-corp",
 };
 
