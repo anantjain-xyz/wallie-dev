@@ -203,6 +203,10 @@ describe("optimistic session interactions", () => {
     expect((screen.getByRole("button", { name: /Approving/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );
+    const archive = screen.getByRole("button", { name: "Archive" }) as HTMLButtonElement;
+    expect(archive.disabled).toBe(true);
+    fireEvent.click(archive);
+    expect(mocked.fetch).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
 
     await act(async () => releaseResponse());
@@ -422,6 +426,35 @@ describe("optimistic session interactions", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
+  it("keeps the detail session active when the archive response is already active", async () => {
+    mocked.fetch.mockResolvedValue(
+      Response.json({
+        archivedAt: null,
+        id: session.id,
+        phaseStatus: session.phaseStatus,
+        updatedAt: "2026-07-17T13:00:00.000Z",
+      }),
+    );
+    render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: makeDetailData(),
+          initialFormattedArtifact: null,
+          initialFormattedArtifactKey: null,
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+
+    await screen.findByText("Session #1 remains active.");
+    expect(screen.getByRole("button", { name: "Archive" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
   it("shows a committed archive after soft navigation to the Archived scope", async () => {
     const archivedAt = "2026-07-17T12:00:00.000Z";
     mocked.fetch.mockResolvedValue(
@@ -512,6 +545,71 @@ describe("optimistic session interactions", () => {
 
     expect(mocked.fetch).toHaveBeenCalledTimes(3);
     expect(screen.getByText("Archived", { exact: true })).toBeTruthy();
+  });
+
+  it("keeps detail Undo valid after an unrelated title update", async () => {
+    const archivedAt = "2026-07-17T12:00:00.000Z";
+    mocked.fetch
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: archivedAt,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: null,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: "2026-07-17T14:00:00.000Z",
+        }),
+      );
+    const data = makeDetailData();
+    const view = render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: data,
+          initialFormattedArtifact: null,
+          initialFormattedArtifactKey: null,
+        }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    view.rerender(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionDetailPageClient, {
+          activity: null,
+          initialData: {
+            ...data,
+            session: {
+              ...data.session,
+              archivedAt,
+              title: "Renamed while archived",
+              updatedAt: "2026-07-17T13:00:00.000Z",
+            },
+          },
+          initialFormattedArtifact: null,
+          initialFormattedArtifactKey: null,
+        }),
+      ),
+    );
+    await screen.findByText("Renamed while archived");
+    fireEvent.click(undo);
+
+    await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(2));
+    expect(mocked.fetch.mock.calls[1]?.[1]).toMatchObject({
+      body: JSON.stringify({ expectedArchivedAt: archivedAt }),
+      method: "DELETE",
+    });
   });
 
   it("refreshes the active destination after a detail archive Undo survives navigation", async () => {

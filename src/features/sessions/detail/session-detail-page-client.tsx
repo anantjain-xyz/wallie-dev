@@ -66,15 +66,14 @@ type SessionDetailPageClientProps = {
 };
 
 type ArchiveUndoVersion = {
-  archivedAt: string | null;
-  updatedAt: string;
+  archivedAt: string;
 };
 
 function isCurrentArchiveVersion(
-  session: Pick<SessionReviewSession, "archivedAt" | "updatedAt">,
+  session: Pick<SessionReviewSession, "archivedAt">,
   version: ArchiveUndoVersion,
 ) {
-  return session.archivedAt === version.archivedAt && session.updatedAt === version.updatedAt;
+  return session.archivedAt === version.archivedAt;
 }
 
 function CreatorAvatar({ displayName }: { displayName: string }) {
@@ -624,9 +623,15 @@ export function SessionDetailPageClient({
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           ),
       });
+      if (!result.archivedAt) {
+        pushToast({
+          priority: "polite",
+          title: `Session #${session.number} remains active.`,
+        });
+        return;
+      }
       const undoVersion = {
         archivedAt: result.archivedAt,
-        updatedAt: result.updatedAt,
       } satisfies ArchiveUndoVersion;
       archiveUndoVersionRef.current = undoVersion;
       pushToast({
@@ -640,7 +645,7 @@ export function SessionDetailPageClient({
             ) {
               return;
             }
-            void handleUnarchive(undoVersion.archivedAt ?? undefined, true);
+            void handleUnarchive(undoVersion.archivedAt, true);
           },
         },
         duration: 7000,
@@ -738,7 +743,7 @@ export function SessionDetailPageClient({
       <button
         type="button"
         className="ui-button gap-1.5"
-        disabled={archivePending !== null}
+        disabled={archivePending !== null || phaseActionPending !== null}
         onClick={() => void handleArchive()}
       >
         <ArchiveIcon className="h-3.5 w-3.5" />
