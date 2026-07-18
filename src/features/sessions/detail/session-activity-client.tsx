@@ -30,12 +30,14 @@ export function useSessionActivityArchivedAt(initialArchivedAt: string | null) {
 export function SessionActivityPanel({
   initialArchivedAt,
   initialData,
+  initialNow,
   sessionId,
   workspaceId,
   workspaceSlug,
 }: {
   initialArchivedAt: string | null;
   initialData: WallieSessionData;
+  initialNow?: string;
   sessionId: string;
   workspaceId: string;
   workspaceSlug: string;
@@ -45,6 +47,7 @@ export function SessionActivityPanel({
   return (
     <SessionWalliePanel
       initialData={initialData}
+      initialNow={initialNow}
       session={{
         archivedAt,
         id: sessionId,

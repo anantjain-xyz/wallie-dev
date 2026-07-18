@@ -503,11 +503,12 @@ describe("OnboardingPageClient", () => {
               },
             },
           }),
+          initialNow: "2026-05-16T18:05:00.000Z",
         }),
       );
 
-      expect(html).toContain("Checked 5 minutes ago");
-      expect(html).not.toContain("2026-05-16T18:00:00.000Z");
+      expect(html).toMatch(/Checked <time[^>]*>5m ago<\/time>/);
+      expect(html).toContain('dateTime="2026-05-16T18:00:00.000Z"');
     } finally {
       vi.useRealTimers();
     }
