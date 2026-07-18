@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 
-import { loadWorkspaceOnboardingData } from "@/features/onboarding/data";
+import { loadWorkspaceOnboardingDataForContext } from "@/features/onboarding/data";
 import { OnboardingPageClient } from "@/features/onboarding/onboarding-page-client";
-import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 import { loginPath } from "@/lib/routes";
 
 type WorkspaceOnboardingPageProps = {
@@ -13,8 +13,8 @@ type WorkspaceOnboardingPageProps = {
 
 export default async function WorkspaceOnboardingPage({ params }: WorkspaceOnboardingPageProps) {
   const { workspaceSlug } = await params;
-  const { workspace } = await loadWorkspaceLayoutContext(workspaceSlug);
-  const result = await loadWorkspaceOnboardingData(workspace.id);
+  const authenticatedContext = await loadAuthenticatedWorkspaceContext(workspaceSlug);
+  const result = await loadWorkspaceOnboardingDataForContext(authenticatedContext);
 
   if (!result.ok) {
     if (result.status === 401) {

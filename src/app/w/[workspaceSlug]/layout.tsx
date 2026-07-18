@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { loadWorkspaceLayoutContext } from "@/features/workspaces/workspace-layout-data";
+import { loadAuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 
 export const preferredRegion = "home";
 
@@ -14,7 +14,7 @@ type WorkspaceLayoutProps = {
 export default async function WorkspaceLayout({ children, params }: WorkspaceLayoutProps) {
   const { workspaceSlug } = await params;
 
-  await loadWorkspaceLayoutContext(workspaceSlug);
+  await loadAuthenticatedWorkspaceContext(workspaceSlug);
 
   return children;
 }

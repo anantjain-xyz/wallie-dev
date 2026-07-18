@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { loadWorkspaceGitHubData, type WorkspaceGitHubData } from "@/features/github/data";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import {
@@ -12,11 +14,15 @@ import {
 } from "@/features/onboarding/runtime-readiness";
 import type { WorkspaceMemberSummary } from "@/features/pipeline/editor-primitives";
 import type { PipelineStage, SessionPipeline } from "@/features/sessions/types";
-import type { LinearRoutingConfig } from "@/lib/linear-routing/contracts";
-import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
+import {
+  coerceLinearRoutingConfig,
+  DEFAULT_LINEAR_ROUTING_CONFIG,
+  type LinearRoutingConfig,
+} from "@/lib/linear-routing/contracts";
 import { credentialExpired, isCodexCredentialType } from "@/lib/codex/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
+import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Tables, TablesUpdate } from "@/lib/supabase/database.types";
 import {
@@ -31,6 +37,7 @@ import {
 import { type WorkspaceAccessContext, requireWorkspaceAccessById } from "@/lib/workspaces/access";
 import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
+import type { AuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 
 const onboardingSelect =
   "id, workspace_id, status, current_step, selected_github_repository_id, completed_steps, skipped_steps, dismissed_at, completed_at, created_at, updated_at";
@@ -117,7 +124,10 @@ function mapOnboardingRow(row: Tables<"workspace_onboarding">): WorkspaceOnboard
 }
 
 async function loadOrCreateOnboardingRow(
-  context: WorkspaceAccessContext,
+  context: {
+    supabase: WorkspaceAccessContext["supabase"];
+    workspace: { id: string };
+  },
   admin = createSupabaseAdminClient(),
 ): Promise<Tables<"workspace_onboarding">> {
   const { data: existingRow, error: existingError } = await context.supabase
@@ -225,99 +235,258 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
   };
 }
 
-async function loadSetupHealth(
-  context: WorkspaceAccessContext,
-  github: WorkspaceGitHubData,
-  selectedGithubRepositoryId: string | null,
-  admin = createSupabaseAdminClient(),
-  options: { includeSecretKeyInventory?: boolean } = {},
-): Promise<OnboardingSetupHealth> {
+type OnboardingSnapshotContext = Pick<
+  AuthenticatedWorkspaceContext,
+  "supabase" | "user" | "workspace"
+> & {
+  currentMember?: WorkspaceAccessContext["currentMember"];
+};
+
+type PipelineRow = Pick<Tables<"pipelines">, "id" | "is_default" | "name" | "operating_rules_md">;
+type PipelineStageRow = Pick<
+  Tables<"pipeline_stages">,
+  | "approver_member_ids"
+  | "description"
+  | "id"
+  | "name"
+  | "pipeline_id"
+  | "position"
+  | "prompt_template_md"
+  | "slug"
+>;
+type WorkspaceMemberRow = Pick<
+  Tables<"workspace_members">,
+  "email" | "full_name" | "id" | "is_active" | "kind" | "role" | "user_id"
+>;
+type LinearRoutingRow = Pick<
+  Tables<"workspace_linear_routing">,
+  "land_stage_slug" | "rework_stage_slug" | "status_mappings" | "updated_at"
+>;
+
+type OnboardingSnapshot = {
+  agentConfigRows: AgentConfigRow[];
+  claudeCodeCredentials: { updated_at: string } | null;
+  codexCredentials: {
+    access_token_expires_at: string | null;
+    auth_reconnect_required: boolean;
+    credential_type: string;
+    updated_at: string;
+  } | null;
+  github: WorkspaceGitHubData;
+  linearRoutingRow: LinearRoutingRow | null;
+  onboardingRow: Tables<"workspace_onboarding">;
+  pipelineRow: PipelineRow | null;
+  sandboxRows: SandboxCapabilityCheckRow[];
+  secretRows: SecretPreviewRow[];
+  stageRows: PipelineStageRow[];
+  vercelSandboxConnection: VercelSandboxConnectionPreview | null;
+  workspaceMemberRows: WorkspaceMemberRow[];
+};
+
+function throwQueryError(error: unknown) {
+  if (error) throw error;
+}
+
+async function buildOnboardingSnapshot(
+  context: OnboardingSnapshotContext,
+  options?: { onboardingRow?: Tables<"workspace_onboarding"> },
+): Promise<OnboardingSnapshot> {
+  const admin = createSupabaseAdminClient();
   const workspaceId = context.workspace.id;
-  const repositoryHealth = buildRepositorySetupHealth(github, selectedGithubRepositoryId);
-  const primaryRepositoryId = repositoryHealth.primaryRepositoryProfile.repositoryId;
-  let sandboxQuery = admin
-    .from("sandbox_capability_checks")
-    .select(
-      "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    )
-    .eq("workspace_id", workspaceId);
 
-  if (primaryRepositoryId) {
-    sandboxQuery = sandboxQuery.eq("github_repository_id", primaryRepositoryId);
-  }
-
-  const latestSandboxQuery = sandboxQuery.order("checked_at", { ascending: false }).limit(1);
-
-  const [
-    { data: pipelineRow, error: pipelineError },
-    { data: stageRows, error: stageError },
-    { data: secretRows, error: secretsError },
-    { data: linearRouting, error: linearRoutingError },
-    { data: agentConfigRows, error: agentConfigError },
-    { data: codexCredentials, error: codexError },
-    { data: claudeCodeCredentials, error: claudeCodeError },
-    { data: sandboxRows, error: sandboxError },
-    vercelSandboxConnection,
-  ] = await Promise.all([
-    admin
-      .from("pipelines")
-      .select("id")
-      .eq("workspace_id", workspaceId)
-      .eq("is_default", true)
-      .maybeSingle(),
-    admin.from("pipeline_stages").select("id, pipeline_id").eq("workspace_id", workspaceId),
-    options.includeSecretKeyInventory
-      ? admin.from("workspace_secrets").select("key, updated_at").eq("workspace_id", workspaceId)
-      : admin
-          .from("workspace_secrets")
-          .select("key, updated_at")
+  return withServerTiming("onboarding.snapshot", { workspaceId }, async (timing) => {
+    const [
+      onboardingRow,
+      github,
+      pipelineResult,
+      stageResult,
+      secretResult,
+      routingResult,
+      agentConfigResult,
+      providerResults,
+      sandboxResult,
+      vercelSandboxConnection,
+      memberResult,
+    ] = await Promise.all([
+      options?.onboardingRow
+        ? Promise.resolve(options.onboardingRow)
+        : timing.segment("snapshot.onboarding", () => loadOrCreateOnboardingRow(context, admin)),
+      timing.segment(
+        "snapshot.github",
+        () => loadWorkspaceGitHubData(admin, workspaceId),
+        (result) => ({
+          payloadBytes: approximatePayloadSizeBytes(result),
+          rows: result.repositories.length + (result.installation ? 1 : 0),
+        }),
+      ),
+      timing.segment("snapshot.pipeline", () =>
+        context.supabase
+          .from("pipelines")
+          .select("id, name, is_default, operating_rules_md")
           .eq("workspace_id", workspaceId)
-          .in("key", ["LINEAR_API_KEY"]),
-    admin
-      .from("workspace_linear_routing")
-      .select("id, updated_at")
-      .eq("workspace_id", workspaceId)
-      .maybeSingle(),
-    admin.from("workspace_agent_config").select("key, value_json").eq("workspace_id", workspaceId),
-    admin
-      .from("user_codex_credentials")
-      .select("access_token_expires_at, auth_reconnect_required, credential_type, updated_at")
-      .eq("user_id", context.user.id)
-      .maybeSingle(),
-    admin
-      .from("user_claude_code_credentials")
-      .select("updated_at")
-      .eq("user_id", context.user.id)
-      .maybeSingle(),
-    latestSandboxQuery,
-    loadVercelSandboxConnectionPreview(admin, workspaceId),
-  ]);
+          .eq("is_default", true)
+          .maybeSingle(),
+      ),
+      timing.segment("snapshot.stages", () =>
+        context.supabase
+          .from("pipeline_stages")
+          .select(
+            "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
+          )
+          .eq("workspace_id", workspaceId)
+          .order("position", { ascending: true }),
+      ),
+      timing.segment("snapshot.secrets", () =>
+        admin
+          .from("workspace_secrets")
+          .select(
+            "id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .order("key", { ascending: true }),
+      ),
+      timing.segment("snapshot.routing", () =>
+        admin
+          .from("workspace_linear_routing")
+          .select("status_mappings, rework_stage_slug, land_stage_slug, updated_at")
+          .eq("workspace_id", workspaceId)
+          .maybeSingle(),
+      ),
+      timing.segment("snapshot.agent-config", () =>
+        admin
+          .from("workspace_agent_config")
+          .select("key, value_json")
+          .eq("workspace_id", workspaceId),
+      ),
+      timing.segment("snapshot.providers", () =>
+        Promise.all([
+          admin
+            .from("user_codex_credentials")
+            .select("access_token_expires_at, auth_reconnect_required, credential_type, updated_at")
+            .eq("user_id", context.user.id)
+            .maybeSingle(),
+          admin
+            .from("user_claude_code_credentials")
+            .select("updated_at")
+            .eq("user_id", context.user.id)
+            .maybeSingle(),
+        ]),
+      ),
+      timing.segment("snapshot.sandbox", () =>
+        admin
+          .from("sandbox_capability_checks")
+          .select(
+            "id, github_repository_id, status, capabilities, error_text, checked_at, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+          )
+          .eq("workspace_id", workspaceId)
+          .order("checked_at", { ascending: false }),
+      ),
+      timing.segment("snapshot.vercel", () =>
+        loadVercelSandboxConnectionPreview(admin, workspaceId),
+      ),
+      timing.segment("snapshot.members", () =>
+        context.supabase
+          .from("workspace_members")
+          .select("id, user_id, full_name, email, role, kind, is_active")
+          .eq("workspace_id", workspaceId)
+          .eq("kind", "human")
+          .eq("is_active", true)
+          .order("full_name", { ascending: true }),
+      ),
+    ]);
 
-  const firstError =
-    pipelineError ??
-    stageError ??
-    secretsError ??
-    linearRoutingError ??
-    agentConfigError ??
-    codexError ??
-    claudeCodeError ??
-    sandboxError;
-  if (firstError) throw firstError;
+    const [codexResult, claudeCodeResult] = providerResults;
+    for (const error of [
+      pipelineResult.error,
+      stageResult.error,
+      secretResult.error,
+      routingResult.error,
+      agentConfigResult.error,
+      codexResult.error,
+      claudeCodeResult.error,
+      sandboxResult.error,
+      memberResult.error,
+    ]) {
+      throwQueryError(error);
+    }
 
-  const stageCount = pipelineRow
-    ? (stageRows ?? []).filter((stage) => stage.pipeline_id === pipelineRow.id).length
-    : 0;
+    return {
+      agentConfigRows: (agentConfigResult.data ?? []) as AgentConfigRow[],
+      claudeCodeCredentials: claudeCodeResult.data,
+      codexCredentials: codexResult.data,
+      github,
+      linearRoutingRow: routingResult.data as LinearRoutingRow | null,
+      onboardingRow,
+      pipelineRow: pipelineResult.data as PipelineRow | null,
+      sandboxRows: (sandboxResult.data ?? []) as SandboxCapabilityCheckRow[],
+      secretRows: (secretResult.data ?? []) as SecretPreviewRow[],
+      stageRows: (stageResult.data ?? []) as PipelineStageRow[],
+      vercelSandboxConnection,
+      workspaceMemberRows: (memberResult.data ?? []) as WorkspaceMemberRow[],
+    };
+  });
+}
+
+const loadOnboardingSnapshot = cache(
+  async (workspaceId: string, context: OnboardingSnapshotContext) => {
+    if (workspaceId !== context.workspace.id) {
+      throw new Error("Onboarding snapshot workspace does not match the authenticated context.");
+    }
+    return buildOnboardingSnapshot(context);
+  },
+);
+
+function derivePipeline(snapshot: OnboardingSnapshot): SessionPipeline | null {
+  if (!snapshot.pipelineRow) return null;
+  const stages: PipelineStage[] = snapshot.stageRows
+    .filter((stage) => stage.pipeline_id === snapshot.pipelineRow?.id)
+    .map((stage) => ({
+      approverMemberIds: stage.approver_member_ids ?? [],
+      description: stage.description,
+      id: stage.id,
+      name: stage.name,
+      pipelineId: stage.pipeline_id,
+      position: stage.position,
+      promptTemplateMd: stage.prompt_template_md,
+      slug: stage.slug,
+    }));
+
+  return {
+    id: snapshot.pipelineRow.id,
+    isDefault: snapshot.pipelineRow.is_default,
+    name: snapshot.pipelineRow.name,
+    operatingRulesMd: snapshot.pipelineRow.operating_rules_md ?? "",
+    stages,
+  };
+}
+
+function deriveLinearRouting(row: LinearRoutingRow | null): LinearRoutingConfig {
+  if (!row) return DEFAULT_LINEAR_ROUTING_CONFIG;
+  return coerceLinearRoutingConfig({
+    landStageSlug: row.land_stage_slug,
+    reworkStageSlug: row.rework_stage_slug,
+    statusMappings: row.status_mappings,
+  });
+}
+
+function deriveSetupHealth(
+  snapshot: OnboardingSnapshot,
+  selectedGithubRepositoryId: string | null,
+  canManage: boolean,
+): OnboardingSetupHealth {
+  const repositoryHealth = buildRepositorySetupHealth(snapshot.github, selectedGithubRepositoryId);
+  const primaryRepositoryId = repositoryHealth.primaryRepositoryProfile.repositoryId;
+  const latestSandboxRow = primaryRepositoryId
+    ? snapshot.sandboxRows.find((row) => row.github_repository_id === primaryRepositoryId)
+    : snapshot.sandboxRows[0];
+  const pipeline = derivePipeline(snapshot);
   const agentConfig = agentConfigEntriesToMap(
-    ((agentConfigRows ?? []) as AgentConfigRow[]).map((row) => ({
-      key: row.key,
-      value: row.value_json,
-    })),
+    snapshot.agentConfigRows.map((row) => ({ key: row.key, value: row.value_json })),
   );
   const configuredKeys = configuredAgentConfigKeys(agentConfig);
-  const secretKeys = [...new Set((secretRows ?? []).map((row) => row.key))].sort();
-  const linearSecret = (secretRows ?? []).find((row) => row.key === "LINEAR_API_KEY") ?? null;
-  const linearRoutingUpdatedAt =
-    typeof linearRouting?.updated_at === "string" ? linearRouting.updated_at : null;
+  const secretKeys = [...new Set(snapshot.secretRows.map((row) => row.key))].sort();
+  const linearSecret = snapshot.secretRows.find((row) => row.key === "LINEAR_API_KEY") ?? null;
+  const linearRoutingUpdatedAt = snapshot.linearRoutingRow?.updated_at ?? null;
 
   return {
     agentConfig: {
@@ -326,32 +495,32 @@ async function loadSetupHealth(
       status: configuredKeys.length > 0 ? "present" : "missing",
       values: agentConfig,
     },
-    claudeCodeConnection: claudeCodeConnectionStatus(claudeCodeCredentials),
-    codexConnection: codexConnectionStatus(codexCredentials),
+    claudeCodeConnection: claudeCodeConnectionStatus(snapshot.claudeCodeCredentials),
+    codexConnection: codexConnectionStatus(snapshot.codexCredentials),
     defaultPipeline: {
-      configured: Boolean(pipelineRow && stageCount > 0),
-      pipelineId: pipelineRow?.id ?? null,
-      stageCount,
-      status: pipelineRow && stageCount > 0 ? "ready" : "missing",
+      configured: Boolean(pipeline && pipeline.stages.length > 0),
+      pipelineId: pipeline?.id ?? null,
+      stageCount: pipeline?.stages.length ?? 0,
+      status: pipeline && pipeline.stages.length > 0 ? "ready" : "missing",
     },
     githubInstallation: {
-      connected: Boolean(github.installation && !github.installation.suspended),
-      installationId: github.installation?.installationId ?? null,
-      status: github.installation ? "present" : "missing",
-      suspended: github.installation?.suspended ?? null,
-      targetName: github.installation?.targetName ?? null,
-      updatedAt: github.installation?.updatedAt ?? null,
+      connected: Boolean(snapshot.github.installation && !snapshot.github.installation.suspended),
+      installationId: snapshot.github.installation?.installationId ?? null,
+      status: snapshot.github.installation ? "present" : "missing",
+      suspended: snapshot.github.installation?.suspended ?? null,
+      targetName: snapshot.github.installation?.targetName ?? null,
+      updatedAt: snapshot.github.installation?.updatedAt ?? null,
     },
-    latestSandboxCapabilityCheck: mapSandboxCapabilityCheck(sandboxRows?.[0]),
-    vercelSandboxConnection: vercelSandboxConnection
+    latestSandboxCapabilityCheck: mapSandboxCapabilityCheck(latestSandboxRow),
+    vercelSandboxConnection: snapshot.vercelSandboxConnection
       ? {
-          connected: vercelSandboxConnection.status === "connected",
-          lastValidationError: vercelSandboxConnection.lastValidationError,
-          projectId: vercelSandboxConnection.projectId,
-          projectName: vercelSandboxConnection.projectName,
-          status: vercelSandboxConnection.status,
-          teamId: vercelSandboxConnection.teamId,
-          updatedAt: vercelSandboxConnection.updatedAt,
+          connected: snapshot.vercelSandboxConnection.status === "connected",
+          lastValidationError: snapshot.vercelSandboxConnection.lastValidationError,
+          projectId: snapshot.vercelSandboxConnection.projectId,
+          projectName: snapshot.vercelSandboxConnection.projectName,
+          status: snapshot.vercelSandboxConnection.status,
+          teamId: snapshot.vercelSandboxConnection.teamId,
+          updatedAt: snapshot.vercelSandboxConnection.updatedAt,
         }
       : {
           connected: false,
@@ -368,186 +537,69 @@ async function loadSetupHealth(
       updatedAt: linearSecret?.updated_at ?? null,
     },
     linearRouting: {
-      configured: Boolean(linearRouting),
-      status: linearRouting ? "present" : "missing",
+      configured: Boolean(snapshot.linearRoutingRow),
+      status: snapshot.linearRoutingRow ? "present" : "missing",
       updatedAt: linearRoutingUpdatedAt,
     },
     workspaceSecrets: {
-      configuredKeys: options.includeSecretKeyInventory ? secretKeys : [],
+      configuredKeys: canManage ? secretKeys : [],
     },
     ...repositoryHealth,
   };
 }
 
-async function loadDefaultPipeline(
-  context: WorkspaceAccessContext,
-): Promise<SessionPipeline | null> {
-  const { data: pipelineRow, error: pipelineError } = await context.supabase
-    .from("pipelines")
-    .select("id, name, is_default, operating_rules_md")
-    .eq("workspace_id", context.workspace.id)
-    .eq("is_default", true)
-    .maybeSingle();
-
-  if (pipelineError) throw pipelineError;
-  if (!pipelineRow) return null;
-
-  const { data: stageRows, error: stageError } = await context.supabase
-    .from("pipeline_stages")
-    .select(
-      "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
-    )
-    .eq("pipeline_id", pipelineRow.id)
-    .order("position", { ascending: true });
-
-  if (stageError) throw stageError;
-
-  const stages: PipelineStage[] = (stageRows ?? []).map((stage) => ({
-    approverMemberIds: stage.approver_member_ids ?? [],
-    description: stage.description,
-    id: stage.id,
-    name: stage.name,
-    pipelineId: stage.pipeline_id,
-    position: stage.position,
-    promptTemplateMd: stage.prompt_template_md,
-    slug: stage.slug,
-  }));
-
-  return {
-    id: pipelineRow.id,
-    isDefault: pipelineRow.is_default,
-    name: pipelineRow.name,
-    operatingRulesMd: pipelineRow.operating_rules_md ?? "",
-    stages,
-  };
-}
-
-async function loadWorkspaceMembers(
-  context: WorkspaceAccessContext,
-): Promise<WorkspaceMemberSummary[]> {
-  const { data, error } = await context.supabase
-    .from("workspace_members")
-    .select("id, full_name, email, role, kind, is_active")
-    .eq("workspace_id", context.workspace.id)
-    .eq("kind", "human")
-    .eq("is_active", true)
-    .order("full_name", { ascending: true });
-
-  if (error) throw error;
-
-  return (data ?? []).map((member) => ({
-    email: member.email,
-    fullName: member.full_name,
-    id: member.id,
-    role: member.role as WorkspaceMemberSummary["role"],
-  }));
-}
-
-async function loadLinearSecretPreview(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  workspaceId: string,
-): Promise<WorkspaceSecretPreview | null> {
-  const { data, error } = await admin
-    .from("workspace_secrets")
-    .select("id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at")
-    .eq("workspace_id", workspaceId)
-    .eq("key", "LINEAR_API_KEY")
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-
-  return mapSecretPreview(data);
-}
-
-async function loadWorkspaceSecretPreviews(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  workspaceId: string,
-): Promise<WorkspaceSecretPreview[]> {
-  const { data, error } = await admin
-    .from("workspace_secrets")
-    .select("id, key, workspace_id, value_preview, created_by_member_id, created_at, updated_at")
-    .eq("workspace_id", workspaceId)
-    .order("key", { ascending: true });
-
-  if (error) throw error;
-  return ((data ?? []) as SecretPreviewRow[]).map(mapSecretPreview);
-}
-
-async function loadAgentConfig(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  workspaceId: string,
-): Promise<AgentConfigMap> {
-  const { data, error } = await admin
-    .from("workspace_agent_config")
-    .select("key, value_json")
-    .eq("workspace_id", workspaceId);
-
-  if (error) throw error;
-  return agentConfigEntriesToMap(
-    ((data ?? []) as AgentConfigRow[]).map((row) => ({ key: row.key, value: row.value_json })),
-  );
+function currentMemberFromSnapshot(
+  context: OnboardingSnapshotContext,
+  snapshot: OnboardingSnapshot,
+) {
+  const member =
+    context.currentMember ??
+    snapshot.workspaceMemberRows.find((row) => row.user_id === context.user.id);
+  if (!member || !member.is_active || member.kind !== "human") return null;
+  return member;
 }
 
 async function buildWorkspaceOnboardingData(
-  context: WorkspaceAccessContext,
-  options?: {
-    onboardingRow?: Tables<"workspace_onboarding">;
-  },
-): Promise<WorkspaceOnboardingData> {
-  let onboardingRow = options?.onboardingRow;
-  const admin = createSupabaseAdminClient();
+  context: OnboardingSnapshotContext,
+  options?: { onboardingRow?: Tables<"workspace_onboarding">; requestCached?: boolean },
+): Promise<WorkspaceOnboardingData | null> {
+  const snapshot = options?.requestCached
+    ? await loadOnboardingSnapshot(context.workspace.id, context)
+    : await buildOnboardingSnapshot(context, { onboardingRow: options?.onboardingRow });
+  const currentMember = currentMemberFromSnapshot(context, snapshot);
+  if (!currentMember) return null;
 
-  if (!onboardingRow) {
-    onboardingRow = await loadOrCreateOnboardingRow(context, admin);
-  }
-
-  const onboarding = mapOnboardingRow(onboardingRow);
-  const canManage =
-    context.currentMember.role === "owner" || context.currentMember.role === "admin";
-  const github = await loadWorkspaceGitHubData(admin, context.workspace.id);
-  const [
-    setupHealth,
-    pipeline,
-    workspaceMembers,
-    linearRouting,
-    linearSecret,
-    workspaceSecrets,
-    agentConfig,
-    vercelSandboxConnection,
-  ] = await Promise.all([
-    loadSetupHealth(context, github, onboarding.selectedGithubRepositoryId, admin, {
-      includeSecretKeyInventory: canManage,
-    }),
-    loadDefaultPipeline(context),
-    loadWorkspaceMembers(context),
-    loadLinearRoutingConfig(admin, context.workspace.id),
-    canManage ? loadLinearSecretPreview(admin, context.workspace.id) : Promise.resolve(null),
-    canManage ? loadWorkspaceSecretPreviews(admin, context.workspace.id) : Promise.resolve([]),
-    loadAgentConfig(admin, context.workspace.id),
-    loadVercelSandboxConnectionPreview(admin, context.workspace.id),
-  ]);
+  const onboarding = mapOnboardingRow(snapshot.onboardingRow);
+  const canManage = currentMember.role === "owner" || currentMember.role === "admin";
+  const workspaceSecrets = canManage ? snapshot.secretRows.map(mapSecretPreview) : [];
+  const agentConfig = agentConfigEntriesToMap(
+    snapshot.agentConfigRows.map((row) => ({ key: row.key, value: row.value_json })),
+  );
 
   return {
     agentConfig,
     canManage,
-    currentMember: {
-      id: context.currentMember.id,
-      role: context.currentMember.role,
-    },
-    github,
-    linearRouting,
-    linearSecret,
+    currentMember: { id: currentMember.id, role: currentMember.role },
+    github: snapshot.github,
+    linearRouting: deriveLinearRouting(snapshot.linearRoutingRow),
+    linearSecret: canManage
+      ? (workspaceSecrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null)
+      : null,
     onboarding,
-    pipeline,
-    setupHealth,
-    vercelSandboxConnection,
+    pipeline: derivePipeline(snapshot),
+    setupHealth: deriveSetupHealth(snapshot, onboarding.selectedGithubRepositoryId, canManage),
+    vercelSandboxConnection: snapshot.vercelSandboxConnection,
     workspace: {
       id: context.workspace.id,
       name: context.workspace.name,
       slug: context.workspace.slug,
     },
-    workspaceMembers,
+    workspaceMembers: snapshot.workspaceMemberRows.map((member) => ({
+      email: member.email,
+      fullName: member.full_name,
+      id: member.id,
+      role: member.role as WorkspaceMemberSummary["role"],
+    })),
     workspaceSecrets,
   };
 }
@@ -565,10 +617,17 @@ export async function loadWorkspaceOnboardingData(
     };
   }
 
-  return {
-    data: await buildWorkspaceOnboardingData(access.context),
-    ok: true,
-  };
+  const data = await buildWorkspaceOnboardingData(access.context, { requestCached: true });
+  if (!data) return { error: "Workspace not found.", ok: false, status: 404 };
+  return { data, ok: true };
+}
+
+export async function loadWorkspaceOnboardingDataForContext(
+  context: AuthenticatedWorkspaceContext,
+): Promise<OnboardingDataResult> {
+  const data = await buildWorkspaceOnboardingData(context, { requestCached: true });
+  if (!data) return { error: "Workspace not found.", ok: false, status: 404 };
+  return { data, ok: true };
 }
 
 export async function updateWorkspaceOnboardingData(
@@ -616,10 +675,11 @@ export async function updateWorkspaceOnboardingData(
 
   if (error) throw error;
 
-  return {
-    data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
-    ok: true,
-  };
+  const onboardingData = await buildWorkspaceOnboardingData(access.context, {
+    onboardingRow: data,
+  });
+  if (!onboardingData) return { error: "Workspace not found.", ok: false, status: 404 };
+  return { data: onboardingData, ok: true };
 }
 
 const REPOSITORY_SELECTION_DEPENDENT_STEPS = new Set<WorkspaceOnboardingStep>([
@@ -759,6 +819,9 @@ export async function completeWorkspaceOnboarding(
   if (onboardingError) throw onboardingError;
 
   const currentData = await buildWorkspaceOnboardingData(access.context, { onboardingRow });
+  if (!currentData) {
+    return { error: "Workspace not found.", ok: false, status: 404 };
+  }
   const blockers = verifyBlockersFromChecklist(
     buildVerifyChecklist({
       agentConfig: currentData.agentConfig,
@@ -792,10 +855,13 @@ export async function completeWorkspaceOnboarding(
 
   if (error) throw error;
 
-  return {
-    data: await buildWorkspaceOnboardingData(access.context, { onboardingRow: data }),
-    ok: true,
-  };
+  const completedData = await buildWorkspaceOnboardingData(access.context, {
+    onboardingRow: data,
+  });
+  if (!completedData) {
+    return { error: "Workspace not found.", ok: false, status: 404 };
+  }
+  return { data: completedData, ok: true };
 }
 
 export function buildWorkspaceOnboardingUpdatePayload(
