@@ -191,7 +191,7 @@ export function isPipelineDraftValid(input: {
 
 export function PipelineVariableHelp() {
   return (
-    <details className="ml-auto rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-[12px] text-muted">
+    <details className="ml-auto rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-xs text-muted">
       <summary className="cursor-pointer text-foreground">Template variables</summary>
       <ul className="mt-2 space-y-0.5 font-mono">
         {PIPELINE_VARIABLE_HELP.map((variable) => (
@@ -225,11 +225,11 @@ export function OperatingRulesField({
         value={value}
         disabled={!canManage}
         onChange={(event) => onChange(event.target.value)}
-        className={`ui-textarea font-mono text-[12px] ${compact ? "min-h-[120px]" : "min-h-[160px]"}`}
+        className={`ui-textarea font-mono text-xs ${compact ? "min-h-[120px]" : "min-h-[160px]"}`}
         placeholder="Shared rules prepended to every stage prompt. Use {{session.title}} etc."
         maxLength={20000}
       />
-      <p className="text-[11px] text-muted">
+      <p className="type-annotation text-muted">
         Prepended to every stage prompt in this pipeline — cross-cutting rules like autonomy, git
         safety, cleanup, and honest reporting.
       </p>
@@ -280,7 +280,7 @@ export function StageRowEditor({
     <li
       className={`relative rounded-[10px] border border-border bg-surface ${compact ? "p-4" : "p-5"}`}
     >
-      <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted text-[11px] font-semibold text-muted">
+      <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted type-annotation font-semibold text-muted">
         {index + 1}
       </div>
       <div className="space-y-4 pl-9">
@@ -300,7 +300,7 @@ export function StageRowEditor({
               value={stage.slug}
               disabled={!canManage}
               onChange={(event) => onChange({ slug: event.target.value })}
-              className="ui-input w-[160px] font-mono text-[12px]"
+              className="ui-input w-[160px] font-mono text-xs"
               placeholder="kebab-slug"
               maxLength={64}
             />
@@ -353,7 +353,7 @@ export function StageRowEditor({
             value={stage.promptTemplateMd}
             disabled={!canManage}
             onChange={(event) => onChange({ promptTemplateMd: event.target.value })}
-            className={`ui-textarea font-mono text-[12px] ${compact ? "min-h-[120px]" : "min-h-[160px]"}`}
+            className={`ui-textarea font-mono text-xs ${compact ? "min-h-[120px]" : "min-h-[160px]"}`}
             placeholder="The prompt to run for this stage. Use {{session.title}} etc."
             maxLength={20000}
           />
@@ -362,7 +362,7 @@ export function StageRowEditor({
         <div>
           <button
             type="button"
-            className="text-[12px] font-medium text-muted transition-colors hover:text-foreground"
+            className="text-xs font-medium text-muted transition-colors hover:text-foreground"
             onClick={() => setShowApprovers((value) => !value)}
           >
             Approvers: {approverPreview} {showApprovers ? "▾" : "▸"}
@@ -370,13 +370,13 @@ export function StageRowEditor({
           {showApprovers ? (
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-[6px] border border-border bg-background p-2">
               {workspaceMembers.length === 0 ? (
-                <li className="text-[12px] text-muted">No human members yet.</li>
+                <li className="text-xs text-muted">No human members yet.</li>
               ) : (
                 workspaceMembers.map((member) => {
                   const checked = stage.approverMemberIds.includes(member.id);
                   const id = `approver-${stage.id ?? "new"}-${index}-${member.id}`;
                   return (
-                    <li key={member.id} className="flex items-center gap-2 text-[12px]">
+                    <li key={member.id} className="flex items-center gap-2 text-xs">
                       <input
                         type="checkbox"
                         checked={checked}
@@ -396,7 +396,7 @@ export function StageRowEditor({
               )}
             </ul>
           ) : null}
-          <p className="mt-1 text-[11px] text-muted">
+          <p className="mt-1 type-annotation text-muted">
             Leave empty to default to workspace owners and admins.
           </p>
         </div>

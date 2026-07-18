@@ -153,7 +153,7 @@ export function RepositorySetupMessages({ repository }: { repository: WorkspaceG
   return (
     <>
       {repository.onboarding.status === "conflict" ? (
-        <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] leading-5 text-warning">
+        <div className="rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
           <p className="font-semibold">Existing skill files need review.</p>
           <ul className="mt-1 space-y-1">
             {repository.onboarding.conflictReport.map((conflict) => (
@@ -165,7 +165,7 @@ export function RepositorySetupMessages({ repository }: { repository: WorkspaceG
         </div>
       ) : null}
       {repository.onboarding.lastError ? (
-        <p className="text-[12px] leading-5 text-danger">{repository.onboarding.lastError}</p>
+        <p className="text-xs leading-5 text-danger">{repository.onboarding.lastError}</p>
       ) : null}
     </>
   );

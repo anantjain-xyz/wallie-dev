@@ -143,7 +143,7 @@ function ProfileField({
 }) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-[12px] font-medium text-muted">{label}</span>
+      <span className="text-xs font-medium text-muted">{label}</span>
       <input
         className="ui-input w-full"
         onChange={(event) => onChange(event.target.value)}
@@ -245,7 +245,7 @@ export function RepositoryProfileEditor({
 
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block space-y-1.5">
-          <span className="text-[12px] font-medium text-muted">Language hints</span>
+          <span className="text-xs font-medium text-muted">Language hints</span>
           <textarea
             className="ui-textarea min-h-24 w-full"
             onChange={(event) => update("languageHints", splitList(event.target.value))}
@@ -253,7 +253,7 @@ export function RepositoryProfileEditor({
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-[12px] font-medium text-muted">Framework hints</span>
+          <span className="text-xs font-medium text-muted">Framework hints</span>
           <textarea
             className="ui-textarea min-h-24 w-full"
             onChange={(event) => update("frameworkHints", splitList(event.target.value))}
@@ -261,15 +261,15 @@ export function RepositoryProfileEditor({
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-[12px] font-medium text-muted">Env key suggestions</span>
+          <span className="text-xs font-medium text-muted">Env key suggestions</span>
           <textarea
-            className="ui-textarea min-h-28 w-full font-mono text-[12px]"
+            className="ui-textarea min-h-28 w-full font-mono text-xs"
             onChange={(event) => update("envKeySuggestions", splitList(event.target.value))}
             value={joinList(profile.envKeySuggestions)}
           />
         </label>
         <label className="block space-y-1.5">
-          <span className="text-[12px] font-medium text-muted">Setup notes</span>
+          <span className="text-xs font-medium text-muted">Setup notes</span>
           <textarea
             className="ui-textarea min-h-28 w-full"
             onChange={(event) => update("setupNotes", event.target.value)}
@@ -279,9 +279,9 @@ export function RepositoryProfileEditor({
       </div>
 
       <div className="mt-4">
-        <p className="text-[12px] font-medium text-muted">Source files</p>
+        <p className="text-xs font-medium text-muted">Source files</p>
         {profile.inferenceSources.length === 0 ? (
-          <p className="mt-1 text-[12px] leading-5 text-muted">No source files matched.</p>
+          <p className="mt-1 text-xs leading-5 text-muted">No source files matched.</p>
         ) : (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {profile.inferenceSources.map((source) => (

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { dateFormatter, InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -39,6 +40,8 @@ export function LinearKeyControls({
   const [linearApiKeyDraft, setLinearApiKeyDraft] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState<FlashMessage | null>(null);
   const [feedbackSlot, setFeedbackSlot] = useState<LinearKeyFeedbackSlot>("initial");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const testLinearConnection = useApiAction<{ ok: true }>({
     call: () =>
@@ -75,18 +78,25 @@ export function LinearKeyControls({
     successText: null,
   });
 
-  const deleteLinearKey = useApiAction<DeleteWorkspaceSecretResponse>({
+  const deleteLinearKey = useApiAction<DeleteWorkspaceSecretResponse, [], boolean>({
     call: () =>
       fetch(
         `/api/secrets/${encodeURIComponent("LINEAR_API_KEY")}?workspaceId=${encodeURIComponent(workspaceId)}`,
         { method: "DELETE" },
       ),
     errorText: "Linear API key deletion failed.",
+    onError: (message) => {
+      setDeleteError(message);
+      return false;
+    },
     onSuccess: async (payload) => {
       setFeedbackSlot("initial");
       await onSecretDeleted?.(payload.deletedKey);
+      return true;
     },
-    setFlashMessage: setFeedbackMessage,
+    setFlashMessage: (message) => {
+      if (message.kind === "success") setFeedbackMessage(message);
+    },
     successText: "Linear API key removed.",
   });
 
@@ -112,14 +122,11 @@ export function LinearKeyControls({
     void saveLinearKey.run(value);
   }
 
-  function handleDeleteLinearKey() {
-    if (!window.confirm("Remove the Linear API key for this workspace?")) {
-      return;
-    }
-
+  async function handleDeleteLinearKey() {
     setFeedbackSlot("configured");
     setFeedbackMessage(null);
-    void deleteLinearKey.run();
+    setDeleteError(null);
+    if (await deleteLinearKey.run()) setDeleteOpen(false);
   }
 
   function handleDraftChange(value: string) {
@@ -145,22 +152,35 @@ export function LinearKeyControls({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
             <p className="text-[13px] font-medium text-foreground">Linear API key configured</p>
-            <p className="font-mono text-[12px] text-muted">
+            <p className="font-mono text-xs text-muted">
               {linearSecret.valuePreview ?? "preview unavailable"} · updated{" "}
               {dateFormatter.format(new Date(linearSecret.updatedAt))}
             </p>
           </div>
           {allowDelete ? (
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="ui-button-danger"
-                disabled={deleteLinearKey.isBusy}
-                onClick={handleDeleteLinearKey}
-                type="button"
-              >
-                {deleteLinearKey.isBusy ? "Removing…" : "Remove"}
-              </button>
-            </div>
+            <DestructiveConfirmationDialog
+              actionLabel="Remove Linear API key"
+              description="Removing the Linear API key stops Wallie from reading Linear issues in this workspace until a new key is saved."
+              errorMessage={deleteError}
+              onConfirm={() => void handleDeleteLinearKey()}
+              onOpenChange={(open) => {
+                setDeleteOpen(open);
+                setDeleteError(null);
+              }}
+              open={deleteOpen}
+              pending={deleteLinearKey.isBusy}
+              pendingLabel="Removing…"
+              title="Remove Linear API key?"
+              trigger={
+                <button
+                  aria-label="Remove Linear API key"
+                  className="ui-button-danger"
+                  type="button"
+                >
+                  Remove
+                </button>
+              }
+            />
           ) : null}
         </div>
         {feedbackSlot === "configured" ? (

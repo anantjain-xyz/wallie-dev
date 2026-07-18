@@ -50,6 +50,7 @@ describe("isCreateSessionSubmitDisabled", () => {
     expect(
       isCreateSessionSubmitDisabled({
         hasRepositoryResult: false,
+        isRepositoryStale: false,
         isSubmitting: false,
         prompt: "Build the dashboard",
       }),
@@ -57,10 +58,22 @@ describe("isCreateSessionSubmitDisabled", () => {
     expect(
       isCreateSessionSubmitDisabled({
         hasRepositoryResult: true,
+        isRepositoryStale: false,
         isSubmitting: false,
         prompt: "Build the dashboard",
       }),
     ).toBe(false);
+  });
+
+  it("blocks submission while cached repository options are stale", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: true,
+        isSubmitting: false,
+        prompt: "Build the dashboard",
+      }),
+    ).toBe(true);
   });
 });
 

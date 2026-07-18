@@ -246,10 +246,8 @@ function FeatureSection({
     <section id={id} className="border-b border-border bg-surface">
       <div className={contentClassName}>
         <div className={textClassName}>
-          <p className="font-mono text-[12px] font-semibold text-accent">{index}</p>
-          <h2 className="mt-4 text-[32px] font-semibold leading-[1.05] text-foreground sm:text-[44px]">
-            {title}
-          </h2>
+          <p className="font-mono text-xs font-semibold text-accent">{index}</p>
+          <h2 className="type-display mt-4 sm:text-[44px] sm:leading-[1.05]">{title}</h2>
           <p className="mt-5 text-[15px] leading-7 text-muted sm:text-[16px]">{body}</p>
         </div>
         <div className="min-w-0">{children}</div>

@@ -66,7 +66,7 @@ describe("ShellHeader", () => {
 
     expect(html).toContain("New session");
     expect(html).not.toContain("Resume setup");
-    expect(html).toContain("Loading session form…");
+    expect(html).not.toContain("Loading session form…");
   });
 
   it("renders the topbar theme toggle as an accessible icon button", () => {
@@ -125,12 +125,10 @@ describe("ShellHeader", () => {
 });
 
 describe("create-session dialog loading", () => {
-  it("renders a stable announced loading state", () => {
+  it("waits for the client overlay root before rendering portal content", () => {
     const html = renderToStaticMarkup(createElement(CreateSessionDialogLoading));
 
-    expect(html).toContain('role="status"');
-    expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("Loading session form…");
+    expect(html).toBe("");
   });
 
   it("deduplicates preloads for one shell mount", () => {

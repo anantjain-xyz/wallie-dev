@@ -535,7 +535,7 @@ export function SessionWalliePanel({
                     <div className="flex flex-wrap items-center gap-2">
                       <span
                         className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
                           runStatusToneClass(run.status),
                         )}
                       >
@@ -600,7 +600,7 @@ export function SessionWalliePanel({
                                 : "border-border bg-surface-muted text-foreground",
                             )}
                           >
-                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
+                            <div className="flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
                               <span>{message.kind}</span>
                               <span>{dateTimeFormatter.format(new Date(message.createdAt))}</span>
                             </div>

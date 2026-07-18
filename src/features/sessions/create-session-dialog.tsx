@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
 import {
@@ -44,10 +45,16 @@ export function preloadSessionRepositories(input: SessionRepositoryCacheKey) {
 
 export function isCreateSessionSubmitDisabled(input: {
   hasRepositoryResult: boolean;
+  isRepositoryStale: boolean;
   isSubmitting: boolean;
   prompt: string;
 }) {
-  return input.isSubmitting || !input.prompt.trim() || !input.hasRepositoryResult;
+  return (
+    input.isSubmitting ||
+    !input.prompt.trim() ||
+    !input.hasRepositoryResult ||
+    input.isRepositoryStale
+  );
 }
 
 // When `open` is false the body does not mount, so all of its local state is
@@ -66,7 +73,6 @@ function CreateSessionDialogBody({
   workspaceId,
   workspaceSlug,
 }: CreateSessionDialogProps) {
-  const titleId = useId();
   const router = useRouter();
 
   const [prompt, setPrompt] = useState("");
@@ -111,6 +117,11 @@ function CreateSessionDialogBody({
 
     if (!repositorySnapshot.data) {
       setErrorMessage("Wait for repositories to finish loading before starting a session.");
+      return;
+    }
+
+    if (repositorySnapshot.isStale) {
+      setErrorMessage("Refresh repository options before starting a session.");
       return;
     }
 
@@ -162,23 +173,19 @@ function CreateSessionDialogBody({
   }
 
   return (
-    <div className="fixed inset-0 isolate z-50 flex items-start justify-center overscroll-contain bg-foreground/28 px-4 py-4 backdrop-blur-sm sm:py-10">
-      <div
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="ui-panel-elevated relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto overscroll-contain bg-surface p-5 sm:max-h-[calc(100dvh-5rem)] sm:p-6"
-        role="dialog"
+    <Dialog
+      open
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !isSubmitting) onClose();
+      }}
+    >
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto sm:max-h-[calc(100dvh-5rem)]"
+        description="Describe the work, choose its repository, and optionally link a Linear issue."
+        dismissible={!isSubmitting}
+        title="Start a new session"
       >
-        <div>
-          <h2
-            id={titleId}
-            className="text-2xl font-semibold tracking-tight text-balance text-foreground"
-          >
-            Start a new session
-          </h2>
-        </div>
-
-        <form className="mt-6 space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
+        <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
               Prompt
@@ -198,7 +205,7 @@ function CreateSessionDialogBody({
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-title">
-              Title <span className="text-[11px] font-normal text-muted">(optional)</span>
+              Title <span className="type-annotation font-normal text-muted">(optional)</span>
             </label>
             <input
               id="session-title"
@@ -222,7 +229,7 @@ function CreateSessionDialogBody({
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
               Linear issue URL{" "}
-              <span className="text-[11px] font-normal text-muted">(optional)</span>
+              <span className="type-annotation font-normal text-muted">(optional)</span>
             </label>
             <input
               id="session-linear"
@@ -235,7 +242,7 @@ function CreateSessionDialogBody({
               placeholder="https://linear.app/acme/issue/TEAM-123"
               type="url"
             />
-            {linearError ? <p className="text-[11px] text-danger">{linearError}</p> : null}
+            {linearError ? <p className="text-xs text-danger">{linearError}</p> : null}
           </div>
 
           {errorMessage ? (
@@ -249,13 +256,14 @@ function CreateSessionDialogBody({
           ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-3">
-            <button type="button" onClick={onClose} className="ui-button">
+            <button type="button" disabled={isSubmitting} onClick={onClose} className="ui-button">
               Cancel
             </button>
             <button
               type="submit"
               disabled={isCreateSessionSubmitDisabled({
                 hasRepositoryResult: repositorySnapshot.data !== null,
+                isRepositoryStale: repositorySnapshot.isStale,
                 isSubmitting,
                 prompt,
               })}
@@ -265,8 +273,8 @@ function CreateSessionDialogBody({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -294,7 +302,7 @@ export function RepositoryField({
       <div
         aria-busy="true"
         aria-live="polite"
-        className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted"
+        className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-xs text-muted"
         role="status"
       >
         Loading repositories…
@@ -305,7 +313,7 @@ export function RepositoryField({
   if (!snapshot.data && snapshot.error) {
     return (
       <div
-        className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning"
         role="alert"
       >
         <span>{snapshot.error}</span>
@@ -318,7 +326,7 @@ export function RepositoryField({
 
   if (!snapshot.data) {
     return (
-      <div aria-live="polite" className="text-[12px] text-muted" role="status">
+      <div aria-live="polite" className="text-xs text-muted" role="status">
         Preparing repository options…
       </div>
     );
@@ -336,7 +344,7 @@ export function RepositoryField({
       ) : (
         <div
           aria-live="polite"
-          className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-[12px] text-muted"
+          className="rounded-[6px] border border-border bg-surface-muted px-3 py-2 text-xs text-muted"
           role="status"
         >
           No repositories are available. This session will start without one.
@@ -346,7 +354,7 @@ export function RepositoryField({
       {snapshot.isStale ? (
         <div
           aria-live="polite"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-[12px] text-warning"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-warning/20 bg-warning-soft px-3 py-2 text-xs text-warning"
           role={snapshot.error ? "alert" : "status"}
         >
           <span>

@@ -33,13 +33,9 @@ export function PlaceholderPanel({
       <header className="flex items-start justify-between gap-4">
         <div className="space-y-3">
           {eyebrow ? (
-            <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted">
-              {eyebrow}
-            </p>
+            <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted">{eyebrow}</p>
           ) : null}
-          <TitleTag className="max-w-2xl text-[28px] font-semibold tracking-tight text-balance text-foreground">
-            {title}
-          </TitleTag>
+          <TitleTag className="type-page-title max-w-2xl">{title}</TitleTag>
           <p className="max-w-2xl text-[14px] leading-6 text-muted">{summary}</p>
         </div>
         <StatusChip tone={tone}>{tone}</StatusChip>
