@@ -19,30 +19,37 @@ import { type WorkspaceNavItem, workspaceBasePath, workspaceOnboardingPath } fro
 import { cn } from "@/lib/utils";
 
 type ShellHeaderProps = {
-  defaultSessionGithubRepositoryId: string | null;
   navItems: WorkspaceNavItem[];
   onboarding: OnboardingResumeState | null;
   viewerEmail: string | null;
+  viewerId: string;
   workspace: WorkspaceSummary;
   workspaceAvatarUrl: string | null;
 };
 
-const loadCreateSessionDialog = () =>
-  import("@/features/sessions/create-session-dialog").then((module) => module.CreateSessionDialog);
+type CreateSessionDialogModule = typeof import("@/features/sessions/create-session-dialog");
+
+const loadCreateSessionDialogModule = () => import("@/features/sessions/create-session-dialog");
 
 export function preloadCreateSessionDialogOnce(
-  started: { current: boolean },
-  load: () => Promise<unknown> = loadCreateSessionDialog,
+  startedKey: { current: string | null },
+  input: { userId: string; workspaceId: string },
+  load: () => Promise<
+    Pick<CreateSessionDialogModule, "preloadSessionRepositories">
+  > = loadCreateSessionDialogModule,
 ) {
-  if (started.current) {
+  const key = `${input.userId}:${input.workspaceId}`;
+  if (startedKey.current === key) {
     return;
   }
 
-  started.current = true;
+  startedKey.current = key;
   // Reset on failure so a transient chunk error allows retry, not a permanent preload lockout.
-  load().catch(() => {
-    started.current = false;
-  });
+  load()
+    .then((module) => module.preloadSessionRepositories(input))
+    .catch(() => {
+      if (startedKey.current === key) startedKey.current = null;
+    });
 }
 
 const CreateSessionLoadingCloseContext = createContext<(() => void) | null>(null);
@@ -67,10 +74,13 @@ export function CreateSessionDialogLoading({ onClose }: { onClose?: () => void }
   );
 }
 
-const CreateSessionDialog = dynamic(loadCreateSessionDialog, {
-  loading: () => <CreateSessionDialogLoading />,
-  ssr: false,
-});
+const CreateSessionDialog = dynamic(
+  () => loadCreateSessionDialogModule().then((module) => module.CreateSessionDialog),
+  {
+    loading: () => <CreateSessionDialogLoading />,
+    ssr: false,
+  },
+);
 
 function WorkspaceAvatar({ name, url }: { name: string; url: string | null }) {
   if (url) {
@@ -109,10 +119,10 @@ function isActive(pathname: string, workspaceSlug: string, item: WorkspaceNavIte
 }
 
 export function ShellHeader({
-  defaultSessionGithubRepositoryId,
   navItems,
   onboarding,
   viewerEmail,
+  viewerId,
   workspace,
   workspaceAvatarUrl,
 }: ShellHeaderProps) {
@@ -129,7 +139,7 @@ export function ShellHeader({
   const [userCreateOpen, setUserCreateOpen] = useState(false);
   const createOpen = !shouldResumeSetup && (userCreateOpen || createFromUrl);
   const createButtonRef = useRef<HTMLButtonElement>(null);
-  const createDialogPreloadStarted = useRef(false);
+  const createDialogPreloadStartedKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (shouldResumeSetup && createFromUrl) {
@@ -150,7 +160,10 @@ export function ShellHeader({
   }, [createFromUrl, pathname, router, searchParams]);
 
   function preloadCreateDialog() {
-    preloadCreateSessionDialogOnce(createDialogPreloadStarted);
+    preloadCreateSessionDialogOnce(createDialogPreloadStartedKey, {
+      userId: viewerId,
+      workspaceId: workspace.id,
+    });
   }
 
   const pipelineHref = workspaceBasePath(workspace.slug);
@@ -237,9 +250,9 @@ export function ShellHeader({
       {createOpen ? (
         <CreateSessionLoadingCloseContext.Provider value={handleCreateClose}>
           <CreateSessionDialog
-            defaultGithubRepositoryId={defaultSessionGithubRepositoryId}
             open
             onClose={handleCreateClose}
+            userId={viewerId}
             workspaceId={workspace.id}
             workspaceSlug={workspace.slug}
           />

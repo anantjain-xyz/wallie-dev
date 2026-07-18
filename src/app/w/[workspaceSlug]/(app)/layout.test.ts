@@ -21,9 +21,8 @@ describe("workspace app route group layout", () => {
     const workspace = { id: "workspace-1", name: "Northwind", slug: "northwind" };
     const onboarding = { currentStep: "repository", status: "in_progress" };
     mocked.loadWorkspaceLayoutContext.mockResolvedValue({
-      defaultSessionGithubRepositoryId: "repo-1",
       onboarding,
-      user: { email: "owner@example.com" },
+      user: { email: "owner@example.com", id: "user-1" },
       workspace,
       workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
     });
@@ -33,9 +32,9 @@ describe("workspace app route group layout", () => {
       params: Promise.resolve({ workspaceSlug: "northwind" }),
     })) as ReactElement<{
       children: string;
-      defaultSessionGithubRepositoryId: string;
       onboarding: typeof onboarding;
       viewerEmail: string;
+      viewerId: string;
       workspace: typeof workspace;
       workspaceAvatarUrl: string | null;
     }>;
@@ -43,9 +42,9 @@ describe("workspace app route group layout", () => {
     expect(element.type).toBe(mocked.AppShell);
     expect(element.props).toMatchObject({
       children: "app-page",
-      defaultSessionGithubRepositoryId: "repo-1",
       onboarding,
       viewerEmail: "owner@example.com",
+      viewerId: "user-1",
       workspace,
       workspaceAvatarUrl: "https://cdn.example.com/avatar.png",
     });

@@ -8,6 +8,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { CreateSessionDialogLoading } from "@/components/app-shell/shell-header";
+import {
+  invalidateSessionRepositoryCache,
+  loadSessionRepositories,
+  resetSessionRepositoryCacheForTests,
+} from "@/features/sessions/session-repository-cache";
 
 const clientMocks = vi.hoisted(() => ({
   createSessionFromClient: vi.fn(),
@@ -50,6 +55,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  resetSessionRepositoryCacheForTests();
   document.body.removeAttribute("data-scroll-locked");
   document.body.removeAttribute("style");
 });
@@ -98,9 +104,9 @@ describe("CreateSessionDialog accessibility", () => {
       <OverlayProvider>
         <button type="button">Outside</button>
         <CreateSessionDialog
-          defaultGithubRepositoryId={null}
           onClose={onClose}
           open
+          userId="00000000-0000-4000-8000-000000000002"
           workspaceId="00000000-0000-4000-8000-000000000001"
           workspaceSlug="acme"
         />
@@ -124,5 +130,48 @@ describe("CreateSessionDialog accessibility", () => {
 
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("blocks keyboard submission while cached repository options are stale", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const userId = "00000000-0000-4000-8000-000000000002";
+    const repositoryResult = {
+      defaultGithubRepositoryId: "repo-1",
+      repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+    };
+
+    await loadSessionRepositories(
+      { userId, workspaceId },
+      { load: async () => repositoryResult, now: Date.now() },
+    );
+    invalidateSessionRepositoryCache(workspaceId);
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockImplementation(
+      () => new Promise(() => undefined),
+    );
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId={userId}
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    await user.type(screen.getByLabelText("Prompt"), "Build the dashboard");
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+
+    expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
+    expect(
+      screen
+        .getByText("Refresh repository options before starting a session.")
+        .closest('[role="status"]'),
+    ).toBeVisible();
   });
 });
