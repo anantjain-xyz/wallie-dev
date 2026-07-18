@@ -62,6 +62,12 @@
   --dropdown-item-foreground: var(--text-secondary);
   --overlay-backdrop: rgba(14, 17, 23, 0.46);
   --overlay-gutter: 16px;
+  --overlay-gutter-block-start: max(var(--overlay-gutter), env(safe-area-inset-top));
+  --overlay-gutter-block-end: max(var(--overlay-gutter), env(safe-area-inset-bottom));
+  --overlay-gutter-inline-end: max(var(--overlay-gutter), env(safe-area-inset-right));
+  --shell-scroll-padding: calc(4.5rem + env(safe-area-inset-top));
+  --wallie-visual-viewport-center: 50dvh;
+  --wallie-visual-viewport-height: 100dvh;
   --overlay-motion-duration: 160ms;
   --overlay-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
   --z-overlay-backdrop: 60;
@@ -139,12 +145,17 @@
   }
 
   html {
+    min-height: 100%;
+    overflow-x: clip;
     background: var(--surface-canvas);
+    scroll-padding-block-start: var(--shell-scroll-padding);
     -webkit-tap-highlight-color: var(--accent-soft);
   }
 
   body {
     min-height: 100vh;
+    min-height: 100svh;
+    max-width: 100%;
     background: var(--surface-canvas);
     color: var(--foreground);
     font-feature-settings:
@@ -175,6 +186,10 @@
     touch-action: manipulation;
   }
 
+  :where(input, textarea, [contenteditable="true"], [role="alert"], [role="status"]) {
+    scroll-margin-block: var(--shell-scroll-padding) var(--overlay-gutter-block-end);
+  }
+
   button {
     cursor: pointer;
   }
@@ -186,6 +201,10 @@
 }
 
 @layer components {
+  .ui-shell-header {
+    padding-top: env(safe-area-inset-top);
+  }
+
   /* Semantic type roles. Prefer these over one-off text sizes in product UI. */
   .type-display {
     color: var(--foreground);
@@ -454,10 +473,13 @@
   .ui-dialog-content {
     position: fixed;
     left: 50%;
-    top: 50%;
+    top: var(--wallie-visual-viewport-center);
     z-index: var(--z-overlay-content);
     width: min(32rem, calc(100vw - (var(--overlay-gutter) * 2)));
-    max-height: calc(100dvh - (var(--overlay-gutter) * 2));
+    max-height: calc(
+      var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
+        var(--overlay-gutter-block-end)
+    );
     overflow-y: auto;
     overscroll-behavior: contain;
     transform: translate(-50%, -50%);
@@ -585,12 +607,15 @@
 
   .ui-toast-viewport {
     position: fixed;
-    right: var(--overlay-gutter);
-    bottom: var(--overlay-gutter);
+    right: var(--overlay-gutter-inline-end);
+    bottom: var(--overlay-gutter-block-end);
     z-index: var(--z-toast);
     display: flex;
     width: min(24rem, calc(100vw - (var(--overlay-gutter) * 2)));
-    max-height: calc(100dvh - (var(--overlay-gutter) * 2));
+    max-height: calc(
+      var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
+        var(--overlay-gutter-block-end)
+    );
     flex-direction: column;
     gap: 0.5rem;
     margin: 0;
@@ -883,6 +908,12 @@
 
   .issue-textarea:focus {
     @apply border-border bg-sheet px-3 py-2;
+  }
+}
+
+@media (max-width: 639px) {
+  :root {
+    --shell-scroll-padding: calc(8.5rem + env(safe-area-inset-top));
   }
 }
 
