@@ -54,5 +54,22 @@ export async function POST(_request: Request, { params }: Params) {
     sessionId: sessionRow.id,
   });
 
-  return NextResponse.json({ phaseStatus: "rejected", success: true });
+  const { data: result, error: resultError } = await admin
+    .from("sessions")
+    .select("phase_status, updated_at")
+    .eq("id", sessionRow.id)
+    .single();
+
+  if (resultError || !result) {
+    return NextResponse.json(
+      { error: resultError?.message ?? "Could not reconcile the stopped session." },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({
+    phaseStatus: result.phase_status,
+    success: true,
+    updatedAt: result.updated_at,
+  });
 }

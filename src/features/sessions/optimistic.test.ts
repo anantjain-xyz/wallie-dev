@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applySessionMutationPatch,
+  reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
 } from "@/features/sessions/optimistic";
@@ -117,5 +118,33 @@ describe("optimistic session mutations", () => {
       currentStageSlug: "build",
       phaseStatus: "agent_generating",
     });
+  });
+
+  it("accepts a later same-timestamp stage row without letting its earlier echo regress state", () => {
+    const intermediate = reconcileSessionMutationPatch(session, {
+      phaseStatus: "approved",
+      updatedAt: session.updatedAt,
+    });
+    expect(intermediate).toBe(session);
+
+    const advanced = reconcileSessionMutationPatch(session, {
+      currentArtifactVersion: 0,
+      currentStageId: "stage-build",
+      phaseStatus: "agent_generating",
+      updatedAt: session.updatedAt,
+    });
+    expect(advanced).toMatchObject({
+      currentStageId: "stage-build",
+      phaseStatus: "agent_generating",
+    });
+
+    expect(
+      reconcileSessionMutationPatch(advanced, {
+        currentArtifactVersion: 1,
+        currentStageId: "stage-plan",
+        phaseStatus: "approved",
+        updatedAt: session.updatedAt,
+      }),
+    ).toBe(advanced);
   });
 });

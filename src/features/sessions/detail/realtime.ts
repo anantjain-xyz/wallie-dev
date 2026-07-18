@@ -28,12 +28,12 @@ type SessionRealtimeRow = Pick<
 
 type ArtifactRealtimeRow = Pick<
   Tables<"session_artifacts">,
-  "artifact_json" | "created_at" | "session_id" | "stage_slug" | "version"
+  "artifact_json" | "created_at" | "id" | "session_id" | "stage_slug" | "version"
 >;
 
 type CompletionRealtimeRow = Pick<
   Tables<"session_phase_completions">,
-  "completed_at" | "session_id" | "stage_slug"
+  "completed_at" | "id" | "session_id" | "stage_slug"
 >;
 
 export function mergeSessionRealtimeRow(
@@ -78,6 +78,7 @@ export function mergeArtifactRealtimeRow(
 
   const artifact: SessionArtifactSummary = {
     createdAt: row.created_at,
+    id: row.id,
     payload: row.artifact_json,
     stageSlug: row.stage_slug,
     version: row.version,
@@ -103,6 +104,19 @@ export function mergeArtifactRealtimeRow(
   };
 }
 
+export function removeArtifactRealtimeRow(
+  session: SessionDetail,
+  row: Pick<Tables<"session_artifacts">, "id"> &
+    Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>,
+): SessionDetail {
+  const artifacts = session.artifacts.filter((artifact) => {
+    if (artifact.id) return artifact.id !== row.id;
+    return artifact.stageSlug !== row.stage_slug || artifact.version !== row.version;
+  });
+
+  return artifacts.length === session.artifacts.length ? session : { ...session, artifacts };
+}
+
 export function mergeCompletionRealtimeRow(
   session: SessionDetail,
   row: CompletionRealtimeRow,
@@ -113,6 +127,7 @@ export function mergeCompletionRealtimeRow(
 
   const completion: SessionPhaseCompletion = {
     completedAt: row.completed_at,
+    id: row.id,
     stageSlug: row.stage_slug,
   };
   const existingCompletion = session.phaseCompletions.find(
@@ -134,4 +149,19 @@ export function mergeCompletionRealtimeRow(
     ...session,
     phaseCompletions,
   };
+}
+
+export function removeCompletionRealtimeRow(
+  session: SessionDetail,
+  row: Pick<Tables<"session_phase_completions">, "id"> &
+    Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>,
+): SessionDetail {
+  const phaseCompletions = session.phaseCompletions.filter((completion) => {
+    if (completion.id) return completion.id !== row.id;
+    return completion.stageSlug !== row.stage_slug;
+  });
+
+  return phaseCompletions.length === session.phaseCompletions.length
+    ? session
+    : { ...session, phaseCompletions };
 }

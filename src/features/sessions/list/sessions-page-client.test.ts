@@ -2,7 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
+import {
+  commitListArchive,
+  commitListTitle,
+  SessionsPageClient,
+} from "@/features/sessions/list/sessions-page-client";
 import type { SessionListPageData, SessionStageFacet } from "@/features/sessions/list/data";
 import type { SessionSummary } from "@/features/sessions/types";
 
@@ -182,5 +186,52 @@ describe("SessionsPageClient", () => {
     expect(html).toContain(">Land");
     expect(html).toContain(">12</span>");
     expect(html).toContain(">4</span>");
+  });
+});
+
+describe("session list mutation reconciliation", () => {
+  it("uses the title response timestamp and moves the updated row to the top", () => {
+    const older = makeSession({
+      id: "older",
+      number: 1,
+      updatedAt: "2026-06-07T10:00:00.000Z",
+    });
+    const newer = makeSession({
+      id: "newer",
+      number: 2,
+      updatedAt: "2026-06-07T11:00:00.000Z",
+    });
+
+    const result = commitListTitle([newer, older], {
+      id: older.id,
+      title: "Updated title",
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+
+    expect(result.map((session) => session.id)).toEqual(["older", "newer"]);
+    expect(result[0]).toMatchObject({
+      title: "Updated title",
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
+  });
+
+  it("removes archive changes that no longer match the server-backed scope", () => {
+    const active = makeSession({ id: "active" });
+    const archived = makeSession({ archivedAt: "2026-06-07T09:00:00.000Z", id: "archived" });
+
+    expect(
+      commitListArchive([active], "active", {
+        archivedAt: "2026-06-07T12:00:00.000Z",
+        id: active.id,
+        phaseStatus: active.phaseStatus,
+      }),
+    ).toEqual([]);
+    expect(
+      commitListArchive([archived], "archived", {
+        archivedAt: null,
+        id: archived.id,
+        phaseStatus: archived.phaseStatus,
+      }),
+    ).toEqual([]);
   });
 });

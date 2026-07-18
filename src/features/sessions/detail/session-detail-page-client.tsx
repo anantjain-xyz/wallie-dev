@@ -16,13 +16,17 @@ import {
 } from "@/features/sessions/client";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import type { SessionDetailPageData } from "@/features/sessions/detail/data";
+import type { SessionPhaseMutationResult } from "@/features/sessions/mutation-contracts";
 import {
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
+  removeArtifactRealtimeRow,
+  removeCompletionRealtimeRow,
 } from "@/features/sessions/detail/realtime";
 import {
   applySessionMutationPatch,
+  reconcileSessionMutationPatch,
   rollbackSessionMutationPatch,
   runOptimisticMutation,
   type SessionMutationPatch,
@@ -366,17 +370,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            const deleted = payload.old as Pick<
-              Tables<"session_artifacts">,
-              "stage_slug" | "version"
-            >;
-            setSession((current) => ({
-              ...current,
-              artifacts: current.artifacts.filter(
-                (artifact) =>
-                  artifact.stageSlug !== deleted.stage_slug || artifact.version !== deleted.version,
-              ),
-            }));
+            const deleted = payload.old as Pick<Tables<"session_artifacts">, "id"> &
+              Partial<Pick<Tables<"session_artifacts">, "stage_slug" | "version">>;
+            setSession((current) => removeArtifactRealtimeRow(current, deleted));
             return;
           }
 
@@ -393,13 +389,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
         },
         (payload) => {
           if (payload.eventType === "DELETE") {
-            const deleted = payload.old as Pick<Tables<"session_phase_completions">, "stage_slug">;
-            setSession((current) => ({
-              ...current,
-              phaseCompletions: current.phaseCompletions.filter(
-                (completion) => completion.stageSlug !== deleted.stage_slug,
-              ),
-            }));
+            const deleted = payload.old as Pick<Tables<"session_phase_completions">, "id"> &
+              Partial<Pick<Tables<"session_phase_completions">, "stage_slug">>;
+            setSession((current) => removeCompletionRealtimeRow(current, deleted));
             return;
           }
 
@@ -529,17 +521,35 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
             headers: { "Content-Type": "application/json" },
             method: "POST",
           });
-          const body = (await response.json().catch(() => null)) as {
-            error?: string;
-            session?: SessionMutationPatch;
-          } | null;
+          const body = (await response.json().catch(() => null)) as
+            | (Partial<SessionPhaseMutationResult> & { error?: string })
+            | null;
 
           if (!response.ok) throw new Error(body?.error ?? "Action failed.");
-          if (!body?.session) throw new Error("Action response was invalid.");
-          return body.session;
+          if (
+            !body ||
+            typeof body.archivedAt === "undefined" ||
+            typeof body.artifactVersion !== "number" ||
+            typeof body.currentStageId !== "string" ||
+            typeof body.phaseStatus !== "string" ||
+            typeof body.rejectionCount !== "number" ||
+            typeof body.updatedAt !== "string"
+          ) {
+            throw new Error("Action response was invalid.");
+          }
+          return body as SessionPhaseMutationResult;
         },
         commit: (result) => {
-          setSession((current) => applySessionMutationPatch(current, result));
+          setSession((current) =>
+            reconcileSessionMutationPatch(current, {
+              archivedAt: result.archivedAt,
+              currentArtifactVersion: result.artifactVersion,
+              currentStageId: result.currentStageId,
+              phaseStatus: result.phaseStatus,
+              rejectionCount: result.rejectionCount,
+              updatedAt: result.updatedAt,
+            }),
+          );
         },
         rollback: () => {
           setSession((current) =>
@@ -567,7 +577,9 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
       if (expectedTitle !== undefined && currentSession.title !== expectedTitle) {
         return currentSession;
       }
-      return applySessionMutationPatch(currentSession, { title: nextTitle, updatedAt });
+      return updatedAt
+        ? reconcileSessionMutationPatch(currentSession, { title: nextTitle, updatedAt })
+        : applySessionMutationPatch(currentSession, { title: nextTitle });
     });
   }
 
@@ -592,13 +604,15 @@ export function SessionDetailPageClient({ initialData }: SessionDetailPageClient
           const body = (await response.json().catch(() => null)) as {
             error?: string;
             phaseStatus?: SessionDetail["phaseStatus"];
+            updatedAt?: string;
           } | null;
           if (!response.ok) throw new Error(body?.error ?? "Could not stop the run.");
-          if (!body?.phaseStatus) throw new Error("Stop response was invalid.");
-          return body.phaseStatus;
+          if (!body?.phaseStatus || typeof body.updatedAt !== "string") {
+            throw new Error("Stop response was invalid.");
+          }
+          return { phaseStatus: body.phaseStatus, updatedAt: body.updatedAt };
         },
-        commit: (phaseStatus) =>
-          setSession((current) => applySessionMutationPatch(current, { phaseStatus })),
+        commit: (result) => setSession((current) => reconcileSessionMutationPatch(current, result)),
         rollback: () =>
           setSession((current) =>
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),

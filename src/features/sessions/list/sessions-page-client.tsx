@@ -65,10 +65,58 @@ const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
   { key: "archived", label: "Archived" },
 ];
 
+export function commitListTitle(
+  sessions: readonly SessionListItem[],
+  result: { id: string; title: string; updatedAt: string },
+) {
+  return sessions
+    .map((session) =>
+      session.id === result.id
+        ? { ...session, title: result.title, updatedAt: result.updatedAt }
+        : session,
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export function commitListArchive(
+  sessions: readonly SessionListItem[],
+  scope: SessionFilterKey,
+  result: {
+    archivedAt: string | null;
+    id: string;
+    phaseStatus: SessionListItem["phaseStatus"];
+  },
+) {
+  return sessions
+    .map((session) =>
+      session.id === result.id
+        ? { ...session, archivedAt: result.archivedAt, phaseStatus: result.phaseStatus }
+        : session,
+    )
+    .filter(
+      (session) =>
+        (scope !== "active" || !session.archivedAt) &&
+        (scope !== "archived" || Boolean(session.archivedAt)),
+    );
+}
+
 export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [committedMutations, setCommittedMutations] = useState<
+    (
+      | {
+          kind: "archive";
+          result: {
+            archivedAt: string | null;
+            id: string;
+            phaseStatus: SessionListItem["phaseStatus"];
+          };
+        }
+      | { kind: "title"; result: { id: string; title: string; updatedAt: string } }
+    )[]
+  >([]);
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -91,7 +139,29 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
     updateQueryState({ query: value });
   }
 
-  const sessions = initialData.sessions;
+  const sessions = useMemo(
+    () =>
+      committedMutations.reduce<SessionListItem[]>(
+        (current, mutation) =>
+          mutation.kind === "title"
+            ? commitListTitle(current, mutation.result)
+            : commitListArchive(current, initialData.queryState.scope, mutation.result),
+        initialData.sessions,
+      ),
+    [committedMutations, initialData.queryState.scope, initialData.sessions],
+  );
+
+  function handleTitleCommitted(result: { id: string; title: string; updatedAt: string }) {
+    setCommittedMutations((current) => [...current, { kind: "title", result }]);
+  }
+
+  function handleArchiveCommitted(result: {
+    archivedAt: string | null;
+    id: string;
+    phaseStatus: SessionListItem["phaseStatus"];
+  }) {
+    setCommittedMutations((current) => [...current, { kind: "archive", result }]);
+  }
   // Build the stage filter chips from whatever stages appear in the loaded
   // sessions. This keeps the chip set in sync with workspaces that have
   // edited their pipeline; we don't need to know the workspace's pipeline
@@ -195,7 +265,14 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
         <SessionDetailLinkPrefetchBoundary>
           <ul className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-surface">
             {sessions.map((session) => (
-              <SessionRow key={session.id} session={session} workspaceSlug={workspaceSlug} />
+              <SessionRow
+                key={session.id}
+                onArchiveCommitted={handleArchiveCommitted}
+                onTitleCommitted={handleTitleCommitted}
+                scope={initialData.queryState.scope}
+                session={session}
+                workspaceSlug={workspaceSlug}
+              />
             ))}
           </ul>
         </SessionDetailLinkPrefetchBoundary>
@@ -219,9 +296,19 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 }
 
 function SessionRow({
+  onArchiveCommitted,
+  onTitleCommitted,
+  scope,
   session,
   workspaceSlug,
 }: {
+  onArchiveCommitted: (result: {
+    archivedAt: string | null;
+    id: string;
+    phaseStatus: SessionListItem["phaseStatus"];
+  }) => void;
+  onTitleCommitted: (result: { id: string; title: string; updatedAt: string }) => void;
+  scope: SessionFilterKey;
   session: SessionListItem;
   workspaceSlug: string;
 }) {
@@ -265,6 +352,7 @@ function SessionRow({
       setArchivedAt(result.archivedAt);
       setPhaseStatus(result.phaseStatus);
       setArchiveConfirming(false);
+      onArchiveCommitted(result);
     } catch (errorValue) {
       setArchivedAt(previousArchivedAt);
       setPhaseStatus(previousPhaseStatus);
@@ -341,6 +429,7 @@ function SessionRow({
       });
       setDisplayTitle(result.title);
       setDraftTitle(result.title);
+      onTitleCommitted(result);
     } catch (errorValue) {
       setDisplayTitle(previousTitle);
       setDraftTitle(normalizedTitle);
@@ -354,6 +443,13 @@ function SessionRow({
   function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void saveTitle();
+  }
+
+  const hiddenFromCurrentScope =
+    (scope === "active" && Boolean(archivedAt)) || (scope === "archived" && !archivedAt);
+
+  if (hiddenFromCurrentScope) {
+    return null;
   }
 
   return (

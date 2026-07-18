@@ -24,9 +24,11 @@ export type SessionTitleMutationResult = {
 };
 
 export type SessionPhaseMutationResult = {
+  archivedAt: string | null;
   artifactVersion: number;
   currentStageId: string;
   id: string;
   phaseStatus: SessionPhaseStatus;
+  rejectionCount: number;
   updatedAt: string;
 };

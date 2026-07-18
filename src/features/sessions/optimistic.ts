@@ -60,11 +60,50 @@ export function reconcileSessionMutationPatch(
   session: SessionDetail,
   patch: SessionMutationPatch & { updatedAt: string },
 ): SessionDetail {
-  if (Date.parse(patch.updatedAt) <= Date.parse(session.updatedAt)) {
+  const patchTimestamp = Date.parse(patch.updatedAt);
+  const sessionTimestamp = Date.parse(session.updatedAt);
+
+  if (patchTimestamp < sessionTimestamp) {
+    return session;
+  }
+
+  if (patchTimestamp === sessionTimestamp && !advancesSameTimestampState(session, patch)) {
     return session;
   }
 
   return applySessionMutationPatch(session, patch);
+}
+
+function advancesSameTimestampState(session: SessionDetail, patch: SessionMutationPatch): boolean {
+  if (patch.currentStageId && patch.currentStageId !== session.currentStageId) {
+    const currentPosition = session.pipeline.stages.find(
+      (stage) => stage.id === session.currentStageId,
+    )?.position;
+    const nextPosition = session.pipeline.stages.find(
+      (stage) => stage.id === patch.currentStageId,
+    )?.position;
+
+    if (currentPosition !== undefined && nextPosition !== undefined) {
+      // Stage position is the primary ordering key. In particular, an older
+      // stage can have a larger artifact version than the newly advanced one.
+      return nextPosition > currentPosition;
+    }
+  }
+
+  if (
+    patch.currentArtifactVersion !== undefined &&
+    patch.currentArtifactVersion !== null &&
+    (session.currentArtifactVersion === null ||
+      patch.currentArtifactVersion > session.currentArtifactVersion)
+  ) {
+    return true;
+  }
+
+  if (patch.rejectionCount !== undefined && patch.rejectionCount > session.rejectionCount) {
+    return true;
+  }
+
+  return patch.archivedAt !== undefined && patch.archivedAt !== null && !session.archivedAt;
 }
 
 export function rollbackSessionMutationPatch(

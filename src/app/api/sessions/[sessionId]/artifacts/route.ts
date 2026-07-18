@@ -65,7 +65,7 @@ export async function GET(request: Request, context: RouteContext) {
 
   let artifactQuery = supabase
     .from("session_artifacts")
-    .select("artifact_json, created_at, stage_slug, version")
+    .select("artifact_json, created_at, id, stage_slug, version")
     .eq("session_id", parsedParams.data.sessionId)
     .order("version", { ascending: false });
 
@@ -81,6 +81,7 @@ export async function GET(request: Request, context: RouteContext) {
   return NextResponse.json({
     artifacts: (artifactRows ?? []).map((row) => ({
       createdAt: row.created_at,
+      id: row.id,
       payload: row.artifact_json,
       stageSlug: row.stage_slug,
       version: row.version,

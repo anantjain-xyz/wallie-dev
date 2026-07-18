@@ -4,6 +4,8 @@ import {
   mergeArtifactRealtimeRow,
   mergeCompletionRealtimeRow,
   mergeSessionRealtimeRow,
+  removeArtifactRealtimeRow,
+  removeCompletionRealtimeRow,
 } from "@/features/sessions/detail/realtime";
 import type { SessionDetail } from "@/features/sessions/types";
 
@@ -120,6 +122,7 @@ describe("session detail realtime helpers", () => {
     const next = mergeArtifactRealtimeRow(baseSession, {
       artifact_json: "# Product spec",
       created_at: "2026-05-21T13:06:00.000Z",
+      id: "artifact-1",
       session_id: "sess-1",
       stage_slug: "product",
       version: 1,
@@ -128,6 +131,7 @@ describe("session detail realtime helpers", () => {
     expect(next.artifacts).toEqual([
       {
         createdAt: "2026-05-21T13:06:00.000Z",
+        id: "artifact-1",
         payload: "# Product spec",
         stageSlug: "product",
         version: 1,
@@ -138,6 +142,7 @@ describe("session detail realtime helpers", () => {
   it("upserts phase completion rows into the stage rail inputs", () => {
     const next = mergeCompletionRealtimeRow(baseSession, {
       completed_at: "2026-05-21T13:07:00.000Z",
+      id: "completion-1",
       session_id: "sess-1",
       stage_slug: "product",
     });
@@ -145,8 +150,36 @@ describe("session detail realtime helpers", () => {
     expect(next.phaseCompletions).toEqual([
       {
         completedAt: "2026-05-21T13:07:00.000Z",
+        id: "completion-1",
         stageSlug: "product",
       },
     ]);
+  });
+
+  it("removes realtime rows by primary key when DELETE only includes replica identity", () => {
+    const withRows: SessionDetail = {
+      ...baseSession,
+      artifacts: [
+        {
+          createdAt: "2026-05-21T13:06:00.000Z",
+          id: "artifact-1",
+          payload: "# Product spec",
+          stageSlug: "product",
+          version: 1,
+        },
+      ],
+      phaseCompletions: [
+        {
+          completedAt: "2026-05-21T13:07:00.000Z",
+          id: "completion-1",
+          stageSlug: "product",
+        },
+      ],
+    };
+
+    expect(removeArtifactRealtimeRow(withRows, { id: "artifact-1" }).artifacts).toEqual([]);
+    expect(removeCompletionRealtimeRow(withRows, { id: "completion-1" }).phaseCompletions).toEqual(
+      [],
+    );
   });
 });
