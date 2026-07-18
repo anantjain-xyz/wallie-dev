@@ -118,6 +118,8 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toContain("min-height: 44px;");
     expect(stylesheet).toContain(".ui-touch-target,");
     expect(stylesheet).toContain("grid-template-columns: repeat(6, minmax(44px, 1fr));");
+    expect(stylesheet).toContain("container-name: email-code-form;");
+    expect(stylesheet).toContain("@container email-code-form (max-width: 283px)");
     expect(stylesheet).toContain("grid-template-columns: repeat(3, minmax(44px, 1fr));");
   });
 });

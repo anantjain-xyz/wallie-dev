@@ -586,7 +586,12 @@
   grid-template-columns: repeat(6, minmax(44px, 1fr));
 }
 
-@media (max-width: 340px) {
+.email-code-form {
+  container-name: email-code-form;
+  container-type: inline-size;
+}
+
+@container email-code-form (max-width: 283px) {
   .email-code-grid {
     grid-template-columns: repeat(3, minmax(44px, 1fr));
   }
