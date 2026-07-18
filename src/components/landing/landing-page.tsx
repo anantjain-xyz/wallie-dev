@@ -1,106 +1,183 @@
-import type { ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 
-import { EmailMagicLinkForm } from "@/components/auth/email-magic-link-form";
 import {
-  ApprovalGatesMockup,
-  HeroWorkspaceMockup,
-  RuntimeChoiceMockup,
-  SandboxExecutionMockup,
+  ArtifactDecisionMockup,
+  IssueInputMockup,
+  PipelineProgressMockup,
 } from "@/components/landing/product-mockups";
 import { GitHubIcon } from "@/components/shared/icons";
 
-type FeatureSectionProps = {
-  body: string;
-  children: ReactNode;
-  id: string;
-  index: string;
-  layout?: "split" | "stacked";
-  title: string;
-};
-
-const nextPath = "/";
 const githubUrl = "https://github.com/anantjain-xyz/wallie-dev";
 const docsUrl = "https://github.com/anantjain-xyz/wallie-dev#readme";
-const selfHostingUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/docs/SELF_HOSTING.md";
 const licenseUrl = "https://github.com/anantjain-xyz/wallie-dev/blob/main/LICENSE";
-const authorUrl = "https://anantjain.xyz";
 
-const heroBadges = ["Open source", "MIT licensed", "Self-hostable"];
+const primaryCtaClassName =
+  "ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-accent bg-accent px-5 text-[14px] font-semibold text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-sheet";
+
+const secondaryCtaClassName =
+  "ui-touch-target inline-flex min-h-11 items-center justify-center rounded-[6px] border border-border bg-sheet px-5 text-[14px] font-semibold text-foreground transition-colors hover:border-border-strong hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-sheet";
 
 export function LandingPage() {
   return (
-    <main id="main-content" className="min-h-[100svh] bg-sheet text-foreground tracking-normal">
+    <main id="main-content" className="min-h-[100svh] bg-canvas text-foreground">
       <LandingHeader />
 
-      <section className="mx-auto flex w-full max-w-[1180px] flex-col px-5 pb-16 pt-12 sm:px-8 sm:pb-20 sm:pt-16 lg:px-10">
-        <div className="mx-auto max-w-[860px] text-center">
-          <h1 className="text-[48px] font-normal leading-[0.96] text-foreground sm:text-[72px] lg:text-[88px]">
-            Bring agents together with your team in one shared workspace.
-          </h1>
-          <p className="mx-auto mt-6 max-w-[720px] text-[17px] leading-8 text-muted sm:text-[18px]">
-            Wallie turns your plan, build, and land stages into gated, sandboxed runs your team can
-            inspect and approve together.
-          </p>
-
-          <ul className="mx-auto mt-8 flex flex-wrap items-center justify-center text-[13px] font-medium text-muted">
-            {heroBadges.map((badge) => (
-              <li key={badge} className="border-l border-border px-3 first:border-l-0">
-                {badge}
-              </li>
-            ))}
-          </ul>
-
-          <p className="mx-auto mt-4 max-w-[640px] text-[14px] leading-7 text-muted">
-            Works with Linear, GitHub, and Codex or Claude Code.{" "}
-            <a
-              href={selfHostingUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="font-medium text-foreground underline-offset-4 transition-colors hover:text-accent hover:underline focus-visible:outline-none focus-visible:text-accent"
+      <section
+        aria-labelledby="landing-title"
+        className="border-b border-border bg-sheet px-5 py-16 sm:px-8 sm:py-20 lg:px-10 lg:py-24"
+      >
+        <div className="mx-auto grid w-full max-w-[1080px] gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-16">
+          <div>
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accent">
+              From issue to approved artifact
+            </p>
+            <h1
+              id="landing-title"
+              className="mt-5 max-w-[760px] text-[42px] font-semibold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px] lg:text-[72px]"
             >
-              Self-host it
-            </a>{" "}
-            or use the free hosted instance.
-          </p>
-        </div>
+              Turn Linear issues into reviewed, staged work.
+            </h1>
+            <p className="mt-6 max-w-[620px] text-[17px] leading-8 text-muted sm:text-[18px]">
+              Wallie carries one issue through your workspace pipeline, preserving a reviewable
+              artifact at every human gate.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 min-[420px]:flex-row">
+              <Link href="/login" className={primaryCtaClassName}>
+                Sign in to Wallie
+              </Link>
+              <a href="#product-walkthrough" className={secondaryCtaClassName}>
+                See the product walkthrough
+              </a>
+            </div>
+          </div>
 
-        <div className="mt-12 sm:mt-16">
-          <HeroWorkspaceMockup />
+          <div
+            className="rounded-[10px] border border-border bg-canvas p-4 shadow-[var(--shadow-elevated)] sm:p-5"
+            aria-label="Wallie workflow summary"
+          >
+            <ol className="grid gap-3">
+              {[
+                ["01", "Linear issue", "OP-349 ready"],
+                ["02", "Pipeline", "Plan → Build → Land"],
+                ["03", "Artifact review", "Awaiting approval"],
+              ].map(([index, label, value]) => (
+                <li
+                  key={index}
+                  className="grid grid-cols-[34px_minmax(0,1fr)] gap-3 rounded-[6px] border border-border bg-sheet p-4"
+                >
+                  <span className="font-mono text-xs font-semibold text-accent">{index}</span>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold text-foreground">{label}</p>
+                    <p className="mt-1 truncate font-mono text-xs text-muted">{value}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
         </div>
       </section>
 
-      <div className="border-t border-border bg-canvas">
-        <FeatureSection
-          id="sandboxed-execution"
-          index="01"
-          title="Sandboxed execution for every stage"
-          body="Agent runs execute in a connected sandbox and write logs, messages, and stage artifacts back to the session, so teammates can inspect the same output before approving the next stage."
+      <section
+        id="product-walkthrough"
+        tabIndex={-1}
+        aria-labelledby="issue-input-title"
+        className="scroll-mt-20 border-b border-border bg-canvas px-5 py-14 outline-none sm:px-8 sm:py-18 lg:px-10"
+      >
+        <StorySection
+          eyebrow="01 · Start with the source"
+          title="Bring the Linear issue into focus."
+          body="Link the issue to a new session so its title and source stay attached to the work moving through Wallie."
         >
-          <SandboxExecutionMockup />
-        </FeatureSection>
+          <IssueInputMockup />
+        </StorySection>
+      </section>
 
-        <FeatureSection
-          id="approval-gates"
-          index="02"
-          layout="stacked"
-          title="Approval gates your team controls"
-          body="Tune every stage to your workflow: reorder gates, assign approvers, customize prompts, inject your own skills, and send Wallie back through a rerun when the artifact needs another pass."
+      <section
+        aria-labelledby="pipeline-title"
+        className="border-b border-border bg-sheet px-5 py-14 sm:px-8 sm:py-18 lg:px-10"
+      >
+        <StorySection
+          eyebrow="02 · Follow the pipeline"
+          title="See exactly which stage owns the work."
+          body="The session advances through the workspace’s ordered stages. Each handoff stays visible without compressing a desktop dashboard onto a phone."
+          reverse
         >
-          <ApprovalGatesMockup />
-        </FeatureSection>
+          <PipelineProgressMockup />
+        </StorySection>
+      </section>
 
-        <FeatureSection
-          id="agent-runtime"
-          index="03"
-          layout="stacked"
-          title="Bring your favorite agent and sandbox"
-          body="Use Codex, Claude Code, or the agent setup your team already trusts. Wallie keeps credentials, sandbox readiness, and capability checks visible before work starts."
+      <section
+        aria-labelledby="artifact-title"
+        className="border-b border-border bg-canvas px-5 py-14 sm:px-8 sm:py-18 lg:px-10"
+      >
+        <StorySection
+          eyebrow="03 · Make the decision"
+          title="Review the artifact, then approve or return it."
+          body="Every stage produces a versioned markdown artifact. A reviewer decides whether the session advances or reruns with feedback."
         >
-          <RuntimeChoiceMockup />
-        </FeatureSection>
-      </div>
+          <ArtifactDecisionMockup />
+        </StorySection>
+      </section>
+
+      <section
+        aria-labelledby="trust-title"
+        className="border-b border-border bg-sheet px-5 py-14 sm:px-8 sm:py-18 lg:px-10"
+      >
+        <div className="mx-auto w-full max-w-[1080px]">
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accent">
+            Human control, kept explicit
+          </p>
+          <h2
+            id="trust-title"
+            className="type-display mt-4 max-w-[680px] sm:text-[42px] sm:leading-[1.1]"
+          >
+            Boundaries your team can see.
+          </h2>
+          <div className="mt-8 grid gap-px overflow-hidden rounded-[6px] border border-border bg-border md:grid-cols-3">
+            {[
+              [
+                "Human approval gates",
+                "A reviewer approves or rejects the artifact before the next stage begins.",
+              ],
+              [
+                "Workspace isolation",
+                "Sessions, pipelines, artifacts, and secrets remain scoped to their workspace.",
+              ],
+              [
+                "Integration boundaries",
+                "Linear supplies issue context; GitHub and the configured runtime handle their connected parts.",
+              ],
+            ].map(([title, body]) => (
+              <article key={title} className="bg-sheet p-5 sm:p-6">
+                <h3 className="text-[15px] font-semibold text-foreground">{title}</h3>
+                <p className="mt-3 text-[14px] leading-6 text-muted">{body}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        aria-labelledby="final-cta-title"
+        className="bg-canvas px-5 py-16 sm:px-8 sm:py-20 lg:px-10"
+      >
+        <div className="mx-auto flex w-full max-w-[860px] flex-col items-start rounded-[10px] border border-border bg-sheet p-6 shadow-[var(--shadow-elevated)] sm:items-center sm:p-10 sm:text-center">
+          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accent">
+            Keep the next handoff reviewable
+          </p>
+          <h2 id="final-cta-title" className="type-display mt-4 sm:text-[42px] sm:leading-[1.1]">
+            Start with the issue your team already has.
+          </h2>
+          <p className="mt-4 max-w-[560px] text-[15px] leading-7 text-muted">
+            Sign in, choose a workspace, and create the session that carries it through your
+            pipeline.
+          </p>
+          <Link href="/login" className={`${primaryCtaClassName} mt-7`}>
+            Sign in to Wallie
+          </Link>
+        </div>
+      </section>
 
       <LandingFooter />
     </main>
@@ -109,93 +186,90 @@ export function LandingPage() {
 
 function LandingHeader() {
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-sheet/95 backdrop-blur supports-[backdrop-filter]:bg-sheet/80">
-      <div className="mx-auto flex w-full max-w-[1180px] items-center justify-between gap-3 px-5 py-4 sm:px-8 lg:px-10">
-        <Link href="/" className="flex shrink-0 items-center gap-3 focus-visible:outline-none">
+    <header className="sticky top-0 z-50 border-b border-border bg-sheet/95 backdrop-blur supports-[backdrop-filter]:bg-sheet/85">
+      <div className="mx-auto flex min-h-16 w-full max-w-[1180px] items-center justify-between gap-4 px-5 sm:px-8 lg:px-10">
+        <Link
+          href="/"
+          aria-label="Wallie home"
+          className="flex min-h-11 items-center gap-2.5 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
           <Image
             src="/wallie-logo-minimal.png"
             alt=""
-            width={44}
-            height={44}
-            className="h-11 w-11 rounded-[6px] object-contain dark:invert"
+            width={36}
+            height={36}
+            className="h-9 w-9 rounded-[6px] object-contain dark:invert"
             priority
           />
-          <span className="text-[16px] font-semibold text-foreground">Wallie</span>
+          <span className="text-[15px] font-semibold text-foreground">Wallie</span>
         </Link>
-
-        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-          <a
-            href={githubUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-[6px] border border-border bg-sheet px-3 text-[13px] font-medium text-foreground transition-colors hover:border-border-strong hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-          >
-            <GitHubIcon className="h-4 w-4" />
-            <span>GitHub</span>
-          </a>
-
-          {/* Desktop keeps the inline email capture; narrower widths fall back to
-              a single Get started button so the header always stays on one row. */}
-          <div className="hidden lg:block lg:w-[420px]">
-            <EmailMagicLinkForm
-              next={nextPath}
-              variant="inline"
-              className="flex items-center gap-2"
-              inputClassName="h-9 w-full rounded-[6px] border border-border bg-sheet px-3 text-[13px] text-foreground outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-muted focus-visible:border-accent/50 focus-visible:shadow-[0_0_0_4px_var(--focus-ring-soft)]"
-              submitClassName="inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-              submitLabel="Get started"
-            />
-          </div>
-
-          <Link
-            href="/login"
-            className="ui-touch-target inline-flex h-9 shrink-0 items-center justify-center rounded-[6px] border border-accent bg-accent px-4 text-[13px] font-medium text-accent-foreground transition-colors hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas lg:hidden"
-          >
-            Get started
-          </Link>
-        </div>
+        <Link href="/login" className={primaryCtaClassName}>
+          Sign in
+        </Link>
       </div>
     </header>
+  );
+}
+
+function StorySection({
+  body,
+  children,
+  eyebrow,
+  reverse = false,
+  title,
+}: {
+  body: string;
+  children: React.ReactNode;
+  eyebrow: string;
+  reverse?: boolean;
+  title: string;
+}) {
+  const titleId = eyebrow.startsWith("01")
+    ? "issue-input-title"
+    : eyebrow.startsWith("02")
+      ? "pipeline-title"
+      : "artifact-title";
+
+  return (
+    <div
+      className={`mx-auto grid w-full max-w-[1080px] gap-8 lg:grid-cols-2 lg:items-center lg:gap-14 ${reverse ? "lg:[&>*:first-child]:order-2" : ""}`}
+    >
+      <div>
+        <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accent">
+          {eyebrow}
+        </p>
+        <h2 id={titleId} className="type-display mt-4 sm:text-[42px] sm:leading-[1.1]">
+          {title}
+        </h2>
+        <p className="mt-5 max-w-[560px] text-[15px] leading-7 text-muted sm:text-[16px]">{body}</p>
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }
 
 function LandingFooter() {
   return (
     <footer className="border-t border-border bg-sheet">
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-5 py-10 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
-        <div className="flex items-center gap-3">
-          <Image
-            src="/wallie-logo-minimal.png"
-            alt=""
-            width={28}
-            height={28}
-            className="h-7 w-7 rounded-[6px] object-contain dark:invert"
-          />
-          <span className="text-[14px] font-semibold text-foreground">Wallie</span>
-        </div>
-
-        <div className="flex flex-col gap-2 text-[14px] text-muted sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-x-6 sm:gap-y-2">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-5 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
+        <p className="text-[13px] text-muted">Wallie is open source and MIT licensed.</p>
+        <nav
+          aria-label="Footer"
+          className="flex flex-wrap items-center gap-x-5 gap-y-3 text-[13px] text-muted"
+        >
           <a
             href={docsUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+            className="hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
           >
             Docs
-          </a>
-          <a
-            href={selfHostingUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
-          >
-            Self-hosting guide
           </a>
           <a
             href={licenseUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+            className="hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
           >
             MIT License
           </a>
@@ -203,52 +277,13 @@ function LandingFooter() {
             href={githubUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-2 text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+            className="inline-flex min-h-11 items-center gap-2 hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
           >
             <GitHubIcon className="h-4 w-4" />
-            <span>GitHub</span>
+            GitHub
           </a>
-          <span>
-            Built by{" "}
-            <a
-              href={authorUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="font-medium text-foreground underline-offset-4 transition-colors hover:text-accent hover:underline focus-visible:outline-none focus-visible:text-accent"
-            >
-              Anant Jain
-            </a>
-          </span>
-        </div>
+        </nav>
       </div>
     </footer>
-  );
-}
-
-function FeatureSection({
-  body,
-  children,
-  id,
-  index,
-  layout = "split",
-  title,
-}: FeatureSectionProps) {
-  const contentClassName =
-    layout === "stacked"
-      ? "mx-auto grid w-full max-w-[1180px] gap-8 px-5 py-16 sm:px-8 sm:py-20 lg:px-10"
-      : "mx-auto grid w-full max-w-[1180px] gap-8 px-5 py-16 sm:px-8 sm:py-20 lg:grid-cols-[0.72fr_1.28fr] lg:items-center lg:gap-12 lg:px-10";
-  const textClassName = layout === "stacked" ? "max-w-[760px]" : "";
-
-  return (
-    <section id={id} className="border-b border-border bg-sheet">
-      <div className={contentClassName}>
-        <div className={textClassName}>
-          <p className="font-mono text-xs font-semibold text-accent">{index}</p>
-          <h2 className="type-display mt-4 sm:text-[44px] sm:leading-[1.05]">{title}</h2>
-          <p className="mt-5 text-[15px] leading-7 text-muted sm:text-[16px]">{body}</p>
-        </div>
-        <div className="min-w-0">{children}</div>
-      </div>
-    </section>
   );
 }
