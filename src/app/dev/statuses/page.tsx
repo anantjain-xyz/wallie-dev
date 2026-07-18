@@ -1,9 +1,10 @@
 import { notFound } from "next/navigation";
 
 import { StatusShowcase } from "@/components/ui/status-showcase";
+import { isProductionDeploy } from "@/env/deploy";
 
 export default function StatusesPage() {
-  if (process.env.NODE_ENV === "production") notFound();
+  if (isProductionDeploy()) notFound();
 
   return <StatusShowcase />;
 }
