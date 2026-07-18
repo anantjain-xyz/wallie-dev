@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
 import {
@@ -69,6 +71,8 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 
 function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSessionDialogProps) {
   const router = useRouter();
+  const { startNavigation } = useOptionalRouteProgress();
+  const submitInFlightRef = useRef(false);
 
   useEffect(() => {
     finishInteraction("open_create_dialog", "success");
@@ -110,7 +114,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (isSubmitting) {
+    if (submitInFlightRef.current) {
       return;
     }
 
@@ -137,6 +141,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     }
 
     setErrorMessage(null);
+    submitInFlightRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -151,8 +156,10 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
       onClose();
+      startNavigation(result.canonicalUrl);
       router.push(result.canonicalUrl);
     } catch (error) {
+      submitInFlightRef.current = false;
       setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
       setIsSubmitting(false);
     }
@@ -267,7 +274,11 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
               })}
               className="ui-button-primary"
             >
-              {isSubmitting ? "Starting…" : "Start session"}
+              <ActionButtonLabel
+                idle="Start session"
+                pending={isSubmitting}
+                pendingLabel="Starting…"
+              />
             </button>
           </div>
         </form>

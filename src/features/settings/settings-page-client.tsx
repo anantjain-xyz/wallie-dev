@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense, use, useState, type SetStateAction } from "react";
+import { Suspense, use, useCallback, useEffect, useState, type SetStateAction } from "react";
 
+import { useOptionalToast } from "@/components/ui/toast";
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
@@ -25,7 +26,7 @@ import {
   SettingsAnchorNav,
 } from "@/features/settings/settings-anchor-nav";
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
-import { Section, toneClass, UsageSummary } from "@/features/settings/settings-ui";
+import { Section, UsageSummary } from "@/features/settings/settings-ui";
 import {
   VercelSandboxConnectionSection,
   vercelConnectionHealth,
@@ -103,6 +104,29 @@ function initialFlashMessage(searchState: SettingsPageClientProps["searchState"]
     default:
       return null;
   }
+}
+
+function useFlashToasts(initialMessage: FlashMessage | null) {
+  const { pushToast } = useOptionalToast();
+  const initialKind = initialMessage?.kind;
+  const initialText = initialMessage?.text;
+  const setFlashMessage = useCallback(
+    (message: FlashMessage) => {
+      pushToast({
+        priority: message.kind === "error" ? "assertive" : "polite",
+        title: message.text,
+        tone:
+          message.kind === "error" ? "danger" : message.kind === "success" ? "success" : "neutral",
+      });
+    },
+    [pushToast],
+  );
+
+  useEffect(() => {
+    if (initialKind && initialText) setFlashMessage({ kind: initialKind, text: initialText });
+  }, [initialKind, initialText, setFlashMessage]);
+
+  return setFlashMessage;
 }
 
 export function updateGithubInData(
@@ -282,9 +306,7 @@ function SettingsCompletePage({
     streamedGithub,
   }));
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
-  const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(
-    deferredMode ? null : initialFlashMessage(searchState),
-  );
+  const setFlashMessage = useFlashToasts(deferredMode ? null : initialFlashMessage(searchState));
 
   if (streamedGithub !== state.streamedGithub) {
     setState({
@@ -320,16 +342,6 @@ function SettingsCompletePage({
             </div>
           </header>
         )}
-
-        {flashMessage ? (
-          <div
-            aria-live="polite"
-            className={`mb-8 rounded-[6px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
-            role="status"
-          >
-            {flashMessage.text}
-          </div>
-        ) : null}
 
         <div
           className={
@@ -628,9 +640,7 @@ function SettingsStreamingPage({
   workspaceInvitations: Promise<WorkspaceInvitation[]>;
 }) {
   const [github, setGithub] = useState(initialData.github);
-  const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(() =>
-    initialFlashMessage(searchState),
-  );
+  const setFlashMessage = useFlashToasts(initialFlashMessage(searchState));
 
   return (
     <div className="min-h-full">
@@ -643,16 +653,6 @@ function SettingsStreamingPage({
             </p>
           </div>
         </header>
-
-        {flashMessage ? (
-          <div
-            aria-live="polite"
-            className={`mb-8 rounded-[6px] border px-4 py-3 text-sm ${toneClass(flashMessage.kind)}`}
-            role="status"
-          >
-            {flashMessage.text}
-          </div>
-        ) : null}
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
           <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />

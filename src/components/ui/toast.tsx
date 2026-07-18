@@ -12,6 +12,11 @@ export type ToastPriority = "polite" | "assertive";
 export type ToastTone = "neutral" | "success" | "danger";
 
 export type ToastInput = {
+  action?: {
+    altText?: string;
+    label: ReactNode;
+    onClick: () => void;
+  };
   description?: ReactNode;
   duration?: number;
   priority?: ToastPriority;
@@ -20,9 +25,16 @@ export type ToastInput = {
 };
 
 type ToastRecord = ToastInput & { id: number };
-type ToastContextValue = { pushToast: (toast: ToastInput) => number };
+type ToastContextValue = {
+  dismissToast: (id: number) => void;
+  pushToast: (toast: ToastInput) => number;
+};
 
 const ToastContext = createContext<ToastContextValue | null>(null);
+const optionalToastContext: ToastContextValue = {
+  dismissToast: () => undefined,
+  pushToast: () => 0,
+};
 let toastId = 0;
 
 export function useToast() {
@@ -33,15 +45,23 @@ export function useToast() {
   return context;
 }
 
+/** Allows leaf screens to remain independently renderable in server/component tests. */
+export function useOptionalToast() {
+  return useContext(ToastContext) ?? optionalToastContext;
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const container = useAnnouncementContainer();
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
   const pushToast = useCallback((toast: ToastInput) => {
     const id = ++toastId;
     setToasts((current) => [...current, { ...toast, id }]);
     return id;
   }, []);
-  const context = useMemo(() => ({ pushToast }), [pushToast]);
+  const context = useMemo(() => ({ dismissToast, pushToast }), [dismissToast, pushToast]);
 
   return (
     <ToastContext value={context}>
@@ -74,6 +94,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                         <ToastPrimitive.Description className="mt-1 text-sm leading-5 text-muted">
                           {toast.description}
                         </ToastPrimitive.Description>
+                      ) : null}
+                      {toast.action ? (
+                        <ToastPrimitive.Action
+                          altText={toast.action.altText ?? "Undo action"}
+                          asChild
+                        >
+                          <button
+                            className="ui-toast-action"
+                            onClick={toast.action.onClick}
+                            type="button"
+                          >
+                            {toast.action.label}
+                          </button>
+                        </ToastPrimitive.Action>
                       ) : null}
                     </div>
                     <ToastPrimitive.Close

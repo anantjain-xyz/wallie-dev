@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import type { UpsertAgentConfigResponse } from "@/app/api/agent-config/route";
 import {
   AGENT_PROVIDER_EMPTY_OPTION,
@@ -331,7 +332,11 @@ export function AgentConfigSection({
               onClick={() => void handleSaveAll()}
               type="button"
             >
-              {saveAgentConfig.isBusy ? "Saving…" : "Save changes"}
+              <ActionButtonLabel
+                idle="Save changes"
+                pending={saveAgentConfig.isBusy}
+                pendingLabel="Saving…"
+              />
             </button>
           </div>
 

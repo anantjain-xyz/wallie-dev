@@ -1,5 +1,6 @@
 "use client";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 
@@ -114,7 +115,11 @@ export function RepositoryProfileEditor({
             onClick={onInfer}
             type="button"
           >
-            {isAnalyzing ? "Analyzing…" : reanalyzeLabel}
+            <ActionButtonLabel
+              idle={reanalyzeLabel}
+              pending={isAnalyzing}
+              pendingLabel="Analyzing…"
+            />
           </button>
           <button
             className="ui-button-primary"
@@ -122,7 +127,7 @@ export function RepositoryProfileEditor({
             onClick={onSave}
             type="button"
           >
-            {isSaving ? "Saving…" : "Save profile"}
+            <ActionButtonLabel idle="Save profile" pending={isSaving} pendingLabel="Saving…" />
           </button>
         </div>
       </div>

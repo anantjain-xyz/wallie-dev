@@ -2,7 +2,9 @@
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
 
 export interface ClaudeCodeConnectionStatus {
   connected: boolean;
@@ -17,9 +19,11 @@ interface ClaudeCodeConnectionPanelProps {
 export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnectionPanelProps = {}) {
   const [status, setStatus] = useState<ClaudeCodeConnectionStatus | null>(null);
   const [credential, setCredential] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"disconnect" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const actionInFlightRef = useRef(false);
+  const { pushToast } = useOptionalToast();
+  const isBusy = pendingAction !== null;
 
   // Held in a ref so the panel is robust to callers that pass a fresh callback
   // on every render — otherwise the refresh effect would refire in a loop.
@@ -51,9 +55,10 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsBusy(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("save");
     setError(null);
-    setNotice(null);
     try {
       const response = await fetch("/api/claude-code/connection", {
         method: "POST",
@@ -69,18 +74,22 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
       setStatus(data);
       if (data) onStatusChangeRef.current?.(data);
       setCredential("");
-      setNotice("Anthropic API key saved.");
+      pushToast({ priority: "polite", title: "Anthropic API key saved.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Anthropic API key.");
+      const message = err instanceof Error ? err.message : "Failed to save Anthropic API key.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
   const handleDisconnect = async () => {
-    setIsBusy(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("disconnect");
     setError(null);
-    setNotice(null);
     try {
       const response = await fetch("/api/claude-code/connection", { method: "DELETE" });
       if (!response.ok && response.status !== 204) {
@@ -88,11 +97,14 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
       }
       setCredential("");
       await refresh();
-      setNotice("Anthropic API key removed.");
+      pushToast({ priority: "polite", title: "Anthropic API key removed.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disconnect Claude Code.");
+      const message = err instanceof Error ? err.message : "Failed to disconnect Claude Code.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
@@ -100,7 +112,6 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
 
   return (
     <div className="space-y-4">
-      {notice ? <p className="text-[13px] leading-5 text-success">{notice}</p> : null}
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
       {status === null ? (
@@ -122,7 +133,11 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
             disabled={isBusy}
             onClick={handleDisconnect}
           >
-            {isBusy ? "Disconnecting…" : "Disconnect"}
+            <ActionButtonLabel
+              idle="Disconnect"
+              pending={pendingAction === "disconnect"}
+              pendingLabel="Disconnecting…"
+            />
           </button>
         </div>
       ) : (
@@ -149,7 +164,11 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
 
         <div className="flex justify-end">
           <button className="ui-button-primary" disabled={saveDisabled} type="submit">
-            {isBusy ? "Saving…" : status?.connected ? "Update API key" : "Save API key"}
+            <ActionButtonLabel
+              idle={status?.connected ? "Update API key" : "Save API key"}
+              pending={pendingAction === "save"}
+              pendingLabel="Saving…"
+            />
           </button>
         </div>
       </form>

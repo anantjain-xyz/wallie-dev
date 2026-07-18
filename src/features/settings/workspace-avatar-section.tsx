@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { AvatarFallback, Section } from "@/features/settings/settings-ui";
@@ -111,7 +112,11 @@ export function WorkspaceAvatarSection({
 
         {canManage ? (
           <label className="ui-button cursor-pointer">
-            <span>{uploadAvatar.isBusy ? "Uploading…" : "Upload avatar"}</span>
+            <ActionButtonLabel
+              idle="Upload avatar"
+              pending={uploadAvatar.isBusy}
+              pendingLabel="Uploading…"
+            />
             <input
               accept=".jpg,.jpeg,.png,.webp"
               className="sr-only"

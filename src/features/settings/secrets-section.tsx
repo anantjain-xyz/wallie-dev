@@ -3,6 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -136,7 +137,11 @@ export function WorkspaceSecretsPanel({
             onClick={handleSaveSecret}
             type="button"
           >
-            {saveSecret.isBusy ? "Saving…" : "Save secret"}
+            <ActionButtonLabel
+              idle="Save secret"
+              pending={saveSecret.isBusy}
+              pendingLabel="Saving…"
+            />
           </button>
         </div>
       </div>

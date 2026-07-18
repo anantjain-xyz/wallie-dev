@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
 import type { PipelineStage } from "@/features/sessions/types";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -284,7 +285,11 @@ export function LinearRoutingControls({
             onClick={handleSaveRouting}
             type="button"
           >
-            {saveRouting.isBusy ? "Saving…" : "Save routing"}
+            <ActionButtonLabel
+              idle="Save routing"
+              pending={saveRouting.isBusy}
+              pendingLabel="Saving…"
+            />
           </button>
           <InlineActionMessage className="w-full" message={feedbackMessage} />
         </div>

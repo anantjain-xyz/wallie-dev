@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
 import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
@@ -339,9 +340,51 @@ describe("optimistic session interactions", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Unarchive session #1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm unarchive for session #1" }));
 
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
+  });
+
+  it("removes an archived row immediately and restores it through the seven-second Undo toast", async () => {
+    let releaseArchive!: () => void;
+    mocked.fetch
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseArchive = () =>
+              resolve(
+                Response.json({
+                  archivedAt: "2026-07-17T12:00:00.000Z",
+                  id: session.id,
+                  phaseStatus: session.phaseStatus,
+                  updatedAt: "2026-07-17T12:00:00.000Z",
+                }),
+              );
+          }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          archivedAt: null,
+          id: session.id,
+          phaseStatus: session.phaseStatus,
+          updatedAt: "2026-07-17T13:00:00.000Z",
+        }),
+      );
+
+    render(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive session #1" }));
+    expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+
+    await act(async () => releaseArchive());
+    await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy());
   });
 
   it("keeps a newer server title when an older save response arrives late", async () => {

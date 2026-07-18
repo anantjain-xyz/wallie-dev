@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { PlusIcon, XIcon } from "@/components/shared/icons";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -66,6 +67,7 @@ export function WorkspaceMembersSection({
   const [invitations, setInvitations] = useState(initialInvitations);
   const [role, setRole] = useState<WorkspaceInvitationRole>("member");
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const busyActionRef = useRef<string | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -78,10 +80,21 @@ export function WorkspaceMembersSection({
   const [invitationPendingRevocation, setInvitationPendingRevocation] =
     useState<WorkspaceInvitation | null>(null);
 
+  function beginAction(action: string) {
+    if (busyActionRef.current) return false;
+    busyActionRef.current = action;
+    setBusyAction(action);
+    return true;
+  }
+
+  function finishAction() {
+    busyActionRef.current = null;
+    setBusyAction(null);
+  }
+
   async function inviteMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busyAction) return;
-    setBusyAction("create");
+    if (!beginAction("create")) return;
     setInviteError(null);
 
     try {
@@ -107,15 +120,14 @@ export function WorkspaceMembersSection({
         error instanceof Error ? error.message : "Wallie could not send that invitation.";
       setInviteError(message);
     } finally {
-      setBusyAction(null);
+      finishAction();
     }
   }
 
   async function changeMemberRole(member: WorkspaceMemberSummary, nextRole: string) {
-    if (busyAction || nextRole === member.role) {
+    if (nextRole === member.role || !beginAction(`role:${member.id}`)) {
       return;
     }
-    setBusyAction(`role:${member.id}`);
     setDialogError(null);
 
     try {
@@ -142,13 +154,12 @@ export function WorkspaceMembersSection({
       const message = error instanceof Error ? error.message : "Wallie could not update that role.";
       setDialogError(message);
     } finally {
-      setBusyAction(null);
+      finishAction();
     }
   }
 
   async function removeMember(member: WorkspaceMemberSummary) {
-    if (busyAction) return;
-    setBusyAction(`remove:${member.id}`);
+    if (!beginAction(`remove:${member.id}`)) return;
     setDialogError(null);
 
     try {
@@ -170,12 +181,12 @@ export function WorkspaceMembersSection({
         error instanceof Error ? error.message : "Wallie could not remove that member.";
       setDialogError(message);
     } finally {
-      setBusyAction(null);
+      finishAction();
     }
   }
 
   async function resendInvitation(invitationId: string) {
-    setBusyAction(`resend:${invitationId}`);
+    if (!beginAction(`resend:${invitationId}`)) return;
 
     try {
       const response = await fetch(
@@ -197,13 +208,12 @@ export function WorkspaceMembersSection({
         text: error instanceof Error ? error.message : "Wallie could not resend that invitation.",
       });
     } finally {
-      setBusyAction(null);
+      finishAction();
     }
   }
 
   async function revokeInvitation(invitationId: string) {
-    if (busyAction) return;
-    setBusyAction(`revoke:${invitationId}`);
+    if (!beginAction(`revoke:${invitationId}`)) return;
     setDialogError(null);
 
     try {
@@ -225,7 +235,7 @@ export function WorkspaceMembersSection({
         error instanceof Error ? error.message : "Wallie could not revoke that invitation.";
       setDialogError(message);
     } finally {
-      setBusyAction(null);
+      finishAction();
     }
   }
 
@@ -300,7 +310,11 @@ export function WorkspaceMembersSection({
                       disabled={busyAction === "create" || !email.trim()}
                       type="submit"
                     >
-                      {busyAction === "create" ? "Sending…" : "Send invitation"}
+                      <ActionButtonLabel
+                        idle="Send invitation"
+                        pending={busyAction === "create"}
+                        pendingLabel="Sending…"
+                      />
                     </button>
                   </DialogFooter>
                 </form>
@@ -348,7 +362,11 @@ export function WorkspaceMembersSection({
                         }}
                         type="button"
                       >
-                        {roleBusy ? "Saving…" : `Change role (${roleLabel(member.role)})`}
+                        <ActionButtonLabel
+                          idle={`Change role (${roleLabel(member.role)})`}
+                          pending={roleBusy}
+                          pendingLabel="Saving…"
+                        />
                       </button>
                       <DestructiveConfirmationDialog
                         actionLabel="Remove member"
@@ -428,7 +446,11 @@ export function WorkspaceMembersSection({
                           onClick={() => void resendInvitation(invitation.id)}
                           type="button"
                         >
-                          {resendBusy ? "Resending" : "Resend"}
+                          <ActionButtonLabel
+                            idle="Resend"
+                            pending={resendBusy}
+                            pendingLabel="Resending…"
+                          />
                         </button>
                         <DestructiveConfirmationDialog
                           actionLabel="Revoke invitation"
@@ -528,7 +550,11 @@ export function WorkspaceMembersSection({
               }}
               type="button"
             >
-              {busyAction?.startsWith("role:") ? "Saving…" : "Save role"}
+              <ActionButtonLabel
+                idle="Save role"
+                pending={Boolean(busyAction?.startsWith("role:"))}
+                pendingLabel="Saving…"
+              />
             </button>
           </DialogFooter>
         </DialogContent>

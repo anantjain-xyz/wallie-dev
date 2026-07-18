@@ -48,6 +48,18 @@ test("title and archive state render before their delayed responses", async ({ p
 
   const archiveGate = delayedResponse();
   await page.route("**/api/sessions/*/archive", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await route.fulfill({
+        contentType: "application/json",
+        json: {
+          archivedAt: null,
+          id: "a2b2c3d4-0001-4000-8000-000000000001",
+          phaseStatus: "awaiting_review",
+          updatedAt: "2026-07-17T20:01:30.000Z",
+        },
+      });
+      return;
+    }
     await archiveGate.gate;
     await route.fulfill({
       contentType: "application/json",
@@ -61,11 +73,12 @@ test("title and archive state render before their delayed responses", async ({ p
   });
 
   await page.getByRole("button", { name: "Archive" }).click();
-  await page.getByRole("button", { name: "Confirm" }).click();
   await expect(page.getByText("Archived", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Archiving/ })).toBeDisabled();
   archiveGate.release();
-  await expect(page.getByRole("button", { name: "Unarchive" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByRole("button", { name: "Archive" })).toBeEnabled();
 });
 
 test("approve and reject expose optimistic status while delayed", async ({ page }) => {
@@ -134,6 +147,39 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
   await expect(page.getByRole("button", { name: /Queueing/ })).toBeDisabled();
   await expect(page.getByLabel("Feedback for Wallie")).toHaveValue("Preserve this feedback");
   rejectGate.release();
+});
+
+test("delayed filters retain pressed feedback and reduced-motion route progress", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await signIn(page);
+
+  const filterGate = delayedResponse();
+  await page.route("**/w/acme-corp/sessions?*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.headers().rsc !== "1" || url.searchParams.get("scope") !== "active") {
+      await route.continue();
+      return;
+    }
+    await filterGate.gate;
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "Active" }).click();
+  await expect(page.getByRole("button", { name: "Loading Active…" })).toBeDisabled();
+  const routeProgress = page.locator("[data-route-progress]");
+  await expect(routeProgress).toBeVisible();
+  await expect(page.getByRole("status", { name: "Loading page…" })).toHaveCount(1);
+  await expect(routeProgress.locator(".ui-route-progress-value")).toHaveCSS(
+    "animation-duration",
+    "0.00001s",
+  );
+
+  filterGate.release();
+  await expect(page).toHaveURL(/scope=active/);
+  await expect(routeProgress).toBeHidden();
 });
 
 test("create navigates with one destination RSC request and no refresh", async ({ page }) => {

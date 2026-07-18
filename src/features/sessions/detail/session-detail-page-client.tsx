@@ -9,7 +9,9 @@ import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
 import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
 import {
   archiveSessionFromClient,
   isSessionPhaseMutationResult,
@@ -208,8 +210,11 @@ export function SessionDetailPageClient({
   initialFormattedArtifactKey,
 }: SessionDetailPageClientProps) {
   const router = useRouter();
+  const { pushToast } = useOptionalToast();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
+  const latestSessionRef = useRef(session);
+  latestSessionRef.current = session;
   const creatorDisplayName = initialData.creatorDisplayName;
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
@@ -220,7 +225,6 @@ export function SessionDetailPageClient({
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
-  const [archiveConfirming, setArchiveConfirming] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
 
@@ -552,9 +556,19 @@ export function SessionDetailPageClient({
       setFeedbackDraft("");
       setFeedbackOpen(false);
       finishInteraction(action, "success");
+      pushToast({
+        priority: "polite",
+        title: action === "approve" ? "Review approved." : "Changes queued.",
+        tone: "success",
+      });
     } catch (error) {
       finishInteraction(action, "error");
-      setActionError(error instanceof Error ? error.message : "Action failed.");
+      pushToast({
+        description: error instanceof Error ? error.message : "Action failed.",
+        priority: "assertive",
+        title: action === "approve" ? "Approval failed." : "Could not queue changes.",
+        tone: "danger",
+      });
     } finally {
       setPhaseActionPending(null);
     }
@@ -606,13 +620,19 @@ export function SessionDetailPageClient({
           ),
       });
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Could not stop the run.");
+      pushToast({
+        description: error instanceof Error ? error.message : "Could not stop the run.",
+        priority: "assertive",
+        title: "Stop failed.",
+        tone: "danger",
+      });
     } finally {
       setStopPending(false);
     }
   }
 
   async function handleArchive() {
+    if (archivePending !== null || phaseActionPending !== null) return;
     setArchiveError(null);
     setArchivePending("archive");
     const optimisticPatch: SessionMutationPatch = {
@@ -643,9 +663,26 @@ export function SessionDetailPageClient({
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           ),
       });
-      setArchiveConfirming(false);
+      pushToast({
+        action: {
+          altText: `Undo archive for session #${session.number}`,
+          label: "Undo",
+          onClick: () => void handleUnarchive(),
+        },
+        duration: 7000,
+        priority: "polite",
+        title: `Session #${session.number} archived.`,
+        tone: "success",
+      });
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : "Failed to archive session.");
+      const message = error instanceof Error ? error.message : "Failed to archive session.";
+      setArchiveError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Archive failed.",
+        tone: "danger",
+      });
     } finally {
       setArchivePending(null);
     }
@@ -653,19 +690,20 @@ export function SessionDetailPageClient({
 
   async function handleUnarchive() {
     if (phaseActionPending !== null || archivePending !== null) return;
+    const currentSession = latestSessionRef.current;
     setArchiveError(null);
     setArchivePending("unarchive");
     const optimisticPatch: SessionMutationPatch = { archivedAt: null };
     const previousPatch: SessionMutationPatch = {
-      archivedAt: session.archivedAt,
-      updatedAt: session.updatedAt,
+      archivedAt: currentSession.archivedAt,
+      updatedAt: currentSession.updatedAt,
     };
 
     try {
       await runOptimisticMutation({
         optimistic: () =>
           setSession((current) => applySessionMutationPatch(current, optimisticPatch)),
-        mutate: () => unarchiveSessionFromClient({ sessionId: session.id }),
+        mutate: () => unarchiveSessionFromClient({ sessionId: currentSession.id }),
         commit: (result) =>
           setSession((current) =>
             reconcileSessionMutationPatch(current, {
@@ -679,8 +717,20 @@ export function SessionDetailPageClient({
             rollbackSessionMutationPatch(current, optimisticPatch, previousPatch),
           ),
       });
+      pushToast({
+        priority: "polite",
+        title: `Session #${currentSession.number} unarchived.`,
+        tone: "success",
+      });
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : "Failed to unarchive session.");
+      const message = error instanceof Error ? error.message : "Failed to unarchive session.";
+      setArchiveError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Unarchive failed.",
+        tone: "danger",
+      });
     } finally {
       setArchivePending(null);
     }
@@ -696,82 +746,31 @@ export function SessionDetailPageClient({
           disabled={archivePending !== null || phaseActionPending !== null}
           onClick={() => void handleUnarchive()}
         >
-          {archivePending ? (
-            <>
-              <Spinner />
-              <span>{archivePending === "archive" ? "Archiving…" : "Unarchiving…"}</span>
-            </>
-          ) : (
-            "Unarchive"
-          )}
+          <ActionButtonLabel
+            idle="Unarchive"
+            pending={archivePending !== null}
+            pendingLabel={archivePending === "archive" ? "Archiving…" : "Unarchiving…"}
+          />
         </button>
       </div>
-      {archiveError ? (
-        <span className="text-xs text-danger" role="alert">
-          {archiveError}
-        </span>
-      ) : null}
+      {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>
   ) : (
     <div className="flex flex-col items-end gap-1">
-      {archiveConfirming ? (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted">Archive this session?</span>
-          <button
-            type="button"
-            className="ui-button-danger gap-1.5"
-            disabled={archivePending !== null}
-            onClick={() => void handleArchive()}
-          >
-            {archivePending === "archive" ? (
-              <>
-                <Spinner />
-                <span>Archiving…</span>
-              </>
-            ) : (
-              "Confirm"
-            )}
-          </button>
-          <button
-            type="button"
-            className="ui-button"
-            disabled={archivePending !== null}
-            onClick={() => {
-              setArchiveConfirming(false);
-              setArchiveError(null);
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="ui-button gap-1.5"
-          disabled={archivePending !== null}
-          onClick={() => {
-            setArchiveConfirming(true);
-            setArchiveError(null);
-          }}
-        >
-          {archivePending === "unarchive" ? (
-            <>
-              <Spinner />
-              <span>Unarchiving…</span>
-            </>
-          ) : (
-            <>
-              <ArchiveIcon className="h-3.5 w-3.5" />
-              <span>Archive</span>
-            </>
-          )}
-        </button>
-      )}
-      {archiveError ? (
-        <span className="text-xs text-danger" role="alert">
-          {archiveError}
-        </span>
-      ) : null}
+      <button
+        type="button"
+        className="ui-button gap-1.5"
+        disabled={archivePending !== null}
+        onClick={() => void handleArchive()}
+      >
+        <ArchiveIcon className="h-3.5 w-3.5" />
+        <ActionButtonLabel
+          idle="Archive"
+          pending={archivePending === "archive"}
+          pendingLabel="Archiving…"
+        />
+      </button>
+      {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>
   );
 
@@ -887,8 +886,7 @@ export function SessionDetailPageClient({
             <div className="border-t border-border bg-control-muted p-4">
               {actionError ? (
                 <div
-                  role="status"
-                  aria-live="polite"
+                  role="alert"
                   className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger"
                 >
                   {actionError}
@@ -901,14 +899,11 @@ export function SessionDetailPageClient({
                   disabled={stopPending}
                   onClick={() => void handleStopRun()}
                 >
-                  {stopPending ? (
-                    <>
-                      <Spinner />
-                      <span>Stopping…</span>
-                    </>
-                  ) : (
-                    "Stop run"
-                  )}
+                  <ActionButtonLabel
+                    idle="Stop run"
+                    pending={stopPending}
+                    pendingLabel="Stopping…"
+                  />
                 </button>
               </div>
             </div>
@@ -918,8 +913,7 @@ export function SessionDetailPageClient({
             <div className="border-t border-border bg-control-muted p-4">
               {actionError ? (
                 <div
-                  role="status"
-                  aria-live="polite"
+                  role="alert"
                   className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger"
                 >
                   {actionError}
@@ -959,14 +953,11 @@ export function SessionDetailPageClient({
                       className="ui-button-primary gap-1.5"
                       onClick={() => handlePhaseAction("reject")}
                     >
-                      {phaseActionPending === "reject" ? (
-                        <>
-                          <Spinner />
-                          <span>Queueing…</span>
-                        </>
-                      ) : (
-                        "Queue rerun"
-                      )}
+                      <ActionButtonLabel
+                        idle="Queue rerun"
+                        pending={phaseActionPending === "reject"}
+                        pendingLabel="Queueing…"
+                      />
                     </button>
                   </div>
                 </div>
@@ -986,16 +977,15 @@ export function SessionDetailPageClient({
                     disabled={phaseActionBusy}
                     onClick={() => handlePhaseAction("approve")}
                   >
-                    {phaseActionPending === "approve" ? (
-                      <>
-                        <Spinner />
-                        <span>Approving…</span>
-                      </>
-                    ) : isTerminalStage(session.pipeline, session.currentStageSlug) ? (
-                      "Approve & archive"
-                    ) : (
-                      "Approve & advance"
-                    )}
+                    <ActionButtonLabel
+                      idle={
+                        isTerminalStage(session.pipeline, session.currentStageSlug)
+                          ? "Approve & archive"
+                          : "Approve & advance"
+                      }
+                      pending={phaseActionPending === "approve"}
+                      pendingLabel="Approving…"
+                    />
                   </button>
                 </div>
               )}
@@ -1034,6 +1024,7 @@ function EditableSessionTitle({
   sessionNumber: number;
   title: string;
 }) {
+  const { pushToast } = useOptionalToast();
   const [draftTitle, setDraftTitle] = useState(title);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -1086,6 +1077,7 @@ function EditableSessionTitle({
       });
       setDraftTitle(result.title);
       onTitleChanged(result.title, result.updatedAt);
+      pushToast({ priority: "polite", title: "Session title updated.", tone: "success" });
     } catch (errorValue) {
       onTitleChanged(title, undefined, normalizedTitle);
       setIsEditing(true);
