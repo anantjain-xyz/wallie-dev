@@ -79,6 +79,7 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
     },
     ...overrides,
     loadedMessageRunIds: overrides.loadedMessageRunIds ?? runs.map((entry) => entry.id),
+    nextRunCursor: overrides.nextRunCursor ?? null,
   };
 }
 
@@ -158,7 +159,7 @@ describe("SessionWalliePanel", () => {
     expect(html).not.toContain("Connect a Vercel Sandbox account");
   });
 
-  it("shows visible progress when an active run has no messages yet", () => {
+  it("keeps active-run details collapsed until requested", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data({
@@ -178,13 +179,13 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).toContain("Wallie is working");
-    expect(html).not.toContain("Messages will appear here as the processor");
+    expect(html).toContain("Running");
+    expect(html).not.toContain("Wallie is working");
     expect(html).toContain("animate-spin");
     expect(html).not.toContain("No persisted messages were recorded for this run.");
   });
 
-  it("keeps the progress row visible while an active run has messages", () => {
+  it("does not include active-run messages in the initial DOM", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data({
@@ -203,15 +204,12 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).toContain("Wallie is working");
-    expect(html).toContain("Product spec created.");
-    expect(html.indexOf("Wallie is working")).toBeGreaterThan(
-      html.indexOf("Product spec created."),
-    );
-    expect(html).not.toContain("Messages will appear here as the processor");
+    expect(html).toContain("Running");
+    expect(html).not.toContain("Wallie is working");
+    expect(html).not.toContain("Product spec created.");
   });
 
-  it("keeps the terminal empty-message state for completed runs", () => {
+  it("does not render the terminal empty-message state before expansion", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data({
@@ -223,11 +221,11 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).toContain("No persisted messages were recorded for this run.");
+    expect(html).not.toContain("No persisted messages were recorded for this run.");
     expect(html).not.toContain("Wallie is working.");
   });
 
-  it("shows persisted error messages for failed runs instead of the empty-message state", () => {
+  it("does not include cached error messages before expansion", () => {
     const html = renderToStaticMarkup(
       createElement(SessionWalliePanel, {
         initialData: data({
@@ -252,7 +250,7 @@ describe("SessionWalliePanel", () => {
       }),
     );
 
-    expect(html).toContain("Vercel Sandbox credentials are required.");
+    expect(html).not.toContain("Vercel Sandbox credentials are required.");
     expect(html).not.toContain("No persisted messages were recorded for this run.");
   });
 

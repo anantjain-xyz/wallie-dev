@@ -21,6 +21,7 @@ const initialData: WallieSessionData = {
   loadedMessageRunIds: [],
   missingSecretKeys: [],
   mode: "project",
+  nextRunCursor: null,
   repository: null,
   requiredSecretKeys: [],
   requiresVercelSandbox: false,

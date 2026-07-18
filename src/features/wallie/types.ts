@@ -74,12 +74,23 @@ export type WallieRun = {
   status: Enums<"agent_run_status">;
 };
 
+export type WallieRunCursor = {
+  createdAt: string;
+  id: string;
+};
+
+export type WallieRunPage = {
+  nextCursor: WallieRunCursor | null;
+  runs: WallieRun[];
+};
+
 export type WallieSessionData = {
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
   loadedMessageRunIds: string[];
   missingSecretKeys: string[];
   mode: WallieRunMode;
+  nextRunCursor: WallieRunCursor | null;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
   requiredSecretKeys: string[];
