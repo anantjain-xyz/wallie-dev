@@ -261,7 +261,7 @@ export function PipelineValidationSummary({
 
 export function PipelineVariableHelp() {
   return (
-    <details className="ml-auto rounded-[6px] border border-border bg-surface-strong px-3 py-2 text-xs text-muted">
+    <details className="ml-auto rounded-[6px] border border-border bg-control-hover px-3 py-2 text-xs text-muted">
       <summary className="cursor-pointer text-foreground">Template variables</summary>
       <ul className="mt-2 space-y-0.5 font-mono">
         {PIPELINE_VARIABLE_HELP.map((variable) => (
@@ -353,9 +353,9 @@ export function StageRowEditor({
 
   return (
     <li
-      className={`relative rounded-[10px] border border-border bg-surface ${compact ? "p-4" : "p-5"}`}
+      className={`relative rounded-[6px] border border-border bg-sheet ${compact ? "p-4" : "p-5"}`}
     >
-      <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-surface-muted type-annotation font-semibold text-muted">
+      <div className="absolute left-3 top-5 flex h-6 w-6 items-center justify-center rounded-full bg-control-muted type-annotation font-semibold text-muted">
         {index + 1}
       </div>
       <div className="space-y-4 pl-9">

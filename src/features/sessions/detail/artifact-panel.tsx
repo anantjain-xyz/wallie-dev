@@ -502,7 +502,7 @@ function ArtifactPanelStage({
                     type="button"
                     aria-pressed={selectedVersion === artifact.version}
                     className={cn(
-                      "rounded-full border px-2.5 py-1 text-xs font-medium",
+                      "rounded-[6px] border px-2.5 py-1 text-xs font-medium",
                       selectedVersion === artifact.version
                         ? "border-accent/40 bg-accent-soft text-accent"
                         : "border-border text-muted hover:text-foreground",
@@ -556,7 +556,7 @@ function TabButton({ active, children, controls, onClick, onKeyDown, ref }: TabB
       aria-selected={active}
       className={cn(
         "rounded-[4px] px-2.5 py-1 text-xs font-medium",
-        active ? "bg-surface-muted text-foreground" : "text-muted hover:text-foreground",
+        active ? "bg-control-muted text-foreground" : "text-muted hover:text-foreground",
       )}
       id={id}
       onClick={onClick}
@@ -616,7 +616,7 @@ function ArtifactBodyView({
                 className={cn(
                   "rounded-[4px] px-2 py-1 text-xs font-medium capitalize",
                   displayMode === mode
-                    ? "bg-surface-muted text-foreground"
+                    ? "bg-control-muted text-foreground"
                     : "text-muted hover:text-foreground",
                 )}
                 onClick={() => setDisplayMode(mode)}
@@ -642,7 +642,7 @@ function ArtifactBodyView({
         <pre
           className={cn(
             "max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-xs leading-5 text-foreground",
-            !isMarkdown && "bg-background",
+            !isMarkdown && "bg-canvas",
           )}
         >
           {formatted}

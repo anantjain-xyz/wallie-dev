@@ -59,14 +59,14 @@ function SettingsSectionSkeleton({
       </header>
 
       <div
-        className={`rounded-[10px] border bg-surface ${
+        className={`rounded-[6px] border bg-sheet ${
           tone === "danger" ? "border-danger/20" : "border-border"
         }`}
       >
         <div className="flex flex-col gap-5 p-5 sm:p-6">
           {withAvatar ? (
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-              <SkeletonBlock className="h-16 w-16 shrink-0 rounded-[10px]" />
+              <SkeletonBlock className="h-16 w-16 shrink-0 rounded-[6px]" />
               <div className="min-w-0 flex-1 space-y-2">
                 <SkeletonBlock className="h-5 w-52 max-w-full" />
                 <SkeletonBlock className="h-4 w-full max-w-md" />

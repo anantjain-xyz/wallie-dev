@@ -31,7 +31,7 @@ const classesByTag: Record<string, string> = {
   strong: "font-semibold text-foreground",
   table: "w-full border-collapse text-left text-[13px]",
   td: "border border-border px-2 py-1 align-top",
-  th: "border border-border bg-surface-muted px-2 py-1 font-semibold",
+  th: "border border-border bg-control-muted px-2 py-1 font-semibold",
   ul: "my-2 list-disc space-y-1 pl-5 first:mt-0 last:mb-0",
 };
 

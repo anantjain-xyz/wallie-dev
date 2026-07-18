@@ -5,7 +5,7 @@ const cardTitleWidths = ["w-10/12", "w-8/12", "w-11/12"];
 
 function PipelineCardSkeleton({ index }: { index: number }) {
   return (
-    <article className="rounded-[8px] border border-border/80 bg-surface p-3">
+    <article className="ui-sheet border-border/80 p-3">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-2">
           <SkeletonBlock className={`h-4 ${cardTitleWidths[index % cardTitleWidths.length]}`} />
@@ -46,7 +46,7 @@ function PipelineLaneSkeleton({ index }: { index: number }) {
 
 export function PipelineLoadingSkeleton() {
   return (
-    <div className="min-h-full bg-surface">
+    <div className="min-h-full bg-canvas">
       <section aria-busy="true" aria-label="Loading pipeline" role="status">
         <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
           <div className="mx-auto w-full md:max-w-[780px]">

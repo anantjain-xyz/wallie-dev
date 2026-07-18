@@ -8,21 +8,33 @@ type Theme = "dark" | "light";
 type TokenMap = Record<string, string>;
 
 const semanticPairings = [
-  { foreground: "text-primary", backgrounds: ["canvas", "sheet", "raised", "surface-muted"] },
+  {
+    foreground: "text-primary",
+    backgrounds: ["surface-canvas", "surface-sheet", "surface-overlay", "control-muted"],
+  },
   {
     foreground: "text-secondary",
-    backgrounds: ["canvas", "sheet", "raised", "surface-muted"],
+    backgrounds: ["surface-canvas", "surface-sheet", "surface-overlay", "control-muted"],
   },
-  { foreground: "primary", backgrounds: ["canvas", "sheet", "raised", "primary-soft"] },
+  {
+    foreground: "primary",
+    backgrounds: ["surface-canvas", "surface-sheet", "surface-overlay", "primary-soft"],
+  },
   { foreground: "primary-foreground", backgrounds: ["primary"] },
-  { foreground: "warning", backgrounds: ["sheet", "raised", "warning-soft"] },
-  { foreground: "danger", backgrounds: ["sheet", "raised", "danger-soft"] },
-  { foreground: "success", backgrounds: ["sheet", "raised", "success-soft"] },
+  { foreground: "warning", backgrounds: ["surface-sheet", "surface-overlay", "warning-soft"] },
+  { foreground: "danger", backgrounds: ["surface-sheet", "surface-overlay", "danger-soft"] },
+  { foreground: "success", backgrounds: ["surface-sheet", "surface-overlay", "success-soft"] },
 ] as const;
 
 const boundaryPairings = [
-  { foreground: "border", backgrounds: ["canvas", "sheet", "raised", "surface-muted"] },
-  { foreground: "focus-ring", backgrounds: ["canvas", "sheet", "raised", "surface-muted"] },
+  {
+    foreground: "border",
+    backgrounds: ["surface-canvas", "surface-sheet", "surface-overlay", "control-muted"],
+  },
+  {
+    foreground: "focus-ring",
+    backgrounds: ["surface-canvas", "surface-sheet", "surface-overlay", "control-muted"],
+  },
 ] as const;
 
 function declarations(block: string): TokenMap {
@@ -145,5 +157,27 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).toContain("grid-template-columns: repeat(3, minmax(2.75rem, 1fr));");
     expect(stylesheet).not.toContain("minmax(44px, 1fr)");
     expect(stylesheet).not.toContain("@container email-code-form (max-width: 283px)");
+  });
+});
+
+describe("Precision Console surface contract", () => {
+  it("defines only canvas, primary sheet, and overlay as hierarchy surfaces", () => {
+    expect(stylesheet).toContain("--surface-canvas:");
+    expect(stylesheet).toContain("--surface-sheet:");
+    expect(stylesheet).toContain("--surface-overlay:");
+    expect(stylesheet).not.toMatch(/--(?:canvas|sheet|raised|surface-strong|surface-muted):/u);
+  });
+
+  it("reserves ten-pixel radii and elevation for overlays", () => {
+    expect(stylesheet).toContain("--content-radius: 6px;");
+    expect(stylesheet).toContain("--overlay-radius: 10px;");
+    expect(stylesheet).toContain("box-shadow: var(--shadow-elevated);");
+    expect(stylesheet).not.toContain("--shadow-ambient:");
+    expect(stylesheet).not.toContain("--shadow-control:");
+  });
+
+  it("reserves fully rounded shared treatment for status", () => {
+    expect(stylesheet).toMatch(/\.ui-status\s*\{[\s\S]*?rounded-full/u);
+    expect(stylesheet).not.toMatch(/\.ui-(?:tab|filter-chip|icon-button)\s*\{[^}]*rounded-full/u);
   });
 });

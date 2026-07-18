@@ -120,13 +120,13 @@ function ConnectionBadge({
 }: ConnectionBadgeProps) {
   const isInteractive = !!(href || onClick);
   const classes = cn(
-    "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+    "inline-flex max-w-full items-center gap-1.5 font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
     compact ? "h-5 type-annotation" : "h-6 text-xs",
-    quiet ? "text-muted hover:text-foreground" : "rounded-full border px-2.5 py-0.5",
+    quiet ? "text-muted hover:text-foreground" : "rounded-[4px] text-foreground hover:text-accent",
     !quiet &&
       (tone === "linked"
-        ? "border-border bg-surface text-foreground hover:bg-surface-muted"
-        : "border-dashed border-border bg-transparent text-muted hover:text-foreground"),
+        ? "underline decoration-border underline-offset-4"
+        : "text-muted underline decoration-dashed underline-offset-4 hover:text-foreground"),
     isInteractive && "cursor-pointer",
   );
 
