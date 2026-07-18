@@ -55,6 +55,23 @@ const CREDENTIAL_TYPES: CodexCredentialType[] = [
   "platform_api_key",
 ];
 
+function deviceFlowMessage(deviceFlow: CodexDeviceFlow) {
+  switch (deviceFlow.status) {
+    case "starting":
+      return "Waiting for sign-in code…";
+    case "prompted":
+      return deviceFlow.userCode ? "Enter this code in ChatGPT" : "Waiting for sign-in code…";
+    case "authenticated":
+      return "ChatGPT sign-in succeeded.";
+    case "canceled":
+      return "ChatGPT sign-in was canceled.";
+    case "error":
+      return deviceFlow.error ?? "ChatGPT sign-in failed. Try again.";
+    case "expired":
+      return "ChatGPT sign-in expired. Start again.";
+  }
+}
+
 export function ChatGptSubscriptionControls({
   blocked,
   deviceFlow,
@@ -98,15 +115,7 @@ export function ChatGptSubscriptionControls({
       {deviceFlow ? (
         <div className="space-y-2 rounded-[6px] border border-border bg-sheet p-3">
           <Status compact value={codexDeviceFlowStatusValues[deviceFlow.status]} />
-          <p className="text-xs font-medium text-foreground">
-            {deviceFlow.status === "starting"
-              ? "Waiting for sign-in code…"
-              : deviceFlow.status === "prompted"
-                ? deviceFlow.userCode
-                  ? "Enter this code in ChatGPT"
-                  : "Waiting for sign-in code…"
-                : "ChatGPT sign-in finished."}
-          </p>
+          <p className="text-xs font-medium text-foreground">{deviceFlowMessage(deviceFlow)}</p>
           {deviceFlow.userCode ? (
             <p className="font-mono text-[22px] font-semibold tracking-normal text-foreground">
               {deviceFlow.userCode}

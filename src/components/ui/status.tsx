@@ -180,12 +180,12 @@ export const AGENT_RUN_STATUS_VALUES = {
 export type ConfigurationStatusTone = "accent" | "danger" | "neutral" | "success" | "warning";
 
 export const CONFIGURATION_STATUS_BY_TONE = {
-  accent: "not_started",
+  accent: "running",
   danger: "blocked",
   neutral: "not_started",
   success: "healthy",
   warning: "needs_attention",
-} satisfies Record<ConfigurationStatusTone, ConfigurationStatus>;
+} satisfies Record<ConfigurationStatusTone, StatusValue>;
 
 export function sessionPhaseStatusValue(status: PipelinePhaseStatus): StatusValue {
   return SESSION_PHASE_STATUS_VALUES[status];
@@ -195,7 +195,7 @@ export function agentRunStatusValue(status: AgentRunStatus): StatusValue {
   return AGENT_RUN_STATUS_VALUES[status];
 }
 
-export function configurationStatusFromTone(tone: ConfigurationStatusTone): ConfigurationStatus {
+export function configurationStatusFromTone(tone: ConfigurationStatusTone): StatusValue {
   return CONFIGURATION_STATUS_BY_TONE[tone];
 }
 
@@ -245,7 +245,12 @@ export function Status({
 }: StatusProps) {
   const definition = resolveStatusDefinition(value);
   const visibleLabel = label ?? definition.label;
-  const accessibleDescription = description ?? definition.description;
+  const accessibleLabel =
+    description !== undefined
+      ? `${visibleLabel}. ${description}`
+      : label === undefined
+        ? `${visibleLabel}. ${definition.description}`
+        : visibleLabel;
   const normalizedProgress =
     typeof progress === "number" && Number.isFinite(progress)
       ? Math.min(100, Math.max(0, progress))
@@ -253,7 +258,7 @@ export function Status({
 
   return (
     <span
-      aria-label={`${visibleLabel}. ${accessibleDescription}`}
+      aria-label={accessibleLabel}
       className={cn(
         "ui-status inline-flex max-w-full items-center gap-1.5 rounded-full border text-xs leading-5",
         compact ? "px-2 py-0.5" : "px-2.5 py-1",

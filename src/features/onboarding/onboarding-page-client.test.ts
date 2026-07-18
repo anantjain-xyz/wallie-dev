@@ -1696,6 +1696,7 @@ describe("OnboardingPageClient", () => {
 
     expect(running).toContain("Checking…");
     expect(running).toContain(">Running</span>");
+    expect(running).toMatch(/data-status="running" data-tone="progress"/);
     expect(running).toContain("disabled");
     expect(failed).toContain(">Failed</span>");
     expect(failed).toContain("Retry capability check");

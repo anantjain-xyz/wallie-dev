@@ -63,7 +63,7 @@ describe("product status grammar", () => {
       success: "complete",
     });
     expect(CONFIGURATION_STATUS_BY_TONE).toEqual({
-      accent: "not_started",
+      accent: "running",
       danger: "blocked",
       neutral: "not_started",
       success: "healthy",
@@ -101,6 +101,27 @@ describe("product status grammar", () => {
     expect(screen.getByText("Approved").closest(".ui-status")).toHaveAttribute(
       "data-tone",
       "success",
+    );
+  });
+
+  it("does not reuse a canonical description when display copy is overridden", () => {
+    const { rerender } = render(<Status label="Selected" value="approved" />);
+
+    expect(screen.getByText("Selected").closest(".ui-status")).toHaveAttribute(
+      "aria-label",
+      "Selected",
+    );
+
+    rerender(
+      <Status
+        description="This repository supplies the active workspace profile."
+        label="Selected"
+        value="approved"
+      />,
+    );
+    expect(screen.getByText("Selected").closest(".ui-status")).toHaveAttribute(
+      "aria-label",
+      "Selected. This repository supplies the active workspace profile.",
     );
   });
 
