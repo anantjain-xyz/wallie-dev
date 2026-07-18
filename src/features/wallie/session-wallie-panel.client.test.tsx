@@ -256,6 +256,142 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores stale reconcile snapshots when updating the pagination cursor", async () => {
+    const olderFirstPage = Array.from({ length: 20 }, (_, index) => run(index + 21));
+    const newerFirstPage = Array.from({ length: 20 }, (_, index) => run(index + 1));
+    const olderCursor = {
+      createdAt: olderFirstPage.at(-1)!.createdAt,
+      id: olderFirstPage.at(-1)!.id,
+    };
+    const newerCursor = {
+      createdAt: newerFirstPage.at(-1)!.createdAt,
+      id: newerFirstPage.at(-1)!.id,
+    };
+    const gapPage = [run(41)];
+    const fake = fakeSupabase();
+    let resolveOlder!: (value: Response) => void;
+    let resolveNewer!: (value: Response) => void;
+    const olderPromise = new Promise<Response>((resolve) => {
+      resolveOlder = resolve;
+    });
+    const newerPromise = new Promise<Response>((resolve) => {
+      resolveNewer = resolve;
+    });
+    let reconcileCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("createdAt=")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ nextCursor: null, runs: gapPage }), { status: 200 }),
+        );
+      }
+
+      reconcileCalls += 1;
+      return reconcileCalls === 1 ? olderPromise : newerPromise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const view = panel(data(olderFirstPage, true), fake.supabase);
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => {
+      sessionChannel?.statusCallback?.("SUBSCRIBED");
+      sessionChannel?.statusCallback?.("SUBSCRIBED");
+    });
+
+    await act(async () => {
+      resolveNewer(
+        new Response(JSON.stringify({ nextCursor: newerCursor, runs: newerFirstPage }), {
+          status: 200,
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-run-id="run-1"]')).not.toBeNull(),
+    );
+
+    await act(async () => {
+      resolveOlder(
+        new Response(JSON.stringify({ nextCursor: olderCursor, runs: olderFirstPage }), {
+          status: 200,
+        }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-run-id="run-41"]')).not.toBeNull(),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `createdAt=${encodeURIComponent(newerCursor.createdAt)}&id=${newerCursor.id}`,
+      ),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining(
+        `createdAt=${encodeURIComponent(olderCursor.createdAt)}&id=${olderCursor.id}`,
+      ),
+    );
+  });
+
+  it("discards older-run pages that resolve after session navigation", async () => {
+    const sessionOneRun = run(1);
+    const sessionTwoRun = run(2, { stageName: "Session two only" });
+    const leakedOlderRun = run(99, { stageName: "Leaked older run" });
+    const fake = fakeSupabase();
+    let resolveOlder!: (value: Response) => void;
+    const olderPromise = new Promise<Response>((resolve) => {
+      resolveOlder = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("createdAt=")) {
+          return olderPromise;
+        }
+
+        return Promise.resolve(
+          new Response(JSON.stringify({ nextCursor: null, runs: [sessionTwoRun] }), {
+            status: 200,
+          }),
+        );
+      }),
+    );
+
+    const view = render(
+      <SessionWalliePanel
+        initialData={data([sessionOneRun], true)}
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
+    view.rerender(
+      <SessionWalliePanel
+        initialData={data([sessionTwoRun])}
+        session={{ archivedAt: null, id: "session-2", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    await act(async () => {
+      resolveOlder(
+        new Response(JSON.stringify({ nextCursor: null, runs: [leakedOlderRun] }), {
+          status: 200,
+        }),
+      );
+    });
+
+    expect(view.container.querySelector('[data-run-id="run-99"]')).toBeNull();
+    expect(view.container.querySelector('[data-run-id="run-2"]')).not.toBeNull();
+    expect(screen.queryByText("Leaked older run")).toBeNull();
+    expect(screen.getByText("Session two only run")).not.toBeNull();
+  });
+
   it("retries the selected paginated row and inserts the returned run without refresh", async () => {
     const initialRun = run(1);
     const olderRun = run(21, { canRetry: true, status: "error" });

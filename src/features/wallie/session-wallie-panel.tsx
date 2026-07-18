@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useCallback, useEffect, useEffectEvent, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
@@ -161,6 +161,9 @@ export function SessionWalliePanel({
   const [isLoadingOlderRuns, setIsLoadingOlderRuns] = useState(false);
   const [olderRunsError, setOlderRunsError] = useState<string | null>(null);
   const [realtimeReady, setRealtimeReady] = useState(false);
+  const sessionIdRef = useRef(session.id);
+  const reconcileGenerationRef = useRef(0);
+  sessionIdRef.current = session.id;
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
 
@@ -177,6 +180,7 @@ export function SessionWalliePanel({
     return nextIndex;
   }, [initialData.runs, initialData.workspaceMembers]);
   useEffect(() => {
+    reconcileGenerationRef.current += 1;
     setRuns(initialData.runs);
     setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
@@ -252,8 +256,11 @@ export function SessionWalliePanel({
   });
 
   const reconcileLatestRuns = useEffectEvent(async () => {
+    const requestSessionId = session.id;
+    const generation = ++reconcileGenerationRef.current;
+
     try {
-      const response = await fetch(`/api/sessions/${session.id}/runs`);
+      const response = await fetch(`/api/sessions/${requestSessionId}/runs`);
       const payload = (await response.json().catch(() => null)) as
         | RunHistoryResponse
         | RunHistoryErrorResponse
@@ -265,10 +272,24 @@ export function SessionWalliePanel({
         );
       }
 
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        generation !== reconcileGenerationRef.current
+      ) {
+        return;
+      }
+
       setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
       setNextRunCursor(payload.nextCursor);
     } catch (error) {
-      console.error("Wallie could not reconcile run history", { error, sessionId: session.id });
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
+      console.error("Wallie could not reconcile run history", {
+        error,
+        sessionId: requestSessionId,
+      });
     }
   });
 
@@ -472,15 +493,18 @@ export function SessionWalliePanel({
   const handleLoadOlderRuns = useCallback(async () => {
     if (!nextRunCursor || isLoadingOlderRuns) return;
 
+    const requestSessionId = session.id;
+    const requestCursor = nextRunCursor;
+
     setIsLoadingOlderRuns(true);
     setOlderRunsError(null);
 
     try {
       const searchParams = new URLSearchParams({
-        createdAt: nextRunCursor.createdAt,
-        id: nextRunCursor.id,
+        createdAt: requestCursor.createdAt,
+        id: requestCursor.id,
       });
-      const response = await fetch(`/api/sessions/${session.id}/runs?${searchParams}`);
+      const response = await fetch(`/api/sessions/${requestSessionId}/runs?${searchParams}`);
       const payload = (await response.json().catch(() => null)) as
         | RunHistoryResponse
         | RunHistoryErrorResponse
@@ -492,12 +516,22 @@ export function SessionWalliePanel({
         );
       }
 
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
       setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
       setNextRunCursor(payload.nextCursor);
     } catch (error) {
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
       setOlderRunsError(error instanceof Error ? error.message : "Could not load older runs.");
     } finally {
-      setIsLoadingOlderRuns(false);
+      if (sessionIdRef.current === requestSessionId) {
+        setIsLoadingOlderRuns(false);
+      }
     }
   }, [isLoadingOlderRuns, nextRunCursor, session.id]);
 
