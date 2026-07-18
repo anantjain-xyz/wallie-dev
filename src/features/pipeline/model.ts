@@ -109,6 +109,17 @@ function continuationCursor(lane: PipelineBoardLane) {
   );
 }
 
+function removeCardFromLane(lane: PipelineBoardLane, cardId: string): PipelineBoardLane {
+  const cardIds = lane.cardIds.filter((candidateId) => candidateId !== cardId);
+  const totalCount = Math.max(0, lane.totalCount - 1);
+  return {
+    ...lane,
+    cardIds,
+    cursor: totalCount > cardIds.length ? lane.cursor : null,
+    totalCount,
+  };
+}
+
 export function createPipelineBoardState(lanes: PipelineDashboardLane[]): PipelineBoardState {
   const cardsById: Record<string, PipelineDashboardCard> = {};
   const claimedCardIds = new Set<string>();
@@ -268,11 +279,7 @@ function upsertPipelineCard(
     }
 
     if (laneIndex === sourceLaneIndex) {
-      return {
-        ...lane,
-        cardIds: lane.cardIds.filter((cardId) => cardId !== card.id),
-        totalCount: Math.max(0, lane.totalCount - 1),
-      };
+      return removeCardFromLane(lane, card.id);
     }
 
     return {
@@ -300,13 +307,7 @@ function removePipelineCard(state: PipelineBoardState, cardId: string): Pipeline
   const offPageCardLaneKeys = { ...state.offPageCardLaneKeys };
   delete offPageCardLaneKeys[cardId];
   const lanes = state.lanes.map((lane, index) =>
-    index === sourceLaneIndex
-      ? {
-          ...lane,
-          cardIds: lane.cardIds.filter((candidateId) => candidateId !== cardId),
-          totalCount: Math.max(0, lane.totalCount - 1),
-        }
-      : lane,
+    index === sourceLaneIndex ? removeCardFromLane(lane, cardId) : lane,
   );
   return { cardsById, lanes, offPageCardLaneKeys };
 }

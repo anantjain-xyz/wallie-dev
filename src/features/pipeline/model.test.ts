@@ -178,6 +178,11 @@ describe("pipelineBoardReducer", () => {
     );
     expect(next.lanes[0]?.totalCount).toBe(26);
     expect(next.offPageCardLaneKeys[inserted.id]).toBe(`${PIPELINE_ID}:${PLAN_STAGE_ID}`);
+
+    const removed = pipelineBoardReducer(next, { cardId: inserted.id, type: "remove" });
+    expect(removed.lanes[0]?.cardIds).toEqual(initial.lanes[0]?.cardIds);
+    expect(removed.lanes[0]?.cursor).toBeNull();
+    expect(removed.lanes[0]?.totalCount).toBe(25);
   });
 
   it("keeps a full destination slice bounded when a loaded card moves into it", () => {
