@@ -1,8 +1,6 @@
 import "server-only";
 
-import type { User } from "@supabase/supabase-js";
-
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { getSupabaseAuthIdentityOrNull, type SupabaseAuthIdentity } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Tables } from "@/lib/supabase/database.types";
 
@@ -14,7 +12,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient
 export type WorkspaceAccessContext = {
   currentMember: Pick<Tables<"workspace_members">, "id" | "is_active" | "kind" | "role">;
   supabase: SupabaseServerClient;
-  user: User;
+  user: SupabaseAuthIdentity;
   workspace: Pick<Tables<"workspaces">, "avatar_path" | "id" | "name" | "slug">;
 };
 
@@ -35,7 +33,7 @@ type WorkspaceAccessResult =
     });
 
 async function loadCurrentUser(supabase: SupabaseServerClient) {
-  return getSupabaseUserOrNull(supabase);
+  return getSupabaseAuthIdentityOrNull(supabase);
 }
 
 export async function requireWorkspaceAccessById(
