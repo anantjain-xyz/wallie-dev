@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { PlusIcon } from "@/components/shared/icons";
+import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import {
   shouldShowOnboardingResumeCta,
   type OnboardingResumeState,

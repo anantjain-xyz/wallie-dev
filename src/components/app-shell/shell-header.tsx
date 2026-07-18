@@ -8,7 +8,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 import { AccountMenu } from "@/components/app-shell/account-menu";
 import { ThemeToggle } from "@/components/app-shell/theme-toggle";
-import { PlusIcon } from "@/components/shared/icons";
+import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Tooltip } from "@/components/ui/tooltip";
 import {

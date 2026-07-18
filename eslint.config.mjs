@@ -63,6 +63,26 @@ const eslintConfig = defineConfig([
               group: ["@radix-ui/*"],
               message: "Import Wallie wrappers from @/components/ui instead of Radix directly.",
             },
+            {
+              regex: "(^|/)components/shared/icons(?:/index)?$",
+              message: "Import each icon from its direct module; do not use an all-icons barrel.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/components/ui/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "(^|/)components/shared/icons(?:/index)?$",
+              message: "Import each icon from its direct module; do not use an all-icons barrel.",
+            },
           ],
         },
       ],

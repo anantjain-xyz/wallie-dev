@@ -6,7 +6,10 @@ import { useRouter } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
-import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "@/components/shared/icons";
+import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { PencilIcon } from "@/components/shared/icons/pencil-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
