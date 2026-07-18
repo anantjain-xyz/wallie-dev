@@ -1841,6 +1841,15 @@ export type Database = {
         }
         Returns: Json
       }
+      get_workspace_usage: {
+        Args: { target_workspace_id: string }
+        Returns: {
+          total_cost_usd: number
+          total_input_tokens: number
+          total_output_tokens: number
+          total_runs: number
+        }[]
+      }
       mark_codex_auth_reconnect_required: {
         Args: {
           reconnect_reason: string

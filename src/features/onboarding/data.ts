@@ -71,6 +71,11 @@ export type WorkspaceOnboardingData = {
   workspaceSecrets: WorkspaceSecretPreview[];
 };
 
+export type WorkspaceOnboardingSnapshot = {
+  data: Promise<WorkspaceOnboardingData>;
+  github: Promise<WorkspaceGitHubData>;
+};
+
 type OnboardingDataResult =
   | {
       data: WorkspaceOnboardingData;
@@ -344,14 +349,15 @@ function throwQueryError(error: unknown) {
   if (error) throw error;
 }
 
-async function buildOnboardingSnapshot(
+function createOnboardingSnapshot(
   context: OnboardingSnapshotContext,
   options?: { onboardingRow?: Tables<"workspace_onboarding"> },
-): Promise<OnboardingSnapshot> {
+): { data: Promise<OnboardingSnapshot>; github: Promise<WorkspaceGitHubData> } {
   const admin = createSupabaseAdminClient();
   const workspaceId = context.workspace.id;
+  const githubPromise = loadWorkspaceGitHubData(admin, workspaceId);
 
-  return withServerTiming("onboarding.snapshot", { workspaceId }, async (timing) => {
+  const data = withServerTiming("onboarding.snapshot", { workspaceId }, async (timing) => {
     const pipelinePromise = timing.segment("snapshot.pipeline", () =>
       context.supabase
         .from("pipelines")
@@ -394,7 +400,7 @@ async function buildOnboardingSnapshot(
         : timing.segment("snapshot.onboarding", () => loadOrCreateOnboardingRow(context, admin)),
       timing.segment(
         "snapshot.github",
-        () => loadWorkspaceGitHubData(admin, workspaceId),
+        () => githubPromise,
         (result) => ({
           payloadBytes: approximatePayloadSizeBytes(result),
           rows: result.repositories.length + (result.installation ? 1 : 0),
@@ -482,6 +488,15 @@ async function buildOnboardingSnapshot(
       workspaceMemberRows: (memberResult.data ?? []) as WorkspaceMemberRow[],
     };
   });
+
+  return { data, github: githubPromise };
+}
+
+async function buildOnboardingSnapshot(
+  context: OnboardingSnapshotContext,
+  options?: { onboardingRow?: Tables<"workspace_onboarding"> },
+): Promise<OnboardingSnapshot> {
+  return createOnboardingSnapshot(context, options).data;
 }
 
 const loadOnboardingSnapshot = cache(
@@ -611,13 +626,10 @@ function currentMemberFromSnapshot(context: OnboardingSnapshotContext) {
   return member;
 }
 
-async function buildWorkspaceOnboardingData(
+function mapWorkspaceOnboardingData(
   context: OnboardingSnapshotContext,
-  options?: { onboardingRow?: Tables<"workspace_onboarding">; requestCached?: boolean },
-): Promise<WorkspaceOnboardingData | null> {
-  const snapshot = options?.requestCached
-    ? await loadOnboardingSnapshot(context.workspace.id, context)
-    : await buildOnboardingSnapshot(context, { onboardingRow: options?.onboardingRow });
+  snapshot: OnboardingSnapshot,
+): WorkspaceOnboardingData | null {
   const currentMember = currentMemberFromSnapshot(context);
   if (!currentMember) return null;
 
@@ -654,6 +666,31 @@ async function buildWorkspaceOnboardingData(
     })),
     workspaceSecrets,
   };
+}
+
+async function buildWorkspaceOnboardingData(
+  context: OnboardingSnapshotContext,
+  options?: { onboardingRow?: Tables<"workspace_onboarding">; requestCached?: boolean },
+): Promise<WorkspaceOnboardingData | null> {
+  const snapshot = options?.requestCached
+    ? await loadOnboardingSnapshot(context.workspace.id, context)
+    : await buildOnboardingSnapshot(context, { onboardingRow: options?.onboardingRow });
+  return mapWorkspaceOnboardingData(context, snapshot);
+}
+
+export function createWorkspaceOnboardingSnapshot(
+  context: AuthenticatedWorkspaceContext,
+): WorkspaceOnboardingSnapshot {
+  const snapshot = createOnboardingSnapshot(context);
+  const data = snapshot.data.then((value) => {
+    const onboardingData = mapWorkspaceOnboardingData(context, value);
+    if (!onboardingData) {
+      throw new Error("Authenticated workspace context has no active human member.");
+    }
+    return onboardingData;
+  });
+
+  return { data, github: snapshot.github };
 }
 
 export async function loadWorkspaceOnboardingData(

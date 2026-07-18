@@ -15,10 +15,7 @@ export type WorkspaceAccessContext = {
   currentMember: Pick<Tables<"workspace_members">, "id" | "is_active" | "kind" | "role">;
   supabase: SupabaseServerClient;
   user: User;
-  workspace: Pick<
-    Tables<"workspaces">,
-    "avatar_path" | "created_at" | "id" | "name" | "slug" | "updated_at"
-  >;
+  workspace: Pick<Tables<"workspaces">, "avatar_path" | "id" | "name" | "slug">;
 };
 
 type WorkspaceAccessFailure = {
