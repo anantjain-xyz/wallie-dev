@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -59,6 +59,14 @@ afterEach(() => {
 });
 
 describe("SettingsAnchorNav", () => {
+  it("sticks below the safe-area-aware shell header", () => {
+    render(<SettingsAnchorNav groups={groups} />);
+
+    expect(screen.getByRole("navigation", { name: "Settings sections" })).toHaveClass(
+      "top-[calc(5rem+env(safe-area-inset-top))]",
+    );
+  });
+
   it("observes Settings sections inserted after the navigation mounts", async () => {
     render(
       <>

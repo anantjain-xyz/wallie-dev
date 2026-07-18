@@ -43,7 +43,7 @@ function PipelineLaneSkeleton({ index }: { index: number }) {
 
 export function PipelineLoadingSkeleton() {
   return (
-    <div className="min-h-full bg-canvas">
+    <div className="min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas">
       <section aria-busy="true" aria-label="Loading pipeline" role="status">
         <header className="px-4 pb-8 pt-10 sm:px-8 md:pb-10 md:pt-14">
           <div className="mx-auto w-full md:max-w-[780px]">

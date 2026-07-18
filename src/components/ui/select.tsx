@@ -1,11 +1,11 @@
 "use client";
 
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { useCallback, useId, useState, type ComponentProps, type ReactNode } from "react";
+import { useId, useState, type ComponentProps, type ReactNode } from "react";
 
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
-import { useOverlayContainer } from "@/components/ui/portal-root";
+import { useModalOverlayContainer, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 const RADIX_EMPTY_VALUE = "__wallie_select_empty_value__";
@@ -58,13 +58,14 @@ export function SelectContent({
   children,
   className,
   collisionPadding = 8,
-  portalContainer,
+  container: containerOverride,
   position = "popper",
   sideOffset = 6,
   ...props
-}: ComponentProps<typeof SelectPrimitive.Content> & { portalContainer?: HTMLElement | null }) {
+}: ComponentProps<typeof SelectPrimitive.Content> & { container?: HTMLElement | null }) {
   const overlayContainer = useOverlayContainer();
-  const container = portalContainer ?? overlayContainer;
+  const modalContainer = useModalOverlayContainer();
+  const container = containerOverride ?? modalContainer ?? overlayContainer;
 
   if (!container) return null;
 
@@ -111,10 +112,7 @@ export function SelectField({
   value,
 }: SelectFieldProps) {
   const labelId = useId();
-  const [modalContainer, setModalContainer] = useState<HTMLElement | null>(null);
-  const setFieldNode = useCallback((node: HTMLDivElement | null) => {
-    setModalContainer(node?.closest<HTMLElement>('[aria-modal="true"]') ?? null);
-  }, []);
+  const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null);
   const selectOptions = emptyOption ? [emptyOption, ...options] : [...options];
   const selectedOption = selectOptions.find((option) => option.value === value);
   const hasOptionIcons = selectOptions.some((option) => option.icon);
@@ -123,7 +121,7 @@ export function SelectField({
     selectedOption?.label ?? (value || fallbackLabel || emptyOption?.label || "None");
 
   return (
-    <div className={cn("block space-y-1.5", className)} ref={setFieldNode}>
+    <div className={cn("block space-y-1.5", className)}>
       <span className="text-[13px] font-medium text-foreground" id={labelId}>
         {label}
       </span>
@@ -138,6 +136,7 @@ export function SelectField({
           aria-haspopup="listbox"
           aria-labelledby={labelId}
           className="ui-select-trigger w-full"
+          ref={setTriggerElement}
         >
           <span className="flex min-w-0 items-center gap-2">
             {selectedOption?.icon ? (
@@ -156,7 +155,9 @@ export function SelectField({
             <ChevronDownIcon className="text-muted" />
           </SelectPrimitive.Icon>
         </SelectPrimitive.Trigger>
-        <SelectContent portalContainer={modalContainer}>
+        <SelectContent
+          container={triggerElement?.closest<HTMLElement>('[aria-modal="true"]') ?? undefined}
+        >
           {selectOptions.map((option) => (
             <SelectPrimitive.Item
               className="ui-select-item"

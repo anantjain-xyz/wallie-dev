@@ -178,7 +178,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       }}
     >
       <DialogContent
-        className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto sm:max-h-[calc(100dvh-5rem)]"
+        className="max-w-xl"
         description="Describe the work, choose its repository, and optionally link a Linear issue."
         dismissible={!isSubmitting}
         title="Start a new session"
@@ -190,6 +190,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             </label>
             <textarea
               id="session-prompt"
+              aria-describedby={errorMessage ? "create-session-error" : undefined}
               autoComplete="off"
               autoFocus
               name="prompt"
@@ -231,6 +232,14 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             </label>
             <input
               id="session-linear"
+              aria-describedby={
+                [
+                  linearError ? "session-linear-error" : null,
+                  errorMessage ? "create-session-error" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
               autoComplete="off"
               name="linearUrl"
               value={linearUrl}
@@ -240,12 +249,17 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
               placeholder="https://linear.app/acme/issue/TEAM-123"
               type="url"
             />
-            {linearError ? <p className="text-xs text-danger">{linearError}</p> : null}
+            {linearError ? (
+              <p className="text-xs text-danger" id="session-linear-error" role="alert">
+                {linearError}
+              </p>
+            ) : null}
           </div>
 
           {errorMessage ? (
             <div
               aria-live="polite"
+              id="create-session-error"
               role="status"
               className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
             >

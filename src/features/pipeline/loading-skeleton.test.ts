@@ -10,7 +10,9 @@ describe("PipelineLoadingSkeleton", () => {
 
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('aria-label="Loading pipeline"');
-    expect(html).toContain("min-h-full bg-canvas");
+    expect(html).toContain(
+      "min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas",
+    );
     expect(html).toContain("md:w-[260px]");
     expect((html.match(/<article/g) ?? []).length).toBe(4);
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);

@@ -1,10 +1,10 @@
 "use client";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
 import { XIcon } from "@/components/shared/icons/x-icon";
-import { useOverlayContainer } from "@/components/ui/portal-root";
+import { ModalOverlayContainerProvider, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 export const Dialog = DialogPrimitive.Root;
@@ -33,6 +33,7 @@ export function DialogContent({
   ...props
 }: DialogContentProps) {
   const container = useOverlayContainer();
+  const [modalContainer, setModalContainer] = useState<HTMLDivElement | null>(null);
 
   if (!container) return null;
 
@@ -53,23 +54,26 @@ export function DialogContent({
         }}
         {...descriptionProps}
         {...props}
+        ref={setModalContainer}
       >
-        <header className="space-y-1.5 pr-8">
-          <DialogPrimitive.Title className="text-base font-semibold text-foreground">
-            {title}
-          </DialogPrimitive.Title>
-          {description ? (
-            <DialogPrimitive.Description className="text-sm leading-6 text-muted">
-              {description}
-            </DialogPrimitive.Description>
+        <ModalOverlayContainerProvider container={modalContainer}>
+          <header className="space-y-1.5 pr-8">
+            <DialogPrimitive.Title className="text-base font-semibold text-foreground">
+              {title}
+            </DialogPrimitive.Title>
+            {description ? (
+              <DialogPrimitive.Description className="text-sm leading-6 text-muted">
+                {description}
+              </DialogPrimitive.Description>
+            ) : null}
+          </header>
+          <div className="mt-5">{children}</div>
+          {!hideCloseButton && dismissible ? (
+            <DialogPrimitive.Close aria-label="Close dialog" className="ui-dialog-close">
+              <XIcon />
+            </DialogPrimitive.Close>
           ) : null}
-        </header>
-        <div className="mt-5">{children}</div>
-        {!hideCloseButton && dismissible ? (
-          <DialogPrimitive.Close aria-label="Close dialog" className="ui-dialog-close">
-            <XIcon />
-          </DialogPrimitive.Close>
-        ) : null}
+        </ModalOverlayContainerProvider>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

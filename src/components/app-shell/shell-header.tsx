@@ -210,7 +210,10 @@ export function ShellHeader({
 
   return (
     <>
-      <header className="sticky top-0 z-20 min-w-0 border-b border-border bg-sheet">
+      <header
+        className="ui-shell-header sticky top-0 z-20 min-w-0 border-b border-border bg-sheet"
+        data-shell-header=""
+      >
         <div className="flex h-14 min-w-0 items-center justify-between gap-3 px-3 sm:px-5">
           <div className="flex min-w-0 shrink items-center gap-2">
             <Link
