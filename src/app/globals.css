@@ -952,6 +952,49 @@
   }
 }
 
+/* Browser rendering skips independent, off-screen work while retaining a
+   measured placeholder. `auto` remembers the rendered block size after the
+   first visit, which prevents repeat visits from shifting the scroll range. */
+.settings-contained-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0 auto 680px;
+}
+
+.settings-contained-section-large {
+  contain-intrinsic-size: auto 0 auto 920px;
+}
+
+.settings-contained-section-compact {
+  contain-intrinsic-size: auto 0 auto 360px;
+}
+
+.session-list-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0 auto 116px;
+}
+
+.content-visibility-benchmark-disabled .session-list-row {
+  content-visibility: visible;
+}
+
+.run-history-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0 auto 166px;
+}
+
+/* Focused and actively changing content must be fully rendered. This also
+   lets keyboard navigation and browser find-in-page reveal skipped targets. */
+:where(.settings-contained-section, .session-list-row, .run-history-group):focus-within,
+.content-visibility-interacting {
+  content-visibility: visible;
+}
+
+@media (min-width: 768px) {
+  .session-list-row {
+    contain-intrinsic-size: auto 0 auto 76px;
+  }
+}
+
 /* Unlayered so one focus contract overrides component-level utility rings. */
 :where(
   a,
