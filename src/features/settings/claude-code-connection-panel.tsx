@@ -3,19 +3,29 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { Status } from "@/components/ui/status";
+import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
 
 export interface ClaudeCodeConnectionStatus {
+  checkedAt: string;
   connected: boolean;
   updatedAt?: string | null;
 }
 
 interface ClaudeCodeConnectionPanelProps {
+  /** Server-loaded status used immediately and revalidated only after its freshness window. */
+  initialStatus?: ClaudeCodeConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
 }
 
-export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnectionPanelProps = {}) {
-  const [status, setStatus] = useState<ClaudeCodeConnectionStatus | null>(null);
+export function ClaudeCodeConnectionPanel({
+  initialStatus,
+  onStatusChange,
+}: ClaudeCodeConnectionPanelProps = {}) {
+  const initialStatusRef = useRef(initialStatus);
+  const [status, setStatus] = useState<ClaudeCodeConnectionStatus | null>(
+    () => initialStatus ?? null,
+  );
   const [credential, setCredential] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +56,9 @@ export function ClaudeCodeConnectionPanel({ onStatusChange }: ClaudeCodeConnecti
   }, []);
 
   useEffect(() => {
-    void refresh();
+    if (isProviderStatusStale(initialStatusRef.current?.checkedAt)) {
+      void refresh();
+    }
   }, [refresh]);
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {

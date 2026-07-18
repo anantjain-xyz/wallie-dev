@@ -21,6 +21,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       },
     },
     codexConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "codex_access_token",
       expiresAt: "2026-05-16T20:00:00.000Z",
@@ -28,6 +29,7 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     claudeCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       status: "connected",
       updatedAt: "2026-05-16T18:00:00.000Z",
@@ -126,6 +128,7 @@ describe("buildRuntimeReadiness", () => {
         agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },
         claudeCodeConnection: health().claudeCodeConnection,
         codexConnection: {
+          checkedAt: "2026-05-16T18:00:01.000Z",
           connected: false,
           credentialType: null,
           expiresAt: null,
@@ -165,6 +168,7 @@ describe("buildRuntimeReadiness", () => {
       buildRuntimeReadiness({
         agentConfig: { agent_model: "claude-opus-4-7[1m]", agent_provider: "claude-code" },
         claudeCodeConnection: {
+          checkedAt: "2026-05-16T18:00:01.000Z",
           connected: false,
           status: "missing",
           updatedAt: null,

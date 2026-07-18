@@ -82,6 +82,7 @@ const onboardingData = {
   setupHealth: {
     agentConfig: { configured: false, configuredKeys: [], status: "missing", values: {} },
     codexConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       credentialType: null,
       expiresAt: null,
@@ -89,6 +90,7 @@ const onboardingData = {
       updatedAt: null,
     },
     claudeCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       status: "missing",
       updatedAt: null,

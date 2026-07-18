@@ -35,11 +35,13 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const checkedAt = new Date().toISOString();
   if (!data) {
-    return NextResponse.json({ connected: false });
+    return NextResponse.json({ checkedAt, connected: false });
   }
 
   return NextResponse.json({
+    checkedAt,
     connected: true,
     updatedAt: data.updated_at,
   });
@@ -87,6 +89,7 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({
+    checkedAt: new Date().toISOString(),
     connected: true,
     updatedAt: data.updated_at,
   });

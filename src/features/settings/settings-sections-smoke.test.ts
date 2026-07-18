@@ -106,11 +106,13 @@ function settingsData(overrides: Partial<SettingsPageData> = {}): SettingsPageDa
         values: agentConfig,
       },
       claudeCodeConnection: {
+        checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         status: "missing",
         updatedAt: null,
       },
       codexConnection: {
+        checkedAt: "2026-05-16T18:00:01.000Z",
         connected: false,
         credentialType: null,
         expiresAt: null,
@@ -523,6 +525,7 @@ describe("Settings integration sections", () => {
           setupHealth: {
             ...base.setupHealth,
             codexConnection: {
+              checkedAt: "2026-05-16T18:00:01.000Z",
               connected: true,
               credentialType: "codex_access_token",
               expiresAt: "2026-05-16T20:00:00.000Z",

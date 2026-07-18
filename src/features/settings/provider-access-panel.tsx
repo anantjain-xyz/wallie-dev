@@ -1,18 +1,16 @@
 "use client";
 
-import {
-  ClaudeCodeConnectionPanel,
-  type ClaudeCodeConnectionStatus,
-} from "@/features/settings/claude-code-connection-panel";
-import {
-  CodexConnectionPanel,
-  type CodexConnectionStatus,
-} from "@/features/settings/codex-connection-panel";
+import dynamic from "next/dynamic";
+
+import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
+import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
 type ProviderAccessPanelProps = {
   connectFlash?: string | null;
+  initialClaudeCodeStatus?: ClaudeCodeConnectionStatus;
+  initialCodexStatus?: CodexConnectionStatus;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   provider: AgentProvider;
@@ -23,8 +21,29 @@ type ProviderAccessPanelProps = {
   workspaceId?: string;
 };
 
+const CodexConnectionPanel = dynamic(
+  () =>
+    import("@/features/settings/codex-connection-panel").then(
+      (module) => module.CodexConnectionPanel,
+    ),
+  { loading: () => <p className="text-xs text-muted">Checking connection</p>, ssr: false },
+);
+
+const ClaudeCodeConnectionPanel = dynamic(
+  () =>
+    import("@/features/settings/claude-code-connection-panel").then(
+      (module) => module.ClaudeCodeConnectionPanel,
+    ),
+  {
+    loading: () => <p className="text-xs text-muted">Checking connection</p>,
+    ssr: false,
+  },
+);
+
 export function ProviderAccessPanel({
   connectFlash,
+  initialClaudeCodeStatus,
+  initialCodexStatus,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
   provider,
@@ -51,6 +70,7 @@ export function ProviderAccessPanel({
           </div>
           <CodexConnectionPanel
             connectFlash={connectFlash}
+            initialStatus={initialCodexStatus}
             onStatusChange={onCodexStatusChange}
             returnTo={returnTo}
             vercelConnectionHref={vercelConnectionHref}
@@ -68,7 +88,10 @@ export function ProviderAccessPanel({
               Sessions run with the Anthropic API key saved by the session creator.
             </p>
           </div>
-          <ClaudeCodeConnectionPanel onStatusChange={onClaudeCodeStatusChange} />
+          <ClaudeCodeConnectionPanel
+            initialStatus={initialClaudeCodeStatus}
+            onStatusChange={onClaudeCodeStatusChange}
+          />
         </div>
       );
   }

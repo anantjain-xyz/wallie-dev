@@ -3,6 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { Status, type StatusValue } from "@/components/ui/status";
+import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
 import { codexCredentialTypeLabel, type CodexCredentialType } from "@/lib/codex/contracts";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
 
@@ -11,6 +12,7 @@ export interface CodexConnectionStatus {
   authCacheLastRefresh?: string | null;
   connected: boolean;
   credentialType?: CodexCredentialType | null;
+  checkedAt: string;
   expired?: boolean;
   expiresAt?: string | null;
   reconnectReason?: string | null;
@@ -33,6 +35,8 @@ interface CodexConnectionPanelProps {
   returnTo?: string;
   /** Banner to surface when the query string reports codex_connect=... */
   connectFlash?: string | null;
+  /** Server-loaded status used immediately and revalidated only after its freshness window. */
+  initialStatus?: CodexConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: CodexConnectionStatus) => void;
   vercelConnectionHref?: string;
@@ -149,13 +153,15 @@ export function ChatGptSubscriptionControls({
 
 export function CodexConnectionPanel({
   connectFlash,
+  initialStatus,
   onStatusChange,
   returnTo,
   vercelConnectionHref = "#vercel",
   vercelSandboxConnection,
   workspaceId,
 }: CodexConnectionPanelProps) {
-  const [status, setStatus] = useState<CodexConnectionStatus | null>(null);
+  const initialStatusRef = useRef(initialStatus);
+  const [status, setStatus] = useState<CodexConnectionStatus | null>(() => initialStatus ?? null);
   const [credentialType, setCredentialType] = useState<CodexCredentialType>("chatgpt_auth_json");
   const [credential, setCredential] = useState("");
   const [expiresOn, setExpiresOn] = useState("");
@@ -190,7 +196,9 @@ export function CodexConnectionPanel({
   }, []);
 
   useEffect(() => {
-    void refresh();
+    if (isProviderStatusStale(initialStatusRef.current?.checkedAt)) {
+      void refresh();
+    }
   }, [refresh]);
 
   const deviceFlowCallbackUrl = useCallback(

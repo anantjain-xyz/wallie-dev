@@ -69,11 +69,12 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const checkedAt = new Date().toISOString();
   if (!data) {
-    return NextResponse.json({ connected: false });
+    return NextResponse.json({ checkedAt, connected: false });
   }
 
-  return NextResponse.json(mapCodexCredentialConnectionStatus(data));
+  return NextResponse.json({ ...mapCodexCredentialConnectionStatus(data), checkedAt });
 }
 
 export async function POST(request: Request) {
@@ -134,7 +135,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(mapCodexCredentialConnectionStatus(data));
+  return NextResponse.json({
+    ...mapCodexCredentialConnectionStatus(data),
+    checkedAt: new Date().toISOString(),
+  });
 }
 
 export async function DELETE() {

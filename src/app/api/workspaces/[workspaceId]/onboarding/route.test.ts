@@ -91,6 +91,7 @@ const onboardingData: WorkspaceOnboardingData = {
       },
     },
     codexConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: true,
       credentialType: "codex_access_token",
       expiresAt: "2026-05-16T20:00:00.000Z",
@@ -98,6 +99,7 @@ const onboardingData: WorkspaceOnboardingData = {
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     claudeCodeConnection: {
+      checkedAt: "2026-05-16T18:00:01.000Z",
       connected: false,
       status: "missing",
       updatedAt: null,

@@ -243,6 +243,10 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.defaultPipeline.status).toBe("ready");
     expect(result.data.setupHealth.codexConnection.status).toBe("connected");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
+    expect(result.data.setupHealth.codexConnection.checkedAt).toMatch(/Z$/);
+    expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toBe(
+      result.data.setupHealth.codexConnection.checkedAt,
+    );
 
     for (const table of [
       "workspace_onboarding",

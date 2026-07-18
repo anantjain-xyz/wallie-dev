@@ -231,9 +231,11 @@ function codexConnectionStatus(
     credential_type: string;
     updated_at: string;
   } | null,
+  checkedAt: string,
 ) {
   if (!row || !isCodexCredentialType(row.credential_type)) {
     return {
+      checkedAt,
       connected: false,
       credentialType: null,
       expiresAt: null,
@@ -247,6 +249,7 @@ function codexConnectionStatus(
     row.credential_type === "chatgpt_auth_json" && row.auth_reconnect_required;
 
   return {
+    checkedAt,
     connected: !isExpired && !reconnectRequired,
     credentialType: row.credential_type,
     expiresAt: row.access_token_expires_at,
@@ -255,9 +258,10 @@ function codexConnectionStatus(
   };
 }
 
-function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
+function claudeCodeConnectionStatus(row: { updated_at: string } | null, checkedAt: string) {
   if (!row) {
     return {
+      checkedAt,
       connected: false,
       status: "missing" as const,
       updatedAt: null,
@@ -265,6 +269,7 @@ function claudeCodeConnectionStatus(row: { updated_at: string } | null) {
   }
 
   return {
+    checkedAt,
     connected: true,
     status: "connected" as const,
     updatedAt: row.updated_at,
@@ -590,6 +595,7 @@ function deriveSetupHealth(
   const secretKeys = [...new Set(snapshot.secretRows.map((row) => row.key))].sort();
   const linearSecret = snapshot.secretRows.find((row) => row.key === "LINEAR_API_KEY") ?? null;
   const linearRoutingUpdatedAt = snapshot.linearRoutingRow?.updated_at ?? null;
+  const providerStatusCheckedAt = new Date().toISOString();
 
   return {
     agentConfig: {
@@ -598,8 +604,11 @@ function deriveSetupHealth(
       status: configuredKeys.length > 0 ? "present" : "missing",
       values: agentConfig,
     },
-    claudeCodeConnection: claudeCodeConnectionStatus(snapshot.claudeCodeCredentials),
-    codexConnection: codexConnectionStatus(snapshot.codexCredentials),
+    claudeCodeConnection: claudeCodeConnectionStatus(
+      snapshot.claudeCodeCredentials,
+      providerStatusCheckedAt,
+    ),
+    codexConnection: codexConnectionStatus(snapshot.codexCredentials, providerStatusCheckedAt),
     defaultPipeline: {
       configured: Boolean(pipeline && pipeline.stages.length > 0),
       pipelineId: pipeline?.id ?? null,
