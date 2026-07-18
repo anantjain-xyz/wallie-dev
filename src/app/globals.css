@@ -979,6 +979,12 @@ html:has([data-precision-console-fixture]) nextjs-portal {
   }
 }
 
+@container email-code-form (max-width: 10rem) {
+  .email-code-grid {
+    grid-template-columns: repeat(2, minmax(2.75rem, 1fr));
+  }
+}
+
 /* Coarse pointers and narrow layouts keep the dense desktop visual while
    expanding every control to the WCAG 2.2 target minimum. */
 @media (pointer: coarse), (max-width: 767px) {
