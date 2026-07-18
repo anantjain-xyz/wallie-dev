@@ -12,7 +12,8 @@ describe("PipelineLoadingSkeleton", () => {
     expect(html).toContain('aria-label="Loading pipeline"');
     expect(html).toContain("min-h-full bg-canvas");
     expect(html).toContain("md:w-[260px]");
-    expect((html.match(/animate-pulse/g) ?? []).length).toBeGreaterThan(20);
+    expect((html.match(/<article/g) ?? []).length).toBe(4);
+    expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
     expect(html).not.toMatch(/<(?:a|button|input|select|textarea)\b/);
   });
 });
