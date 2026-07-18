@@ -209,7 +209,20 @@ function reconcilePipelineBoard(
       : nextLane;
   });
 
-  return { cardsById, lanes, offPageCardLaneKeys: {} };
+  const laneByKey = new Map(lanes.map((lane) => [pipelineLaneKey(lane), lane]));
+  const offPageCardLaneKeys = Object.fromEntries(
+    Object.entries(current.offPageCardLaneKeys).filter(([cardId, laneKey]) => {
+      const lane = laneByKey.get(laneKey);
+      return (
+        !invalidatedCardIds.has(cardId) &&
+        !cardsById[cardId] &&
+        !!lane &&
+        lane.totalCount > lane.cardIds.length
+      );
+    }),
+  );
+
+  return { cardsById, lanes, offPageCardLaneKeys };
 }
 
 function upsertPipelineCard(

@@ -185,6 +185,28 @@ describe("pipelineBoardReducer", () => {
     expect(removed.lanes[0]?.totalCount).toBe(25);
   });
 
+  it("preserves off-page ownership through an unrelated lane reconciliation", () => {
+    const cards = Array.from({ length: 25 }, (_, index) => card(index + 1));
+    const initial = createPipelineBoardState([lane(PLAN_STAGE_ID, "Plan", cards)]);
+    const inserted = card(99, PLAN_STAGE_ID, "awaiting_review");
+    const withOffPageInsert = pipelineBoardReducer(initial, {
+      card: inserted,
+      isInsert: true,
+      type: "upsert",
+    });
+    const reconciled = pipelineBoardReducer(withOffPageInsert, {
+      invalidatedCardIds: new Set([card(100, BUILD_STAGE_ID).id]),
+      lanes: [{ ...lane(PLAN_STAGE_ID, "Plan", cards), totalCount: 26 }],
+      type: "reconcile",
+    });
+
+    expect(reconciled.offPageCardLaneKeys[inserted.id]).toBe(`${PIPELINE_ID}:${PLAN_STAGE_ID}`);
+
+    const removed = pipelineBoardReducer(reconciled, { cardId: inserted.id, type: "remove" });
+    expect(removed.lanes[0]?.totalCount).toBe(25);
+    expect(removed.offPageCardLaneKeys[inserted.id]).toBeUndefined();
+  });
+
   it("keeps a full destination slice bounded when a loaded card moves into it", () => {
     const buildCards = Array.from({ length: 25 }, (_, index) =>
       card(
