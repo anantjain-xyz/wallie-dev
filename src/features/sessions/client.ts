@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createSessionPayloadSchema } from "@/features/sessions/create";
+import type { SessionTitleMutationResult } from "@/features/sessions/mutation-contracts";
 import { updateSessionTitleClientInputSchema } from "@/features/sessions/update-title";
 import type { Database } from "@/lib/supabase/database.types";
 import type { SessionRepositoryOption } from "@/features/sessions/types";
@@ -22,11 +23,7 @@ export type UpdateSessionTitleInput = {
   title: string;
 };
 
-export type UpdateSessionTitleResult = {
-  id: string;
-  title: string;
-  updatedAt: string;
-};
+export type UpdateSessionTitleResult = SessionTitleMutationResult;
 
 export type SessionArchiveResult = {
   archivedAt: string | null;
