@@ -69,9 +69,16 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const shouldRestoreSearchFocusRef = useRef(false);
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
+
+  useEffect(() => {
+    if (!shouldRestoreSearchFocusRef.current) return;
+    shouldRestoreSearchFocusRef.current = false;
+    searchInputRef.current?.focus();
+  }, [initialData.queryState.query]);
 
   function updateQueryState(next: Partial<SessionListQueryState>) {
     const merged: SessionListQueryState = {
@@ -93,8 +100,12 @@ export function SessionsPageClient({ initialData }: SessionsPageClientProps) {
 
   function handleSearchClear() {
     if (searchInputRef.current) searchInputRef.current.value = "";
+    if (initialData.queryState.query) {
+      shouldRestoreSearchFocusRef.current = true;
+    } else {
+      searchInputRef.current?.focus();
+    }
     updateQueryState({ query: "" });
-    searchInputRef.current?.focus();
   }
 
   const sessions = initialData.sessions;

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -102,5 +102,36 @@ describe("SessionsPageClient accessibility", () => {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("restores Search focus after Clear navigation remounts the keyed input", async () => {
+    const user = userEvent.setup();
+    const dataWithQuery: SessionListPageData = {
+      ...initialData,
+      queryState: { ...initialData.queryState, query: "OP-339" },
+    };
+    const { rerender } = render(
+      <main>
+        <SessionsPageClient initialData={dataWithQuery} />
+      </main>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(mocked.replace).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&scope=active");
+
+    rerender(
+      <main>
+        <SessionsPageClient
+          initialData={{
+            ...dataWithQuery,
+            queryState: { ...dataWithQuery.queryState, query: "" },
+          }}
+        />
+      </main>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox", { name: "Search sessions" })).toHaveFocus(),
+    );
   });
 });
