@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Status, STATUS_VALUES } from "@/components/ui/status";
+import { cn } from "@/lib/utils";
 
 const themes = ["light", "dark"] as const;
 const simulations = [
@@ -14,12 +15,26 @@ const simulations = [
   { label: "Achromatopsia", value: "achromatopsia" },
 ] as const;
 
-type StatusSimulation = (typeof simulations)[number]["value"];
+export type StatusSimulation = (typeof simulations)[number]["value"];
 
-export function StatusShowcase() {
-  const [theme, setTheme] = useState<(typeof themes)[number]>("light");
-  const [simulation, setSimulation] = useState<StatusSimulation>("standard");
-  const [zoomed, setZoomed] = useState(false);
+export function isStatusSimulation(value: string | undefined): value is StatusSimulation {
+  return simulations.some((simulation) => simulation.value === value);
+}
+
+export function StatusShowcase({
+  displayMode = "desktop",
+  initialSimulation = "standard",
+  initialTheme = "light",
+  initialZoomed = false,
+}: {
+  displayMode?: "desktop" | "mobile";
+  initialSimulation?: StatusSimulation;
+  initialTheme?: (typeof themes)[number];
+  initialZoomed?: boolean;
+}) {
+  const [theme, setTheme] = useState<(typeof themes)[number]>(initialTheme);
+  const [simulation, setSimulation] = useState<StatusSimulation>(initialSimulation);
+  const [zoomed, setZoomed] = useState(initialZoomed);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -29,9 +44,15 @@ export function StatusShowcase() {
   }, [theme]);
 
   return (
-    <main className="min-h-screen bg-canvas px-5 py-10 text-foreground sm:px-8">
+    <main
+      className={cn(
+        "min-h-screen bg-canvas px-5 py-10 text-foreground sm:px-8",
+        displayMode === "mobile" && "w-[390px] sm:px-5",
+      )}
+      data-status-display={displayMode}
+    >
       <ColorVisionFilters />
-      <div className="mx-auto max-w-5xl space-y-8">
+      <div className={cn("mx-auto max-w-5xl space-y-8", displayMode === "mobile" && "max-w-none")}>
         <header className="space-y-3">
           <p className="font-mono text-xs uppercase tracking-[0.16em] text-accent">
             Design system lab
