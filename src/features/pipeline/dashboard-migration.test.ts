@@ -12,8 +12,9 @@ describe("Pipeline dashboard migration", () => {
   it("bounds pages and ranks attention before stable update/id keys", () => {
     expect(migration).toContain("least(greatest(coalesce(page_limit, 25), 1), 25)");
     expect(migration).toContain("order by ss.attention_rank asc, ss.updated_at desc, ss.id desc");
-    expect(migration).toContain("s.updated_at <= v_snapshot_at");
-    expect(migration).toContain("ss.id < cursor_id");
+    expect(migration).toContain("where not (ss.id = any(v_seen_ids))");
+    expect(migration).toContain("cursor_seen_ids uuid[] default null");
+    expect(migration).not.toContain("s.updated_at <= v_snapshot_at");
   });
 
   it("keeps lane identity pinned to both the session pipeline and current stage", () => {

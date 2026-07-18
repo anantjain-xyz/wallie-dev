@@ -54,12 +54,8 @@ function card(index: number, stageId = PLAN_STAGE_ID, pipelineId = DEFAULT_PIPEL
 
 function cursor(stageId = PLAN_STAGE_ID, pipelineId = DEFAULT_PIPELINE_ID) {
   return {
-    attentionRank: 1,
-    id: card(25, stageId, pipelineId).id,
     pipelineId,
-    snapshotAt: "2026-07-17T01:00:00.000Z",
     stageId,
-    updatedAt: "2026-07-17T00:25:00.000Z",
   };
 }
 

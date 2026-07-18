@@ -11,13 +11,14 @@ type RouteContext = {
   params: Promise<{ workspaceId: string }>;
 };
 
-const querySchema = z.object({
+const requestSchema = z.object({
   cursor: z.string().min(1),
   pipelineId: z.string().uuid(),
+  seenIds: z.array(z.string().uuid()).max(5_000),
   stageId: z.string().uuid(),
 });
 
-export async function GET(request: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
   const access = await requireWorkspaceAccessById(workspaceId);
 
@@ -25,12 +26,8 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  const url = new URL(request.url);
-  const parsed = querySchema.safeParse({
-    cursor: url.searchParams.get("cursor"),
-    pipelineId: url.searchParams.get("pipelineId"),
-    stageId: url.searchParams.get("stageId"),
-  });
+  const body = await request.json().catch(() => null);
+  const parsed = requestSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ error: "A valid lane cursor is required." }, { status: 400 });
@@ -47,8 +44,8 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     const lane = await loadPipelineDashboardLanePage({
-      cursor,
       pipelineId: parsed.data.pipelineId,
+      seenIds: parsed.data.seenIds,
       stageId: parsed.data.stageId,
       supabase: access.context.supabase,
       workspaceId,

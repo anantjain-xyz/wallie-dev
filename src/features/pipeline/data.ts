@@ -16,19 +16,12 @@ import type { createSupabaseServerClient } from "@/lib/supabase/server";
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 type PipelineDashboardCursor = {
-  attentionRank: number;
-  id: string;
   pipelineId: string;
-  snapshotAt: string;
   stageId: string;
-  updatedAt: string;
 };
 
 type PipelineDashboardRpcArgs = {
-  cursor_attention_rank?: number;
-  cursor_id?: string;
-  cursor_snapshot_at?: string;
-  cursor_updated_at?: string;
+  cursor_seen_ids?: string[];
   page_limit: number;
   target_pipeline_id?: string;
   target_stage_id?: string;
@@ -36,12 +29,8 @@ type PipelineDashboardRpcArgs = {
 };
 
 type PipelineDashboardRpcCursor = {
-  attentionRank: number;
-  id: string;
   pipelineId: string;
-  snapshotAt: string;
   stageId: string;
-  updatedAt: string;
 };
 
 type PipelineDashboardRpcLane = Omit<PipelineDashboardLane, "cursor"> & {
@@ -58,12 +47,8 @@ type PipelineDashboardRpcResult = PromiseLike<{
 }>;
 
 const cursorSchema = z.object({
-  attentionRank: z.number().int().min(0).max(1),
-  id: z.string().uuid(),
   pipelineId: z.string().uuid(),
-  snapshotAt: z.string().datetime({ offset: true }),
   stageId: z.string().uuid(),
-  updatedAt: z.string().datetime({ offset: true }),
 });
 
 function encodeCursor(cursor: PipelineDashboardRpcCursor | null) {
@@ -117,23 +102,20 @@ async function queryPipelineDashboard(
 }
 
 export async function loadPipelineDashboardLanePage({
-  cursor,
   pipelineId,
+  seenIds,
   stageId,
   supabase,
   workspaceId,
 }: {
-  cursor: PipelineDashboardCursor;
   pipelineId: string;
+  seenIds: string[];
   stageId: string;
   supabase: SupabaseServerClient;
   workspaceId: string;
 }): Promise<PipelineDashboardLanePage | null> {
   const { data, error } = await queryPipelineDashboard(supabase, {
-    cursor_attention_rank: cursor.attentionRank,
-    cursor_id: cursor.id,
-    cursor_snapshot_at: cursor.snapshotAt,
-    cursor_updated_at: cursor.updatedAt,
+    cursor_seen_ids: seenIds,
     page_limit: PIPELINE_DASHBOARD_PAGE_SIZE,
     target_pipeline_id: pipelineId,
     target_stage_id: stageId,

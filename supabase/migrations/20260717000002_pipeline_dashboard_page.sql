@@ -17,10 +17,7 @@ create or replace function public.get_pipeline_dashboard_page(
   target_pipeline_id uuid default null,
   target_stage_id uuid default null,
   page_limit integer default 25,
-  cursor_snapshot_at timestamptz default null,
-  cursor_attention_rank integer default null,
-  cursor_updated_at timestamptz default null,
-  cursor_id uuid default null
+  cursor_seen_ids uuid[] default null
 )
 returns jsonb
 language plpgsql
@@ -30,7 +27,7 @@ as $$
 declare
   v_lanes jsonb := '[]'::jsonb;
   v_limit integer := least(greatest(coalesce(page_limit, 25), 1), 25);
-  v_snapshot_at timestamptz := coalesce(cursor_snapshot_at, statement_timestamp());
+  v_seen_ids uuid[] := coalesce(cursor_seen_ids, '{}'::uuid[]);
 begin
   if not exists (
     select 1
@@ -95,7 +92,6 @@ begin
         where s.workspace_id = target_workspace_id
           and s.pipeline_id = p.id
           and s.archived_at is null
-          and s.updated_at <= v_snapshot_at
       )
       and (
         target_pipeline_id is null
@@ -123,7 +119,6 @@ begin
      and ld.stage_id = s.current_stage_id
     where s.workspace_id = target_workspace_id
       and s.archived_at is null
-      and s.updated_at <= v_snapshot_at
   ),
   lane_counts as (
     select pipeline_id, current_stage_id as stage_id, count(*)::integer as total_count
@@ -141,17 +136,7 @@ begin
         order by ss.attention_rank asc, ss.updated_at desc, ss.id desc
       )::integer as page_row
     from snapshot_sessions ss
-    where cursor_attention_rank is null
-      or cursor_updated_at is null
-      or cursor_id is null
-      or ss.attention_rank > cursor_attention_rank
-      or (
-        ss.attention_rank = cursor_attention_rank
-        and (
-          ss.updated_at < cursor_updated_at
-          or (ss.updated_at = cursor_updated_at and ss.id < cursor_id)
-        )
-      )
+    where not (ss.id = any(v_seen_ids))
   ),
   page_sessions as (
     select *
@@ -206,12 +191,8 @@ begin
       case
         when coalesce(max(cr.remaining_count), 0) > v_limit then
           jsonb_build_object(
-            'attentionRank', max(cr.attention_rank) filter (where cr.page_row = v_limit),
-            'id', max(cr.id::text) filter (where cr.page_row = v_limit),
             'pipelineId', ld.pipeline_id,
-            'snapshotAt', v_snapshot_at,
-            'stageId', ld.stage_id,
-            'updatedAt', max(cr.updated_at) filter (where cr.page_row = v_limit)
+            'stageId', ld.stage_id
           )
         else null
       end as next_cursor
@@ -271,10 +252,7 @@ revoke all on function public.get_pipeline_dashboard_page(
   uuid,
   uuid,
   integer,
-  timestamptz,
-  integer,
-  timestamptz,
-  uuid
+  uuid[]
 ) from public;
 
 grant execute on function public.get_pipeline_dashboard_page(
@@ -282,8 +260,5 @@ grant execute on function public.get_pipeline_dashboard_page(
   uuid,
   uuid,
   integer,
-  timestamptz,
-  integer,
-  timestamptz,
-  uuid
+  uuid[]
 ) to authenticated;

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { appendPipelineLanePage, comparePipelineDashboardCards } from "@/features/pipeline/model";
+import { appendPipelineBoardLanePage, upsertPipelineRealtimeCard } from "@/features/pipeline/model";
 import type {
   PipelineDashboardCard,
   PipelineDashboardData,
@@ -129,7 +129,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
               workspaceId: row.workspace_id,
             };
 
-            return upsertRealtimeCard(prev, next, payload.eventType === "INSERT");
+            return upsertPipelineRealtimeCard(prev, next, payload.eventType === "INSERT");
           });
         },
       )
@@ -163,15 +163,19 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
     setLoadingLaneId(lane.id);
     setLaneErrors((prev) => ({ ...prev, [lane.id]: "" }));
 
-    const search = new URLSearchParams({
-      cursor: lane.cursor,
-      pipelineId: lane.pipeline.id,
-      stageId: lane.id,
-    });
-
     try {
       const response = await fetch(
-        `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard?${search.toString()}`,
+        `/api/workspaces/${initialData.workspace.id}/pipeline-dashboard`,
+        {
+          body: JSON.stringify({
+            cursor: lane.cursor,
+            pipelineId: lane.pipeline.id,
+            seenIds: lane.cards.map((card) => card.id),
+            stageId: lane.id,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
       );
       const payload = (await response.json()) as {
         error?: string;
@@ -182,9 +186,7 @@ function PipelinePageContent({ initialData }: PipelinePageClientProps) {
         throw new Error(payload.error ?? "Failed to load more sessions.");
       }
 
-      setLanes((prev) =>
-        prev.map((currentLane) => appendPipelineLanePage(currentLane, payload.lane!)),
-      );
+      setLanes((prev) => appendPipelineBoardLanePage(prev, payload.lane!));
     } catch (error) {
       setLaneErrors((prev) => ({
         ...prev,
@@ -351,41 +353,6 @@ function removeLoadedCard(lanes: PipelineDashboardLane[], cardId: string) {
       cards: lane.cards.filter((card) => card.id !== cardId),
       totalCount: Math.max(0, lane.totalCount - 1),
     };
-  });
-}
-
-function upsertRealtimeCard(
-  lanes: PipelineDashboardLane[],
-  card: PipelineDashboardCard,
-  isInsert: boolean,
-) {
-  const existingLaneIndex = lanes.findIndex((lane) =>
-    lane.cards.some((candidate) => candidate.id === card.id),
-  );
-  const targetLaneIndex = lanes.findIndex(
-    (lane) => lane.pipeline.id === card.pipelineId && lane.id === card.currentStageId,
-  );
-
-  return lanes.map((lane, laneIndex) => {
-    if (laneIndex !== existingLaneIndex && laneIndex !== targetLaneIndex) return lane;
-
-    const cards = lane.cards.filter((candidate) => candidate.id !== card.id);
-    let totalCount = lane.totalCount;
-
-    if (laneIndex === existingLaneIndex && laneIndex !== targetLaneIndex) {
-      totalCount = Math.max(0, totalCount - 1);
-    }
-
-    if (laneIndex === targetLaneIndex) {
-      cards.push(card);
-      cards.sort(comparePipelineDashboardCards);
-
-      if (existingLaneIndex !== targetLaneIndex && (existingLaneIndex >= 0 || isInsert)) {
-        totalCount += 1;
-      }
-    }
-
-    return { ...lane, cards, totalCount };
   });
 }
 

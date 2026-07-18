@@ -15,7 +15,7 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-import { GET } from "./route";
+import { POST } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
@@ -25,8 +25,19 @@ function routeContext() {
   return { params: Promise.resolve({ workspaceId: WORKSPACE_ID }) };
 }
 
-function request(query = `cursor=opaque&pipelineId=${PIPELINE_ID}&stageId=${STAGE_ID}`) {
-  return new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard?${query}`);
+function request(
+  body: unknown = {
+    cursor: "opaque",
+    pipelineId: PIPELINE_ID,
+    seenIds: ["30000000-0000-4000-8000-000000000001"],
+    stageId: STAGE_ID,
+  },
+) {
+  return new Request(`http://localhost/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard`, {
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
 }
 
 function grantAccess() {
@@ -39,7 +50,7 @@ function grantAccess() {
   });
 }
 
-describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
+describe("POST /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -47,12 +58,8 @@ describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
   it("loads only the requested pinned-pipeline lane", async () => {
     grantAccess();
     const cursor = {
-      attentionRank: 1,
-      id: "30000000-0000-4000-8000-000000000001",
       pipelineId: PIPELINE_ID,
-      snapshotAt: "2026-07-17T01:00:00.000Z",
       stageId: STAGE_ID,
-      updatedAt: "2026-07-17T00:00:00.000Z",
     };
     mocked.decodePipelineDashboardCursor.mockReturnValue(cursor);
     mocked.loadPipelineDashboardLanePage.mockResolvedValue({
@@ -63,14 +70,14 @@ describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
       totalCount: 25,
     });
 
-    const response = await GET(request(), routeContext());
+    const response = await POST(request(), routeContext());
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(mocked.loadPipelineDashboardLanePage).toHaveBeenCalledTimes(1);
     expect(mocked.loadPipelineDashboardLanePage).toHaveBeenCalledWith({
-      cursor,
       pipelineId: PIPELINE_ID,
+      seenIds: ["30000000-0000-4000-8000-000000000001"],
       stageId: STAGE_ID,
       supabase: expect.any(Object),
       workspaceId: WORKSPACE_ID,
@@ -84,7 +91,7 @@ describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
       stageId: "90000000-0000-4000-8000-000000000001",
     });
 
-    const response = await GET(request(), routeContext());
+    const response = await POST(request(), routeContext());
 
     expect(response.status).toBe(400);
     expect(mocked.loadPipelineDashboardLanePage).not.toHaveBeenCalled();
@@ -97,7 +104,7 @@ describe("GET /api/workspaces/[workspaceId]/pipeline-dashboard", () => {
       status: 404,
     });
 
-    const response = await GET(request(), routeContext());
+    const response = await POST(request(), routeContext());
 
     expect(response.status).toBe(404);
     expect(mocked.decodePipelineDashboardCursor).not.toHaveBeenCalled();

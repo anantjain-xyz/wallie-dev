@@ -129,7 +129,13 @@ describe("PipelinePageClient", () => {
     expect(screen.getAllByText("Session 1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Session 3").length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`stageId=${PLAN_STAGE_ID}`);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/workspaces/${WORKSPACE_ID}/pipeline-dashboard`);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      cursor: "opaque-plan-cursor",
+      pipelineId: PIPELINE_ID,
+      seenIds: [card(1, PLAN_STAGE_ID).id],
+      stageId: PLAN_STAGE_ID,
+    });
     expect(screen.queryByRole("button", { name: "Load more Plan sessions" })).toBeNull();
   });
 });

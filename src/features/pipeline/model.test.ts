@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { appendPipelineLanePage } from "@/features/pipeline/model";
+import {
+  appendPipelineBoardLanePage,
+  appendPipelineLanePage,
+  upsertPipelineRealtimeCard,
+} from "@/features/pipeline/model";
 import type { PipelineDashboardCard, PipelineDashboardLane } from "@/features/pipeline/types";
 
 const PIPELINE_ID = "10000000-0000-4000-8000-000000000001";
@@ -38,7 +42,7 @@ function lane(cards: PipelineDashboardCard[]): PipelineDashboardLane {
     pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
     position: 1,
     slug: "plan",
-    totalCount: 4,
+    totalCount: Math.max(4, cards.length),
   };
 }
 
@@ -92,5 +96,79 @@ describe("appendPipelineLanePage", () => {
     });
 
     expect(result).toBe(initial);
+  });
+});
+
+describe("concurrent dashboard updates", () => {
+  it("does not restore a stale load-more card after realtime moved it to another lane", () => {
+    const movedId = "00000000-0000-4000-8000-000000000009";
+    const buildStageId = "50000000-0000-4000-8000-000000000001";
+    const planLane = lane([]);
+    const movedCard = {
+      ...card(movedId, "agent_generating", "2026-07-17T06:00:00Z"),
+      currentStageId: buildStageId,
+    };
+    const buildLane = {
+      ...lane([movedCard]),
+      cursor: null,
+      id: buildStageId,
+      name: "Build",
+      slug: "build",
+      totalCount: 1,
+    };
+
+    const result = appendPipelineBoardLanePage([planLane, buildLane], {
+      cards: [card(movedId, "agent_generating", "2026-07-17T05:00:00Z")],
+      cursor: null,
+      id: STAGE_ID,
+      pipeline: planLane.pipeline,
+      totalCount: 1,
+    });
+
+    expect(result[0]?.cards).toEqual([]);
+    expect(result[1]?.cards).toEqual([movedCard]);
+  });
+
+  it("ignores off-page realtime updates so a loaded slice remains bounded", () => {
+    const cards = Array.from({ length: 25 }, (_, index) =>
+      card(
+        `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        "agent_generating",
+        `2026-07-17T${String(index).padStart(2, "0")}:00:00Z`,
+      ),
+    );
+    const initial = [lane(cards)];
+    const offPageCard = card(
+      "00000000-0000-4000-8000-000000000099",
+      "awaiting_review",
+      "2026-07-18T00:00:00Z",
+    );
+
+    const result = upsertPipelineRealtimeCard(initial, offPageCard, false);
+
+    expect(result).toBe(initial);
+    expect(result[0]?.cards).toHaveLength(25);
+  });
+
+  it("does not let realtime inserts grow a full initial lane", () => {
+    const cards = Array.from({ length: 25 }, (_, index) =>
+      card(
+        `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        "agent_generating",
+        `2026-07-17T${String(index).padStart(2, "0")}:00:00Z`,
+      ),
+    );
+    const initial = [lane(cards)];
+    const inserted = card(
+      "00000000-0000-4000-8000-000000000099",
+      "awaiting_review",
+      "2026-07-18T00:00:00Z",
+    );
+
+    const result = upsertPipelineRealtimeCard(initial, inserted, true);
+
+    expect(result).toBe(initial);
+    expect(result[0]?.cards).toHaveLength(25);
+    expect(result[0]?.totalCount).toBe(25);
   });
 });
