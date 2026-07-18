@@ -32,6 +32,7 @@ function buildSupabaseMock({
   artifactRows?: Array<{
     artifact_json?: unknown;
     created_at: string;
+    id: string;
     stage_slug: string;
     version: number;
   }>;
@@ -103,8 +104,18 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
   it("returns version metadata without selecting or returning artifact bodies", async () => {
     const supabase = buildSupabaseMock({
       artifactRows: [
-        { created_at: "2026-06-07T11:00:00.000Z", stage_slug: "build", version: 2 },
-        { created_at: "2026-06-07T10:00:00.000Z", stage_slug: "build", version: 1 },
+        {
+          created_at: "2026-06-07T11:00:00.000Z",
+          id: "artifact-2",
+          stage_slug: "build",
+          version: 2,
+        },
+        {
+          created_at: "2026-06-07T10:00:00.000Z",
+          id: "artifact-1",
+          stage_slug: "build",
+          version: 1,
+        },
       ],
     });
     mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
@@ -114,11 +125,21 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     expect(result.status).toBe(200);
     await expect(result.json()).resolves.toEqual({
       artifacts: [
-        { createdAt: "2026-06-07T11:00:00.000Z", stageSlug: "build", version: 2 },
-        { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
+        {
+          createdAt: "2026-06-07T11:00:00.000Z",
+          id: "artifact-2",
+          stageSlug: "build",
+          version: 2,
+        },
+        {
+          createdAt: "2026-06-07T10:00:00.000Z",
+          id: "artifact-1",
+          stageSlug: "build",
+          version: 1,
+        },
       ],
     });
-    expect(supabase.selects).toEqual(["created_at, stage_slug, version"]);
+    expect(supabase.selects).toEqual(["created_at, id, stage_slug, version"]);
   });
 
   it("returns one requested body with sanitized server-rendered Markdown", async () => {
@@ -128,6 +149,7 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
           artifact_json:
             "# Safe\n\n<script>alert(1)</script> [bad](javascript:alert(2))\n\n| A | B |\n| - | - |\n| x | y |\n\n- [x] done",
           created_at: "2026-06-07T10:00:00.000Z",
+          id: "artifact-1",
           stage_slug: "build",
           version: 1,
         },

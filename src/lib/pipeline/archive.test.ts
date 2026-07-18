@@ -13,7 +13,12 @@ vi.mock("@/lib/pipeline/cancel", () => ({
 
 import { archiveSession, unarchiveSession } from "@/lib/pipeline/archive";
 
-type Row = { archived_at: string | null; id: string };
+type Row = {
+  archived_at: string | null;
+  id: string;
+  phase_status: "agent_generating" | "approved" | "awaiting_review" | "rejected";
+  updated_at: string;
+};
 
 type Call = {
   filters: Record<string, unknown>;
@@ -83,7 +88,18 @@ afterEach(() => {
 describe("archiveSession", () => {
   it("sets archived_at under the is-null guard, then cancels in-flight work", async () => {
     const { admin, calls } = buildAdmin({
-      updateRow: { archived_at: "2026-06-07T12:00:00.000Z", id: "s1" },
+      selectRow: {
+        archived_at: "2026-06-07T12:00:00.000Z",
+        id: "s1",
+        phase_status: "rejected",
+        updated_at: "2026-06-07T12:00:01.000Z",
+      },
+      updateRow: {
+        archived_at: "2026-06-07T12:00:00.000Z",
+        id: "s1",
+        phase_status: "agent_generating",
+        updated_at: "2026-06-07T12:00:00.000Z",
+      },
     });
 
     const result = await archiveSession(admin as never, {
@@ -102,15 +118,25 @@ describe("archiveSession", () => {
     expect(update?.filters["eq.id"]).toBe("s1");
     expect(update?.filters["is.archived_at"]).toBeNull();
 
-    expect(result).toEqual({ archivedAt: "2026-06-07T12:00:00.000Z", id: "s1" });
-    // No fallback read needed when the guarded update matched a row.
-    expect(calls.some((c) => c.op === "select")).toBe(false);
+    expect(result).toEqual({
+      archivedAt: "2026-06-07T12:00:00.000Z",
+      id: "s1",
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:01.000Z",
+    });
+    // The final read happens after cancellation so phase_status is authoritative.
+    expect(calls.some((c) => c.op === "select")).toBe(true);
   });
 
   it("is idempotent: when already archived it reads back the current state", async () => {
     const { admin, calls } = buildAdmin({
       updateRow: null,
-      selectRow: { archived_at: "2026-06-01T00:00:00.000Z", id: "s1" },
+      selectRow: {
+        archived_at: "2026-06-01T00:00:00.000Z",
+        id: "s1",
+        phase_status: "awaiting_review",
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
     });
 
     const result = await archiveSession(admin as never, {
@@ -118,7 +144,12 @@ describe("archiveSession", () => {
       sessionId: "s1",
     });
 
-    expect(result).toEqual({ archivedAt: "2026-06-01T00:00:00.000Z", id: "s1" });
+    expect(result).toEqual({
+      archivedAt: "2026-06-01T00:00:00.000Z",
+      id: "s1",
+      phaseStatus: "awaiting_review",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    });
     expect(calls.some((c) => c.op === "select")).toBe(true);
     // cancelSessionWork is idempotent and runs even on the already-archived
     // path, so a retry can finish cleanup if a prior archive's cancel failed
@@ -134,7 +165,18 @@ describe("archiveSession", () => {
 describe("unarchiveSession", () => {
   it("clears archived_at under the not-null guard without canceling work", async () => {
     const { admin, calls } = buildAdmin({
-      updateRow: { archived_at: null, id: "s1" },
+      selectRow: {
+        archived_at: null,
+        id: "s1",
+        phase_status: "rejected",
+        updated_at: "2026-06-07T12:00:01.000Z",
+      },
+      updateRow: {
+        archived_at: null,
+        id: "s1",
+        phase_status: "rejected",
+        updated_at: "2026-06-07T12:00:00.000Z",
+      },
     });
 
     const result = await unarchiveSession(admin as never, { sessionId: "s1" });
@@ -145,17 +187,32 @@ describe("unarchiveSession", () => {
     expect(update?.patch).toEqual({ archived_at: null });
     expect(update?.filters["not.archived_at"]).toEqual(["is", null]);
 
-    expect(result).toEqual({ archivedAt: null, id: "s1" });
+    expect(result).toEqual({
+      archivedAt: null,
+      id: "s1",
+      phaseStatus: "rejected",
+      updatedAt: "2026-06-07T12:00:01.000Z",
+    });
   });
 
   it("is idempotent: when already active it reads back the current state", async () => {
     const { admin } = buildAdmin({
       updateRow: null,
-      selectRow: { archived_at: null, id: "s1" },
+      selectRow: {
+        archived_at: null,
+        id: "s1",
+        phase_status: "awaiting_review",
+        updated_at: "2026-06-07T12:00:00.000Z",
+      },
     });
 
     const result = await unarchiveSession(admin as never, { sessionId: "s1" });
 
-    expect(result).toEqual({ archivedAt: null, id: "s1" });
+    expect(result).toEqual({
+      archivedAt: null,
+      id: "s1",
+      phaseStatus: "awaiting_review",
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    });
   });
 });

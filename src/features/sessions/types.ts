@@ -52,11 +52,13 @@ export type SessionRepositoryOption = {
 
 export type SessionPhaseCompletion = {
   completedAt: string;
+  id?: string;
   stageSlug: string;
 };
 
 export type SessionArtifactSummary = {
   createdAt: string;
+  id?: string;
   payload: unknown;
   stageSlug: string;
   version: number;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import type { SessionPhaseMutationResult } from "@/features/sessions/mutation-contracts";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -54,5 +55,29 @@ export async function POST(_request: Request, { params }: Params) {
     sessionId: sessionRow.id,
   });
 
-  return NextResponse.json({ success: true });
+  const { data: result, error: resultError } = await admin
+    .from("sessions")
+    .select(
+      "id, archived_at, phase_status, current_stage_id, current_artifact_version, rejection_count, updated_at, currentStage:pipeline_stages!sessions_current_stage_id_fkey(id, description, name, position, slug)",
+    )
+    .eq("id", sessionRow.id)
+    .single();
+
+  if (resultError || !result || !result.currentStage) {
+    return NextResponse.json(
+      { error: resultError?.message ?? "Could not reconcile the stopped session." },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json<SessionPhaseMutationResult>({
+    archivedAt: result.archived_at,
+    artifactVersion: result.current_artifact_version,
+    currentStage: result.currentStage,
+    currentStageId: result.current_stage_id,
+    id: result.id,
+    phaseStatus: result.phase_status,
+    rejectionCount: result.rejection_count,
+    updatedAt: result.updated_at,
+  });
 }
