@@ -372,6 +372,7 @@ function secretSnapshotRows(value: Json | null): SecretPreviewRow[] {
 type OnboardingSnapshot = {
   agentConfigRows: AgentConfigRow[];
   claudeCodeCredentials: { updated_at: string } | null;
+  claudeCodeCredentialsCheckedAt: string;
   codexCredentials: {
     account_email: string | null;
     access_token_expires_at: string | null;
@@ -380,6 +381,7 @@ type OnboardingSnapshot = {
     credential_type: string;
     updated_at: string;
   } | null;
+  codexCredentialsCheckedAt: string;
   github: WorkspaceGitHubData;
   linearRoutingRow: LinearRoutingRow | null;
   onboardingRow: Tables<"workspace_onboarding">;
@@ -393,6 +395,11 @@ type OnboardingSnapshot = {
 
 function throwQueryError(error: unknown) {
   if (error) throw error;
+}
+
+async function timestampQueryResult<T>(query: PromiseLike<T>) {
+  const result = await query;
+  return { checkedAt: new Date().toISOString(), result };
 }
 
 function createOnboardingSnapshot(
@@ -472,18 +479,22 @@ function createOnboardingSnapshot(
       ),
       timing.segment("snapshot.providers", () =>
         Promise.all([
-          admin
-            .from("user_codex_credentials")
-            .select(
-              "account_email, access_token_expires_at, auth_reconnect_reason, auth_reconnect_required, credential_type, updated_at",
-            )
-            .eq("user_id", context.user.id)
-            .maybeSingle(),
-          admin
-            .from("user_claude_code_credentials")
-            .select("updated_at")
-            .eq("user_id", context.user.id)
-            .maybeSingle(),
+          timestampQueryResult(
+            admin
+              .from("user_codex_credentials")
+              .select(
+                "account_email, access_token_expires_at, auth_reconnect_reason, auth_reconnect_required, credential_type, updated_at",
+              )
+              .eq("user_id", context.user.id)
+              .maybeSingle(),
+          ),
+          timestampQueryResult(
+            admin
+              .from("user_claude_code_credentials")
+              .select("updated_at")
+              .eq("user_id", context.user.id)
+              .maybeSingle(),
+          ),
         ]),
       ),
       timing.segment("snapshot.sandbox", () =>
@@ -503,7 +514,9 @@ function createOnboardingSnapshot(
       ),
     ]);
 
-    const [codexResult, claudeCodeResult] = providerResults;
+    const [codexProviderResult, claudeCodeProviderResult] = providerResults;
+    const codexResult = codexProviderResult.result;
+    const claudeCodeResult = claudeCodeProviderResult.result;
     for (const error of [
       pipelineResult.error,
       stageResult.error,
@@ -521,7 +534,9 @@ function createOnboardingSnapshot(
     return {
       agentConfigRows: (agentConfigResult.data ?? []) as AgentConfigRow[],
       claudeCodeCredentials: claudeCodeResult.data,
+      claudeCodeCredentialsCheckedAt: claudeCodeProviderResult.checkedAt,
       codexCredentials: codexResult.data,
+      codexCredentialsCheckedAt: codexProviderResult.checkedAt,
       github,
       linearRoutingRow: routingResult.data as LinearRoutingRow | null,
       onboardingRow,
@@ -607,8 +622,6 @@ function deriveSetupHealth(
   const secretKeys = [...new Set(snapshot.secretRows.map((row) => row.key))].sort();
   const linearSecret = snapshot.secretRows.find((row) => row.key === "LINEAR_API_KEY") ?? null;
   const linearRoutingUpdatedAt = snapshot.linearRoutingRow?.updated_at ?? null;
-  const providerStatusCheckedAt = new Date().toISOString();
-
   return {
     agentConfig: {
       configured: configuredKeys.length > 0,
@@ -618,9 +631,12 @@ function deriveSetupHealth(
     },
     claudeCodeConnection: claudeCodeConnectionStatus(
       snapshot.claudeCodeCredentials,
-      providerStatusCheckedAt,
+      snapshot.claudeCodeCredentialsCheckedAt,
     ),
-    codexConnection: codexConnectionStatus(snapshot.codexCredentials, providerStatusCheckedAt),
+    codexConnection: codexConnectionStatus(
+      snapshot.codexCredentials,
+      snapshot.codexCredentialsCheckedAt,
+    ),
     defaultPipeline: {
       configured: Boolean(pipeline && pipeline.stages.length > 0),
       pipelineId: pipeline?.id ?? null,

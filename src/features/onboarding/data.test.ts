@@ -188,6 +188,7 @@ describe("canonical onboarding snapshot", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -247,9 +248,7 @@ describe("canonical onboarding snapshot", () => {
     expect(result.data.setupHealth.codexConnection.accountEmail).toBe("owner@example.com");
     expect(result.data.setupHealth.claudeCodeConnection.status).toBe("missing");
     expect(result.data.setupHealth.codexConnection.checkedAt).toMatch(/Z$/);
-    expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toBe(
-      result.data.setupHealth.codexConnection.checkedAt,
-    );
+    expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toMatch(/Z$/);
 
     for (const table of [
       "workspace_onboarding",
@@ -547,6 +546,31 @@ describe("canonical onboarding snapshot", () => {
 
     resolveGithub?.(freshGithub());
     await expect(pending).resolves.toMatchObject({ ok: true });
+  });
+
+  it("timestamps provider status when the provider reads resolve", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-17T12:00:00.000Z"));
+    let resolveGithub: ((value: ReturnType<typeof freshGithub>) => void) | undefined;
+    mocked.github.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGithub = resolve;
+        }),
+    );
+    const fixture = createFixture({ memberRole: "owner" });
+
+    const pending = loadWorkspaceOnboardingDataForContext(fixture.context as never);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.setSystemTime(new Date("2026-07-17T12:02:00.000Z"));
+    resolveGithub?.(freshGithub());
+
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.setupHealth.codexConnection.checkedAt).toBe("2026-07-17T12:00:00.000Z");
+    expect(result.data.setupHealth.claudeCodeConnection.checkedAt).toBe("2026-07-17T12:00:00.000Z");
   });
 
   it("reports named snapshot phases around one concurrent critical path", async () => {
