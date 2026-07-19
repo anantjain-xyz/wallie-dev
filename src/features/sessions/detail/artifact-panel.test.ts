@@ -217,7 +217,9 @@ describe("ArtifactPanel", () => {
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
         isDrafting: false,
-        latestArtifact: null,
+        // The reset signal is authoritative even if an artifact deletion event
+        // has not yet removed the stale summary from parent state.
+        latestArtifact,
         loadLatest: false,
         sessionId: SESSION_ID,
         stageSlug: "land",

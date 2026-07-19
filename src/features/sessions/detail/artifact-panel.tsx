@@ -269,6 +269,7 @@ function ArtifactPanelStage({
   );
 
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
+    if (!loadLatest) return null;
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
     return cachedVersion === undefined
@@ -301,11 +302,12 @@ function ArtifactPanelStage({
   const latestArtifactKey = latestArtifact
     ? artifactBodyCacheKey(sessionId, latestArtifact.stageSlug, latestArtifact.version)
     : null;
-  const latestVersion =
-    latestArtifact?.version ??
-    latestBody?.version ??
-    latestVersionCache.get(currentStageKey) ??
-    null;
+  const latestVersion = loadLatest
+    ? (latestArtifact?.version ??
+      latestBody?.version ??
+      latestVersionCache.get(currentStageKey) ??
+      null)
+    : null;
   const viewingVersion = selectedVersion ?? latestVersion;
   const viewingIsLatest =
     viewingVersion !== null && latestVersion !== null && viewingVersion === latestVersion;
@@ -346,7 +348,7 @@ function ArtifactPanelStage({
   useEffect(() => {
     const previousLatestVersion = latestVersionCache.get(currentStageKey);
 
-    if (latestArtifact) {
+    if (latestArtifact && loadLatest) {
       if (previousLatestVersion !== undefined && latestArtifact.version < previousLatestVersion) {
         metadataCache.delete(currentStageKey);
         bodyCache.delete(artifactBodyCacheKey(sessionId, stageSlug, previousLatestVersion));
@@ -584,6 +586,7 @@ function ArtifactPanelStage({
 
   // Load latest body for cache / default view.
   useEffect(() => {
+    if (!loadLatest) return;
     const cachedLatestVersion = latestArtifact?.version ?? latestVersionCache.get(currentStageKey);
     const cachedLatest =
       cachedLatestVersion === undefined
@@ -610,10 +613,6 @@ function ArtifactPanelStage({
       });
       return;
     }
-    if (!body && !loadLatest) {
-      return;
-    }
-
     const controller = new AbortController();
     latestBodyController.current?.abort();
     latestBodyController.current = controller;
