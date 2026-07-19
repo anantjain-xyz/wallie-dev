@@ -54,6 +54,7 @@ export type WallieRunMessage = {
 };
 
 export type WallieRun = {
+  attemptCount: number;
   canCancel: boolean;
   canRetry: boolean;
   createdAt: string;
@@ -61,12 +62,15 @@ export type WallieRun = {
   id: string;
   isActive: boolean;
   isTerminal: boolean;
+  lastActivityAt: string | null;
   messages: WallieRunMessage[];
   modelName: string;
   modelProvider: string;
   requestedByMember: WorkspaceMember | null;
   requestedByMemberId: string | null;
   runType: WallieRunMode;
+  sandboxId: string | null;
+  sandboxProvider: string | null;
   startedAt: string | null;
   stageId: string | null;
   stageName: string | null;
@@ -96,6 +100,8 @@ export type WallieSessionData = {
   requiresVercelSandbox: boolean;
   requiredSecretKeys: string[];
   runs: WallieRun[];
+  /** Workspace stall timeout used by the worker; UI mirrors it for "No recent activity". */
+  stallTimeoutMs: number;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
   workspaceMembers: WorkspaceMember[];
 };

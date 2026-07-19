@@ -24,6 +24,7 @@ import {
 } from "@/lib/codex/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
+import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 
@@ -1019,11 +1020,6 @@ async function mintInstallationToken(installationId: number): Promise<string> {
     { installation_id: installationId },
   );
   return data.token;
-}
-
-function buildStageBranchName(sessionId: string, stageSlug: string): string {
-  const safeSlug = stageSlug.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `wallie/${safeSlug || "stage"}-${sessionId}`;
 }
 
 async function startAgentRun(

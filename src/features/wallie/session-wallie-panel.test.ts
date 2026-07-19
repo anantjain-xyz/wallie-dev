@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
@@ -21,6 +22,7 @@ const baseMember: WorkspaceMember = {
 
 function run(overrides: Partial<WallieRun> = {}): WallieRun {
   return {
+    attemptCount: 1,
     canCancel: false,
     canRetry: false,
     createdAt: "2026-05-20T20:00:00.000Z",
@@ -28,6 +30,7 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
     id: "run-1",
     isActive: false,
     isTerminal: true,
+    lastActivityAt: "2026-05-20T20:05:00.000Z",
     messages: [
       {
         createdAt: "2026-05-20T20:05:00.000Z",
@@ -41,6 +44,8 @@ function run(overrides: Partial<WallieRun> = {}): WallieRun {
     requestedByMember: baseMember,
     requestedByMemberId: baseMember.id,
     runType: "code",
+    sandboxId: null,
+    sandboxProvider: null,
     stageId: "stage-product",
     stageName: "Product",
     stageSlug: "product",
@@ -70,6 +75,7 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
     requiresVercelSandbox: true,
     requiredSecretKeys: [],
     runs,
+    stallTimeoutMs: RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms,
     vercelSandboxConnection: {
       connected: true,
       lastValidationError: null,
@@ -85,16 +91,21 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
   };
 }
 
+function renderPanel(initialData: WallieSessionData, archivedAt: string | null = null) {
+  return renderToStaticMarkup(
+    createElement(SessionWalliePanel, {
+      initialData,
+      initialNow: "2026-05-20T20:10:00.000Z",
+      session: { archivedAt, id: "sess-1", workspaceId: "ws-1" },
+      supabase: {} as SupabaseClient<Database>,
+      workspaceSlug: "acme",
+    }),
+  );
+}
+
 describe("SessionWalliePanel", () => {
   it("uses stage/requester labels and hides internal execution controls", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data(),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
-      }),
-    );
+    const html = renderPanel(data());
 
     expect(html).toContain("Product run");
     expect(html).toContain("Requested by Anant Jain");
@@ -107,45 +118,26 @@ describe("SessionWalliePanel", () => {
   });
 
   it("marks every collapsed inactive row as a run history group", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
-          runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
-        }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+    const html = renderPanel(
+      data({
+        runs: [run(), run({ id: "run-2", stageName: "Build", stageSlug: "build" })],
       }),
     );
 
-    expect((html.match(/run-history-group/g) ?? []).length).toBe(2);
+    // Latest run auto-expands; the older collapsed run remains a history group.
+    expect((html.match(/run-history-group/g) ?? []).length).toBe(1);
   });
 
   it("allows retry only when the run is retryable", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({ runs: [run({ canRetry: true, status: "error" })] }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
-      }),
-    );
+    const html = renderPanel(data({ runs: [run({ canRetry: true, status: "error" })] }));
 
     expect(html).toContain("Retry Run");
   });
 
   it("disables retry and explains why when the session is archived", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({ runs: [run({ canRetry: true, status: "error" })] }),
-        session: {
-          archivedAt: "2026-06-07T12:00:00.000Z",
-          id: "sess-1",
-          workspaceId: "ws-1",
-        },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
-      }),
+    const html = renderPanel(
+      data({ runs: [run({ canRetry: true, status: "error" })] }),
+      "2026-06-07T12:00:00.000Z",
     );
 
     expect(html).toContain("This session is archived. Unarchive it to run Wallie again.");
@@ -154,121 +146,175 @@ describe("SessionWalliePanel", () => {
   });
 
   it("does not show the Vercel setup blocker when fake sandboxes are selected", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
-          requiresVercelSandbox: false,
-          vercelSandboxConnection: {
-            connected: false,
-            lastValidationError: null,
-            projectId: null,
-            projectName: null,
-            status: "missing",
-            teamId: null,
-          },
-        }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+    const html = renderPanel(
+      data({
+        requiresVercelSandbox: false,
+        vercelSandboxConnection: {
+          connected: false,
+          lastValidationError: null,
+          projectId: null,
+          projectName: null,
+          status: "missing",
+          teamId: null,
+        },
       }),
     );
 
     expect(html).not.toContain("Connect a Vercel Sandbox account");
   });
 
-  it("keeps active-run details collapsed until requested", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
-          runs: [
-            run({
-              finishedAt: null,
-              isActive: true,
-              isTerminal: false,
-              messages: [],
-              status: "running",
-            }),
-          ],
-        }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+  it("shows an active summary without requiring message expansion", () => {
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            attemptCount: 2,
+            finishedAt: null,
+            isActive: true,
+            isTerminal: false,
+            lastActivityAt: "2026-05-20T20:09:00.000Z",
+            messages: [],
+            status: "running",
+          }),
+        ],
       }),
     );
 
+    expect(html).toContain("data-wallie-summary");
+    expect(html).toContain("Current activity");
+    expect(html).toContain("Product");
+    expect(html).toContain("Wallie is working…");
+    expect(html).toContain("Connecting…");
+    expect(html).toContain("Attempt");
+    expect(html).toContain(">2<");
     expect(html).toContain("Running");
-    expect(html).not.toContain("Wallie is working");
     expect(html).toContain("animate-spin");
-    expect(html).not.toContain("No persisted messages were recorded for this run.");
   });
 
-  it("does not include active-run messages in the initial DOM", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
-          runs: [
-            run({
-              finishedAt: null,
-              isActive: true,
-              isTerminal: false,
-              status: "running",
-            }),
-          ],
-        }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+  it("expands the latest run by default and keeps older runs collapsed", () => {
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            id: "run-latest",
+            messages: [
+              {
+                createdAt: "2026-05-20T20:05:00.000Z",
+                id: "msg-latest",
+                kind: "completion",
+                messageMd: "Latest completion body",
+              },
+            ],
+          }),
+          run({
+            id: "run-older",
+            messages: [
+              {
+                createdAt: "2026-05-20T19:05:00.000Z",
+                id: "msg-older",
+                kind: "completion",
+                messageMd: "Older completion body",
+              },
+            ],
+          }),
+        ],
+        loadedMessageRunIds: ["run-latest", "run-older"],
       }),
     );
 
-    expect(html).toContain("Running");
-    expect(html).not.toContain("Wallie is working");
-    expect(html).not.toContain("Product spec created.");
+    expect(html).toContain("Latest completion body");
+    expect(html).not.toContain("Older completion body");
+    expect(html).toContain('aria-expanded="true"');
   });
 
-  it("does not render the terminal empty-message state before expansion", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
-          runs: [run({ messages: [], status: "success" })],
-        }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+  it("uses the typographic ellipsis for loading copy", () => {
+    const html = renderPanel(
+      data({
+        loadedMessageRunIds: [],
+        runs: [run({ messages: [], status: "success" })],
       }),
     );
 
-    expect(html).not.toContain("No persisted messages were recorded for this run.");
-    expect(html).not.toContain("Wallie is working.");
+    expect(html).toContain("Loading run messages…");
+    expect(html).not.toContain("Loading run messages...");
   });
 
-  it("does not include cached error messages before expansion", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
+  it("renders queued, failed, canceled, and completed status fixtures with shared grammar", () => {
+    const fixtures: Array<{ status: WallieRun["status"]; label: string }> = [
+      { status: "queued", label: "Queued" },
+      { status: "error", label: "Failed" },
+      { status: "canceled", label: "Canceled" },
+      { status: "success", label: "Complete" },
+    ];
+
+    for (const fixture of fixtures) {
+      const html = renderPanel(
+        data({
           runs: [
             run({
-              canRetry: true,
-              messages: [
-                {
-                  createdAt: "2026-05-20T20:05:00.000Z",
-                  id: "msg-error",
-                  kind: "error",
-                  messageMd: "**Error:** Vercel Sandbox credentials are required.",
-                },
-              ],
-              status: "error",
+              finishedAt: fixture.status === "queued" ? null : run().finishedAt,
+              isActive: fixture.status === "queued",
+              isTerminal: fixture.status !== "queued",
+              status: fixture.status,
             }),
           ],
         }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+      );
+      expect(html).toContain(fixture.label);
+      expect(html).toContain(
+        `data-status="${fixture.status === "error" ? "failed" : fixture.status === "success" ? "complete" : fixture.status === "queued" ? "queued" : "canceled"}"`,
+      );
+    }
+  });
+
+  it("surfaces stalled recovery copy at the workspace stall threshold", () => {
+    const html = renderPanel(
+      data({
+        stallTimeoutMs: 60_000,
+        runs: [
+          run({
+            canCancel: true,
+            createdAt: "2026-05-20T20:00:00.000Z",
+            finishedAt: null,
+            isActive: true,
+            isTerminal: false,
+            lastActivityAt: "2026-05-20T20:00:00.000Z",
+            messages: [],
+            startedAt: "2026-05-20T20:00:00.000Z",
+            status: "running",
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("No recent activity");
+    expect(html).toContain("Cancel run");
+    expect(html).not.toContain("Wallie is working…");
+  });
+
+  it("does not include cached error messages before expansion of non-latest runs", () => {
+    const html = renderPanel(
+      data({
+        runs: [
+          run({ id: "run-latest", messages: [] }),
+          run({
+            canRetry: true,
+            id: "run-error",
+            messages: [
+              {
+                createdAt: "2026-05-20T20:05:00.000Z",
+                id: "msg-error",
+                kind: "error",
+                messageMd: "**Error:** Vercel Sandbox credentials are required.",
+              },
+            ],
+            status: "error",
+          }),
+        ],
       }),
     );
 
     expect(html).not.toContain("Vercel Sandbox credentials are required.");
-    expect(html).not.toContain("No persisted messages were recorded for this run.");
   });
 
   it("falls back to a human-readable requester label when member names are blank", () => {
@@ -278,23 +324,43 @@ describe("SessionWalliePanel", () => {
       username: null,
     };
 
-    const html = renderToStaticMarkup(
-      createElement(SessionWalliePanel, {
-        initialData: data({
-          runs: [
-            run({
-              requestedByMember: memberWithoutName,
-              requestedByMemberId: memberWithoutName.id,
-            }),
-          ],
-        }),
-        session: { archivedAt: null, id: "sess-1", workspaceId: "ws-1" },
-        supabase: {} as SupabaseClient<Database>,
-        workspaceSlug: "acme",
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            requestedByMember: memberWithoutName,
+            requestedByMemberId: memberWithoutName.id,
+          }),
+        ],
       }),
     );
 
     expect(html).toContain("Requested by workspace owner");
     expect(html).not.toContain("unavailable member");
+  });
+
+  it("keeps long log bodies from introducing unconstrained width", () => {
+    const longLog = `path/${"segment/".repeat(40)}file.ts:${"x".repeat(200)}`;
+    const html = renderPanel(
+      data({
+        runs: [
+          run({
+            messages: [
+              {
+                createdAt: "2026-05-20T20:05:00.000Z",
+                id: "msg-long",
+                kind: "log",
+                messageMd: longLog,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(html).toContain("overflow-x-clip");
+    expect(html).toContain("[overflow-wrap:anywhere]");
+    expect(html).toContain("min-w-0");
+    expect(html).toContain(longLog);
   });
 });
