@@ -85,6 +85,24 @@ Wallie turns Linear issues into **sessions** that move through a user-configurab
 - **Artifact** — versioned markdown output per stage. Stored in `session_artifacts`, keyed on `(session_id, stage_slug, version)`.
 - **Run** — one agent execution within a stage. A rejected artifact triggers a new run of the same stage.
 
+## Cursor Cloud specific instructions
+
+The VM snapshot already has Docker CE, the Supabase CLI, project `node_modules`, and a `.env.local` (local Supabase keys, a generated `WALLIE_ENCRYPTION_KEY`, and `WALLIE_SANDBOX_IMPL=fake`). The startup update script only runs `pnpm install`; everything below must be started by hand each session because services do not auto-start after a snapshot restart.
+
+**Start services (run in this order, each in its own tmux session):**
+
+1. `sudo dockerd` — the Docker daemon is not running on boot. Wait until `docker info` succeeds.
+2. `supabase start` — boots local Postgres/Auth/Realtime/Storage in Docker and applies migrations + seed. Studio: `http://127.0.0.1:54323`, Mailpit (captured emails): `http://127.0.0.1:54324`. Re-print keys with `supabase status`.
+3. `pnpm dev` and `pnpm worker` — see README/AGENTS commands. Both are required end-to-end; without the worker, sessions stay in `agent_generating`.
+
+**Docker-in-VM caveats (already configured in `/etc/docker/daemon.json` and via update-alternatives; only needed if reinstalling Docker):** Docker 29 must use `fuse-overlayfs` with `features.containerd-snapshotter=false`, and iptables must be switched to `iptables-legacy`. Without these, `supabase start` container networking/storage fails.
+
+**Local auth shortcut:** email confirmations are disabled locally, so instead of the magic-link/Mailpit flow you can sign in via the "Development alternative" password form on `/login` (any email + a 6+ char password auto-creates and logs in the user). Use this for any flow that needs an authenticated session.
+
+**Full agent runs** (GitHub sandbox, Codex/Claude Code) need a real GitHub App + Vercel Sandbox + agent credentials configured in Settings; they are not wired up in this environment. Auth, workspace/pipeline CRUD, dashboard, and the worker queue all work without them. `WALLIE_SANDBOX_IMPL=fake` uses the in-process sandbox for tests.
+
+**Checks:** `pnpm check` (format:check + lint + typecheck + test) is the pre-PR gate and passes clean; tests need no running services.
+
 ## gstack
 
 Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
