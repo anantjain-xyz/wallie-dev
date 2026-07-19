@@ -87,11 +87,13 @@ export function OnboardingProgressHeader({
 
 function StepList({
   canSelect,
+  currentStep,
   items,
   onSelect,
   variant,
 }: {
   canSelect: boolean;
+  currentStep: WorkspaceOnboardingStep;
   items: RailItems;
   onSelect: (step: WorkspaceOnboardingStep) => void;
   variant: "desktop" | "dialog";
@@ -100,11 +102,12 @@ function StepList({
     <ol className={cn("space-y-1", variant === "dialog" && "pb-1")}>
       {items.map((step) => {
         const presentation = onboardingStepStatusPresentation(step.displayState);
+        const isCurrent = step.id === currentStep;
         return (
           <li key={step.id}>
             <button
               type="button"
-              aria-current={step.displayState === "current" ? "step" : undefined}
+              aria-current={isCurrent ? "step" : undefined}
               className={cn(
                 "flex w-full items-center gap-2 rounded-[6px] px-3 py-1.5 text-left text-[13px] font-medium transition-colors",
                 railStateClasses[step.displayState],
@@ -118,7 +121,9 @@ function StepList({
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{step.title}</span>
                 <span className="type-annotation mt-0.5 block truncate font-normal opacity-80">
-                  {presentation.label}
+                  {isCurrent && step.displayState === "error"
+                    ? "Current · Error"
+                    : presentation.label}
                 </span>
               </span>
             </button>
@@ -131,14 +136,24 @@ function StepList({
 
 export function OnboardingStepRail({
   canSelect,
+  currentStep,
   items,
   onSelect,
 }: {
   canSelect: boolean;
+  currentStep: WorkspaceOnboardingStep;
   items: RailItems;
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
-  return <StepList canSelect={canSelect} items={items} onSelect={onSelect} variant="desktop" />;
+  return (
+    <StepList
+      canSelect={canSelect}
+      currentStep={currentStep}
+      items={items}
+      onSelect={onSelect}
+      variant="desktop"
+    />
+  );
 }
 
 export function OnboardingMobileStepNav({
@@ -153,7 +168,7 @@ export function OnboardingMobileStepNav({
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const current = items.find((step) => step.displayState === "current") ?? items[0];
+  const current = items.find((step) => step.id === onboarding.currentStep) ?? items[0];
 
   return (
     <div className="border-y border-border bg-sheet px-4 py-3 lg:hidden">
@@ -176,6 +191,7 @@ export function OnboardingMobileStepNav({
         >
           <StepList
             canSelect={canSelect}
+            currentStep={onboarding.currentStep}
             items={items}
             onSelect={(step) => {
               setOpen(false);

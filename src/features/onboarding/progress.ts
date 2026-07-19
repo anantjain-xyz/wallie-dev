@@ -4,7 +4,14 @@ import {
   onboardingStepIndex,
   type OnboardingStepDisplayState,
 } from "@/features/onboarding/flow";
-import type { RuntimeReadiness } from "@/features/onboarding/runtime-readiness";
+import {
+  isActionableSandboxCapabilityFailure,
+  type RuntimeReadiness,
+} from "@/features/onboarding/runtime-readiness";
+import {
+  normalizeAgentProviderName,
+  RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+} from "@/lib/agent-config/contracts";
 import type {
   OnboardingSetupHealth,
   WorkspaceOnboardingState,
@@ -174,23 +181,31 @@ export function onboardingStepStatusPresentation(
   return STEP_STATUS_PRESENTATION[state];
 }
 
+function selectedAgentProvider(health: OnboardingSetupHealth) {
+  const rawProvider = health.agentConfig.values.agent_provider;
+  return typeof rawProvider === "string"
+    ? (normalizeAgentProviderName(rawProvider) ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider)
+    : RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
+}
+
 export function deriveOnboardingStepHealthFlags(health: OnboardingSetupHealth): {
   blockedSteps: Set<WorkspaceOnboardingStep>;
   errorSteps: Set<WorkspaceOnboardingStep>;
 } {
   const errorSteps = new Set<WorkspaceOnboardingStep>();
   const blockedSteps = new Set<WorkspaceOnboardingStep>();
+  const provider = selectedAgentProvider(health);
 
   if (health.githubInstallation.suspended) {
     errorSteps.add("github");
   }
-  if (health.codexConnection.status === "expired") {
+  if (provider === "codex" && health.codexConnection.status === "expired") {
     errorSteps.add("runtime");
   }
   if (health.vercelSandboxConnection.status === "error") {
     errorSteps.add("runtime");
   }
-  if (health.latestSandboxCapabilityCheck?.status === "error") {
+  if (isActionableSandboxCapabilityFailure(health)) {
     errorSteps.add("verify");
   }
 

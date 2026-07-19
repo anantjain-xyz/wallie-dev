@@ -90,6 +90,42 @@ describe("onboarding flow helpers", () => {
     ]);
   });
 
+  it("keeps the active step as error while preserving current-step identity for consumers", () => {
+    const items = getOnboardingStepRailItems(
+      onboardingState({
+        completedSteps: ["github", "repository", "pipeline"],
+        currentStep: "runtime",
+        skippedSteps: ["linear"],
+        status: "in_progress",
+      }),
+      {
+        errorSteps: new Set(["runtime"]),
+      },
+    );
+
+    expect(items.find((item) => item.id === "runtime")).toMatchObject({
+      displayState: "error",
+      id: "runtime",
+    });
+    expect(items.filter((item) => item.displayState === "current")).toEqual([]);
+  });
+
+  it("surfaces health errors over historical completion", () => {
+    const items = getOnboardingStepRailItems(
+      onboardingState({
+        completedSteps: ["github", "repository", "pipeline"],
+        currentStep: "verify",
+        status: "in_progress",
+      }),
+      {
+        errorSteps: new Set(["github"]),
+      },
+    );
+
+    expect(items.find((item) => item.id === "github")?.displayState).toBe("error");
+    expect(items.find((item) => item.id === "verify")?.displayState).toBe("current");
+  });
+
   it("continues by completing the current step and persisting the next current step", () => {
     expect(
       buildOnboardingContinuePatch(

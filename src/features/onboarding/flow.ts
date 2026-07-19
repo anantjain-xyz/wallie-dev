@@ -144,15 +144,17 @@ export function getOnboardingStepRailItems(
   return ONBOARDING_STEPS.map((step, index) => {
     let displayState: OnboardingStepDisplayState;
 
-    if (step.id === onboarding.currentStep) {
-      // Current wins so revisiting a completed step still orients the rail.
-      displayState = errorSteps.has(step.id) ? "error" : "current";
+    // Active health errors win over historical completion so regressions stay visible.
+    // Current-step identity for aria/mobile is derived from `onboarding.currentStep`
+    // in the shell — an errored active step still renders as "error".
+    if (errorSteps.has(step.id)) {
+      displayState = "error";
+    } else if (step.id === onboarding.currentStep) {
+      displayState = "current";
     } else if (completed.has(step.id)) {
       displayState = "completed";
     } else if (skipped.has(step.id)) {
       displayState = "skipped";
-    } else if (errorSteps.has(step.id)) {
-      displayState = "error";
     } else if (blockedSteps.has(step.id)) {
       displayState = "blocked";
     } else {

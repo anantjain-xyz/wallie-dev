@@ -218,6 +218,24 @@ function capabilityCheckIsPendingSandboxMetadata(
   );
 }
 
+/** True when the latest capability check error applies to the current repo + Vercel connection. */
+export function isActionableSandboxCapabilityFailure(health: OnboardingSetupHealth) {
+  const latestCheck = health.latestSandboxCapabilityCheck;
+  if (!latestCheck || latestCheck.status !== "error") {
+    return false;
+  }
+
+  const primaryRepositoryId = health.primaryRepositoryProfile.repositoryId;
+  if (!primaryRepositoryId || latestCheck.githubRepositoryId !== primaryRepositoryId) {
+    return false;
+  }
+
+  return (
+    capabilityCheckMatchesVercelConnection(latestCheck, health.vercelSandboxConnection) ||
+    capabilityCheckIsPendingSandboxMetadata(latestCheck)
+  );
+}
+
 export function buildVerifyChecklist(input: {
   agentConfig: AgentConfigMap;
   health: OnboardingSetupHealth;

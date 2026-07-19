@@ -207,10 +207,38 @@ describe("onboarding progress helpers", () => {
           githubRepositoryId: "repo-1",
           id: "check-1",
           sandboxProvider: "vercel",
-          sandboxVercelProjectId: null,
-          sandboxVercelTeamId: null,
+          sandboxVercelProjectId: "prj_1",
+          sandboxVercelTeamId: "team_1",
           status: "error",
         },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        selectedRepository: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        vercelSandboxConnection: {
+          connected: true,
+          lastValidationError: null,
+          projectId: "prj_1",
+          projectName: "wallie",
+          status: "connected",
+          teamId: "team_1",
+          updatedAt: "2026-07-18T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(failed.errorSteps.has("github")).toBe(true);
+    expect(failed.errorSteps.has("verify")).toBe(true);
+
+    const vercelRuntimeError = deriveOnboardingStepHealthFlags(
+      health({
         vercelSandboxConnection: {
           connected: false,
           lastValidationError: "invalid token",
@@ -222,9 +250,98 @@ describe("onboarding progress helpers", () => {
         },
       }),
     );
-    expect(failed.errorSteps.has("github")).toBe(true);
-    expect(failed.errorSteps.has("runtime")).toBe(true);
-    expect(failed.errorSteps.has("verify")).toBe(true);
+    expect(vercelRuntimeError.errorSteps.has("runtime")).toBe(true);
+  });
+
+  it("scopes Codex expiration errors to the selected agent provider", () => {
+    const expiredCodexWhileClaudeSelected = deriveOnboardingStepHealthFlags(
+      health({
+        agentConfig: {
+          configured: true,
+          configuredKeys: ["agent_provider"],
+          status: "present",
+          values: { agent_provider: "claude-code" },
+        },
+        codexConnection: {
+          accountEmail: null,
+          checkedAt: "2026-07-18T00:00:00.000Z",
+          connected: false,
+          credentialType: null,
+          expiresAt: null,
+          reconnectReason: null,
+          reconnectRequired: true,
+          status: "expired",
+          updatedAt: "2026-07-18T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(expiredCodexWhileClaudeSelected.errorSteps.has("runtime")).toBe(false);
+
+    const expiredCodexWhileCodexSelected = deriveOnboardingStepHealthFlags(
+      health({
+        agentConfig: {
+          configured: true,
+          configuredKeys: ["agent_provider"],
+          status: "present",
+          values: { agent_provider: "codex" },
+        },
+        codexConnection: {
+          accountEmail: null,
+          checkedAt: "2026-07-18T00:00:00.000Z",
+          connected: false,
+          credentialType: null,
+          expiresAt: null,
+          reconnectReason: null,
+          reconnectRequired: true,
+          status: "expired",
+          updatedAt: "2026-07-18T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(expiredCodexWhileCodexSelected.errorSteps.has("runtime")).toBe(true);
+  });
+
+  it("ignores stale sandbox capability failures from prior Vercel connections", () => {
+    const stale = deriveOnboardingStepHealthFlags(
+      health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {
+            git: { detail: "failed", ok: false },
+            node: { detail: "failed", ok: false },
+          },
+          checkedAt: "2026-07-18T00:00:00.000Z",
+          errorText: "old project failed",
+          githubRepositoryId: "repo-1",
+          id: "check-stale",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_old",
+          sandboxVercelTeamId: "team_old",
+          status: "error",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        selectedRepository: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        vercelSandboxConnection: {
+          connected: true,
+          lastValidationError: null,
+          projectId: "prj_new",
+          projectName: "wallie",
+          status: "connected",
+          teamId: "team_new",
+          updatedAt: "2026-07-18T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(stale.errorSteps.has("verify")).toBe(false);
   });
 
   it("builds operation-specific primary actions with disabled reasons", () => {

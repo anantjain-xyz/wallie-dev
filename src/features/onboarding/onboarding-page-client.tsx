@@ -931,7 +931,12 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       >
         <aside aria-label="Setup steps" className="hidden lg:block">
           <div className="sticky top-8">
-            <OnboardingStepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
+            <OnboardingStepRail
+              canSelect={!isSaving}
+              currentStep={onboarding.currentStep}
+              items={railItems}
+              onSelect={selectStep}
+            />
           </div>
         </aside>
 
@@ -951,17 +956,20 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               role="alert"
             >
               <p>{error}</p>
+              <p className="mt-1 type-annotation text-danger/90">
+                Refresh setup status, then repeat the action that failed.
+              </p>
               <button
                 type="button"
                 className="ui-button mt-2"
                 onClick={() => {
                   setError(null);
                   if (savingAction === null) {
-                    void refreshOnboarding("retry");
+                    void refreshOnboarding("refresh");
                   }
                 }}
               >
-                Retry
+                Refresh status
               </button>
             </div>
           ) : null}

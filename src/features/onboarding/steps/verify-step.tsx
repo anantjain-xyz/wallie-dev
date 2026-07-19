@@ -163,11 +163,14 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
         : ("neutral" as const),
     },
     {
-      detail: data.setupHealth.linearKey.configured
-        ? "API key and routing"
-        : data.onboarding.skippedSteps.includes("linear")
-          ? "Skipped for now"
-          : "Not configured",
+      detail:
+        data.setupHealth.linearKey.configured && data.setupHealth.linearRouting.configured
+          ? "API key and routing"
+          : data.setupHealth.linearKey.configured
+            ? "API key saved · routing incomplete"
+            : data.onboarding.skippedSteps.includes("linear")
+              ? "Skipped for now"
+              : "Not configured",
       id: "summary-linear" as const,
       label: "Linear",
       step: "linear" as const,
