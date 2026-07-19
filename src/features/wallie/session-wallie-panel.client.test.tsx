@@ -821,6 +821,78 @@ describe("SessionWalliePanel activity states", () => {
     expect(screen.getAllByText("Live updates restored").length).toBeGreaterThan(0);
   });
 
+  it("does not resubscribe the summary channel when summary run messages upsert", async () => {
+    const active = run(1, {
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      lastActivityAt: "2026-07-18T12:55:00.000Z",
+      messages: [
+        {
+          createdAt: "2026-07-18T12:01:00.000Z",
+          id: "msg-1",
+          kind: "progress",
+          messageMd: "Cloning repository",
+        },
+      ],
+      stageName: "Active",
+      status: "running",
+    });
+    const older = run(2, {
+      stageName: "Older",
+      status: "success",
+    });
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [active, older] }), {
+            status: 200,
+          }),
+      ),
+    );
+    const view = render(
+      <SessionWalliePanel
+        initialData={data([active, older], false, { loadedMessageRunIds: [active.id] })}
+        initialNow="2026-07-18T12:56:00.000Z"
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
+    await act(async () => idleCallback?.());
+    await subscribeChannels(fake);
+    expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
+
+    const summaryChannels = () =>
+      fake.channels.filter((channel) => channel.name.startsWith("wallie-summary-messages:"));
+    expect(summaryChannels()).toHaveLength(1);
+    const removeCallsBefore = (fake.supabase.removeChannel as ReturnType<typeof vi.fn>).mock.calls
+      .length;
+
+    await act(async () => {
+      summaryChannels()[0]?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          agent_run_id: active.id,
+          created_at: "2026-07-18T12:02:00.000Z",
+          id: "msg-2",
+          kind: "progress",
+          message_md: "Installing dependencies",
+        },
+      });
+    });
+
+    expect(screen.getAllByText("Installing dependencies").length).toBeGreaterThan(0);
+    expect(summaryChannels()).toHaveLength(1);
+    expect((fake.supabase.removeChannel as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      removeCallsBefore,
+    );
+  });
+
   it("assigns the next stage attempt ordinal when a retry run is inserted live", async () => {
     const first = run(1, {
       attemptCount: 1,

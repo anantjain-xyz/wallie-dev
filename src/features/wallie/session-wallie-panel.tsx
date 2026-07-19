@@ -486,6 +486,9 @@ export function SessionWalliePanel({
   const summaryRun = useMemo(() => {
     return runs.find((run) => run.isActive) ?? runs[0] ?? null;
   }, [runs]);
+  // Depend on the run id, not the run object — message upserts change object
+  // identity and must not tear down/recreate the summary Realtime channel.
+  const summaryRunId = summaryRun?.id ?? null;
 
   useEffect(() => {
     if (expandedRunId && !loadedMessageRunIds.has(expandedRunId)) {
@@ -496,10 +499,10 @@ export function SessionWalliePanel({
   // Keep the always-visible summary fed even when disclosure stays on an older run
   // (e.g. a new active run arrives while the user still has a prior run expanded).
   useEffect(() => {
-    if (summaryRun && !loadedMessageRunIds.has(summaryRun.id)) {
-      void loadRunMessages(summaryRun.id);
+    if (summaryRunId && !loadedMessageRunIds.has(summaryRunId)) {
+      void loadRunMessages(summaryRunId);
     }
-  }, [loadRunMessages, loadedMessageRunIds, summaryRun]);
+  }, [loadRunMessages, loadedMessageRunIds, summaryRunId]);
 
   useEffect(() => {
     if (!realtimeReady || !expandedRunId) {
@@ -541,12 +544,12 @@ export function SessionWalliePanel({
   }, [expandedRunId, loadRunMessages, realtimeReady, supabase]);
 
   useEffect(() => {
-    if (!realtimeReady || !summaryRun || summaryRun.id === expandedRunId) {
+    if (!realtimeReady || !summaryRunId || summaryRunId === expandedRunId) {
       channelHealthRef.current.summaryMessages = null;
       return;
     }
 
-    const runId = summaryRun.id;
+    const runId = summaryRunId;
     channelHealthRef.current.summaryMessages = false;
     const messageChannel = supabase
       .channel(`wallie-summary-messages:${runId}`)
@@ -577,7 +580,7 @@ export function SessionWalliePanel({
       channelHealthRef.current.summaryMessages = null;
       void supabase.removeChannel(messageChannel);
     };
-  }, [expandedRunId, loadRunMessages, realtimeReady, summaryRun, supabase]);
+  }, [expandedRunId, loadRunMessages, realtimeReady, summaryRunId, supabase]);
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),

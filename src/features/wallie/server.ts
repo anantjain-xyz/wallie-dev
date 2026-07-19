@@ -24,6 +24,8 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
 export const WALLIE_RUN_PAGE_SIZE = 20;
+/** PostgREST `api.max_rows` is 1000 — page so newer runs are not dropped. */
+export const ATTEMPT_ORDINAL_PAGE_SIZE = 1000;
 
 function toBuildableRunRow(row: AgentRunRow, attemptCount: number) {
   return {
@@ -58,21 +60,32 @@ export async function loadAttemptOrdinalForRun(sessionId: string, runId: string)
 }
 
 async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string) {
-  const { data, error } = await admin
-    .from("agent_runs")
-    .select("id, created_at, stage_id")
-    .eq("session_id", sessionId)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
+  const rows: Array<{ created_at: string; id: string; stage_id: string | null }> = [];
 
-  if (error) {
-    throw error;
+  for (let offset = 0; ; offset += ATTEMPT_ORDINAL_PAGE_SIZE) {
+    const { data, error } = await admin
+      .from("agent_runs")
+      .select("id, created_at, stage_id")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + ATTEMPT_ORDINAL_PAGE_SIZE - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < ATTEMPT_ORDINAL_PAGE_SIZE) {
+      break;
+    }
   }
 
   const ordinals = new Map<string, number>();
   const perStage = new Map<string, number>();
 
-  for (const row of data ?? []) {
+  for (const row of rows) {
     // Key by immutable stage_id so slug renames (rewrite_default_pipeline) do
     // not reset attempt ordinals mid-history.
     const stageKey = row.stage_id ?? "__session__";

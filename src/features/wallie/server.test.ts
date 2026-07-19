@@ -5,6 +5,7 @@ const adminOrdinalRows: Array<{
   id: string;
   stage_id: string | null;
 }> = [];
+const adminRangeCalls: Array<{ from: number; to: number }> = [];
 
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdminClient: () => ({
@@ -12,7 +13,15 @@ vi.mock("@/lib/supabase/admin", () => ({
       select: () => ({
         eq: () => ({
           order: () => ({
-            order: async () => ({ data: [...adminOrdinalRows], error: null }),
+            order: () => ({
+              range: async (from: number, to: number) => {
+                adminRangeCalls.push({ from, to });
+                return {
+                  data: adminOrdinalRows.slice(from, to + 1),
+                  error: null,
+                };
+              },
+            }),
           }),
         }),
       }),
@@ -20,7 +29,11 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
-import { loadWallieRunPage, WALLIE_RUN_PAGE_SIZE } from "@/features/wallie/server";
+import {
+  ATTEMPT_ORDINAL_PAGE_SIZE,
+  loadWallieRunPage,
+  WALLIE_RUN_PAGE_SIZE,
+} from "@/features/wallie/server";
 
 function uuid(index: number) {
   return `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
@@ -72,6 +85,7 @@ function client(rows: ReturnType<typeof row>[]) {
 
 beforeEach(() => {
   adminOrdinalRows.length = 0;
+  adminRangeCalls.length = 0;
 });
 
 describe("loadWallieRunPage", () => {
@@ -137,5 +151,40 @@ describe("loadWallieRunPage", () => {
 
     expect(page.runs.find((run) => run.id === first.id)?.attemptCount).toBe(1);
     expect(page.runs.find((run) => run.id === renamed.id)?.attemptCount).toBe(2);
+  });
+
+  it("pages attempt-ordinal history past the PostgREST max_rows cap", async () => {
+    const history = Array.from({ length: ATTEMPT_ORDINAL_PAGE_SIZE + 3 }, (_, index) => {
+      const created = new Date(
+        Date.parse("2026-01-01T00:00:00.000Z") + index * 60_000,
+      ).toISOString();
+      return {
+        created_at: created,
+        id: uuid(index + 1),
+        stage_id: "stage-build",
+      };
+    });
+    adminOrdinalRows.push(...history);
+
+    const newest = row(ATTEMPT_ORDINAL_PAGE_SIZE + 3, {
+      created_at: history.at(-1)!.created_at,
+      id: history.at(-1)!.id,
+      stage_id: "stage-build",
+      stage_slug: "build",
+    });
+    const { supabase } = client([newest]);
+    const page = await loadWallieRunPage({
+      memberIndex: new Map(),
+      sessionId: uuid(999),
+      supabase: supabase as never,
+    });
+
+    expect(adminRangeCalls).toEqual([
+      { from: 0, to: ATTEMPT_ORDINAL_PAGE_SIZE - 1 },
+      { from: ATTEMPT_ORDINAL_PAGE_SIZE, to: ATTEMPT_ORDINAL_PAGE_SIZE * 2 - 1 },
+    ]);
+    expect(page.runs.find((run) => run.id === newest.id)?.attemptCount).toBe(
+      ATTEMPT_ORDINAL_PAGE_SIZE + 3,
+    );
   });
 });
