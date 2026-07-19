@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 
 import { AppShell } from "@/components/app-shell/app-shell";
@@ -16,16 +16,12 @@ describe("AppShell", () => {
       viewerId: "user-1",
       workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
       workspaceAvatarUrl: null,
-    }) as ReactElement<{ children: ReactElement; className: string }>;
+    }) as ReactElement<{ "data-app-shell"?: string; children: ReactNode; className: string }>;
 
     const classes = element.props.className.split(/\s+/u);
     expect(classes).toContain("min-h-[100svh]");
     expect(classes).not.toEqual(expect.arrayContaining(["fixed", "h-[100dvh]", "overflow-hidden"]));
-
-    const surface = element.props.children as ReactElement<{ children: ReactElement[] }>;
-    const main = surface.props.children[1] as ReactElement<{ className: string; id: string }>;
-    expect(main.props.id).toBe("main-content");
-    expect(main.props.className.split(/\s+/u)).not.toContain("overflow-y-auto");
+    expect(element.props["data-app-shell"]).toBe("");
   });
 
   it("bounds dialogs and toasts to the visual viewport safe region", () => {

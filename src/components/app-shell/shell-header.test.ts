@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   CreateSessionDialogLoading,
+  isActiveNavItem,
   preloadCreateSessionDialogOnce,
+  resolveShellPageTitle,
   ShellHeader,
 } from "@/components/app-shell/shell-header";
 import { normalizeTheme, resolveInitialTheme } from "@/components/app-shell/theme-toggle";
@@ -25,6 +27,24 @@ vi.mock("next/navigation", () => ({
 const workspace = { id: "workspace-1", name: "Acme Corp", slug: "acme-corp" };
 const navItems = getWorkspaceNavItems(workspace.slug);
 
+function renderShell(props: Partial<Omit<Parameters<typeof ShellHeader>[0], "children">> = {}) {
+  return renderToStaticMarkup(
+    createElement(
+      ShellHeader,
+      {
+        navItems,
+        onboarding: { currentStep: "verify", status: "completed" } as const,
+        viewerEmail: "owner@example.com",
+        viewerId: "user-1",
+        workspace,
+        workspaceAvatarUrl: null,
+        ...props,
+      } satisfies Omit<Parameters<typeof ShellHeader>[0], "children">,
+      "Page body",
+    ),
+  );
+}
+
 describe("ShellHeader", () => {
   afterEach(() => {
     mocked.pathname = "/w/acme-corp";
@@ -33,16 +53,9 @@ describe("ShellHeader", () => {
   });
 
   it("replaces New session with Resume setup while onboarding is incomplete", () => {
-    const html = renderToStaticMarkup(
-      createElement(ShellHeader, {
-        navItems,
-        onboarding: { currentStep: "repository", status: "in_progress" },
-        viewerEmail: "owner@example.com",
-        viewerId: "user-1",
-        workspace,
-        workspaceAvatarUrl: null,
-      }),
-    );
+    const html = renderShell({
+      onboarding: { currentStep: "repository", status: "in_progress" },
+    });
 
     expect(html).toContain('href="/w/acme-corp/onboarding"');
     expect(html).toContain("Resume setup");
@@ -53,75 +66,71 @@ describe("ShellHeader", () => {
   it("keeps New session available after onboarding is complete", () => {
     mocked.searchParams = new URLSearchParams("create=1");
 
-    const html = renderToStaticMarkup(
-      createElement(ShellHeader, {
-        navItems,
-        onboarding: { currentStep: "verify", status: "completed" },
-        viewerEmail: "owner@example.com",
-        viewerId: "user-1",
-        workspace,
-        workspaceAvatarUrl: null,
-      }),
-    );
+    const html = renderShell();
 
     expect(html).toContain("New session");
     expect(html).not.toContain("Resume setup");
     expect(html).not.toContain("Loading session form…");
   });
 
-  it("renders the topbar theme toggle as an accessible icon button", () => {
-    const html = renderToStaticMarkup(
-      createElement(ShellHeader, {
-        navItems,
-        onboarding: { currentStep: "verify", status: "completed" },
-        viewerEmail: "owner@example.com",
-        viewerId: "user-1",
-        workspace,
-        workspaceAvatarUrl: null,
-      }),
-    );
+  it("renders the theme toggle with a hydration-safe accessible label", () => {
+    const html = renderShell();
 
-    expect(html).toContain('aria-label="Switch to dark mode"');
-    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('aria-label="Toggle color theme"');
     expect(html).not.toContain('title="Switch to dark mode"');
   });
 
-  it("shows the workspace identity beside the Wallie wordmark", () => {
-    const html = renderToStaticMarkup(
-      createElement(ShellHeader, {
-        navItems,
-        onboarding: { currentStep: "verify", status: "completed" },
-        viewerEmail: "owner@example.com",
-        viewerId: "user-1",
-        workspace,
-        workspaceAvatarUrl: null,
-      }),
-    );
+  it("keeps workspace identity in the desktop rail", () => {
+    const html = renderShell();
 
     expect(html).toContain("Wallie");
     expect(html).toContain("Acme Corp");
-    // No avatar URL → initial fallback badge.
+    expect(html).toContain("data-shell-rail");
     expect(html).toContain(">A<");
     expect(html).not.toContain('title="Acme Corp"');
   });
 
   it("renders an account menu exposing the signed-in email and sign-out", () => {
-    const html = renderToStaticMarkup(
-      createElement(ShellHeader, {
-        navItems,
-        onboarding: { currentStep: "verify", status: "completed" },
-        viewerEmail: "owner@example.com",
-        viewerId: "user-1",
-        workspace,
-        workspaceAvatarUrl: null,
-      }),
-    );
+    const html = renderShell();
 
-    // The signed-in email is exposed on the menu trigger; the menu panel
-    // (with the sign-out form) mounts on open, which the AccountMenu test covers.
     expect(html).toContain('aria-label="Account: owner@example.com"');
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("exposes a mobile navigation trigger without bottom navigation", () => {
+    const html = renderShell();
+
+    expect(html).toContain('aria-label="Open workspace navigation"');
+    expect(html).toContain("data-shell-header");
+    expect(html).toContain(">Pipeline</");
+    expect(html).not.toContain("grid-cols-3");
+  });
+
+  it("puts page identity and main content into the document-scroll column", () => {
+    const html = renderShell();
+
+    expect(html).toContain(">Pipeline</p>");
+    expect(html).toContain('id="main-content"');
+    expect(html).toContain("Page body");
+    expect(html).not.toContain("overflow-y-auto");
+  });
+});
+
+describe("shell page title helpers", () => {
+  it("marks only the pipeline root as active for the Pipeline item", () => {
+    expect(isActiveNavItem("/w/acme-corp", "acme-corp", navItems[0]!)).toBe(true);
+    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[0]!)).toBe(false);
+    expect(isActiveNavItem("/w/acme-corp/sessions", "acme-corp", navItems[1]!)).toBe(true);
+  });
+
+  it("resolves command-header titles from the active nav section", () => {
+    expect(resolveShellPageTitle("/w/acme-corp", "acme-corp", navItems)).toBe("Pipeline");
+    expect(resolveShellPageTitle("/w/acme-corp/sessions/12", "acme-corp", navItems)).toBe(
+      "Sessions",
+    );
+    expect(resolveShellPageTitle("/w/acme-corp/settings", "acme-corp", navItems)).toBe("Settings");
+    expect(resolveShellPageTitle("/w/acme-corp/onboarding", "acme-corp", navItems)).toBe("Setup");
   });
 });
 

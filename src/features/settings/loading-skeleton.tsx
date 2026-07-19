@@ -11,7 +11,7 @@ const sectionSkeletons: {
 function SettingsAnchorSkeleton() {
   return (
     <div className="hidden lg:block" aria-hidden="true">
-      <div className="sticky top-[calc(5rem+env(safe-area-inset-top))] flex flex-col gap-5">
+      <div className="sticky top-[var(--shell-scroll-padding)] flex flex-col gap-5">
         {anchorGroupSizes.map((anchorCount, groupIndex) => (
           <div key={groupIndex}>
             <SkeletonBlock className="mb-2 h-3 w-20" />

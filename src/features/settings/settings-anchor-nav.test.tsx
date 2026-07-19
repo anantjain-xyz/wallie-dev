@@ -63,7 +63,7 @@ describe("SettingsAnchorNav", () => {
     render(<SettingsAnchorNav groups={groups} />);
 
     expect(screen.getByRole("navigation", { name: "Settings sections" })).toHaveClass(
-      "top-[calc(5rem+env(safe-area-inset-top))]",
+      "top-[var(--shell-scroll-padding)]",
     );
   });
 
