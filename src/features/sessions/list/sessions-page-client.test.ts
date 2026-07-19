@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import {
   commitListArchive,
   commitListTitle,
@@ -22,6 +23,12 @@ vi.mock("next/navigation", () => ({
     replace: mocked.replace,
   }),
 }));
+
+function renderPage(initialData: SessionListPageData) {
+  return renderToStaticMarkup(
+    createElement(OverlayProvider, null, createElement(SessionsPageClient, { initialData })),
+  );
+}
 
 function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
@@ -98,11 +105,7 @@ function makeSessionListData(
 
 describe("SessionsPageClient", () => {
   it("renders an accessible title edit affordance without removing row navigation", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionsPageClient, {
-        initialData: makeSessionListData(),
-      }),
-    );
+    const html = renderPage(makeSessionListData());
 
     expect(html).toContain('href="/w/acme/sessions/7"');
     expect(html).toContain("session-list-row");
@@ -150,11 +153,7 @@ describe("SessionsPageClient", () => {
       }),
     ];
 
-    const html = renderToStaticMarkup(
-      createElement(SessionsPageClient, {
-        initialData: makeSessionListData(sessions),
-      }),
-    );
+    const html = renderPage(makeSessionListData(sessions));
 
     const order = ["Plan", "Build", "Review", "Land"].map((name) => html.indexOf(`>${name}`));
     expect(order.every((index) => index >= 0)).toBe(true);
@@ -162,32 +161,38 @@ describe("SessionsPageClient", () => {
   });
 
   it("renders stage filters from facets independent of the current page rows", () => {
-    const html = renderToStaticMarkup(
-      createElement(SessionsPageClient, {
-        initialData: makeSessionListData(
-          [
-            makeSession({
-              currentStageName: "Build",
-              currentStagePosition: 1,
-              currentStageSlug: "build",
-              number: 1,
-            }),
+    const html = renderPage(
+      makeSessionListData(
+        [
+          makeSession({
+            currentStageName: "Build",
+            currentStagePosition: 1,
+            currentStageSlug: "build",
+            number: 1,
+          }),
+        ],
+        {
+          stageFacets: [
+            { count: 12, name: "Plan", position: 0, slug: "plan" },
+            { count: 1, name: "Build", position: 1, slug: "build" },
+            { count: 4, name: "Land", position: 3, slug: "land" },
           ],
-          {
-            stageFacets: [
-              { count: 12, name: "Plan", position: 0, slug: "plan" },
-              { count: 1, name: "Build", position: 1, slug: "build" },
-              { count: 4, name: "Land", position: 3, slug: "land" },
-            ],
-          },
-        ),
-      }),
+        },
+      ),
     );
 
     expect(html).toContain(">Plan");
     expect(html).toContain(">Land");
     expect(html).toContain(">12</span>");
     expect(html).toContain(">4</span>");
+  });
+
+  it("renders a real title link instead of an absolute overlay around row controls", () => {
+    const html = renderPage(makeSessionListData());
+
+    expect(html).toContain('href="/w/acme/sessions/7"');
+    expect(html).not.toContain("absolute inset-0");
+    expect(html).toContain("Editable Session");
   });
 });
 
