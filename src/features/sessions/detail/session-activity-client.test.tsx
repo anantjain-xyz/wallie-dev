@@ -26,6 +26,7 @@ const initialData: WallieSessionData = {
   requiredSecretKeys: [],
   requiresVercelSandbox: false,
   runs: [],
+  stallTimeoutMs: 900_000,
   vercelSandboxConnection: {
     connected: true,
     lastValidationError: null,

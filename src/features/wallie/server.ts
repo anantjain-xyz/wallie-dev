@@ -2,6 +2,7 @@ import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
+import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import type { Tables } from "@/lib/supabase/database.types";
 import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import { buildWallieSessionData } from "@/features/wallie/data";
@@ -22,6 +23,37 @@ import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server"
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 export const WALLIE_RUN_PAGE_SIZE = 20;
+
+function attemptCountFromJoin(job: AgentRunRow["agent_jobs"]): number | undefined {
+  if (!job) return undefined;
+  if (Array.isArray(job)) {
+    const first = job[0];
+    return typeof first?.attempt_count === "number" ? first.attempt_count : undefined;
+  }
+  return typeof job.attempt_count === "number" ? job.attempt_count : undefined;
+}
+
+function toBuildableRunRow(row: AgentRunRow) {
+  return {
+    attemptCount: attemptCountFromJoin(row.agent_jobs),
+    created_at: row.created_at,
+    finished_at: row.finished_at,
+    id: row.id,
+    last_activity_at: row.last_activity_at,
+    model_name: row.model_name,
+    model_provider: row.model_provider,
+    run_type: row.run_type,
+    sandbox_id: row.sandbox_id,
+    sandbox_provider: row.sandbox_provider,
+    started_at: row.started_at,
+    stage_id: row.stage_id,
+    stage_name: row.stage_name,
+    stage_slug: row.stage_slug,
+    status: row.status,
+    triggered_by_member_id: row.triggered_by_member_id,
+    updated_at: row.updated_at,
+  };
+}
 
 export async function loadWallieRunPage(input: {
   cursor?: WallieRunCursor | null;
@@ -58,7 +90,7 @@ export async function loadWallieRunPage(input: {
     missingSecretKeys: [],
     repository: null,
     requiresVercelSandbox: false,
-    runs: pageRows,
+    runs: pageRows.map(toBuildableRunRow),
     vercelSandboxConnection: missingVercelSandboxConnection,
   }).runs;
   const lastRun = pageRows.at(-1);
@@ -101,11 +133,13 @@ export async function loadWallieSessionData(input: {
     { data: memberRows, error: memberError },
     { data: secretRows, error: secretError },
     vercelSandboxConnection,
+    stallTimeoutMs,
   ] = await Promise.all([
     runPagePromise,
     memberRowsPromise,
     secretRowsPromise,
     loadWallieVercelSandboxConnection(admin, input.workspaceId),
+    loadWallieStallTimeoutMs(admin, input.workspaceId),
   ]);
 
   if (memberError) {
@@ -133,12 +167,16 @@ export async function loadWallieSessionData(input: {
     repository: input.repository,
     requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
     runs: runPage.runs.map((run) => ({
+      attemptCount: run.attemptCount,
       created_at: run.createdAt,
       finished_at: run.finishedAt,
       id: run.id,
+      last_activity_at: run.lastActivityAt,
       model_name: run.modelName,
       model_provider: run.modelProvider,
       run_type: run.runType,
+      sandbox_id: run.sandboxId,
+      sandbox_provider: run.sandboxProvider,
       stage_id: run.stageId,
       stage_name: run.stageName,
       stage_slug: run.stageSlug,
@@ -147,6 +185,7 @@ export async function loadWallieSessionData(input: {
       triggered_by_member_id: run.requestedByMemberId,
       updated_at: run.updatedAt,
     })),
+    stallTimeoutMs,
     vercelSandboxConnection,
     workspaceMembers: members,
   });
@@ -179,8 +218,26 @@ async function loadWallieVercelSandboxConnection(
   };
 }
 
+async function loadWallieStallTimeoutMs(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+): Promise<number> {
+  const { data, error } = await admin
+    .from("workspace_agent_config")
+    .select("value_json")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "stall_timeout_ms")
+    .maybeSingle();
+
+  if (error || typeof data?.value_json !== "number" || !Number.isFinite(data.value_json)) {
+    return RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms;
+  }
+
+  return data.value_json;
+}
+
 const runSelect =
-  "id, created_at, finished_at, model_name, model_provider, run_type, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at";
+  "id, created_at, finished_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at, agent_jobs(attempt_count)";
 const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";
 
 type AgentRunRow = Pick<
@@ -188,9 +245,12 @@ type AgentRunRow = Pick<
   | "created_at"
   | "finished_at"
   | "id"
+  | "last_activity_at"
   | "model_name"
   | "model_provider"
   | "run_type"
+  | "sandbox_id"
+  | "sandbox_provider"
   | "started_at"
   | "stage_id"
   | "stage_name"
@@ -198,7 +258,9 @@ type AgentRunRow = Pick<
   | "status"
   | "triggered_by_member_id"
   | "updated_at"
->;
+> & {
+  agent_jobs: { attempt_count: number } | { attempt_count: number }[] | null;
+};
 
 const missingVercelSandboxConnection: WallieVercelSandboxConnectionStatus = {
   connected: false,

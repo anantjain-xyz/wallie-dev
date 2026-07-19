@@ -23,6 +23,7 @@ const offlineMember: WorkspaceMember = {
 function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
   const id = `run-${index}`;
   return {
+    attemptCount: 1,
     canCancel: false,
     canRetry: false,
     createdAt: `2026-07-18T12:${(59 - index).toString().padStart(2, "0")}:00.000Z`,
@@ -30,12 +31,15 @@ function run(index: number, overrides: Partial<WallieRun> = {}): WallieRun {
     id,
     isActive: false,
     isTerminal: true,
+    lastActivityAt: "2026-07-18T13:00:00.000Z",
     messages: [],
     modelName: "gpt-5",
     modelProvider: "codex",
     requestedByMember: null,
     requestedByMemberId: null,
     runType: "code",
+    sandboxId: null,
+    sandboxProvider: null,
     startedAt: "2026-07-18T12:00:00.000Z",
     stageId: null,
     stageName: `Stage ${index}`,
@@ -75,6 +79,7 @@ function data(
     requiredSecretKeys: [],
     requiresVercelSandbox: false,
     runs,
+    stallTimeoutMs: 900_000,
     vercelSandboxConnection: {
       connected: false,
       lastValidationError: null,
@@ -206,15 +211,16 @@ describe("SessionWalliePanel run history lifecycle", () => {
     const view = panel(data(initialRuns, true), fake.supabase);
 
     expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(20);
-    expect(fake.messageQueries).toEqual([]);
     expect(fake.activeChannels.size).toBe(0);
+    expect(
+      view.container.querySelector('[data-run-id="run-1"] button')?.getAttribute("aria-expanded"),
+    ).toBe("true");
+
+    await waitFor(() => expect(fake.messageQueries.length).toBeGreaterThanOrEqual(1));
+    expect(fake.messageQueries[0]).toBe("run-1");
+    await screen.findByText("Cached message");
 
     await act(async () => idleCallback?.());
-    expect(fake.activeChannels.size).toBe(1);
-
-    fireEvent.click(view.container.querySelector('[data-run-id="run-1"] button[aria-expanded]')!);
-    await screen.findByText("Cached message");
-    expect(fake.messageQueries).toEqual(["run-1"]);
     expect(fake.activeChannels.size).toBe(2);
 
     fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
@@ -247,11 +253,11 @@ describe("SessionWalliePanel run history lifecycle", () => {
     await act(async () => idleCallback?.());
     const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
     await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
-    await screen.findByText("Failed");
+    await screen.findAllByText("Failed");
 
     reconciled = { ...initialRun, status: "success" };
     await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
-    await screen.findByText("Complete");
+    await screen.findAllByText("Complete");
     expect(view.container.querySelectorAll('[data-run-id="run-1"]')).toHaveLength(1);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
@@ -500,9 +506,12 @@ describe("SessionWalliePanel run history lifecycle", () => {
           created_at: "2026-07-18T14:00:00.000Z",
           finished_at: null,
           id: "run-new",
+          last_activity_at: "2026-07-18T14:00:00.000Z",
           model_name: "gpt-5",
           model_provider: "codex",
           run_type: "code",
+          sandbox_id: null,
+          sandbox_provider: null,
           stage_id: null,
           stage_name: "Build",
           stage_slug: "build",
@@ -562,5 +571,147 @@ describe("SessionWalliePanel run history lifecycle", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(view.container.querySelectorAll('[data-run-id="run-21"]')).toHaveLength(1);
+  });
+});
+
+describe("SessionWalliePanel activity states", () => {
+  it("announces disconnect and restore while preserving run history", async () => {
+    const initialRun = run(1, {
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      lastActivityAt: "2026-07-18T12:55:00.000Z",
+      messages: [
+        {
+          createdAt: "2026-07-18T12:01:00.000Z",
+          id: "msg-1",
+          kind: "progress",
+          messageMd: "Cloning repository",
+        },
+      ],
+      status: "running",
+    });
+    const fake = fakeSupabase({
+      "run-1": [
+        {
+          agent_run_id: "run-1",
+          created_at: "2026-07-18T12:01:00.000Z",
+          id: "msg-1",
+          kind: "progress",
+          message_md: "Cloning repository",
+        },
+      ],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [initialRun] }), { status: 200 }),
+      ),
+    );
+    const view = render(
+      <SessionWalliePanel
+        initialData={data([initialRun], false, { loadedMessageRunIds: ["run-1"] })}
+        initialNow="2026-07-18T12:56:00.000Z"
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
+    expect(screen.getByText("Connecting…")).not.toBeNull();
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    expect(screen.getByText("Live")).not.toBeNull();
+
+    await act(async () => sessionChannel?.statusCallback?.("CHANNEL_ERROR"));
+    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
+
+    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    expect(screen.getAllByText("Live updates restored").length).toBeGreaterThan(0);
+    expect(view.container.querySelectorAll('[data-run-id="run-1"]')).toHaveLength(1);
+  });
+
+  it("keeps disclosure stable when realtime updates arrive on another run", async () => {
+    const latest = run(1, { stageName: "Latest" });
+    const older = run(2, { stageName: "Older" });
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [latest, older] }), {
+            status: 200,
+          }),
+      ),
+    );
+    const view = panel(data([latest, older]), fake.supabase);
+
+    fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
+    expect(
+      view.container.querySelector('[data-run-id="run-2"] button')?.getAttribute("aria-expanded"),
+    ).toBe("true");
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => {
+      sessionChannel?.changeCallback?.({
+        eventType: "UPDATE",
+        new: {
+          created_at: latest.createdAt,
+          finished_at: latest.finishedAt,
+          id: latest.id,
+          last_activity_at: latest.lastActivityAt,
+          model_name: latest.modelName,
+          model_provider: latest.modelProvider,
+          run_type: latest.runType,
+          sandbox_id: null,
+          sandbox_provider: null,
+          stage_id: latest.stageId,
+          stage_name: latest.stageName,
+          stage_slug: latest.stageSlug,
+          started_at: latest.startedAt,
+          status: "success",
+          triggered_by_member_id: null,
+          updated_at: "2026-07-18T13:05:00.000Z",
+        },
+      });
+    });
+
+    expect(
+      view.container.querySelector('[data-run-id="run-2"] button')?.getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(
+      view.container.querySelector('[data-run-id="run-1"] button')?.getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("renders retried attempt metadata in the active summary", () => {
+    const retried = run(1, {
+      attemptCount: 3,
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      lastActivityAt: "2026-07-18T12:55:00.000Z",
+      status: "queued",
+    });
+    const fake = fakeSupabase();
+    render(
+      <SessionWalliePanel
+        initialData={data([retried])}
+        initialNow="2026-07-18T12:56:00.000Z"
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    expect(screen.getByText("Waiting in queue")).not.toBeNull();
+    expect(screen.getByText("3")).not.toBeNull();
+    expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
   });
 });

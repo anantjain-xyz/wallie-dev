@@ -13,6 +13,7 @@ function run(
   overrides: Partial<WallieRun> = {},
 ): WallieRun {
   return {
+    attemptCount: 1,
     canCancel: false,
     canRetry: false,
     createdAt,
@@ -20,12 +21,15 @@ function run(
     id,
     isActive: false,
     isTerminal: true,
+    lastActivityAt: createdAt,
     messages: [],
     modelName: "gpt-5",
     modelProvider: "codex",
     requestedByMember: null,
     requestedByMemberId: null,
     runType: "code",
+    sandboxId: null,
+    sandboxProvider: null,
     startedAt: createdAt,
     stageId: null,
     stageName: "Build",

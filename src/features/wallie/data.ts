@@ -1,5 +1,6 @@
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Tables } from "@/lib/supabase/database.types";
+import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import {
   buildWallieBlockingReasons,
   canCancelWallieRun,
@@ -78,9 +79,12 @@ export function mapAgentRunRow(
     | "created_at"
     | "finished_at"
     | "id"
+    | "last_activity_at"
     | "model_name"
     | "model_provider"
     | "run_type"
+    | "sandbox_id"
+    | "sandbox_provider"
     | "started_at"
     | "stage_id"
     | "stage_name"
@@ -91,8 +95,10 @@ export function mapAgentRunRow(
   >,
   memberIndex: ReadonlyMap<string, WorkspaceMember>,
   messages: WallieRunMessage[],
+  options?: { attemptCount?: number },
 ): WallieRun {
   return {
+    attemptCount: options?.attemptCount && options.attemptCount > 0 ? options.attemptCount : 1,
     canCancel: false,
     canRetry: false,
     createdAt: row.created_at,
@@ -100,6 +106,7 @@ export function mapAgentRunRow(
     id: row.id,
     isActive: false,
     isTerminal: false,
+    lastActivityAt: row.last_activity_at ?? null,
     messages: [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     modelName: row.model_name,
     modelProvider: row.model_provider,
@@ -108,6 +115,8 @@ export function mapAgentRunRow(
       : null,
     requestedByMemberId: row.triggered_by_member_id,
     runType: parseWallieRunMode(row.run_type),
+    sandboxId: row.sandbox_id ?? null,
+    sandboxProvider: row.sandbox_provider ?? null,
     startedAt: row.started_at,
     stageId: row.stage_id,
     stageName: row.stage_name,
@@ -137,8 +146,12 @@ export function mergeWallieRuns(runs: readonly WallieRun[], incomingRuns: readon
 
     nextRuns = upsertWallieRun(nextRuns, {
       ...incomingRun,
+      attemptCount: Math.max(incomingRun.attemptCount, previousRun?.attemptCount ?? 1),
       messages: previousRun?.messages ?? incomingRun.messages,
       requestedByMember: incomingRun.requestedByMember ?? previousRun?.requestedByMember ?? null,
+      sandboxId: incomingRun.sandboxId ?? previousRun?.sandboxId ?? null,
+      sandboxProvider: incomingRun.sandboxProvider ?? previousRun?.sandboxProvider ?? null,
+      lastActivityAt: incomingRun.lastActivityAt ?? previousRun?.lastActivityAt ?? null,
     });
   }
 
@@ -184,14 +197,17 @@ export function buildWallieSessionData(input: {
   nextRunCursor?: WallieSessionData["nextRunCursor"];
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
-  runs: readonly Pick<
+  runs: readonly (Pick<
     Tables<"agent_runs">,
     | "created_at"
     | "finished_at"
     | "id"
+    | "last_activity_at"
     | "model_name"
     | "model_provider"
     | "run_type"
+    | "sandbox_id"
+    | "sandbox_provider"
     | "started_at"
     | "stage_id"
     | "stage_name"
@@ -199,7 +215,8 @@ export function buildWallieSessionData(input: {
     | "status"
     | "triggered_by_member_id"
     | "updated_at"
-  >[];
+  > & { attemptCount?: number })[];
+  stallTimeoutMs?: number;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
   workspaceMembers?: readonly WorkspaceMember[];
 }) {
@@ -220,7 +237,9 @@ export function buildWallieSessionData(input: {
   const mode = inferWallieRunMode(input.sessionGithubRepositoryId);
   const runs = normalizeWallieRuns(
     input.runs.map((run) =>
-      mapAgentRunRow(run, input.memberIndex, messagesByRunId.get(run.id) ?? []),
+      mapAgentRunRow(run, input.memberIndex, messagesByRunId.get(run.id) ?? [], {
+        attemptCount: run.attemptCount,
+      }),
     ),
   );
   const blockingReasons = buildWallieBlockingReasons({
@@ -243,6 +262,7 @@ export function buildWallieSessionData(input: {
     requiresVercelSandbox: input.requiresVercelSandbox,
     requiredSecretKeys: [...WALLIE_REQUIRED_SECRET_KEYS],
     runs,
+    stallTimeoutMs: input.stallTimeoutMs ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms,
     vercelSandboxConnection: input.vercelSandboxConnection,
     workspaceMembers: [...(input.workspaceMembers ?? input.memberIndex.values())],
   } satisfies WallieSessionData;

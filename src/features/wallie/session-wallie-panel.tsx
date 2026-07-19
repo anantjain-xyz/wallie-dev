@@ -16,6 +16,18 @@ import type {
   RunHistoryResponse,
 } from "@/features/wallie/contracts";
 import {
+  connectionStateCopy,
+  currentOperationLabel,
+  formatMessageSourceLabel,
+  isRunActivityStalled,
+  lastActivityTimestamp,
+  messagesDisconnectedCopy,
+  messagesEmptyCopy,
+  messagesFailedCopy,
+  messagesLoadingCopy,
+  type WallieRealtimeConnectionState,
+} from "@/features/wallie/activity-summary";
+import {
   mapAgentRunMessageRow,
   mapAgentRunRow,
   mergeWallieRuns,
@@ -120,6 +132,18 @@ function formatStageRunLabel(run: WallieRun) {
   return "Session run";
 }
 
+function formatStageName(run: WallieRun) {
+  if (run.stageName) return run.stageName;
+  if (run.stageSlug) {
+    const words = run.stageSlug
+      .split(/[-_\s]+/g)
+      .filter(Boolean)
+      .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`);
+    return words.join(" ") || "Session";
+  }
+  return "Session";
+}
+
 function formatRequestedBy(run: WallieRun) {
   if (run.requestedByMember) {
     const fullName = run.requestedByMember.fullName?.trim();
@@ -134,6 +158,19 @@ function formatRequestedBy(run: WallieRun) {
   }
 
   return run.requestedByMemberId ? "workspace member" : "Wallie";
+}
+
+function mapRealtimeStatus(status: string): WallieRealtimeConnectionState | null {
+  switch (status) {
+    case "SUBSCRIBED":
+      return "live";
+    case "CHANNEL_ERROR":
+    case "TIMED_OUT":
+    case "CLOSED":
+      return "disconnected";
+    default:
+      return null;
+  }
 }
 
 export function SessionWalliePanel({
@@ -151,7 +188,9 @@ export function SessionWalliePanel({
   const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(
+    () => initialData.runs[0]?.id ?? null,
+  );
   const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
     () => new Set(initialData.loadedMessageRunIds),
   );
@@ -161,8 +200,13 @@ export function SessionWalliePanel({
   const [isLoadingOlderRuns, setIsLoadingOlderRuns] = useState(false);
   const [olderRunsError, setOlderRunsError] = useState<string | null>(null);
   const [realtimeReady, setRealtimeReady] = useState(false);
+  const [connectionState, setConnectionState] =
+    useState<WallieRealtimeConnectionState>("connecting");
+  const [connectionAnnouncement, setConnectionAnnouncement] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.parse(renderNow) || Date.now());
   const sessionIdRef = useRef(session.id);
   const reconcileGenerationRef = useRef(0);
+  const hadDisconnectRef = useRef(false);
   sessionIdRef.current = session.id;
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
@@ -185,12 +229,27 @@ export function SessionWalliePanel({
     setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
     setPendingActionId(null);
-    setExpandedRunId(null);
+    setExpandedRunId(initialData.runs[0]?.id ?? null);
     setLoadedMessageRunIds(new Set(initialData.loadedMessageRunIds));
     setMessageLoadErrorRunIds(new Set());
     setIsLoadingOlderRuns(false);
     setOlderRunsError(null);
+    setConnectionState("connecting");
+    setConnectionAnnouncement(null);
+    hadDisconnectRef.current = false;
   }, [initialData.loadedMessageRunIds, initialData.nextRunCursor, initialData.runs, session.id]);
+
+  useEffect(() => {
+    const active = runs.some((run) => run.isActive);
+    if (!active) return;
+
+    // Keep the first paint aligned with `initialNow` (hydration-safe / testable),
+    // then follow the wall clock for live stall detection.
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [runs]);
 
   const loadRunMessages = useCallback(
     async (runId: string) => {
@@ -241,7 +300,9 @@ export function SessionWalliePanel({
 
       return upsertWallieRun(
         currentRuns,
-        mapAgentRunRow(row, memberIndex, previousRun?.messages ?? []),
+        mapAgentRunRow(row, memberIndex, previousRun?.messages ?? [], {
+          attemptCount: previousRun?.attemptCount,
+        }),
       );
     });
   });
@@ -338,8 +399,28 @@ export function SessionWalliePanel({
         },
       )
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
+        const mapped = mapRealtimeStatus(status);
+        if (!mapped) return;
+
+        if (mapped === "disconnected") {
+          hadDisconnectRef.current = true;
+          setConnectionState("disconnected");
+          setConnectionAnnouncement(connectionStateCopy("disconnected"));
+          return;
+        }
+
+        if (mapped === "live") {
           void reconcileLatestRuns();
+          if (hadDisconnectRef.current) {
+            setConnectionState("recovered");
+            setConnectionAnnouncement(connectionStateCopy("recovered"));
+            hadDisconnectRef.current = false;
+            window.setTimeout(() => {
+              setConnectionState((current) => (current === "recovered" ? "live" : current));
+            }, 4_000);
+          } else {
+            setConnectionState("live");
+          }
         }
       });
 
@@ -400,6 +481,21 @@ export function SessionWalliePanel({
   // for archived sessions; mirror that here so the Retry button is disabled
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
+  const activeRun = runs.find((run) => run.isActive) ?? null;
+  const summaryRun = activeRun ?? runs[0] ?? null;
+  const summaryStalled = summaryRun
+    ? isRunActivityStalled({
+        createdAt: summaryRun.createdAt,
+        isActive: summaryRun.isActive,
+        lastActivityAt: summaryRun.lastActivityAt,
+        nowMs,
+        stallTimeoutMs: initialData.stallTimeoutMs,
+      })
+    : false;
+  const summaryOperation = summaryRun
+    ? currentOperationLabel({ run: summaryRun, stalled: summaryStalled })
+    : null;
+  const summaryLastActivity = summaryRun ? lastActivityTimestamp(summaryRun) : null;
 
   const handleRetryRun = useCallback(
     async (runId: string) => {
@@ -536,7 +632,7 @@ export function SessionWalliePanel({
   }, [isLoadingOlderRuns, nextRunCursor, session.id]);
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5 overflow-x-clip">
       {flashMessage ? (
         <div
           aria-live="polite"
@@ -547,6 +643,12 @@ export function SessionWalliePanel({
           role="status"
         >
           {flashMessage.text}
+        </div>
+      ) : null}
+
+      {connectionAnnouncement ? (
+        <div aria-live="polite" className="sr-only" role="status">
+          {connectionAnnouncement}
         </div>
       ) : null}
 
@@ -597,7 +699,21 @@ export function SessionWalliePanel({
         </div>
       ) : null}
 
-      <div className="divide-y divide-border border-y border-border">
+      <ActiveRunSummary
+        actionPending={summaryRun ? pendingActionId === summaryRun.id : false}
+        cancelLocked={pendingActionId !== null}
+        connectionState={connectionState}
+        lastActivityAt={summaryLastActivity}
+        onCancel={handleCancelRun}
+        onRetry={handleRetryRun}
+        operation={summaryOperation}
+        renderNow={renderNow}
+        retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+        run={summaryRun}
+        stalled={summaryStalled}
+      />
+
+      <div className="min-w-0 divide-y divide-border border-y border-border">
         {runs.length === 0 ? (
           <div className="py-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
         ) : (
@@ -605,16 +721,20 @@ export function SessionWalliePanel({
             <WallieRunCard
               key={run.id}
               actionPending={pendingActionId === run.id}
+              branchName={initialData.repository?.defaultBranch ?? null}
               cancelLocked={pendingActionId !== null}
+              connectionState={connectionState}
               isExpanded={expandedRunId === run.id}
               messagesLoaded={loadedMessageRunIds.has(run.id)}
               messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+              nowMs={nowMs}
               onCancel={handleCancelRun}
               onRetry={handleRetryRun}
               onToggle={handleToggleRun}
               renderNow={renderNow}
               retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
               run={run}
+              stallTimeoutMs={initialData.stallTimeoutMs}
             />
           ))
         )}
@@ -640,42 +760,197 @@ export function SessionWalliePanel({
   );
 }
 
-type WallieRunCardProps = {
+type ActiveRunSummaryProps = {
   actionPending: boolean;
   cancelLocked: boolean;
+  connectionState: WallieRealtimeConnectionState;
+  lastActivityAt: string | null;
+  onCancel: (runId: string) => Promise<void>;
+  onRetry: (runId: string) => Promise<void>;
+  operation: string | null;
+  renderNow: string;
+  retryLocked: boolean;
+  run: WallieRun | null;
+  stalled: boolean;
+};
+
+function ActiveRunSummary({
+  actionPending,
+  cancelLocked,
+  connectionState,
+  lastActivityAt,
+  onCancel,
+  onRetry,
+  operation,
+  renderNow,
+  retryLocked,
+  run,
+  stalled,
+}: ActiveRunSummaryProps) {
+  if (!run) {
+    return (
+      <section
+        aria-label="Current Wallie activity"
+        className="min-w-0 border-y border-border py-4 text-sm leading-7 text-muted"
+      >
+        No active Wallie run.
+      </section>
+    );
+  }
+
+  const showRecovery = stalled && run.isActive && run.canCancel;
+  const showRetryRecovery = stalled && !run.isActive && run.canRetry;
+
+  return (
+    <section
+      aria-label="Current Wallie activity"
+      className="min-w-0 border-y border-border py-4"
+      data-wallie-summary=""
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-2">
+          <p className="ui-label">Current activity</p>
+          <p className="text-sm font-semibold text-foreground">{formatStageName(run)}</p>
+          <p className="min-w-0 break-words text-sm text-foreground [overflow-wrap:anywhere]">
+            {operation}
+          </p>
+        </div>
+        <Status value={agentRunStatusValue(run.status)} />
+      </div>
+
+      <dl className="mt-4 grid min-w-0 gap-2 text-sm sm:grid-cols-2">
+        <div className="min-w-0">
+          <dt className="type-annotation text-muted">Elapsed</dt>
+          <dd className="text-foreground">
+            {run.startedAt ? (
+              <TimeDisplay
+                active={run.isActive}
+                endValue={run.finishedAt}
+                initialNow={renderNow}
+                value={run.startedAt}
+                variant="elapsed"
+              />
+            ) : (
+              "—"
+            )}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="type-annotation text-muted">Last event</dt>
+          <dd className="text-foreground">
+            {lastActivityAt ? (
+              <TimeDisplay
+                absoluteStyle="short"
+                initialNow={renderNow}
+                value={lastActivityAt}
+                variant="relative"
+              />
+            ) : (
+              "—"
+            )}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="type-annotation text-muted">Connection</dt>
+          <dd className="text-foreground">{connectionStateCopy(connectionState)}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="type-annotation text-muted">Attempt</dt>
+          <dd className="text-foreground">{run.attemptCount}</dd>
+        </div>
+      </dl>
+
+      {stalled ? (
+        <div
+          aria-live="polite"
+          className="mt-4 border-t border-border pt-3 text-sm text-warning"
+          role="status"
+        >
+          No recent activity
+          {showRecovery || showRetryRecovery ? ". Use the recovery action to continue." : "."}
+        </div>
+      ) : null}
+
+      {showRecovery ? (
+        <div className="mt-3">
+          <button
+            className="ui-button-danger"
+            disabled={cancelLocked}
+            onClick={() => void onCancel(run.id)}
+            type="button"
+          >
+            {actionPending ? "Canceling…" : "Cancel run"}
+          </button>
+        </div>
+      ) : null}
+
+      {showRetryRecovery ? (
+        <div className="mt-3">
+          <button
+            className="ui-button"
+            disabled={retryLocked}
+            onClick={() => void onRetry(run.id)}
+            type="button"
+          >
+            {actionPending ? "Retrying…" : "Retry run"}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+type WallieRunCardProps = {
+  actionPending: boolean;
+  branchName: string | null;
+  cancelLocked: boolean;
+  connectionState: WallieRealtimeConnectionState;
   isExpanded: boolean;
   messagesLoaded: boolean;
   messagesLoadFailed: boolean;
+  nowMs: number;
   onCancel: (runId: string) => Promise<void>;
   onRetry: (runId: string) => Promise<void>;
   onToggle: (runId: string) => void;
   renderNow: string;
   retryLocked: boolean;
   run: WallieRun;
+  stallTimeoutMs: number;
 };
 
 const WallieRunCard = memo(function WallieRunCard({
   actionPending,
+  branchName,
   cancelLocked,
+  connectionState,
   isExpanded,
   messagesLoaded,
   messagesLoadFailed,
+  nowMs,
   onCancel,
   onRetry,
   onToggle,
   renderNow,
   retryLocked,
   run,
+  stallTimeoutMs,
 }: WallieRunCardProps) {
   const runDetailsId = `wallie-run-details-${run.id}`;
+  const stalled = isRunActivityStalled({
+    createdAt: run.createdAt,
+    isActive: run.isActive,
+    lastActivityAt: run.lastActivityAt,
+    nowMs,
+    stallTimeoutMs,
+  });
 
   return (
     <article
       aria-busy={run.isActive}
-      className={cn("py-5", !isExpanded && !run.isActive && "run-history-group")}
+      className={cn("min-w-0 py-5", !isExpanded && !run.isActive && "run-history-group")}
       data-run-id={run.id}
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
         <button
           aria-controls={runDetailsId}
           aria-expanded={isExpanded}
@@ -683,33 +958,21 @@ const WallieRunCard = memo(function WallieRunCard({
           onClick={() => onToggle(run.id)}
           type="button"
         >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
             <Status value={agentRunStatusValue(run.status)} />
-            <dl className="flex flex-wrap gap-x-3 gap-y-1 type-annotation text-muted">
-              <div className="flex gap-1">
-                <dt>Stage</dt>
-                <dd className="text-foreground">{formatStageRunLabel(run)}</dd>
-              </div>
-              <div className="flex gap-1">
-                <dt>Model</dt>
-                <dd className="font-mono text-foreground">
-                  {run.modelProvider}/{run.modelName}
-                </dd>
-              </div>
-            </dl>
+            <span className="type-annotation text-muted">Attempt {run.attemptCount}</span>
+            <span className="min-w-0 break-all font-mono type-annotation text-foreground">
+              {run.modelProvider}/{run.modelName}
+            </span>
           </div>
 
-          <p className="mt-3 text-sm font-semibold text-foreground">
-            Requested by {formatRequestedBy(run)}
-          </p>
+          <p className="mt-3 text-sm font-semibold text-foreground">{formatStageRunLabel(run)}</p>
           <p className="mt-1 text-sm text-muted">
-            Created{" "}
-            <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.createdAt} />
             {run.startedAt ? (
               <>
-                {" · Started "}
+                Started{" "}
                 <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.startedAt} />
-                {" · Elapsed "}
+                {" · Duration "}
                 <TimeDisplay
                   active={run.isActive}
                   endValue={run.finishedAt}
@@ -718,14 +981,20 @@ const WallieRunCard = memo(function WallieRunCard({
                   variant="elapsed"
                 />
               </>
-            ) : null}
+            ) : (
+              <>
+                Created{" "}
+                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.createdAt} />
+              </>
+            )}
             {run.finishedAt ? (
               <>
-                {" · Finished "}
+                {" · Ended "}
                 <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.finishedAt} />
               </>
             ) : null}
           </p>
+          <p className="mt-1 text-sm text-muted">Requested by {formatRequestedBy(run)}</p>
         </button>
 
         {run.canCancel ? (
@@ -752,74 +1021,132 @@ const WallieRunCard = memo(function WallieRunCard({
       </div>
 
       {isExpanded ? (
-        <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
-          {run.messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn(
-                "rounded-[6px] border px-4 py-4 text-sm leading-7",
-                message.kind === "error"
-                  ? "border-danger/20 bg-danger-soft text-danger"
-                  : "border-border bg-control-muted text-foreground",
-              )}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
-                <span>{message.kind}</span>
-                <TimeDisplay
-                  absoluteStyle="short"
-                  initialNow={renderNow}
-                  value={message.createdAt}
-                />
+        <div id={runDetailsId} className="mt-4 min-w-0 space-y-4 border-t border-border/70 pt-4">
+          <details className="min-w-0 text-sm">
+            <summary className="cursor-pointer type-annotation font-semibold text-muted">
+              Run details
+            </summary>
+            <dl className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
+              <div className="min-w-0">
+                <dt className="type-annotation text-muted">Run ID</dt>
+                <dd className="break-all font-mono text-foreground">{run.id}</dd>
               </div>
-              <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
-            </div>
-          ))}
-          {run.messages.length === 0 && !run.isActive && messagesLoadFailed ? (
-            <div
-              aria-live="polite"
-              className="rounded-[6px] bg-danger-soft px-4 py-4 text-sm text-danger"
-              role="status"
-            >
-              Could not load run messages. Collapse and expand this run to retry.
-            </div>
-          ) : null}
-          {run.messages.length === 0 && !run.isActive && !messagesLoaded && !messagesLoadFailed ? (
-            <div
-              aria-live="polite"
-              className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
-              role="status"
-            >
-              Loading run messages...
-            </div>
-          ) : null}
-          {run.messages.length === 0 && !run.isActive && messagesLoaded ? (
-            <div
-              aria-live="polite"
-              className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
-              role="status"
-            >
-              No persisted messages were recorded for this run.
-            </div>
-          ) : null}
-          {run.isActive ? <RunProgressRow /> : null}
+              {branchName ? (
+                <div className="min-w-0">
+                  <dt className="type-annotation text-muted">Branch</dt>
+                  <dd className="break-all font-mono text-foreground">{branchName}</dd>
+                </div>
+              ) : null}
+              {run.sandboxId ? (
+                <div className="min-w-0">
+                  <dt className="type-annotation text-muted">Sandbox</dt>
+                  <dd className="break-all font-mono text-foreground">
+                    {run.sandboxProvider ? `${run.sandboxProvider}/` : ""}
+                    {run.sandboxId}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </details>
+
+          <RunMessageTimeline
+            connectionState={connectionState}
+            messages={run.messages}
+            messagesLoadFailed={messagesLoadFailed}
+            messagesLoaded={messagesLoaded}
+            renderNow={renderNow}
+            run={run}
+            stalled={stalled}
+          />
         </div>
       ) : null}
     </article>
   );
 });
 
-function RunProgressRow() {
+function RunMessageTimeline({
+  connectionState,
+  messages,
+  messagesLoadFailed,
+  messagesLoaded,
+  renderNow,
+  run,
+  stalled,
+}: {
+  connectionState: WallieRealtimeConnectionState;
+  messages: WallieRun["messages"];
+  messagesLoadFailed: boolean;
+  messagesLoaded: boolean;
+  renderNow: string;
+  run: WallieRun;
+  stalled: boolean;
+}) {
+  const disconnected = connectionState === "disconnected";
+
   return (
-    <div
-      aria-busy
-      aria-live="polite"
-      className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
-      role="status"
-    >
-      <span className="flex items-center gap-2">
-        <Spinner />
-        <span>Wallie is working</span>
-      </span>
+    <div className="min-w-0">
+      <p className="ui-label">Messages</p>
+
+      {messages.length > 0 ? (
+        <ol className="mt-3 min-w-0 divide-y divide-border border-y border-border">
+          {messages.map((message) => (
+            <li key={message.id} className="min-w-0 py-3">
+              <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2 type-annotation text-muted">
+                <span>{formatMessageSourceLabel(message.kind)}</span>
+                <TimeDisplay
+                  absoluteStyle="short"
+                  initialNow={renderNow}
+                  value={message.createdAt}
+                />
+              </div>
+              <p
+                className={cn(
+                  "mt-2 min-w-0 whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]",
+                  message.kind === "error" ? "text-danger" : "text-foreground",
+                )}
+              >
+                {message.messageMd}
+              </p>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+
+      {messages.length === 0 && !run.isActive && messagesLoadFailed ? (
+        <div aria-live="polite" className="mt-3 text-sm text-danger" role="status">
+          {messagesFailedCopy()}
+        </div>
+      ) : null}
+      {messages.length === 0 && !run.isActive && !messagesLoaded && !messagesLoadFailed ? (
+        <div aria-live="polite" className="mt-3 text-sm text-muted" role="status">
+          {messagesLoadingCopy()}
+        </div>
+      ) : null}
+      {messages.length === 0 && !run.isActive && messagesLoaded ? (
+        <div aria-live="polite" className="mt-3 text-sm text-muted" role="status">
+          {messagesEmptyCopy()}
+        </div>
+      ) : null}
+      {run.isActive ? (
+        <div
+          aria-busy
+          aria-live="polite"
+          className="mt-3 flex items-center gap-2 text-sm text-muted"
+          role="status"
+        >
+          {stalled ? null : <Spinner />}
+          <span>
+            {stalled
+              ? "No recent activity"
+              : disconnected
+                ? messagesDisconnectedCopy()
+                : "Wallie is working…"}
+          </span>
+        </div>
+      ) : null}
+      {disconnected && messages.length > 0 ? (
+        <p className="mt-3 text-sm text-muted">{messagesDisconnectedCopy()}</p>
+      ) : null}
     </div>
   );
 }
