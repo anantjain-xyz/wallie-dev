@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
 
 import type { getOnboardingStepRailItems } from "@/features/onboarding/flow";
 import type { WorkspaceOnboardingStep } from "@/lib/onboarding/contracts";
@@ -35,17 +35,25 @@ export function StepLoading() {
   );
 }
 
+function createDeferredStep(step: WorkspaceOnboardingStep) {
+  return dynamic(stepLoaders[step], { loading: StepLoading });
+}
+
 const deferredSteps = {
-  github: dynamic(stepLoaders.github, { loading: StepLoading }),
-  repository: dynamic(stepLoaders.repository, { loading: StepLoading }),
-  pipeline: dynamic(stepLoaders.pipeline, { loading: StepLoading }),
-  linear: dynamic(stepLoaders.linear, { loading: StepLoading }),
-  runtime: dynamic(stepLoaders.runtime, { loading: StepLoading }),
-  verify: dynamic(stepLoaders.verify, { loading: StepLoading }),
+  github: createDeferredStep("github"),
+  repository: createDeferredStep("repository"),
+  pipeline: createDeferredStep("pipeline"),
+  linear: createDeferredStep("linear"),
+  runtime: createDeferredStep("runtime"),
+  verify: createDeferredStep("verify"),
 } satisfies Record<WorkspaceOnboardingStep, React.ComponentType<OnboardingStepProps>>;
 
 export class StepErrorBoundary extends Component<
-  { children: ReactNode; step: WorkspaceOnboardingStep },
+  {
+    children: ReactNode;
+    onRetry: () => void;
+    step: WorkspaceOnboardingStep;
+  },
   { error: Error | null }
 > {
   state = { error: null as Error | null };
@@ -71,7 +79,10 @@ export class StepErrorBoundary extends Component<
         </p>
         <button
           className="ui-button mt-4"
-          onClick={() => this.setState({ error: null })}
+          onClick={() => {
+            this.setState({ error: null });
+            this.props.onRetry();
+          }}
           type="button"
         >
           Retry
@@ -96,21 +107,38 @@ export function nextPreloadableStep(
   );
 }
 
-export function ActiveOnboardingStep({
+export function ActiveOnboardingStep(
+  props: OnboardingStepProps & { items: RailItems; step: WorkspaceOnboardingStep },
+) {
+  return <ActiveOnboardingStepInner key={props.step} {...props} />;
+}
+
+function ActiveOnboardingStepInner({
   items,
   step,
   ...props
 }: OnboardingStepProps & { items: RailItems; step: WorkspaceOnboardingStep }) {
-  const ActiveStep = deferredSteps[step];
+  const [retryStep, setRetryStep] = useState<React.ComponentType<OnboardingStepProps> | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
+  const ActiveStep = retryStep ?? deferredSteps[step];
 
   useEffect(() => {
     const nextStep = nextPreloadableStep(step, items);
     if (!nextStep) return;
-    void stepLoaders[nextStep]();
+    void stepLoaders[nextStep]().catch(() => {
+      // Speculative preload failures must not surface as unhandled rejections.
+    });
   }, [items, step]);
 
   return (
-    <StepErrorBoundary key={step} step={step}>
+    <StepErrorBoundary
+      key={retryToken}
+      onRetry={() => {
+        setRetryStep(() => createDeferredStep(step));
+        setRetryToken((token) => token + 1);
+      }}
+      step={step}
+    >
       <ActiveStep {...props} />
     </StepErrorBoundary>
   );

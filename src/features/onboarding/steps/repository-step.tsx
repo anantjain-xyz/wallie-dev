@@ -33,8 +33,8 @@ export default function RepositoryAnalysisStep({
   const selectedRepository = selectedRepositoryFromData(data);
   const [profileAction, setProfileAction] = useState<"analyzing" | "saving" | null>(null);
   const [profileDirty, setProfileDirty] = useState(false);
-  const [profileDraft, setProfileDraft] = useState<RepositoryProfileState | null>(
-    () => selectedRepository?.profile ?? data.github.primaryProfile ?? null,
+  const [profileDraft, setProfileDraft] = useState<RepositoryProfileState | null>(() =>
+    initialProfileDraft(selectedRepository, data.github.primaryProfile),
   );
   const [profileError, setProfileError] = useState<string | null>(null);
   const selectedRepositoryIdRef = useRef(selectedRepository?.id ?? null);
@@ -47,6 +47,7 @@ export default function RepositoryAnalysisStep({
     const selected = await onSelectGithubRepository(repository);
     if (!selected) return false;
     selectedRepositoryIdRef.current = repository.id;
+    setProfileAction(null);
     setProfileDraft(repository.profile ?? null);
     setProfileDirty(false);
     setProfileError(null);
@@ -119,17 +120,24 @@ export default function RepositoryAnalysisStep({
         latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
         profile: RepositoryProfileState;
       };
-      const nextData = applySavedRepositoryProfileToData(
-        data,
-        body.profile,
-        body.latestSandboxCapabilityCheck,
-      );
-      onDataChange(nextData);
+      let shouldCompleteRepositoryStep = false;
+      onDataChange((currentData) => {
+        const nextData = applySavedRepositoryProfileToData(
+          currentData,
+          body.profile,
+          body.latestSandboxCapabilityCheck,
+        );
+        shouldCompleteRepositoryStep =
+          currentData.onboarding.currentStep === "repository" &&
+          selectedRepositoryIdRef.current === repositoryId &&
+          canCompleteRepositoryStep(nextData);
+        return nextData;
+      });
       if (selectedRepositoryIdRef.current === repositoryId) {
         setProfileDraft(body.profile);
         setProfileDirty(false);
       }
-      if (canCompleteRepositoryStep(nextData)) await onCompleteStep("repository-profile");
+      if (shouldCompleteRepositoryStep) await onCompleteStep("repository-profile");
     } catch (caught) {
       setProfileError(
         caught instanceof Error ? caught.message : "Failed to save repository profile.",
@@ -298,4 +306,14 @@ function selectedRepositoryFromData(data: WorkspaceOnboardingData) {
   return (
     data.github.repositories.find((repository) => repository.id === selectedRepositoryId) ?? null
   );
+}
+
+function initialProfileDraft(
+  selectedRepository: WorkspaceGitHubRepository | null,
+  primaryProfile: RepositoryProfileState | null,
+) {
+  if (!selectedRepository) return null;
+  if (selectedRepository.profile) return selectedRepository.profile;
+  if (primaryProfile?.githubRepositoryId === selectedRepository.id) return primaryProfile;
+  return null;
 }
