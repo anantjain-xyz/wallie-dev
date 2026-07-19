@@ -3,8 +3,6 @@ import "server-only";
 import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 
-import type { User } from "@supabase/supabase-js";
-
 import {
   getWorkspaceBySlugForUser,
   hasAnyWorkspaceForUser,
@@ -13,7 +11,7 @@ import {
 } from "@/lib/auth";
 import { loginPath, onboardingWorkspacePath } from "@/lib/routes";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
-import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
+import { type SupabaseAuthIdentity, verifySupabaseAuthIdentity } from "@/lib/supabase/auth";
 import type { Tables } from "@/lib/supabase/database.types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -22,7 +20,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient
 export type AuthenticatedWorkspaceContext = {
   currentMember: Pick<Tables<"workspace_members">, "id" | "is_active" | "kind" | "role">;
   supabase: SupabaseServerClient;
-  user: User;
+  user: SupabaseAuthIdentity;
   workspace: WorkspaceSummary & { avatar_path: string | null };
 };
 
@@ -34,13 +32,17 @@ export const loadAuthenticatedWorkspaceContext = cache(
         () => createSupabaseServerClient(),
         () => ({ rows: 1 }),
       );
-      const user = await timing.segment(
-        "auth.get-user",
-        () => getSupabaseUserOrNull(supabase),
-        (resolvedUser) => ({
-          rows: resolvedUser ? 1 : 0,
+      const verification = await timing.segment(
+        "auth.verify-claims",
+        () => verifySupabaseAuthIdentity(supabase, { includeEmail: true }),
+        (result) => ({
+          authUserRequests: result.authUserRequests,
+          claimsVerifications: result.claimsVerifications,
+          method: result.method,
+          rows: result.identity ? 1 : 0,
         }),
       );
+      const user = verification.identity;
 
       if (!user) {
         redirect(loginPath(workspaceLoginRedirectPath(workspaceSlug)));

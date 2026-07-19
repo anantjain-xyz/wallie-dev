@@ -163,6 +163,7 @@ DECLARE
   -- Loop cursors for the generated agent-run history (Section 10)
   sess_rec record;
   comp_rec record;
+  scale_run_index int;
 
 BEGIN
 
@@ -1038,6 +1039,18 @@ BEGIN
         END IF;
       END;
     END IF;
+  END LOOP;
+
+  -- Session 18 is the run-history scale fixture. Its three completed stages,
+  -- rejected land attempt, and current land attempt above create five runs;
+  -- add 195 older terminal runs so pagination can be exercised against an
+  -- exact 200-run history without increasing the initial page or channel count.
+  FOR scale_run_index IN 1..195 LOOP
+    PERFORM internal.seed_agent_run(
+      ws_id, sess18_id, mem1_id, 'Custom workspace branding and logo upload',
+      stage_plan_id, 'plan', 'Plan', 'completed', 1,
+      now() - interval '13 days' - scale_run_index * interval '10 minutes',
+      now() - interval '13 days' - scale_run_index * interval '10 minutes' + interval '8 minutes');
   END LOOP;
 
 END;

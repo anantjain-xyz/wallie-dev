@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { Spinner } from "@/components/shared/spinner";
@@ -12,10 +12,13 @@ import type {
   AgentRunActionErrorResponse,
   AgentRunActionResponse,
   AgentRunCancelResponse,
+  RunHistoryErrorResponse,
+  RunHistoryResponse,
 } from "@/features/wallie/contracts";
 import {
   mapAgentRunMessageRow,
   mapAgentRunRow,
+  mergeWallieRuns,
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
@@ -59,28 +62,32 @@ function flashToneClass(kind: FlashMessage["kind"]) {
   }
 }
 
-function buildDefaultExpandedRunIds(runs: readonly WallieRun[]) {
-  const nextIds = new Set<string>();
-  const activeRun = runs.find((run) => run.isActive);
-
-  if (activeRun) {
-    nextIds.add(activeRun.id);
-    return nextIds;
-  }
-
-  if (runs[0]) {
-    nextIds.add(runs[0].id);
-  }
-
-  return nextIds;
-}
-
 function actionErrorMessage(payload: AgentRunActionErrorResponse | null) {
   if (!payload) {
     return "Wallie could not queue that run.";
   }
 
   return payload.error;
+}
+
+async function queueRun(endpoint: string, body: Record<string, string>) {
+  const response = await fetch(endpoint, {
+    body: JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | AgentRunActionErrorResponse
+    | AgentRunActionResponse
+    | null;
+
+  if (!response.ok) {
+    throw new Error(actionErrorMessage(payload as AgentRunActionErrorResponse | null));
+  }
+
+  return payload as AgentRunActionResponse;
 }
 
 function hydrateRequestedByMember(
@@ -141,16 +148,28 @@ export function SessionWalliePanel({
     () => injectedSupabase ?? createSupabaseBrowserClient(),
   );
   const [runs, setRuns] = useState(initialData.runs);
+  const [nextRunCursor, setNextRunCursor] = useState(initialData.nextRunCursor);
   const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
-  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() =>
-    buildDefaultExpandedRunIds(initialData.runs),
-  );
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [loadedMessageRunIds, setLoadedMessageRunIds] = useState<Set<string>>(
     () => new Set(initialData.loadedMessageRunIds),
   );
+  const [messageLoadErrorRunIds, setMessageLoadErrorRunIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [isLoadingOlderRuns, setIsLoadingOlderRuns] = useState(false);
+  const [olderRunsError, setOlderRunsError] = useState<string | null>(null);
+  const [realtimeReady, setRealtimeReady] = useState(false);
+  const sessionIdRef = useRef(session.id);
+  const reconcileGenerationRef = useRef(0);
+  sessionIdRef.current = session.id;
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
+
+    for (const member of initialData.workspaceMembers) {
+      nextIndex.set(member.id, member);
+    }
 
     for (const run of initialData.runs) {
       if (run.requestedByMember) {
@@ -159,80 +178,72 @@ export function SessionWalliePanel({
     }
 
     return nextIndex;
-  }, [initialData.runs]);
-  const runIdsKey = useMemo(
-    () =>
-      runs
-        .map((run) => run.id)
-        .sort()
-        .join(","),
-    [runs],
-  );
+  }, [initialData.runs, initialData.workspaceMembers]);
   useEffect(() => {
+    reconcileGenerationRef.current += 1;
     setRuns(initialData.runs);
+    setNextRunCursor(initialData.nextRunCursor);
     setFlashMessage(null);
     setPendingActionId(null);
-    setExpandedRunIds(buildDefaultExpandedRunIds(initialData.runs));
+    setExpandedRunId(null);
     setLoadedMessageRunIds(new Set(initialData.loadedMessageRunIds));
-  }, [initialData.loadedMessageRunIds, initialData.runs, session.id]);
+    setMessageLoadErrorRunIds(new Set());
+    setIsLoadingOlderRuns(false);
+    setOlderRunsError(null);
+  }, [initialData.loadedMessageRunIds, initialData.nextRunCursor, initialData.runs, session.id]);
 
-  const loadRunMessages = useEffectEvent(async (runId: string) => {
-    const { data, error } = await supabase
-      .from("agent_run_messages")
-      .select("agent_run_id, created_at, id, kind, message_md")
-      .eq("agent_run_id", runId)
-      .order("created_at", { ascending: true });
-
-    if (error) {
-      console.error("Wallie could not load run messages", {
-        error,
-        runId,
+  const loadRunMessages = useCallback(
+    async (runId: string) => {
+      setMessageLoadErrorRunIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        nextIds.delete(runId);
+        return nextIds;
       });
-      return;
-    }
+      const { data, error } = await supabase
+        .from("agent_run_messages")
+        .select("agent_run_id, created_at, id, kind, message_md")
+        .eq("agent_run_id", runId)
+        .order("created_at", { ascending: true });
 
-    setRuns((currentRuns) => {
-      let nextRuns = currentRuns;
-
-      for (const row of data ?? []) {
-        nextRuns = upsertWallieRunMessage(nextRuns, {
-          agentRunId: row.agent_run_id,
-          message: mapAgentRunMessageRow(row),
+      if (error) {
+        console.error("Wallie could not load run messages", {
+          error,
+          runId,
         });
+        setMessageLoadErrorRunIds((currentIds) => new Set(currentIds).add(runId));
+        return;
       }
 
-      return nextRuns;
-    });
-    setLoadedMessageRunIds((currentIds) => {
-      const nextIds = new Set(currentIds);
-      nextIds.add(runId);
-      return nextIds;
-    });
-  });
+      setRuns((currentRuns) => {
+        let nextRuns = currentRuns;
+
+        for (const row of data ?? []) {
+          nextRuns = upsertWallieRunMessage(nextRuns, {
+            agentRunId: row.agent_run_id,
+            message: mapAgentRunMessageRow(row),
+          });
+        }
+
+        return nextRuns;
+      });
+      setLoadedMessageRunIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        nextIds.add(runId);
+        return nextIds;
+      });
+    },
+    [supabase],
+  );
 
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
-    let isNewRun = false;
-
     setRuns((currentRuns) => {
       const previousRun = currentRuns.find((run) => run.id === row.id);
-
-      isNewRun = !previousRun;
 
       return upsertWallieRun(
         currentRuns,
         mapAgentRunRow(row, memberIndex, previousRun?.messages ?? []),
       );
     });
-
-    if (isNewRun) {
-      setExpandedRunIds((currentIds) => {
-        const nextIds = new Set(currentIds);
-
-        nextIds.add(row.id);
-        return nextIds;
-      });
-      void loadRunMessages(row.id);
-    }
   });
 
   const handleRunMessageRealtimeUpdate = useEffectEvent((row: Tables<"agent_run_messages">) => {
@@ -244,7 +255,70 @@ export function SessionWalliePanel({
     );
   });
 
+  const reconcileLatestRuns = useEffectEvent(async () => {
+    const requestSessionId = session.id;
+    const generation = ++reconcileGenerationRef.current;
+
+    try {
+      const response = await fetch(`/api/sessions/${requestSessionId}/runs`);
+      const payload = (await response.json().catch(() => null)) as
+        | RunHistoryResponse
+        | RunHistoryErrorResponse
+        | null;
+
+      if (!response.ok || !payload || !("runs" in payload)) {
+        throw new Error(
+          payload && "error" in payload ? payload.error : "Could not reconcile run history.",
+        );
+      }
+
+      if (
+        sessionIdRef.current !== requestSessionId ||
+        generation !== reconcileGenerationRef.current
+      ) {
+        return;
+      }
+
+      setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
+      setNextRunCursor(payload.nextCursor);
+    } catch (error) {
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
+      console.error("Wallie could not reconcile run history", {
+        error,
+        sessionId: requestSessionId,
+      });
+    }
+  });
+
   useEffect(() => {
+    setRealtimeReady(false);
+    let started = false;
+    let idleId: number | null = null;
+    const startRealtime = () => {
+      if (started) return;
+      started = true;
+      setRealtimeReady(true);
+    };
+    const fallbackId = window.setTimeout(startRealtime, 500);
+
+    if ("requestIdleCallback" in window) {
+      idleId = window.requestIdleCallback(startRealtime);
+    }
+
+    return () => {
+      window.clearTimeout(fallbackId);
+      if (idleId !== null && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }, [session.id]);
+
+  useEffect(() => {
+    if (!realtimeReady) return;
+
     const runChannel = supabase
       .channel(`wallie-runs:${session.id}`)
       .on(
@@ -263,51 +337,55 @@ export function SessionWalliePanel({
           handleRunRealtimeUpdate(payload.new as Tables<"agent_runs">);
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void reconcileLatestRuns();
+        }
+      });
 
     return () => {
       void supabase.removeChannel(runChannel);
     };
-  }, [session.id, supabase]);
+  }, [realtimeReady, session.id, supabase]);
 
   useEffect(() => {
-    for (const runId of expandedRunIds) {
-      if (!loadedMessageRunIds.has(runId) && runs.some((run) => run.id === runId)) {
-        void loadRunMessages(runId);
-      }
+    if (expandedRunId && !loadedMessageRunIds.has(expandedRunId)) {
+      void loadRunMessages(expandedRunId);
     }
-  }, [expandedRunIds, loadedMessageRunIds, runs]);
+  }, [expandedRunId, loadRunMessages, loadedMessageRunIds]);
 
   useEffect(() => {
-    const runIds = runIdsKey ? runIdsKey.split(",") : [];
-    const channels = runIds.map((runId) =>
-      supabase
-        .channel(`wallie-run-messages:${runId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            filter: `agent_run_id=eq.${runId}`,
-            schema: "public",
-            table: "agent_run_messages",
-          },
-          (payload) => {
-            if (payload.eventType === "DELETE") {
-              return;
-            }
+    if (!realtimeReady || !expandedRunId) return;
 
-            handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
-          },
-        )
-        .subscribe(),
-    );
+    const runId = expandedRunId;
+    const messageChannel = supabase
+      .channel(`wallie-run-messages:${runId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `agent_run_id=eq.${runId}`,
+          schema: "public",
+          table: "agent_run_messages",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            return;
+          }
+
+          handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void loadRunMessages(runId);
+        }
+      });
 
     return () => {
-      for (const channel of channels) {
-        void supabase.removeChannel(channel);
-      }
+      void supabase.removeChannel(messageChannel);
     };
-  }, [runIdsKey, supabase]);
+  }, [expandedRunId, loadRunMessages, realtimeReady, supabase]);
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
@@ -323,109 +401,139 @@ export function SessionWalliePanel({
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
 
-  async function queueRun(endpoint: string, body: Record<string, string>) {
-    const response = await fetch(endpoint, {
-      body: JSON.stringify(body),
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | AgentRunActionErrorResponse
-      | AgentRunActionResponse
-      | null;
+  const handleRetryRun = useCallback(
+    async (runId: string) => {
+      setPendingActionId(runId);
+      setFlashMessage(null);
 
-    if (!response.ok) {
-      throw new Error(actionErrorMessage(payload as AgentRunActionErrorResponse | null));
-    }
+      try {
+        const payload = await queueRun(`/api/agent-runs/${runId}/retry`, {
+          workspaceId: session.workspaceId,
+        });
 
-    return payload as AgentRunActionResponse;
-  }
+        const run = hydrateRequestedByMember(payload.run, memberIndex);
 
-  async function handleRetryRun(runId: string) {
-    setPendingActionId(runId);
-    setFlashMessage(null);
+        setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
+        setExpandedRunId(run.id);
+        setFlashMessage(
+          payload.created
+            ? {
+                kind: "success",
+                text: payload.processScheduled
+                  ? "Wallie queued the retry for the worker."
+                  : "Wallie queued the retry.",
+              }
+            : {
+                kind: "info",
+                text: "Wallie already has an active run on this session.",
+              },
+        );
+      } catch (error) {
+        setFlashMessage({
+          kind: "error",
+          text: error instanceof Error ? error.message : "Wallie could not retry that run.",
+        });
+      } finally {
+        setPendingActionId(null);
+      }
+    },
+    [memberIndex, session.workspaceId],
+  );
+
+  const handleCancelRun = useCallback(
+    async (runId: string) => {
+      setPendingActionId(runId);
+      setFlashMessage(null);
+
+      try {
+        const response = await fetch(`/api/agent-runs/${runId}/cancel`, {
+          body: JSON.stringify({ workspaceId: session.workspaceId }),
+          headers: {
+            "content-type": "application/json",
+          },
+          method: "POST",
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | AgentRunCancelResponse
+          | { error?: string }
+          | null;
+
+        if (!response.ok) {
+          throw new Error(
+            (payload as { error?: string } | null)?.error ?? "Wallie could not cancel that run.",
+          );
+        }
+
+        const cancelPayload = payload as AgentRunCancelResponse;
+        const run = hydrateRequestedByMember(cancelPayload.run, memberIndex);
+
+        setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
+        setFlashMessage({
+          kind: "info",
+          text: cancelPayload.canceled
+            ? "Wallie canceled the run and stopped the worker from retrying."
+            : "That run had already finished.",
+        });
+      } catch (error) {
+        setFlashMessage({
+          kind: "error",
+          text: error instanceof Error ? error.message : "Wallie could not cancel that run.",
+        });
+      } finally {
+        setPendingActionId(null);
+      }
+    },
+    [memberIndex, session.workspaceId],
+  );
+
+  const handleToggleRun = useCallback((runId: string) => {
+    setExpandedRunId((currentRunId) => (currentRunId === runId ? null : runId));
+  }, []);
+
+  const handleLoadOlderRuns = useCallback(async () => {
+    if (!nextRunCursor || isLoadingOlderRuns) return;
+
+    const requestSessionId = session.id;
+    const requestCursor = nextRunCursor;
+
+    setIsLoadingOlderRuns(true);
+    setOlderRunsError(null);
 
     try {
-      const payload = await queueRun(`/api/agent-runs/${runId}/retry`, {
-        workspaceId: session.workspaceId,
+      const searchParams = new URLSearchParams({
+        createdAt: requestCursor.createdAt,
+        id: requestCursor.id,
       });
-
-      const run = hydrateRequestedByMember(payload.run, memberIndex);
-
-      setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
-      setExpandedRunIds((currentIds) => {
-        const nextIds = new Set(currentIds);
-
-        nextIds.add(run.id);
-        return nextIds;
-      });
-      setFlashMessage(
-        payload.created
-          ? {
-              kind: "success",
-              text: payload.processScheduled
-                ? "Wallie queued the retry for the worker."
-                : "Wallie queued the retry.",
-            }
-          : {
-              kind: "info",
-              text: "Wallie already has an active run on this session.",
-            },
-      );
-    } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not retry that run.",
-      });
-    } finally {
-      setPendingActionId(null);
-    }
-  }
-
-  async function handleCancelRun(runId: string) {
-    setPendingActionId(runId);
-    setFlashMessage(null);
-
-    try {
-      const response = await fetch(`/api/agent-runs/${runId}/cancel`, {
-        body: JSON.stringify({ workspaceId: session.workspaceId }),
-        headers: {
-          "content-type": "application/json",
-        },
-        method: "POST",
-      });
+      const response = await fetch(`/api/sessions/${requestSessionId}/runs?${searchParams}`);
       const payload = (await response.json().catch(() => null)) as
-        | AgentRunCancelResponse
-        | { error?: string }
+        | RunHistoryResponse
+        | RunHistoryErrorResponse
         | null;
 
-      if (!response.ok) {
+      if (!response.ok || !payload || !("runs" in payload)) {
         throw new Error(
-          (payload as { error?: string } | null)?.error ?? "Wallie could not cancel that run.",
+          payload && "error" in payload ? payload.error : "Could not load older runs.",
         );
       }
 
-      const cancelPayload = payload as AgentRunCancelResponse;
-      const run = hydrateRequestedByMember(cancelPayload.run, memberIndex);
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
 
-      setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
-      setFlashMessage({
-        kind: "info",
-        text: cancelPayload.canceled
-          ? "Wallie canceled the run and stopped the worker from retrying."
-          : "That run had already finished.",
-      });
+      setRuns((currentRuns) => mergeWallieRuns(currentRuns, payload.runs));
+      setNextRunCursor(payload.nextCursor);
     } catch (error) {
-      setFlashMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : "Wallie could not cancel that run.",
-      });
+      if (sessionIdRef.current !== requestSessionId) {
+        return;
+      }
+
+      setOlderRunsError(error instanceof Error ? error.message : "Could not load older runs.");
     } finally {
-      setPendingActionId(null);
+      if (sessionIdRef.current === requestSessionId) {
+        setIsLoadingOlderRuns(false);
+      }
     }
-  }
+  }, [isLoadingOlderRuns, nextRunCursor, session.id]);
 
   return (
     <div className="space-y-5">
@@ -493,174 +601,212 @@ export function SessionWalliePanel({
         {runs.length === 0 ? (
           <div className="py-5 text-sm leading-7 text-muted">No runs recorded yet.</div>
         ) : (
-          runs.map((run) => {
-            const isExpanded = expandedRunIds.has(run.id);
-            const runDetailsId = `wallie-run-details-${run.id}`;
-            const requestedByLabel = formatRequestedBy(run);
-            const runIsBusy = run.isActive;
-
-            return (
-              <article
-                key={run.id}
-                aria-busy={runIsBusy}
-                className={cn("py-5", !isExpanded && !runIsBusy && "run-history-group")}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <button
-                    aria-controls={runDetailsId}
-                    aria-expanded={isExpanded}
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() =>
-                      setExpandedRunIds((currentIds) => {
-                        const nextIds = new Set(currentIds);
-
-                        if (nextIds.has(run.id)) {
-                          nextIds.delete(run.id);
-                        } else {
-                          nextIds.add(run.id);
-                        }
-
-                        return nextIds;
-                      })
-                    }
-                    type="button"
-                  >
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <Status value={agentRunStatusValue(run.status)} />
-                      <dl className="flex flex-wrap gap-x-3 gap-y-1 type-annotation text-muted">
-                        <div className="flex gap-1">
-                          <dt>Stage</dt>
-                          <dd className="text-foreground">{formatStageRunLabel(run)}</dd>
-                        </div>
-                        <div className="flex gap-1">
-                          <dt>Model</dt>
-                          <dd className="font-mono text-foreground">
-                            {run.modelProvider}/{run.modelName}
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    <p className="mt-3 text-sm font-semibold text-foreground">
-                      Requested by {requestedByLabel}
-                    </p>
-                    <p className="mt-1 text-sm text-muted">
-                      Created{" "}
-                      <TimeDisplay
-                        absoluteStyle="short"
-                        initialNow={renderNow}
-                        value={run.createdAt}
-                      />
-                      {run.startedAt ? (
-                        <>
-                          {" · Started "}
-                          <TimeDisplay
-                            absoluteStyle="short"
-                            initialNow={renderNow}
-                            value={run.startedAt}
-                          />
-                          {" · Elapsed "}
-                          <TimeDisplay
-                            active={run.isActive}
-                            endValue={run.finishedAt}
-                            initialNow={renderNow}
-                            value={run.startedAt}
-                            variant="elapsed"
-                          />
-                        </>
-                      ) : null}
-                      {run.finishedAt ? (
-                        <>
-                          {" · Finished "}
-                          <TimeDisplay
-                            absoluteStyle="short"
-                            initialNow={renderNow}
-                            value={run.finishedAt}
-                          />
-                        </>
-                      ) : null}
-                    </p>
-                  </button>
-
-                  {run.canCancel ? (
-                    <button
-                      className="ui-button-danger"
-                      disabled={pendingActionId !== null}
-                      onClick={() => void handleCancelRun(run.id)}
-                      type="button"
-                    >
-                      {pendingActionId === run.id ? "Canceling…" : "Cancel"}
-                    </button>
-                  ) : null}
-
-                  {run.canRetry ? (
-                    <button
-                      className="ui-button"
-                      disabled={
-                        pendingActionId !== null || blockingReasons.length > 0 || isArchived
-                      }
-                      onClick={() => void handleRetryRun(run.id)}
-                      type="button"
-                    >
-                      {pendingActionId === run.id ? "Retrying…" : "Retry Run"}
-                    </button>
-                  ) : null}
-                </div>
-
-                {isExpanded ? (
-                  <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
-                    {run.messages.length > 0
-                      ? run.messages.map((message) => (
-                          <div
-                            key={message.id}
-                            className={cn(
-                              "rounded-[6px] border px-4 py-4 text-sm leading-7",
-                              message.kind === "error"
-                                ? "border-danger/20 bg-danger-soft text-danger"
-                                : "border-border bg-control-muted text-foreground",
-                            )}
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
-                              <span>{message.kind}</span>
-                              <TimeDisplay
-                                absoluteStyle="short"
-                                initialNow={renderNow}
-                                value={message.createdAt}
-                              />
-                            </div>
-                            <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
-                          </div>
-                        ))
-                      : null}
-                    {run.messages.length === 0 && !runIsBusy && !loadedMessageRunIds.has(run.id) ? (
-                      <div
-                        aria-live="polite"
-                        className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
-                        role="status"
-                      >
-                        Loading run messages...
-                      </div>
-                    ) : null}
-                    {run.messages.length === 0 && !runIsBusy && loadedMessageRunIds.has(run.id) ? (
-                      <div
-                        aria-live="polite"
-                        className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
-                        role="status"
-                      >
-                        No persisted messages were recorded for this run.
-                      </div>
-                    ) : null}
-                    {runIsBusy ? <RunProgressRow /> : null}
-                  </div>
-                ) : null}
-              </article>
-            );
-          })
+          runs.map((run) => (
+            <WallieRunCard
+              key={run.id}
+              actionPending={pendingActionId === run.id}
+              cancelLocked={pendingActionId !== null}
+              isExpanded={expandedRunId === run.id}
+              messagesLoaded={loadedMessageRunIds.has(run.id)}
+              messagesLoadFailed={messageLoadErrorRunIds.has(run.id)}
+              onCancel={handleCancelRun}
+              onRetry={handleRetryRun}
+              onToggle={handleToggleRun}
+              renderNow={renderNow}
+              retryLocked={pendingActionId !== null || blockingReasons.length > 0 || isArchived}
+              run={run}
+            />
+          ))
         )}
       </div>
+
+      {olderRunsError ? (
+        <p aria-live="polite" className="text-sm text-danger" role="status">
+          {olderRunsError}
+        </p>
+      ) : null}
+
+      {nextRunCursor ? (
+        <button
+          className="ui-button"
+          disabled={isLoadingOlderRuns}
+          onClick={() => void handleLoadOlderRuns()}
+          type="button"
+        >
+          {isLoadingOlderRuns ? "Loading older runs…" : "Load older runs"}
+        </button>
+      ) : null}
     </div>
   );
 }
+
+type WallieRunCardProps = {
+  actionPending: boolean;
+  cancelLocked: boolean;
+  isExpanded: boolean;
+  messagesLoaded: boolean;
+  messagesLoadFailed: boolean;
+  onCancel: (runId: string) => Promise<void>;
+  onRetry: (runId: string) => Promise<void>;
+  onToggle: (runId: string) => void;
+  renderNow: string;
+  retryLocked: boolean;
+  run: WallieRun;
+};
+
+const WallieRunCard = memo(function WallieRunCard({
+  actionPending,
+  cancelLocked,
+  isExpanded,
+  messagesLoaded,
+  messagesLoadFailed,
+  onCancel,
+  onRetry,
+  onToggle,
+  renderNow,
+  retryLocked,
+  run,
+}: WallieRunCardProps) {
+  const runDetailsId = `wallie-run-details-${run.id}`;
+
+  return (
+    <article
+      aria-busy={run.isActive}
+      className={cn("py-5", !isExpanded && !run.isActive && "run-history-group")}
+      data-run-id={run.id}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <button
+          aria-controls={runDetailsId}
+          aria-expanded={isExpanded}
+          className="min-w-0 flex-1 text-left"
+          onClick={() => onToggle(run.id)}
+          type="button"
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Status value={agentRunStatusValue(run.status)} />
+            <dl className="flex flex-wrap gap-x-3 gap-y-1 type-annotation text-muted">
+              <div className="flex gap-1">
+                <dt>Stage</dt>
+                <dd className="text-foreground">{formatStageRunLabel(run)}</dd>
+              </div>
+              <div className="flex gap-1">
+                <dt>Model</dt>
+                <dd className="font-mono text-foreground">
+                  {run.modelProvider}/{run.modelName}
+                </dd>
+              </div>
+            </dl>
+          </div>
+
+          <p className="mt-3 text-sm font-semibold text-foreground">
+            Requested by {formatRequestedBy(run)}
+          </p>
+          <p className="mt-1 text-sm text-muted">
+            Created{" "}
+            <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.createdAt} />
+            {run.startedAt ? (
+              <>
+                {" · Started "}
+                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.startedAt} />
+                {" · Elapsed "}
+                <TimeDisplay
+                  active={run.isActive}
+                  endValue={run.finishedAt}
+                  initialNow={renderNow}
+                  value={run.startedAt}
+                  variant="elapsed"
+                />
+              </>
+            ) : null}
+            {run.finishedAt ? (
+              <>
+                {" · Finished "}
+                <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={run.finishedAt} />
+              </>
+            ) : null}
+          </p>
+        </button>
+
+        {run.canCancel ? (
+          <button
+            className="ui-button-danger"
+            disabled={cancelLocked}
+            onClick={() => void onCancel(run.id)}
+            type="button"
+          >
+            {actionPending ? "Canceling…" : "Cancel"}
+          </button>
+        ) : null}
+
+        {run.canRetry ? (
+          <button
+            className="ui-button"
+            disabled={retryLocked}
+            onClick={() => void onRetry(run.id)}
+            type="button"
+          >
+            {actionPending ? "Retrying…" : "Retry Run"}
+          </button>
+        ) : null}
+      </div>
+
+      {isExpanded ? (
+        <div id={runDetailsId} className="mt-4 space-y-3 border-t border-border/70 pt-4">
+          {run.messages.map((message) => (
+            <div
+              key={message.id}
+              className={cn(
+                "rounded-[6px] border px-4 py-4 text-sm leading-7",
+                message.kind === "error"
+                  ? "border-danger/20 bg-danger-soft text-danger"
+                  : "border-border bg-control-muted text-foreground",
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 type-annotation text-muted">
+                <span>{message.kind}</span>
+                <TimeDisplay
+                  absoluteStyle="short"
+                  initialNow={renderNow}
+                  value={message.createdAt}
+                />
+              </div>
+              <div className="mt-3 whitespace-pre-wrap">{message.messageMd}</div>
+            </div>
+          ))}
+          {run.messages.length === 0 && !run.isActive && messagesLoadFailed ? (
+            <div
+              aria-live="polite"
+              className="rounded-[6px] bg-danger-soft px-4 py-4 text-sm text-danger"
+              role="status"
+            >
+              Could not load run messages. Collapse and expand this run to retry.
+            </div>
+          ) : null}
+          {run.messages.length === 0 && !run.isActive && !messagesLoaded && !messagesLoadFailed ? (
+            <div
+              aria-live="polite"
+              className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
+              role="status"
+            >
+              Loading run messages...
+            </div>
+          ) : null}
+          {run.messages.length === 0 && !run.isActive && messagesLoaded ? (
+            <div
+              aria-live="polite"
+              className="rounded-[6px] bg-control-muted px-4 py-4 text-sm text-muted"
+              role="status"
+            >
+              No persisted messages were recorded for this run.
+            </div>
+          ) : null}
+          {run.isActive ? <RunProgressRow /> : null}
+        </div>
+      ) : null}
+    </article>
+  );
+});
 
 function RunProgressRow() {
   return (
