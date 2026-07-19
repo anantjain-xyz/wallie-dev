@@ -376,14 +376,16 @@ export function SessionRowIsland({
         ) : (
           <div className="flex min-w-0 items-start gap-2 md:items-center">
             <span className="font-mono type-annotation text-muted">#{session.number}</span>
-            <SessionDetailLink
-              href={detailHref}
-              trackSessionsToDetail
-              aria-label={`Open session #${session.number}: ${displayTitle}`}
-              className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground hover:text-accent md:block md:truncate"
-            >
-              {displayTitle}
-            </SessionDetailLink>
+            <Tooltip content={displayTitle}>
+              <SessionDetailLink
+                href={detailHref}
+                trackSessionsToDetail
+                aria-label={`Open session #${session.number}: ${displayTitle}`}
+                className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground hover:text-accent md:block md:truncate"
+              >
+                {displayTitle}
+              </SessionDetailLink>
+            </Tooltip>
             <ActionMenu
               className="h-7 w-7 shrink-0"
               disabled={isSaving || archivePending !== null}
