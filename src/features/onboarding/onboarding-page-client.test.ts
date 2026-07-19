@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
+import { isAgentConfigDraftDirty } from "@/features/onboarding/steps/runtime-step";
+import { updateSandboxCapabilityCheckInData } from "@/features/onboarding/steps/verify-step";
+import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
@@ -19,17 +22,50 @@ vi.mock("next/navigation", () => ({
   useRouter: () => router,
 }));
 
+vi.mock("@/features/onboarding/steps/active-step", async () => {
+  const React = await import("react");
+  const [github, repository, pipeline, linear, runtime, verify] = await Promise.all([
+    import("@/features/onboarding/steps/github-step"),
+    import("@/features/onboarding/steps/repository-step"),
+    import("@/features/onboarding/steps/pipeline-step"),
+    import("@/features/onboarding/steps/linear-step"),
+    import("@/features/onboarding/steps/runtime-step"),
+    import("@/features/onboarding/steps/verify-step"),
+  ]);
+  const steps = {
+    github: github.default,
+    repository: repository.default,
+    pipeline: pipeline.default,
+    linear: linear.default,
+    runtime: runtime.default,
+    verify: verify.default,
+  };
+  return {
+    ActiveOnboardingStep: ({
+      items: _items,
+      step,
+      ...props
+    }: {
+      items: unknown;
+      step: keyof typeof steps;
+    }) => {
+      void _items;
+      return React.createElement(
+        steps[step] as React.ComponentType<Record<string, unknown>>,
+        props,
+      );
+    },
+  };
+});
+
 import {
   applySavedPipelineToData,
   applySavedRepositoryProfileToData,
   buildRepositoryProfileCompletionPatch,
-  isAgentConfigDraftDirty,
   isRepositorySelectionCurrent,
   OnboardingPageClient,
-  RepositoryProfileEditor,
   scrollOnboardingSetupToTop,
   setupHealthItems,
-  updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/onboarding-page-client";
 
 const configuredPipeline = {
