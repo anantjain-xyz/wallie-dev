@@ -32,6 +32,11 @@ export function useLiveRegion() {
   return context;
 }
 
+/** Safe in SSR/smoke renders outside OverlayProvider; announcements no-op. */
+export function useOptionalLiveRegion() {
+  return useContext(LiveRegionContext) ?? { announce: () => undefined };
+}
+
 export function LiveRegionProvider({ children }: { children: ReactNode }) {
   const container = useAnnouncementContainer();
   const [politeMessage, setPoliteMessage] = useState("");

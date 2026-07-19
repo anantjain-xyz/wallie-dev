@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 import { ChatGptSubscriptionControls } from "@/features/settings/codex-connection-panel";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -299,17 +300,22 @@ describe("Settings integration sections", () => {
 
   it("smoke-renders the Settings pipeline editor wrapper after extraction", () => {
     const html = renderToStaticMarkup(
-      createElement(PipelineEditor, {
-        canManage: true,
-        pipeline,
-        workspaceId,
-        workspaceMembers: [],
-      }),
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(PipelineEditor, {
+          canManage: true,
+          pipeline,
+          workspaceId,
+          workspaceMembers: [],
+        }),
+      ),
     );
 
     expect(html).toContain("Pipeline name");
     expect(html).toContain("Operating rules");
     expect(html).toContain("Product");
+    expect(html).toContain("Order preview");
     expect(html).toContain("Save pipeline");
   });
 

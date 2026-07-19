@@ -26,7 +26,7 @@ import { GitHubInstallSection } from "@/features/settings/github-install-section
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { SettingsDeferredSectionsSkeleton } from "@/features/settings/loading-skeleton";
 import { MaintenancePanel } from "@/features/settings/maintenance-panel";
-import { PipelineEditor } from "@/features/settings/pipeline-editor";
+import { PipelineEditor, PipelineUnsavedBadge } from "@/features/settings/pipeline-editor";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
 import {
@@ -338,6 +338,7 @@ function SettingsCompletePage({
     streamedGithub,
   }));
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
+  const [pipelineDirty, setPipelineDirty] = useState(false);
   const setFlashMessage = useFlashToasts(deferredMode ? null : initialFlashMessage(searchState));
 
   if (streamedGithub !== state.streamedGithub) {
@@ -494,11 +495,13 @@ function SettingsCompletePage({
             <ContainedSettingsSection size="large">
               <Section
                 anchorId="pipeline"
-                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances."
+                statusBadge={<PipelineUnsavedBadge dirty={pipelineDirty} />}
+                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Existing artifacts stay unchanged; in-progress sessions may follow the updated stage order when they advance."
                 title="Pipeline"
               >
                 <PipelineEditor
                   canManage={isManager}
+                  onDirtyChange={setPipelineDirty}
                   pipeline={pageData.pipeline}
                   workspaceId={pageData.workspace.id}
                   workspaceMembers={pageData.workspaceMembers}
