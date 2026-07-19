@@ -144,6 +144,107 @@ describe("onboarding progress helpers", () => {
     ).toBeNull();
   });
 
+  it("does not resume to an unavailable pipeline the user already advanced past", () => {
+    const advancedPastUnavailablePipeline = onboarding({
+      completedSteps: ["github", "repository"],
+      currentStep: "linear",
+    });
+    expect(firstIncompleteRequiredStep(advancedPastUnavailablePipeline)).toBe("pipeline");
+    expect(shouldResumeToFirstIncompleteRequired(advancedPastUnavailablePipeline)).toBe("pipeline");
+    expect(
+      shouldResumeToFirstIncompleteRequired(advancedPastUnavailablePipeline, {
+        excludeSteps: new Set(["pipeline"]),
+      }),
+    ).toBeNull();
+    expect(
+      firstIncompleteRequiredStep(advancedPastUnavailablePipeline, {
+        excludeSteps: new Set(["pipeline"]),
+      }),
+    ).toBe("verify");
+  });
+
+  it("flags disconnected runtime dependencies as errors after prior completion", () => {
+    const missingRuntime = health({
+      agentConfig: {
+        configured: true,
+        configuredKeys: ["agent_provider"],
+        status: "present",
+        values: { agent_provider: "codex" },
+      },
+      codexConnection: {
+        accountEmail: null,
+        checkedAt: "2026-07-18T00:00:00.000Z",
+        connected: false,
+        credentialType: null,
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        status: "missing",
+        updatedAt: null,
+      },
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: null,
+        projectId: null,
+        projectName: null,
+        status: "missing",
+        teamId: null,
+        updatedAt: null,
+      },
+    });
+
+    expect(
+      deriveOnboardingStepHealthFlags(missingRuntime, onboarding()).errorSteps.has("runtime"),
+    ).toBe(false);
+    expect(
+      deriveOnboardingStepHealthFlags(
+        missingRuntime,
+        onboarding({
+          completedSteps: ["github", "repository", "pipeline", "runtime"],
+          currentStep: "verify",
+        }),
+      ).errorSteps.has("runtime"),
+    ).toBe(true);
+
+    const vercelOnlyMissing = health({
+      agentConfig: {
+        configured: true,
+        configuredKeys: ["agent_provider"],
+        status: "present",
+        values: { agent_provider: "codex" },
+      },
+      codexConnection: {
+        accountEmail: "owner@example.com",
+        checkedAt: "2026-07-18T00:00:00.000Z",
+        connected: true,
+        credentialType: "chatgpt_auth_json",
+        expiresAt: null,
+        reconnectReason: null,
+        reconnectRequired: false,
+        status: "connected",
+        updatedAt: "2026-07-18T00:00:00.000Z",
+      },
+      vercelSandboxConnection: {
+        connected: false,
+        lastValidationError: null,
+        projectId: null,
+        projectName: null,
+        status: "missing",
+        teamId: null,
+        updatedAt: null,
+      },
+    });
+    expect(
+      deriveOnboardingStepHealthFlags(
+        vercelOnlyMissing,
+        onboarding({
+          completedSteps: ["github", "repository", "pipeline", "runtime"],
+          currentStep: "verify",
+        }),
+      ).errorSteps.has("runtime"),
+    ).toBe(true);
+  });
+
   it("covers configured, partial, blocked, and failed health fixtures", () => {
     const baseOnboarding = onboarding({
       completedSteps: ["github"],

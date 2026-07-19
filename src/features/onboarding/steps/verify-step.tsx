@@ -127,6 +127,12 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
     typeof data.agentConfig.agent_provider === "string"
       ? (normalizeAgentProviderName(data.agentConfig.agent_provider) ?? "codex")
       : "codex";
+  const selectedProviderConnected =
+    selectedProvider === "codex"
+      ? data.setupHealth.codexConnection.connected
+      : data.setupHealth.claudeCodeConnection.connected;
+  const vercelConnected = data.setupHealth.vercelSandboxConnection.connected;
+  const runtimeLiveReady = selectedProviderConnected && vercelConnected;
   const setupSummary = [
     {
       detail: data.setupHealth.githubInstallation.connected
@@ -189,22 +195,19 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
     {
       detail: data.onboarding.skippedSteps.includes("runtime")
         ? "Skipped for now"
-        : `${selectedProvider} · ${
-            data.setupHealth.vercelSandboxConnection.connected
-              ? "Vercel connected"
-              : "Vercel missing"
-          }`,
+        : `${selectedProvider} · ${vercelConnected ? "Vercel connected" : "Vercel missing"}`,
       id: "summary-runtime" as const,
       label: "Agent",
       step: "runtime" as const,
+      // Badge reflects live readiness — historical completedSteps alone is not Configured.
       statusLabel: data.onboarding.skippedSteps.includes("runtime")
         ? "Skipped"
-        : stepIsSatisfied(data.onboarding, "runtime")
+        : runtimeLiveReady
           ? "Configured"
           : "Missing",
       tone: data.onboarding.skippedSteps.includes("runtime")
         ? ("warning" as const)
-        : stepIsSatisfied(data.onboarding, "runtime")
+        : runtimeLiveReady
           ? ("success" as const)
           : ("warning" as const),
     },

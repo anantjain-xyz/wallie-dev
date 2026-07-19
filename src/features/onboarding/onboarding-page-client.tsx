@@ -812,7 +812,16 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
 
   useEffect(() => {
     if (resumeAttemptedRef.current || !data.canManage || isCompleted) return;
-    const resumeStep = shouldResumeToFirstIncompleteRequired(latestDataRef.current.onboarding);
+    // When the pipeline editor cannot render, continueSetup advances past Pipeline
+    // without marking it complete. Exclude it from auto-resume so reload does not
+    // undo that supported fallback and strand the user on an uncompletable step.
+    const excludeSteps = !latestDataRef.current.pipeline
+      ? new Set<WorkspaceOnboardingStep>(["pipeline"])
+      : undefined;
+    const resumeStep = shouldResumeToFirstIncompleteRequired(
+      latestDataRef.current.onboarding,
+      excludeSteps ? { excludeSteps } : undefined,
+    );
     resumeAttemptedRef.current = true;
     if (!resumeStep) return;
     void selectStep(resumeStep);

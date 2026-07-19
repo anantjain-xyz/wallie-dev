@@ -119,10 +119,12 @@ export function stepIsSatisfied(
 
 export function firstIncompleteRequiredStep(
   onboarding: WorkspaceOnboardingState,
+  options?: { excludeSteps?: ReadonlySet<WorkspaceOnboardingStep> },
 ): WorkspaceOnboardingStep | null {
   if (onboarding.status === "completed") return null;
 
   for (const step of REQUIRED_ONBOARDING_STEPS) {
+    if (options?.excludeSteps?.has(step)) continue;
     if (!onboarding.completedSteps.includes(step)) {
       return step;
     }
@@ -131,8 +133,11 @@ export function firstIncompleteRequiredStep(
   return null;
 }
 
-export function shouldResumeToFirstIncompleteRequired(onboarding: WorkspaceOnboardingState) {
-  const resumeStep = firstIncompleteRequiredStep(onboarding);
+export function shouldResumeToFirstIncompleteRequired(
+  onboarding: WorkspaceOnboardingState,
+  options?: { excludeSteps?: ReadonlySet<WorkspaceOnboardingStep> },
+) {
+  const resumeStep = firstIncompleteRequiredStep(onboarding, options);
   if (!resumeStep || onboarding.status === "completed") return null;
   if (onboardingStepIndex(onboarding.currentStep) <= onboardingStepIndex(resumeStep)) {
     return null;
@@ -200,6 +205,10 @@ export function deriveOnboardingStepHealthFlags(
   const provider = selectedAgentProvider(health);
   const githubWasCompleted =
     onboarding.status === "completed" || onboarding.completedSteps.includes("github");
+  const runtimeWasCompleted =
+    onboarding.status === "completed" || onboarding.completedSteps.includes("runtime");
+  const selectedProviderConnected =
+    provider === "codex" ? health.codexConnection.connected : health.claudeCodeConnection.connected;
 
   // Suspended installs and deleted installs (connected=false after prior completion)
   // are regressions — surface them as rail errors over historical Complete.
@@ -213,6 +222,14 @@ export function deriveOnboardingStepHealthFlags(
     errorSteps.add("runtime");
   }
   if (health.vercelSandboxConnection.status === "error") {
+    errorSteps.add("runtime");
+  }
+  // Missing selected-provider or Vercel after Runtime completion is a regression —
+  // status is `missing` (not expired/error), so the checks above would miss it.
+  if (
+    runtimeWasCompleted &&
+    (!selectedProviderConnected || !health.vercelSandboxConnection.connected)
+  ) {
     errorSteps.add("runtime");
   }
   if (isActionableSandboxCapabilityFailure(health)) {

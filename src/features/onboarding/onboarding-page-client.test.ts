@@ -1624,6 +1624,43 @@ describe("OnboardingPageClient", () => {
     expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Agent");
   });
 
+  it("derives the Agent review badge from live readiness, not historical completion", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            vercelSandboxConnection: {
+              connected: false,
+              lastValidationError: null,
+              projectId: null,
+              projectName: null,
+              status: "missing",
+              teamId: null,
+              updatedAt: null,
+            },
+          },
+        }),
+      }),
+    );
+
+    const agentSummary = html.slice(html.indexOf(">Agent</p>"));
+    expect(agentSummary).toContain("Vercel missing");
+    expect(agentSummary.slice(0, agentSummary.indexOf("Open Agent"))).toContain(">Missing<");
+    expect(agentSummary.slice(0, agentSummary.indexOf("Open Agent"))).not.toContain(">Configured<");
+  });
+
   it("enables the Verify completion CTA when every blocker passes", () => {
     const repo = repository("repo-a", {
       onboarding: {
