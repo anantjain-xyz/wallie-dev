@@ -436,6 +436,8 @@ function ArtifactPanelStage({
       return;
     }
     if (rejectionCount === trackedRejectionCount.current) return;
+    const previousCount = trackedRejectionCount.current;
+    const delta = rejectionCount - previousCount;
     trackedRejectionCount.current = rejectionCount;
     seenRejectionCountByStage.set(currentStageKey, rejectionCount);
     const rejectedVersion =
@@ -443,6 +445,17 @@ function ArtifactPanelStage({
     if (rejectedVersion !== null) {
       // Survive in-flight / null metadata so a later response cannot drop the marker.
       pendingRejectedVersion.current = rejectedVersion;
+    }
+    if (delta > 1) {
+      // Multiple unseen rejections (e.g. while this stage panel was unmounted) —
+      // a single local patch only covers the latest version. Invalidate and reload
+      // so every newly rejected version gets its changes-requested marker.
+      metadataCache.delete(currentStageKey);
+      queueMicrotask(() => {
+        setMetadata(null);
+        setMetadataRetry((value) => value + 1);
+      });
+      return;
     }
     queueMicrotask(() => {
       setMetadata((rows) => {

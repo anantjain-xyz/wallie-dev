@@ -757,6 +757,95 @@ describe("ArtifactPanel", () => {
     expect(await screen.findByText("Changes requested")).toBeTruthy();
   });
 
+  it("refetches history when rejectionCount jumps by more than one while away", async () => {
+    const v3: SessionArtifactSummary = {
+      createdAt: "2026-06-07T12:00:00.000Z",
+      payload: "# Latest v3",
+      stageSlug: "build",
+      version: 3,
+    };
+    let buildHistoryCalls = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=plan")) {
+        return response({
+          artifacts: [metadataRow({ stageSlug: "plan", version: 1 })],
+        });
+      }
+      if (url.includes("stage=build") && !url.includes("version=") && !url.includes("latest=")) {
+        buildHistoryCalls += 1;
+        if (buildHistoryCalls === 1) {
+          return response({
+            artifacts: [
+              metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+              metadataRow({ version: 1 }),
+            ],
+          });
+        }
+        return response({
+          artifacts: [
+            metadataRow({
+              changesRequested: true,
+              createdAt: v3.createdAt,
+              version: 3,
+            }),
+            metadataRow({
+              changesRequested: true,
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+            metadataRow({ version: 1 }),
+          ],
+        });
+      }
+      return response({ artifacts: [] });
+    });
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+    expect(screen.queryByText("Changes requested")).toBeNull();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Plan formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:plan:1`,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Plan",
+          stageSlug: "plan",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+    await screen.findByRole("heading", { level: 3, name: /plan artifact/i });
+
+    // Two rejections landed while away (v2 rejected → v3 produced → v3 rejected).
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:3`,
+        isDrafting: false,
+        latestArtifact: v3,
+        loadLatest: true,
+        rejectionCount: 2,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 3/i });
+    await waitFor(() => expect(buildHistoryCalls).toBe(2));
+    expect(screen.getAllByText("Changes requested")).toHaveLength(2);
+  });
+
   it("notifies when a historical version is selected", async () => {
     const onViewingHistoricalChange = vi.fn();
     vi.mocked(fetch).mockImplementation((input) => {
