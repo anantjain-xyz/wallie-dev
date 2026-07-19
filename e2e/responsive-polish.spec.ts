@@ -5,7 +5,6 @@ import { expect, test, type Page } from "@playwright/test";
 import axe from "axe-core";
 
 const workspacePath = "/w/acme-corp";
-const screenshotRoot = join(process.cwd(), "output/playwright/responsive-matrix");
 const viewports = [320, 390, 768, 1024, 1440] as const;
 const themes = ["light", "dark"] as const;
 const publicRoutes = [
@@ -118,6 +117,7 @@ async function expectNoAxeViolations(page: Page) {
 async function captureRouteMatrix(
   page: Page,
   routes: ReadonlyArray<{ name: string; path: string }>,
+  screenshotRoot: string,
 ) {
   for (const width of viewports) {
     await page.setViewportSize({ height: width <= 390 ? 844 : 900, width });
@@ -139,8 +139,11 @@ async function captureRouteMatrix(
   }
 }
 
-test("production viewport and theme matrix stays responsive and warning-free", async ({ page }) => {
+test("production viewport and theme matrix stays responsive and warning-free", async ({
+  page,
+}, testInfo) => {
   test.setTimeout(10 * 60_000);
+  const screenshotRoot = testInfo.outputPath("responsive-matrix");
   await mkdir(screenshotRoot, { recursive: true });
   const warnings: string[] = [];
   const warningPattern = /hydration|did not match|overflow|unique.*key|accessib/iu;
@@ -151,9 +154,9 @@ test("production viewport and theme matrix stays responsive and warning-free", a
   });
   page.on("pageerror", (error) => warnings.push(`pageerror: ${error.message}`));
 
-  await captureRouteMatrix(page, publicRoutes);
+  await captureRouteMatrix(page, publicRoutes, screenshotRoot);
   await signIn(page);
-  await captureRouteMatrix(page, authenticatedRoutes);
+  await captureRouteMatrix(page, authenticatedRoutes, screenshotRoot);
 
   expect(warnings).toEqual([]);
 });
