@@ -7,6 +7,7 @@ import {
   type SessionFilterKey,
   type SessionListItem,
   type SessionListQueryState,
+  type SessionListSortKey,
 } from "@/features/sessions/types";
 import { approximatePayloadSizeBytes, withServerTiming } from "@/lib/server-timing";
 
@@ -32,6 +33,8 @@ export type SessionStageFacet = {
 type SearchParamInput = Record<string, string | string[] | undefined>;
 type Cursor = {
   id: string;
+  number?: number;
+  sort: SessionListSortKey;
   updatedAt: string;
 };
 type SessionListRpcPayload = {
@@ -58,6 +61,13 @@ function parseScope(raw: string | null): SessionFilterKey {
   return "all";
 }
 
+function parseSort(raw: string | null): SessionListSortKey {
+  if (raw === "oldest" || raw === "number") {
+    return raw;
+  }
+  return "updated";
+}
+
 export function parseSessionListQueryState(searchParams: SearchParamInput): SessionListQueryState {
   // Stage filter is a free-form slug now (workspaces can define their own
   // stages); we surface whatever's in the URL and let the dashboard decide
@@ -66,11 +76,12 @@ export function parseSessionListQueryState(searchParams: SearchParamInput): Sess
     cursor: readSingle(searchParams, "cursor"),
     query: readSingle(searchParams, "q") ?? "",
     scope: parseScope(readSingle(searchParams, "scope")),
+    sort: parseSort(readSingle(searchParams, "sort")),
     stageSlug: readSingle(searchParams, "stage"),
   };
 }
 
-function decodeCursor(raw: string | null): Cursor | null {
+function decodeCursor(raw: string | null, sort: SessionListSortKey): Cursor | null {
   if (!raw) return null;
 
   try {
@@ -78,8 +89,15 @@ function decodeCursor(raw: string | null): Cursor | null {
     if (typeof parsed.id !== "string" || typeof parsed.updatedAt !== "string") {
       return null;
     }
+    const cursorSort = parseSort(typeof parsed.sort === "string" ? parsed.sort : "updated");
+    // Drop cursors from a different sort so pagination never skips or loops.
+    if (cursorSort !== sort) {
+      return null;
+    }
     return {
       id: parsed.id,
+      number: typeof parsed.number === "number" ? parsed.number : undefined,
+      sort: cursorSort,
       updatedAt: parsed.updatedAt,
     };
   } catch {
@@ -87,10 +105,15 @@ function decodeCursor(raw: string | null): Cursor | null {
   }
 }
 
-function encodeCursor(row: Pick<SessionListItem, "id" | "updatedAt">) {
+function encodeCursor(
+  row: Pick<SessionListItem, "id" | "number" | "updatedAt">,
+  sort: SessionListSortKey,
+) {
   return Buffer.from(
     JSON.stringify({
       id: row.id,
+      number: row.number,
+      sort,
       updatedAt: row.updatedAt,
     } satisfies Cursor),
   ).toString("base64url");
@@ -101,7 +124,7 @@ export async function loadSessionListPageData(
   searchParams: SearchParamInput,
 ): Promise<SessionListPageData> {
   const queryState = parseSessionListQueryState(searchParams);
-  const cursor = decodeCursor(queryState.cursor);
+  const cursor = decodeCursor(queryState.cursor, queryState.sort);
 
   return withServerTiming(
     "sessions.list",
@@ -109,6 +132,7 @@ export async function loadSessionListPageData(
       cursor: cursor ? "present" : "none",
       hasQuery: queryState.query.trim().length > 0,
       scope: queryState.scope,
+      sort: queryState.sort,
       stageSlug: queryState.stageSlug,
       workspaceSlug,
     },
@@ -130,10 +154,12 @@ export async function loadSessionListPageData(
         () =>
           context.supabase.rpc("get_session_list_page", {
             cursor_id: cursor?.id,
+            cursor_number: cursor?.number,
             cursor_updated_at: cursor?.updatedAt,
             page_limit: SESSION_LIST_PAGE_SIZE,
             search_query: queryState.query.trim() || undefined,
             session_scope: queryState.scope,
+            sort_key: queryState.sort,
             stage_filter_slug: queryState.stageSlug ?? undefined,
             target_workspace_slug: workspaceSlug,
           }),
@@ -149,10 +175,16 @@ export async function loadSessionListPageData(
       if (rpcError) throw rpcError;
 
       const payload = (rpcData ?? {}) as SessionListRpcPayload;
-      const sessions = (payload.sessions ?? []).filter((session) => session.number > 0);
+      const sessions = (payload.sessions ?? [])
+        .filter((session) => session.number > 0)
+        .map((session) => ({
+          ...session,
+          repositoryFullName: session.repositoryFullName ?? null,
+        }));
       const stageFacets = payload.stageFacets ?? [];
       const hasMore = payload.hasMore === true;
-      const nextCursor = hasMore && sessions.length > 0 ? encodeCursor(sessions.at(-1)!) : null;
+      const nextCursor =
+        hasMore && sessions.length > 0 ? encodeCursor(sessions.at(-1)!, queryState.sort) : null;
 
       return {
         hasAnySession: payload.hasAnySession === true,

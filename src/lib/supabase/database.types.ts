@@ -1863,10 +1863,12 @@ export type Database = {
       get_session_list_page: {
         Args: {
           cursor_id?: string
+          cursor_number?: number
           cursor_updated_at?: string
           page_limit?: number
           search_query?: string
           session_scope?: string
+          sort_key?: string
           stage_filter_slug?: string
           target_workspace_slug: string
         }

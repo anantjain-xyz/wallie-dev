@@ -22,6 +22,11 @@ export function SessionLedgerRow({
   workspaceSlug,
 }: SessionLedgerRowProps) {
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
+  const repositoryLabel =
+    session.repositoryFullName ??
+    session.pullRequests.find((pullRequest) => pullRequest.repositoryFullName)
+      ?.repositoryFullName ??
+    null;
 
   return (
     <SessionRowIsland
@@ -34,15 +39,7 @@ export function SessionLedgerRow({
         />
       }
       detailHref={detailHref}
-      metaTrailing={
-        <>
-          <span>·</span>
-          <span>
-            updated{" "}
-            <TimeDisplay initialNow={initialNow} value={session.updatedAt} variant="relative" />
-          </span>
-        </>
-      }
+      repositoryLabel={repositoryLabel}
       scope={scope}
       session={{
         archivedAt: session.archivedAt,
@@ -53,6 +50,7 @@ export function SessionLedgerRow({
         updatedAt: session.updatedAt,
       }}
       stageName={session.currentStageName}
+      updated={<TimeDisplay initialNow={initialNow} value={session.updatedAt} variant="relative" />}
     />
   );
 }

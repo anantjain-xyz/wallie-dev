@@ -8,8 +8,9 @@ import { PencilIcon } from "@/components/shared/icons/pencil-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
+import { Status, sessionPhaseStatusValue, resolveStatusDefinition } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -41,10 +42,11 @@ export type SessionRowIslandSession = Pick<
 type SessionRowIslandProps = {
   connections: ReactNode;
   detailHref: string;
-  metaTrailing: ReactNode;
+  repositoryLabel: string | null;
   scope: SessionFilterKey;
   session: SessionRowIslandSession;
   stageName: string;
+  updated: ReactNode;
 };
 
 function archiveOverrideFromSession(
@@ -59,18 +61,36 @@ function archiveOverrideFromSession(
   };
 }
 
+function LedgerStatus({ phaseStatus }: { phaseStatus: SessionRowIslandSession["phaseStatus"] }) {
+  const value = sessionPhaseStatusValue(phaseStatus);
+  // Awaiting review keeps the strongest Status affordance; other statuses stay
+  // text-only so the ledger does not border every Status cell.
+  if (phaseStatus === "awaiting_review") {
+    return <Status compact value={value} />;
+  }
+
+  const definition = resolveStatusDefinition(value);
+  return (
+    <span className="type-annotation text-muted" data-status={value} data-tone={definition.tone}>
+      {definition.label}
+    </span>
+  );
+}
+
 export function SessionRowIsland({
   connections,
   detailHref,
-  metaTrailing,
+  repositoryLabel,
   scope,
   session,
   stageName,
+  updated,
 }: SessionRowIslandProps) {
   const router = useRouter();
   const { dismissToast, pushToast } = useOptionalToast();
   const visibility = useSessionsLedgerVisibility();
   const archiveInFlightRef = useRef(false);
+  const actionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [titleOverride, setTitleOverride] = useState<TitleOverride | null>(null);
   const [draftTitle, setDraftTitle] = useState(session.title);
   const [archiveOverride, setArchiveOverride] = useState<ArchiveOverride | null>(null);
@@ -78,8 +98,9 @@ export function SessionRowIsland({
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [archivePending, setArchivePending] = useState<"unarchive" | null>(null);
+  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
@@ -99,6 +120,8 @@ export function SessionRowIsland({
     if (archiveInFlightRef.current || locallyHidden) return;
 
     archiveInFlightRef.current = true;
+    setArchivePending("archive");
+    setArchiveDialogOpen(false);
     setRowHidden(true);
     setArchiveError(null);
     const archivePromise = archiveSessionFromClient({ sessionId: session.id });
@@ -114,6 +137,7 @@ export function SessionRowIsland({
     void archivePromise
       .then((result) => {
         archiveInFlightRef.current = false;
+        setArchivePending(null);
         dismissToast(pendingToastId);
         const latestSession = latestSessionRef.current;
         if (!shouldApplyArchiveResult(result, latestSession, archivedAtAtMutationStart)) {
@@ -206,6 +230,7 @@ export function SessionRowIsland({
       })
       .catch((errorValue) => {
         archiveInFlightRef.current = false;
+        setArchivePending(null);
         setRowHidden(false);
         dismissToast(pendingToastId);
         pushToast({
@@ -257,7 +282,7 @@ export function SessionRowIsland({
         title: `Session #${session.number} unarchived.`,
         tone: "success",
       });
-      // Refresh so server-owned metaTrailing / ordering catch up when the row stays visible.
+      // Refresh so server-owned ordering catch up when the row stays visible.
       // Override clears once refreshed props diverge from the keyed authoritative snapshot.
       router.refresh();
     } catch (errorValue) {
@@ -376,14 +401,15 @@ export function SessionRowIsland({
   }
 
   return (
-    <li
+    <div
+      role="row"
       className={cn(
-        "session-list-row group flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center",
+        "session-list-row sessions-ledger-row group",
         (isEditing || archivePending !== null || error || archiveError) &&
           "content-visibility-interacting",
       )}
     >
-      <div className="relative flex min-w-0 flex-1 flex-col gap-1">
+      <div className="sessions-ledger-cell sessions-ledger-cell-session" role="cell">
         {isEditing ? (
           <form onSubmit={handleEditSubmit}>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
@@ -435,73 +461,118 @@ export function SessionRowIsland({
             </div>
           </form>
         ) : (
-          <div className="flex min-w-0 items-start gap-2 md:items-center">
-            <span className="font-mono type-annotation text-muted">#{session.number}</span>
-            <Tooltip content={displayTitle}>
-              <SessionDetailLink
-                href={detailHref}
-                trackSessionsToDetail
-                aria-label={`Open session #${session.number}: ${displayTitle}`}
-                className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground hover:text-accent md:block md:truncate"
-              >
-                {displayTitle}
-              </SessionDetailLink>
-            </Tooltip>
+          <div className="min-w-0 space-y-1.5">
+            <div className="flex min-w-0 items-start gap-2">
+              <span className="font-mono type-annotation text-muted">#{session.number}</span>
+              <Tooltip content={displayTitle}>
+                <SessionDetailLink
+                  href={detailHref}
+                  trackSessionsToDetail
+                  aria-label={`Open session #${session.number}: ${displayTitle}`}
+                  className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground hover:text-accent md:truncate"
+                >
+                  {displayTitle}
+                </SessionDetailLink>
+              </Tooltip>
+            </div>
+            {connections ? <div className="sessions-ledger-connections">{connections}</div> : null}
+            {archivedAt ? <span className="type-annotation text-muted">archived</span> : null}
+          </div>
+        )}
+        {error ? (
+          <p className="mt-1 text-xs leading-4 text-danger" role="alert">
+            {error}
+          </p>
+        ) : null}
+        {archiveError ? (
+          <p className="mt-1 text-xs leading-4 text-danger" role="alert">
+            {archiveError}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="sessions-ledger-cell sessions-ledger-cell-stage" role="cell">
+        <span className="sessions-ledger-cell-label">Stage</span>
+        <span className="text-[13px] text-foreground">{stageName}</span>
+      </div>
+
+      <div className="sessions-ledger-cell sessions-ledger-cell-status" role="cell">
+        <span className="sessions-ledger-cell-label">Status</span>
+        <LedgerStatus phaseStatus={phaseStatus} />
+      </div>
+
+      <div className="sessions-ledger-cell sessions-ledger-cell-repository" role="cell">
+        <span className="sessions-ledger-cell-label">Repository</span>
+        <span className="truncate text-[13px] text-muted" title={repositoryLabel ?? undefined}>
+          {repositoryLabel ?? "—"}
+        </span>
+      </div>
+
+      <div className="sessions-ledger-cell sessions-ledger-cell-updated" role="cell">
+        <span className="sessions-ledger-cell-label">Updated</span>
+        <span className="type-annotation text-muted">{updated}</span>
+      </div>
+
+      <div className="sessions-ledger-cell sessions-ledger-cell-actions" role="cell">
+        {!isEditing ? (
+          <>
             <ActionMenu
-              className="h-7 w-7 shrink-0"
+              className="h-8 w-8 shrink-0"
               disabled={isSaving || archivePending !== null}
               label={`Actions for session #${session.number}`}
+              ref={actionsTriggerRef}
             >
               <DropdownMenuItem onSelect={startEditing}>
                 <PencilIcon className="h-3.5 w-3.5" />
-                Edit title
+                Rename
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-danger"
                 onSelect={() => {
                   setArchiveError(null);
                   if (isArchived) void unarchive();
-                  else requestArchive();
+                  else setArchiveDialogOpen(true);
                 }}
               >
                 {isArchived ? "Unarchive" : "Archive"} session
               </DropdownMenuItem>
             </ActionMenu>
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2 type-annotation text-muted">
-          <span>{stageName}</span>
-          <span>·</span>
-          <Status compact value={sessionPhaseStatusValue(phaseStatus)} />
-          {metaTrailing}
-          {archivedAt ? (
-            <>
-              <span>·</span>
-              <span className="text-muted">archived</span>
-            </>
-          ) : null}
-        </div>
-        {error ? (
-          <p className="text-xs leading-4 text-danger" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {archiveError ? (
-          <p className="text-xs leading-4 text-danger" role="alert">
-            {archiveError}
-          </p>
+            <DestructiveConfirmationDialog
+              actionLabel="Archive session"
+              description={`Archive session #${session.number}? You can undo this for a few seconds afterward.`}
+              onConfirm={requestArchive}
+              onOpenChange={setArchiveDialogOpen}
+              open={archiveDialogOpen}
+              pending={archivePending === "archive"}
+              pendingLabel="Archiving…"
+              restoreFocusRef={actionsTriggerRef}
+              title={`Archive session #${session.number}?`}
+            />
+          </>
         ) : null}
       </div>
-
-      <div className="shrink-0">{connections}</div>
-    </li>
+    </div>
   );
 }
 
 export function SessionsLedger({ children }: { children: ReactNode }) {
   return (
     <SessionDetailLinkPrefetchBoundary>
-      <ul className="ui-sheet divide-y divide-border overflow-hidden">{children}</ul>
+      <div className="ui-sheet sessions-ledger overflow-hidden" role="table" aria-label="Sessions">
+        <div role="row" className="sessions-ledger-header">
+          <div role="columnheader">Session</div>
+          <div role="columnheader">Stage</div>
+          <div role="columnheader">Status</div>
+          <div role="columnheader">Repository</div>
+          <div role="columnheader">Updated</div>
+          <div role="columnheader" className="sr-only">
+            Actions
+          </div>
+        </div>
+        <div role="rowgroup" className="divide-y divide-border">
+          {children}
+        </div>
+      </div>
     </SessionDetailLinkPrefetchBoundary>
   );
 }
