@@ -89,7 +89,7 @@ export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsC
   }, [activeCategory, pathname, router, search]);
 
   return (
-    <nav aria-label="Settings categories" className="sticky top-6">
+    <nav aria-label="Settings categories" className="sticky top-[var(--shell-scroll-padding)]">
       <ul className="flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
         {SETTINGS_CATEGORY_LINKS.map((category) => {
           const isActive = category.id === activeCategory;
