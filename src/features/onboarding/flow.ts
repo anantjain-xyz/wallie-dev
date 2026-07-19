@@ -65,11 +65,17 @@ export const SKIPPABLE_ONBOARDING_STEPS = ["linear", "runtime"] as const;
 type OnboardingResumeRow = { current_step: string; status: string } | null;
 
 export type OnboardingStepDisplayState =
-  | "active"
-  | "available"
   | "blocked"
   | "completed"
-  | "skipped";
+  | "current"
+  | "error"
+  | "skipped"
+  | "upcoming";
+
+export type OnboardingStepRailContext = {
+  blockedSteps?: ReadonlySet<WorkspaceOnboardingStep>;
+  errorSteps?: ReadonlySet<WorkspaceOnboardingStep>;
+};
 
 export type OnboardingStepRailItem = OnboardingStepDefinition & {
   displayState: OnboardingStepDisplayState;
@@ -125,24 +131,32 @@ function removeStep(
 
 export function getOnboardingStepRailItems(
   onboarding: WorkspaceOnboardingState,
+  context: OnboardingStepRailContext = {},
 ): OnboardingStepRailItem[] {
   const completed =
     onboarding.status === "completed"
       ? new Set<WorkspaceOnboardingStep>(WORKSPACE_ONBOARDING_STEPS)
       : new Set(onboarding.completedSteps);
   const skipped = new Set(onboarding.skippedSteps);
+  const errorSteps = context.errorSteps ?? new Set<WorkspaceOnboardingStep>();
+  const blockedSteps = context.blockedSteps ?? new Set<WorkspaceOnboardingStep>();
 
   return ONBOARDING_STEPS.map((step, index) => {
-    let displayState: OnboardingStepDisplayState = "blocked";
+    let displayState: OnboardingStepDisplayState;
 
     if (step.id === onboarding.currentStep) {
-      displayState = "active";
+      // Current wins so revisiting a completed step still orients the rail.
+      displayState = errorSteps.has(step.id) ? "error" : "current";
     } else if (completed.has(step.id)) {
       displayState = "completed";
     } else if (skipped.has(step.id)) {
       displayState = "skipped";
+    } else if (errorSteps.has(step.id)) {
+      displayState = "error";
+    } else if (blockedSteps.has(step.id)) {
+      displayState = "blocked";
     } else {
-      displayState = "available";
+      displayState = "upcoming";
     }
 
     return {

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
-import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
+import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -22,9 +22,19 @@ import {
   getOnboardingStepRailItems,
   onboardingStepIndex,
   ONBOARDING_STEPS,
-  type OnboardingStepDisplayState,
 } from "@/features/onboarding/flow";
 import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
+import {
+  OnboardingMobileStepNav,
+  OnboardingProgressHeader,
+  OnboardingStepRail,
+  focusOnboardingTarget,
+} from "@/features/onboarding/onboarding-shell";
+import {
+  buildOnboardingPrimaryAction,
+  deriveOnboardingStepHealthFlags,
+  shouldResumeToFirstIncompleteRequired,
+} from "@/features/onboarding/progress";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import {
   buildRuntimeReadiness,
@@ -53,7 +63,6 @@ import type { RepositoryOnboardingState } from "@/lib/repo-onboarding/contracts"
 import type { RepositoryProfileState } from "@/lib/repo-inference/contracts";
 import type { SandboxCapabilityCheckState } from "@/lib/sandbox-capabilities/contracts";
 import { workspaceBasePath } from "@/lib/routes";
-import { cn } from "@/lib/utils";
 
 type OnboardingPageClientProps = {
   initialData: WorkspaceOnboardingData;
@@ -85,26 +94,6 @@ type RuntimeCompletionState = {
   hasUnsavedDrafts: boolean;
   readiness: RuntimeReadiness;
 };
-
-const railStateClasses: Record<OnboardingStepDisplayState, string> = {
-  active: "bg-accent-soft text-accent",
-  available: "text-muted hover:bg-control-hover hover:text-foreground",
-  blocked: "text-muted opacity-55",
-  completed: "text-muted hover:bg-control-hover hover:text-foreground",
-  skipped: "text-muted hover:bg-control-hover hover:text-foreground",
-};
-
-const onboardingStepStatusValues = {
-  active: "running",
-  available: "queued",
-  blocked: "blocked",
-  completed: "complete",
-  skipped: "skipped",
-} satisfies Record<OnboardingStepDisplayState, StatusValue>;
-
-function OnboardingStepStatus({ state }: { state: OnboardingStepDisplayState }) {
-  return <Status compact value={onboardingStepStatusValues[state]} />;
-}
 
 function presenceBadge(configured: boolean) {
   return configured
@@ -312,96 +301,6 @@ export function setupHealthItems(
   ];
 }
 
-function StepRail({
-  canSelect,
-  items,
-  onSelect,
-}: {
-  canSelect: boolean;
-  items: ReturnType<typeof getOnboardingStepRailItems>;
-  onSelect: (step: WorkspaceOnboardingStep) => void;
-}) {
-  return (
-    <ol className="space-y-1">
-      {items.map((step) => (
-        <li key={step.id}>
-          <button
-            type="button"
-            aria-current={step.displayState === "active" ? "step" : undefined}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-[6px] px-3 py-1.5 text-left text-[13px] font-medium transition-colors",
-              railStateClasses[step.displayState],
-              (!canSelect || !step.isNavigable) && "cursor-not-allowed",
-            )}
-            disabled={!canSelect || !step.isNavigable}
-            onClick={() => onSelect(step.id)}
-          >
-            <OnboardingStepStatus state={step.displayState} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{step.title}</span>
-            </span>
-          </button>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function MobileStepControl({
-  canSelect,
-  items,
-  onSelect,
-}: {
-  canSelect: boolean;
-  items: ReturnType<typeof getOnboardingStepRailItems>;
-  onSelect: (step: WorkspaceOnboardingStep) => void;
-}) {
-  const buttonRefs = useRef(new Map<WorkspaceOnboardingStep, HTMLButtonElement>());
-  const activeStepId = items.find((step) => step.displayState === "active")?.id ?? null;
-
-  useEffect(() => {
-    if (!activeStepId) {
-      return;
-    }
-
-    buttonRefs.current.get(activeStepId)?.scrollIntoView({
-      block: "nearest",
-      inline: "center",
-    });
-  }, [activeStepId]);
-
-  return (
-    <div className="border-y border-border bg-sheet px-4 py-2 lg:hidden">
-      <div className="flex snap-x gap-2 overflow-x-auto scroll-px-4 pb-1" aria-label="Setup steps">
-        {items.map((step) => (
-          <button
-            ref={(node) => {
-              if (node) {
-                buttonRefs.current.set(step.id, node);
-              } else {
-                buttonRefs.current.delete(step.id);
-              }
-            }}
-            key={step.id}
-            type="button"
-            aria-current={step.displayState === "active" ? "step" : undefined}
-            className={cn(
-              "inline-flex h-9 min-w-[112px] snap-start items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-xs font-medium",
-              railStateClasses[step.displayState],
-              (!canSelect || !step.isNavigable) && "cursor-not-allowed",
-            )}
-            disabled={!canSelect || !step.isNavigable}
-            onClick={() => onSelect(step.id)}
-          >
-            <OnboardingStepStatus state={step.displayState} />
-            <span className="truncate">{step.shortTitle}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function SetupHealthSummary({
   health,
   initialNow,
@@ -586,7 +485,18 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     });
   }, []);
   const activeStep = ONBOARDING_STEPS.find((step) => step.id === onboarding.currentStep)!;
-  const railItems = useMemo(() => getOnboardingStepRailItems(onboarding), [onboarding]);
+  const stepHealthFlags = useMemo(
+    () => deriveOnboardingStepHealthFlags(data.setupHealth),
+    [data.setupHealth],
+  );
+  const railItems = useMemo(
+    () =>
+      getOnboardingStepRailItems(onboarding, {
+        blockedSteps: stepHealthFlags.blockedSteps,
+        errorSteps: stepHealthFlags.errorSteps,
+      }),
+    [onboarding, stepHealthFlags],
+  );
   const canGoBack = onboardingStepIndex(onboarding.currentStep) > 0;
   const isCompleted = onboarding.status === "completed";
   const isSaving = savingAction !== null;
@@ -618,9 +528,27 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     health: data.setupHealth,
     onboarding: data.onboarding,
   });
-  const verifyCompletionBlocked =
-    activeStep.id === "verify" && verifyChecklist.some((item) => !item.passed);
+  const verifyBlockers = verifyBlockersFromChecklist(verifyChecklist);
+  const verifyCompletionBlocked = activeStep.id === "verify" && verifyBlockers.length > 0;
   const skipAllowed = canSkipOnboardingStep(onboarding.currentStep);
+  const primaryAction = buildOnboardingPrimaryAction({
+    activeStepAlreadyResolved,
+    activeStepId: activeStep.id,
+    githubContinueBlocked,
+    hasInvalidRuntimeDrafts: runtimeCompletionState.hasInvalidDrafts,
+    hasUnsavedRuntimeDrafts: runtimeCompletionState.hasUnsavedDrafts,
+    inlineCompletionLabel,
+    isCompleted,
+    repositoryContinueBlocked,
+    requiresInlineCompletion,
+    runtimeCompletionBlocked,
+    runtimeReadiness: runtimeCompletionState.readiness,
+    vercelConnected: data.setupHealth.vercelSandboxConnection.connected,
+    verifyCompletionBlocked,
+    verifyFirstBlockerLabel: verifyBlockers[0]?.label ?? null,
+    verifyFirstBlockerStep: verifyBlockers[0]?.step ?? null,
+  });
+  const resumeAttemptedRef = useRef(false);
 
   useEffect(() => {
     if (previousStepRef.current === onboarding.currentStep) return;
@@ -671,6 +599,20 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
       latestDataRef.current = nextData;
       setData(nextData);
+      if (
+        mutation.action === "continue" ||
+        mutation.action === "skip" ||
+        mutation.action === "step-complete"
+      ) {
+        pushToast({
+          description:
+            mutation.action === "skip"
+              ? "Step skipped for now. You can revisit it anytime."
+              : "Progress saved.",
+          title: mutation.action === "skip" ? "Skipped for now" : "Setup updated",
+          tone: "success",
+        });
+      }
       return nextData;
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Failed to save onboarding state.";
@@ -868,6 +810,25 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     });
   }
 
+  useEffect(() => {
+    if (resumeAttemptedRef.current || !data.canManage || isCompleted) return;
+    const resumeStep = shouldResumeToFirstIncompleteRequired(latestDataRef.current.onboarding);
+    resumeAttemptedRef.current = true;
+    if (!resumeStep) return;
+    void selectStep(resumeStep);
+    // Snap returning users once; later rail navigation must not re-trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.canManage, isCompleted]);
+
+  function resolvePrimaryActionBlocker() {
+    if (primaryAction.focusTargetId === null) return;
+    if (activeStep.id === "verify" && verifyBlockers[0] && verifyBlockers[0].step !== "verify") {
+      void selectStep(verifyBlockers[0].step);
+      return;
+    }
+    focusOnboardingTarget(primaryAction.focusTargetId);
+  }
+
   async function exitSetup() {
     const patch = data.canManage ? buildOnboardingExitPatch(onboarding) : null;
     const nextData = patch
@@ -929,13 +890,16 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   }
 
   return (
-    <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
-      <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-8 pt-8 sm:px-8 sm:pt-10">
-        <div className="min-w-0 space-y-2">
-          <h1 className="type-page-title">Set up {data.workspace.name}</h1>
-          <p className="max-w-2xl text-[14px] leading-6 text-muted">
-            Finish the required connections before starting sessions.
-          </p>
+    <div className="flex min-h-[100svh] flex-col overflow-x-hidden bg-sheet text-foreground">
+      <header className="mx-auto flex w-full max-w-[1180px] flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pb-6 pt-8 sm:px-8 sm:pt-10">
+        <div className="min-w-0 space-y-3">
+          <div className="space-y-2">
+            <h1 className="type-page-title">Set up {data.workspace.name}</h1>
+            <p className="max-w-2xl text-[14px] leading-6 text-muted">
+              Finish the required connections before starting sessions.
+            </p>
+          </div>
+          <OnboardingProgressHeader className="hidden max-w-xl lg:block" onboarding={onboarding} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {!data.canManage ? <Status label="Read only" value="not_started" /> : null}
@@ -954,15 +918,20 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         </div>
       </header>
 
-      <MobileStepControl canSelect={!isSaving} items={railItems} onSelect={selectStep} />
+      <OnboardingMobileStepNav
+        canSelect={!isSaving}
+        items={railItems}
+        onboarding={onboarding}
+        onSelect={selectStep}
+      />
 
       <main
         id="main-content"
-        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-28 sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
+        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-28 sm:px-8 lg:grid-cols-[200px_minmax(0,1fr)_260px] lg:gap-12"
       >
         <aside className="hidden lg:block">
           <div className="sticky top-8">
-            <StepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
+            <OnboardingStepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
           </div>
         </aside>
 
@@ -977,8 +946,23 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           </div>
 
           {error ? (
-            <div className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger">
-              {error}
+            <div
+              className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+              role="alert"
+            >
+              <p>{error}</p>
+              <button
+                type="button"
+                className="ui-button mt-2"
+                onClick={() => {
+                  setError(null);
+                  if (savingAction === null) {
+                    void refreshOnboarding("retry");
+                  }
+                }}
+              >
+                Retry
+              </button>
             </div>
           ) : null}
 
@@ -1010,8 +994,26 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       </main>
 
       <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-[1180px] justify-end">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mx-auto flex max-w-[1180px] flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+          {primaryAction.disabled && primaryAction.reason ? (
+            <p
+              className="min-w-0 text-xs leading-5 text-muted sm:mr-auto"
+              data-onboarding-disabled-reason
+              id="onboarding-primary-disabled-reason"
+            >
+              {primaryAction.reason}{" "}
+              {primaryAction.reasonActionLabel ? (
+                <button
+                  type="button"
+                  className="font-medium text-accent underline-offset-2 hover:underline"
+                  onClick={resolvePrimaryActionBlocker}
+                >
+                  {primaryAction.reasonActionLabel}
+                </button>
+              ) : null}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
               className="ui-button"
@@ -1032,7 +1034,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
                 onClick={() => void skipStep()}
               >
                 <ActionButtonLabel
-                  idle="Skip"
+                  idle="Skip for now"
                   pending={savingAction === "skip"}
                   pendingLabel="Saving…"
                 />
@@ -1041,28 +1043,16 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
             <button
               type="button"
               className="ui-button-primary"
-              disabled={
-                !data.canManage ||
-                isCompleted ||
-                isSaving ||
-                githubContinueBlocked ||
-                repositoryContinueBlocked ||
-                runtimeCompletionBlocked ||
-                verifyCompletionBlocked ||
-                requiresInlineCompletion
+              aria-describedby={
+                primaryAction.disabled && primaryAction.reason
+                  ? "onboarding-primary-disabled-reason"
+                  : undefined
               }
+              disabled={!data.canManage || isSaving || primaryAction.disabled}
               onClick={() => void continueSetup()}
             >
               <ActionButtonLabel
-                idle={
-                  isCompleted
-                    ? "Setup complete"
-                    : requiresInlineCompletion
-                      ? inlineCompletionLabel
-                      : activeStep.id === "verify"
-                        ? "Complete setup"
-                        : "Continue"
-                }
+                idle={primaryAction.idleLabel}
                 pending={savingAction === "continue" || savingAction === "complete"}
                 pendingLabel="Saving…"
               />

@@ -18,6 +18,7 @@ import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { ONBOARDING_FOCUS_TARGETS } from "@/features/onboarding/progress";
 import {
   buildRuntimeReadiness,
   configuredAgentConfigKeys,
@@ -933,7 +934,7 @@ export default function RuntimeStep({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" id={ONBOARDING_FOCUS_TARGETS.runtime} tabIndex={-1}>
       {runtimeError ? (
         <div
           className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"

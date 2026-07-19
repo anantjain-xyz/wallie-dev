@@ -2,6 +2,7 @@
 
 import { GitHubConnectionPanel } from "@/features/github/github-connection-panel";
 import type { WorkspaceGitHubData } from "@/features/github/data";
+import { ONBOARDING_FOCUS_TARGETS } from "@/features/onboarding/progress";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import type { OnboardingSetupHealth } from "@/lib/onboarding/contracts";
 
@@ -40,12 +41,14 @@ export default function GitHubStep({ data, isSaving, onDataChange }: OnboardingS
   }
 
   return (
-    <GitHubConnectionPanel
-      canManage={data.canManage && !isSaving}
-      github={data.github}
-      onChange={updateGithub}
-      source="onboarding"
-      workspaceId={data.workspace.id}
-    />
+    <div id={ONBOARDING_FOCUS_TARGETS.github} tabIndex={-1}>
+      <GitHubConnectionPanel
+        canManage={data.canManage && !isSaving}
+        github={data.github}
+        onChange={updateGithub}
+        source="onboarding"
+        workspaceId={data.workspace.id}
+      />
+    </div>
   );
 }

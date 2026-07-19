@@ -46,7 +46,7 @@ describe("onboarding flow helpers", () => {
     ]);
   });
 
-  it("maps completed, skipped, active, and available rail states from server state", () => {
+  it("maps completed, skipped, current, and upcoming rail states from server state", () => {
     const items = getOnboardingStepRailItems(
       onboardingState({
         completedSteps: ["github"],
@@ -59,10 +59,34 @@ describe("onboarding flow helpers", () => {
     expect(items.map((item) => [item.id, item.displayState])).toEqual([
       ["github", "completed"],
       ["repository", "skipped"],
-      ["pipeline", "active"],
-      ["linear", "available"],
-      ["runtime", "available"],
-      ["verify", "available"],
+      ["pipeline", "current"],
+      ["linear", "upcoming"],
+      ["runtime", "upcoming"],
+      ["verify", "upcoming"],
+    ]);
+  });
+
+  it("maps blocked and error rail states from health context without collapsing skipped", () => {
+    const items = getOnboardingStepRailItems(
+      onboardingState({
+        completedSteps: ["github"],
+        currentStep: "pipeline",
+        skippedSteps: ["linear"],
+        status: "in_progress",
+      }),
+      {
+        blockedSteps: new Set(["verify"]),
+        errorSteps: new Set(["runtime"]),
+      },
+    );
+
+    expect(items.map((item) => [item.id, item.displayState])).toEqual([
+      ["github", "completed"],
+      ["repository", "upcoming"],
+      ["pipeline", "current"],
+      ["linear", "skipped"],
+      ["runtime", "error"],
+      ["verify", "blocked"],
     ]);
   });
 

@@ -314,7 +314,7 @@ function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html.match(
     new RegExp(
-      `<button[^>]*>[^]*?<span class="block truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
+      `<button[^>]*data-step-state="[^"]*"[^>]*>[^]*?<span class="block truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
     ),
   )?.[0];
   if (!match) {
@@ -876,8 +876,9 @@ describe("OnboardingPageClient", () => {
     expect(linearHtml).toContain(">Connect Linear</h2>");
     expect(desktopRailButton(runtimeHtml, "Connect Agent")).toContain('aria-current="step"');
     expect(runtimeHtml).toContain(">Connect Agent</h2>");
-    expect(runtimeHtml).toContain('<span class="truncate">Agent</span>');
-    expect(runtimeHtml).not.toContain('<span class="truncate">Runtime</span>');
+    expect(runtimeHtml).toContain("data-onboarding-step-list-trigger");
+    expect(runtimeHtml).toContain("Agent · view all steps");
+    expect(runtimeHtml).not.toContain("Runtime · view all steps");
   });
 
   it("shows setup actions in Analyze repositories for every synced repository", () => {
@@ -1179,7 +1180,7 @@ describe("OnboardingPageClient", () => {
 
     const button = primaryFooterButton(html);
     expect(html).toContain("Workspace has no default pipeline.");
-    expect(button).toContain(">Continue</span>");
+    expect(button).toContain(">Continue with pipeline</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1195,6 +1196,8 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("Use current pipeline");
     expect(button).toContain("disabled");
     expect(button).toContain(">Save pipeline to continue</span>");
+    expect(html).toContain("data-onboarding-disabled-reason");
+    expect(html).toContain("Save the pipeline in this step to continue.");
   });
 
   it("allows fallback progression when Linear routing cannot load pipeline stages", () => {
@@ -1219,7 +1222,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(button).toContain(">Continue</span>");
+    expect(button).toContain(">Connect Linear and continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1244,7 +1247,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(button).toContain(">Continue</span>");
+    expect(button).toContain(">Continue with pipeline</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1538,11 +1541,47 @@ describe("OnboardingPageClient", () => {
 
     const button = primaryFooterButton(html);
     expect(html).toContain("Readiness checklist");
+    expect(html).toContain("Setup review");
     expect(html).toContain('data-step-link="linear"');
     expect(html).toContain('data-step-link="runtime"');
     expect(html).toContain("Save a repository profile before running a sandbox capability check.");
     expect(button).toContain("disabled");
     expect(button).toContain(">Complete setup</span>");
+    expect(html).toContain("data-onboarding-disabled-reason");
+  });
+
+  it("shows oriented progress and distinct completed vs skipped rail treatment", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "runtime",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: ["linear"],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+        }),
+      }),
+    );
+
+    expect(html).toContain("data-onboarding-position");
+    expect(html).toContain("Step 5 of 6");
+    expect(html).toContain("50% complete");
+    expect(html).toContain("1 required step remaining");
+    expect(html).toContain('data-step-state="completed"');
+    expect(html).toContain('data-step-state="skipped"');
+    expect(html).toContain('data-step-state="current"');
+    expect(html).toContain(">Skip for now</span>");
+    expect(desktopRailButton(html, "Connect GitHub")).toContain("Complete");
+    expect(desktopRailButton(html, "Connect Linear")).toContain("Skipped");
+    expect(html).toContain("overflow-x-hidden");
+    expect(html).not.toContain("overflow-x-auto");
   });
 
   it("routes the Vercel Sandbox blocker back into the Connect Agent step", () => {

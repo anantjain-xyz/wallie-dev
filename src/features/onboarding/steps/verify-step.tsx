@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { ONBOARDING_STEPS } from "@/features/onboarding/flow";
+import { ONBOARDING_FOCUS_TARGETS, stepIsSatisfied } from "@/features/onboarding/progress";
 import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
+import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import type {
   SandboxCapabilityCheckLatestResponse,
   SandboxCapabilityCheckResponse,
@@ -121,8 +123,91 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
     }
   }
 
+  const selectedProvider =
+    typeof data.agentConfig.agent_provider === "string"
+      ? (normalizeAgentProviderName(data.agentConfig.agent_provider) ?? "codex")
+      : "codex";
+  const setupSummary = [
+    {
+      detail: data.setupHealth.githubInstallation.connected
+        ? (data.setupHealth.githubInstallation.targetName ?? "Connected")
+        : "Not connected",
+      id: "summary-github" as const,
+      label: "GitHub",
+      step: "github" as const,
+      statusLabel: data.setupHealth.githubInstallation.connected ? "Configured" : "Missing",
+      tone: data.setupHealth.githubInstallation.connected
+        ? ("success" as const)
+        : ("warning" as const),
+    },
+    {
+      detail: data.setupHealth.selectedRepository.fullName ?? "No repository selected",
+      id: "summary-repository" as const,
+      label: "Repository",
+      step: "repository" as const,
+      statusLabel: data.setupHealth.primaryRepositoryProfile.configured ? "Configured" : "Partial",
+      tone: data.setupHealth.primaryRepositoryProfile.configured
+        ? ("success" as const)
+        : ("warning" as const),
+    },
+    {
+      detail: data.pipeline
+        ? `${data.pipeline.name} · ${data.pipeline.stages.length} stages`
+        : "No default pipeline",
+      id: "summary-pipeline" as const,
+      label: "Pipeline",
+      step: "pipeline" as const,
+      statusLabel: stepIsSatisfied(data.onboarding, "pipeline") ? "Configured" : "Not finished",
+      tone: stepIsSatisfied(data.onboarding, "pipeline")
+        ? ("success" as const)
+        : ("neutral" as const),
+    },
+    {
+      detail: data.setupHealth.linearKey.configured
+        ? "API key and routing"
+        : data.onboarding.skippedSteps.includes("linear")
+          ? "Skipped for now"
+          : "Not configured",
+      id: "summary-linear" as const,
+      label: "Linear",
+      step: "linear" as const,
+      statusLabel: data.onboarding.skippedSteps.includes("linear")
+        ? "Skipped"
+        : stepIsSatisfied(data.onboarding, "linear")
+          ? "Configured"
+          : "Missing",
+      tone: data.onboarding.skippedSteps.includes("linear")
+        ? ("warning" as const)
+        : stepIsSatisfied(data.onboarding, "linear")
+          ? ("success" as const)
+          : ("warning" as const),
+    },
+    {
+      detail: data.onboarding.skippedSteps.includes("runtime")
+        ? "Skipped for now"
+        : `${selectedProvider} · ${
+            data.setupHealth.vercelSandboxConnection.connected
+              ? "Vercel connected"
+              : "Vercel missing"
+          }`,
+      id: "summary-runtime" as const,
+      label: "Agent",
+      step: "runtime" as const,
+      statusLabel: data.onboarding.skippedSteps.includes("runtime")
+        ? "Skipped"
+        : stepIsSatisfied(data.onboarding, "runtime")
+          ? "Configured"
+          : "Missing",
+      tone: data.onboarding.skippedSteps.includes("runtime")
+        ? ("warning" as const)
+        : stepIsSatisfied(data.onboarding, "runtime")
+          ? ("success" as const)
+          : ("warning" as const),
+    },
+  ];
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" id={ONBOARDING_FOCUS_TARGETS.verify} tabIndex={-1}>
       {verifyError ? (
         <div
           className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
@@ -131,6 +216,40 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
           {verifyError}
         </div>
       ) : null}
+
+      <div className="rounded-[6px] border border-border bg-sheet p-4">
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-semibold text-foreground">Setup review</h3>
+          <p className="mt-1 text-xs leading-5 text-muted">
+            Review every integration and pipeline choice. Open a step to change it without losing
+            saved work.
+          </p>
+        </div>
+        <div className="mt-4 space-y-2">
+          {setupSummary.map((item) => (
+            <div
+              className="flex flex-col gap-3 rounded-[6px] border border-border bg-sheet px-3 py-2 sm:flex-row sm:items-start sm:justify-between"
+              key={item.id}
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-foreground">{item.label}</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted">{item.detail}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Status label={item.statusLabel} value={configurationStatusFromTone(item.tone)} />
+                <button
+                  className="ui-button"
+                  data-step-link={item.step}
+                  onClick={() => onSelectStep(item.step)}
+                  type="button"
+                >
+                  Open {ONBOARDING_STEPS.find((step) => step.id === item.step)?.shortTitle}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div className="rounded-[6px] border border-border bg-sheet p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

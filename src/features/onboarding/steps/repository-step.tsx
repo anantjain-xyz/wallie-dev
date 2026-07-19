@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { Status } from "@/components/ui/status";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
+import { ONBOARDING_FOCUS_TARGETS } from "@/features/onboarding/progress";
 import { buildRepositorySetupHealth } from "@/features/onboarding/repository-health";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import {
@@ -149,21 +150,27 @@ export default function RepositoryAnalysisStep({
 
   if (repositories.length === 0) {
     return (
-      <div className="rounded-[6px] border border-border bg-sheet p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] leading-5 text-muted">
-            Connect GitHub and sync repositories before analyzing repository setup.
-          </p>
-          <button className="ui-button" onClick={() => onSelectStep("github")} type="button">
-            Open GitHub
-          </button>
+      <div id={ONBOARDING_FOCUS_TARGETS.repository} tabIndex={-1}>
+        <div className="rounded-[6px] border border-border bg-sheet p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[13px] leading-5 text-muted">
+              Connect GitHub and sync repositories before analyzing repository setup.
+            </p>
+            <button className="ui-button" onClick={() => onSelectStep("github")} type="button">
+              Open GitHub
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <ul className="divide-y divide-border rounded-[6px] border border-border bg-sheet">
+    <ul
+      className="divide-y divide-border rounded-[6px] border border-border bg-sheet"
+      id={ONBOARDING_FOCUS_TARGETS.repository}
+      tabIndex={-1}
+    >
       {repositories.map((repository) => {
         const selected = selectedRepository?.id === repository.id;
         const showProfileEditor = selected && Boolean(profileDraft);
