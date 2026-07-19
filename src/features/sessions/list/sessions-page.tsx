@@ -8,7 +8,10 @@ import { SessionsCommandBar } from "@/features/sessions/list/sessions-command-ba
 import { SessionLedgerRow } from "@/features/sessions/list/session-ledger-row";
 import { SessionsLedger } from "@/features/sessions/list/session-row-actions";
 import { SessionsLedgerVisibilityProvider } from "@/features/sessions/list/sessions-ledger-visibility";
-import { buildSessionsListHref } from "@/features/sessions/list/sessions-list-mutations";
+import {
+  buildSessionsListHref,
+  sessionsPaginationLabel,
+} from "@/features/sessions/list/sessions-list-mutations";
 import { workspaceSessionsPath } from "@/lib/routes";
 
 type SessionsPageProps = {
@@ -95,7 +98,7 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
               cursor: initialData.nextCursor,
             })}
           >
-            Load older sessions
+            {sessionsPaginationLabel(initialData.queryState.sort)}
           </Link>
         </div>
       ) : null}

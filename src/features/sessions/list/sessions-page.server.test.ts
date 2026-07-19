@@ -109,6 +109,29 @@ describe("Sessions ledger server render", () => {
     );
     expect(paginated).toContain("Load older sessions");
     expect(paginated).toContain("cursor=cursor-token");
+
+    const paginatedOldest = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, {
+          initialData: {
+            ...makeData(2),
+            hasMore: true,
+            nextCursor: "cursor-token",
+            queryState: {
+              cursor: null,
+              query: "",
+              scope: "all",
+              sort: "oldest",
+              stageSlug: null,
+            },
+          },
+        }),
+      ),
+    );
+    expect(paginatedOldest).toContain("Load newer sessions");
+    expect(paginatedOldest).toContain("sort=oldest");
   });
 
   it("keeps static row text in SSR HTML for 50 rows without absolute overlay links", () => {

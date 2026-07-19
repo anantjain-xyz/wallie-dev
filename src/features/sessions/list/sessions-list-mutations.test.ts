@@ -5,6 +5,7 @@ import {
   compareSessionsBySort,
   resolveOptimisticArchive,
   resolveOptimisticTitle,
+  sessionsPaginationLabel,
   shouldApplyArchiveResult,
 } from "@/features/sessions/list/sessions-list-mutations";
 
@@ -39,6 +40,12 @@ describe("sessions list helpers", () => {
         stageSlug: null,
       }),
     ).toBe("/w/acme/sessions");
+  });
+
+  it("labels pagination by the active sort direction", () => {
+    expect(sessionsPaginationLabel("updated")).toBe("Load older sessions");
+    expect(sessionsPaginationLabel("oldest")).toBe("Load newer sessions");
+    expect(sessionsPaginationLabel("number")).toBe("Load more sessions");
   });
 
   it("orders sessions by the active sort key", () => {

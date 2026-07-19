@@ -28,6 +28,13 @@ export function buildSessionsListHref(
   return qs ? `${base}?${qs}` : base;
 }
 
+/** Label for the next-page control; direction follows the active sort axis. */
+export function sessionsPaginationLabel(sort: SessionListSortKey): string {
+  if (sort === "oldest") return "Load newer sessions";
+  if (sort === "number") return "Load more sessions";
+  return "Load older sessions";
+}
+
 export function compareSessionsBySort(
   left: Pick<SessionListItem, "id" | "number" | "updatedAt">,
   right: Pick<SessionListItem, "id" | "number" | "updatedAt">,
