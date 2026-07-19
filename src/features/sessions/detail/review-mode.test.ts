@@ -3,32 +3,44 @@ import { describe, expect, it } from "vitest";
 import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
 
 describe("resolveReviewMode", () => {
-  it("returns reviewable when awaiting review and authorized", () => {
+  it("returns reviewable when awaiting review and authorized to approve", () => {
     expect(
       resolveReviewMode({
         archivedAt: null,
-        canReview: true,
+        canApprove: true,
         phaseStatus: "awaiting_review",
         selectedStageIsCurrent: true,
       }),
-    ).toEqual({ kind: "reviewable" });
+    ).toEqual({ canApprove: true, kind: "reviewable" });
+  });
+
+  it("keeps request-changes available when the viewer cannot approve", () => {
+    expect(
+      resolveReviewMode({
+        archivedAt: null,
+        canApprove: false,
+        canReject: true,
+        phaseStatus: "awaiting_review",
+        selectedStageIsCurrent: true,
+      }),
+    ).toEqual({ canApprove: false, kind: "reviewable" });
   });
 
   it("returns running while the agent is generating", () => {
     expect(
       resolveReviewMode({
         archivedAt: null,
-        canReview: true,
+        canApprove: true,
         phaseStatus: "agent_generating",
         selectedStageIsCurrent: true,
       }),
     ).toEqual({ kind: "running" });
   });
 
-  it("returns completed with an explicit reason", () => {
+  it("returns completed with an explicit reason even when archived", () => {
     const mode = resolveReviewMode({
-      archivedAt: null,
-      canReview: true,
+      archivedAt: "2026-07-01T00:00:00.000Z",
+      canApprove: true,
       phaseStatus: "approved",
       selectedStageIsCurrent: true,
     });
@@ -41,7 +53,7 @@ describe("resolveReviewMode", () => {
   it("returns failed with an explicit reason when the latest run failed", () => {
     const mode = resolveReviewMode({
       archivedAt: null,
-      canReview: true,
+      canApprove: true,
       hasFailedRun: true,
       phaseStatus: "awaiting_review",
       selectedStageIsCurrent: true,
@@ -55,7 +67,7 @@ describe("resolveReviewMode", () => {
   it("returns archived with an explicit reason", () => {
     const mode = resolveReviewMode({
       archivedAt: "2026-07-01T00:00:00.000Z",
-      canReview: true,
+      canApprove: true,
       phaseStatus: "awaiting_review",
       selectedStageIsCurrent: true,
     });
@@ -65,10 +77,11 @@ describe("resolveReviewMode", () => {
     }
   });
 
-  it("returns unauthorized with an explicit reason", () => {
+  it("returns unauthorized when neither approve nor reject is allowed", () => {
     const mode = resolveReviewMode({
       archivedAt: null,
-      canReview: false,
+      canApprove: false,
+      canReject: false,
       phaseStatus: "awaiting_review",
       selectedStageIsCurrent: true,
     });
@@ -81,7 +94,7 @@ describe("resolveReviewMode", () => {
   it("returns canceled when the stage is not ready for review", () => {
     const mode = resolveReviewMode({
       archivedAt: null,
-      canReview: true,
+      canApprove: true,
       phaseStatus: "rejected",
       selectedStageIsCurrent: true,
     });

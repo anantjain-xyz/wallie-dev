@@ -20,7 +20,7 @@ function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = 
       null,
       createElement(SessionReviewBar, {
         approveLabel: "Approve & advance",
-        mode: { kind: "reviewable" },
+        mode: { canApprove: true, kind: "reviewable" },
         onApprove,
         onReject,
         onStopRun,
@@ -88,6 +88,13 @@ describe("SessionReviewBar", () => {
     });
     expect(screen.getByText(/not authorized/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+  });
+
+  it("keeps Request changes when approve is unauthorized", () => {
+    renderBar({ mode: { canApprove: false, kind: "reviewable" } });
+    expect(screen.getByRole("button", { name: "Request changes" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+    expect(screen.getByText(/not authorized to approve this stage/i)).toBeTruthy();
   });
 
   it("shows an explicit read-only reason for archived sessions", () => {

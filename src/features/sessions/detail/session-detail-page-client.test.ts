@@ -244,10 +244,11 @@ describe("SessionDetailPageClient", () => {
     expect(html).not.toContain("Request changes");
   });
 
-  it("shows an explicit unauthorized reason", () => {
+  it("keeps Request changes when the viewer cannot approve", () => {
     const html = renderDetail({ canReview: false });
-    expect(html).toContain("You are not authorized");
-    expect(html).not.toContain("Request changes");
+    expect(html).toContain("Request changes");
+    expect(html).toContain("You are not authorized to approve this stage.");
+    expect(html).not.toContain("Approve &amp; archive");
   });
 
   it("shows an explicit read-only reason when the stage is not ready for review", () => {

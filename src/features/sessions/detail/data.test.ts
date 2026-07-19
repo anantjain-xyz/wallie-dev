@@ -258,9 +258,17 @@ describe("session detail loader", () => {
       }),
       select: vi.fn().mockReturnThis(),
     };
+    const runsQuery = {
+      eq: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+      order: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+    };
     const from = vi.fn((table: string) => {
       if (table === "workspace_members") return memberQuery;
       if (table === "pipeline_stages") return stageQuery;
+      if (table === "agent_runs") return runsQuery;
       throw new Error(`unexpected table ${table}`);
     });
     const rpc = vi.fn().mockResolvedValue({ data: payload, error: null });
@@ -271,6 +279,8 @@ describe("session detail loader", () => {
     const result = await loadSessionDetailPageData("acme-corp", "18");
 
     expect(result.canReview).toBe(true);
+    expect(result.hasFailedRun).toBe(false);
+    expect(result.failedStageSlug).toBeNull();
     expect(result.repository).toEqual({
       defaultBranch: "main",
       fullName: "acme/app",

@@ -64,6 +64,8 @@ import { cn } from "@/lib/utils";
 type SessionDetailPageClientProps = {
   activity: ReactNode;
   canReview?: boolean;
+  failedStageSlug?: string | null;
+  hasFailedRun?: boolean;
   initialData: SessionReviewData;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
@@ -132,6 +134,8 @@ export { centerStageTimelineSelection as centerStageRailSelection } from "@/feat
 export function SessionDetailPageClient({
   activity,
   canReview = true,
+  failedStageSlug: initialFailedStageSlug = null,
+  hasFailedRun: initialHasFailedRun = false,
   initialData,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
@@ -149,14 +153,21 @@ export function SessionDetailPageClient({
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
+  const [canApprove, setCanApprove] = useState(canReview);
+  const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
+  const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
+  const capabilitiesEffectSkipRef = useRef(true);
 
-  const stageTimeline = useMemo(() => buildStageTimeline(session), [session]);
+  const stageTimeline = useMemo(
+    () => buildStageTimeline(session, { failedStageSlug }),
+    [failedStageSlug, session],
+  );
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
 
@@ -188,19 +199,24 @@ export function SessionDetailPageClient({
 
   const reviewMode = resolveReviewMode({
     archivedAt: session.archivedAt,
-    canReview,
+    canApprove,
+    hasFailedRun,
     phaseStatus: session.phaseStatus,
     selectedStageIsCurrent,
   });
-  // Optimistic approve flips phaseStatus to agent_generating before the network
-  // settles. Keep the reviewable pending surface so Stop cannot race approval.
+  // Optimistic approve/reject flips phaseStatus before the network settles.
+  // Keep the reviewable pending surface so Stop/dialog cannot race the action.
   const stickyReviewMode =
-    phaseActionPending === "approve" && reviewMode.kind === "running"
-      ? ({ kind: "reviewable" } as const)
+    (phaseActionPending === "approve" || phaseActionPending === "reject") &&
+    (reviewMode.kind === "running" || reviewMode.kind === "canceled")
+      ? ({ canApprove, kind: "reviewable" } as const)
       : reviewMode;
 
   useEffect(() => {
     setSession(initialData.session);
+    setCanApprove(canReview);
+    setHasFailedRun(initialHasFailedRun);
+    setFailedStageSlug(initialFailedStageSlug);
     setSelectedStageSlug((currentSlug) => {
       const stageStillExists = initialData.session.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
@@ -208,7 +224,60 @@ export function SessionDetailPageClient({
 
       return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
     });
-  }, [initialData.session]);
+  }, [canReview, initialData.session, initialFailedStageSlug, initialHasFailedRun]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    // Skip the mount pass — RSC already supplied canApprove / hasFailedRun.
+    // Recompute when the current stage changes (Realtime or local advance).
+    if (capabilitiesEffectSkipRef.current) {
+      capabilitiesEffectSkipRef.current = false;
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    // Wait out in-flight phase actions so we don't race the mutation request.
+    if (phaseActionPending !== null) {
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    void fetch(`/api/sessions/${session.id}/review-capabilities`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as {
+          canApprove?: boolean;
+          failedStageSlug?: string | null;
+          hasFailedRun?: boolean;
+        } | null;
+        if (!response.ok || !body || cancelled) return;
+        if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
+        if (typeof body.hasFailedRun === "boolean") setHasFailedRun(body.hasFailedRun);
+        if ("failedStageSlug" in body) setFailedStageSlug(body.failedStageSlug ?? null);
+      })
+      .catch(() => {
+        // Keep the last known capabilities; review actions still authorize server-side.
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [phaseActionPending, session.currentStageId, session.id]);
+
+  useEffect(() => {
+    if (session.phaseStatus === "agent_generating" || session.phaseStatus === "awaiting_review") {
+      setHasFailedRun(false);
+      setFailedStageSlug(null);
+    }
+  }, [session.phaseStatus]);
 
   const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
     const stageIsKnown = session.pipeline.stages.some((stage) => stage.id === row.current_stage_id);

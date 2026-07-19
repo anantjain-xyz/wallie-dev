@@ -130,21 +130,27 @@ export function SessionReviewBar({
           >
             Request changes
           </button>
-          <button
-            type="button"
-            className="ui-button-primary"
-            disabled={phaseActionBusy}
-            onClick={() => {
-              if (phaseActionBusy) return;
-              onApprove();
-            }}
-          >
-            <ActionButtonLabel
-              idle={approveLabel}
-              pending={phaseActionPending === "approve"}
-              pendingLabel="Approving…"
-            />
-          </button>
+          {mode.canApprove ? (
+            <button
+              type="button"
+              className="ui-button-primary"
+              disabled={phaseActionBusy}
+              onClick={() => {
+                if (phaseActionBusy) return;
+                onApprove();
+              }}
+            >
+              <ActionButtonLabel
+                idle={approveLabel}
+                pending={phaseActionPending === "approve"}
+                pendingLabel="Approving…"
+              />
+            </button>
+          ) : (
+            <p className="text-sm text-muted" role="status">
+              You are not authorized to approve this stage.
+            </p>
+          )}
         </div>
       </div>
 

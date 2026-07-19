@@ -17,6 +17,7 @@ import {
   type ServerTimingCollector,
   withServerTiming,
 } from "@/lib/server-timing";
+import { loadSessionReviewCapabilities } from "@/features/sessions/detail/review-capabilities";
 
 /**
  * Seeded session #18 was 10,603 bytes at the detail RPC before member and
@@ -82,6 +83,8 @@ export type SessionReviewRepository = {
 export type SessionDetailPageData = {
   activityContext: SessionActivityContext;
   canReview: boolean;
+  failedStageSlug: string | null;
+  hasFailedRun: boolean;
   repository: SessionReviewRepository | null;
   review: SessionReviewData;
 };
@@ -166,9 +169,10 @@ async function loadSessionDetailPageDataWithTiming(
 
   const review = serializeSessionReviewData(payload);
   const repository = serializeSessionReviewRepository(payload.activity.repository);
-  const canReview = await timing.segment("review.authorization", () =>
-    resolveCanReview({
+  const capabilities = await timing.segment("review.authorization", () =>
+    loadSessionReviewCapabilities({
       memberUserId: user.id,
+      sessionId: payload.session.id,
       stageId: payload.session.currentStageId,
       supabase,
       workspaceId: payload.activity.workspaceId,
@@ -187,7 +191,9 @@ async function loadSessionDetailPageDataWithTiming(
       sessionId: payload.activity.sessionId,
       workspaceId: payload.activity.workspaceId,
     },
-    canReview,
+    canReview: capabilities.canApprove,
+    failedStageSlug: capabilities.failedStageSlug,
+    hasFailedRun: capabilities.hasFailedRun,
     repository,
     review,
   };
@@ -202,44 +208,6 @@ export function serializeSessionReviewRepository(
     fullName: repository.fullName,
     htmlUrl: repository.htmlUrl,
   };
-}
-
-async function resolveCanReview({
-  memberUserId,
-  stageId,
-  supabase,
-  workspaceId,
-}: {
-  memberUserId: string;
-  stageId: string;
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
-  workspaceId: string;
-}): Promise<boolean> {
-  const [{ data: member }, { data: stage }] = await Promise.all([
-    supabase
-      .from("workspace_members")
-      .select("id, role")
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", memberUserId)
-      .eq("is_active", true)
-      .eq("kind", "human")
-      .maybeSingle(),
-    supabase
-      .from("pipeline_stages")
-      .select("approver_member_ids")
-      .eq("id", stageId)
-      .eq("workspace_id", workspaceId)
-      .maybeSingle(),
-  ]);
-
-  if (!member || !stage) return false;
-
-  const approvers = stage.approver_member_ids ?? [];
-  if (approvers.length > 0) {
-    return approvers.includes(member.id);
-  }
-
-  return member.role === "owner" || member.role === "admin";
 }
 
 /**

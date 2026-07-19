@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
 
 import { TimeDisplay } from "@/components/shared/time-display";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
@@ -22,6 +22,8 @@ type SessionInspectorProps = {
 };
 
 type InspectorTab = "context" | "activity";
+
+const INSPECTOR_TABS: InspectorTab[] = ["context", "activity"];
 
 function CreatorAvatar({ displayName }: { displayName: string }) {
   const initial = displayName.trim().charAt(0).toUpperCase() || "?";
@@ -56,9 +58,29 @@ export function SessionInspector({
   const runInputId = useId();
   const contextPanelId = useId();
   const activityPanelId = useId();
+  const tabRefs = useRef(new Map<InspectorTab, HTMLButtonElement>());
   const hasConnections =
     !!session.linearIssueUrl ||
     session.pullRequests.some((pullRequest) => pullRequest.pullRequestUrl);
+
+  function selectTab(next: InspectorTab) {
+    setTab(next);
+    tabRefs.current.get(next)?.focus();
+  }
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = INSPECTOR_TABS.indexOf(tab);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") {
+      nextIndex = Math.min(INSPECTOR_TABS.length - 1, currentIndex + 1);
+    }
+    if (event.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = INSPECTOR_TABS.length - 1;
+    selectTab(INSPECTOR_TABS[nextIndex] ?? "context");
+  }
 
   return (
     <section className="flex min-h-0 flex-col border-border lg:border-l lg:pl-5">
@@ -71,6 +93,10 @@ export function SessionInspector({
         ).map((entry) => (
           <button
             key={entry.id}
+            ref={(node) => {
+              if (node) tabRefs.current.set(entry.id, node);
+              else tabRefs.current.delete(entry.id);
+            }}
             type="button"
             role="tab"
             aria-controls={entry.panelId}
@@ -83,7 +109,8 @@ export function SessionInspector({
                 ? "bg-control-muted text-foreground"
                 : "text-muted hover:text-foreground",
             )}
-            onClick={() => setTab(entry.id)}
+            onClick={() => selectTab(entry.id)}
+            onKeyDown={handleTabKeyDown}
           >
             {entry.label}
           </button>
