@@ -22,28 +22,34 @@ vi.mock("@/lib/supabase/browser", () => ({
 vi.mock("@/features/sessions/components/session-detail-link", () => ({
   SessionDetailLink: ({
     "aria-label": ariaLabel,
+    children,
     className,
     href,
   }: {
     "aria-label": string;
+    children?: React.ReactNode;
     className?: string;
     href: string;
   }) => {
     mocked.cardLinkRenders.set(ariaLabel, (mocked.cardLinkRenders.get(ariaLabel) ?? 0) + 1);
-    return <a aria-label={ariaLabel} className={className} href={href} />;
+    return (
+      <a aria-label={ariaLabel} className={className} href={href}>
+        {children}
+      </a>
+    );
   },
   SessionDetailLinkPrefetchBoundary: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-vi.mock("@/features/sessions/components/session-connections", () => ({
-  SessionConnections: () => null,
 }));
 
 vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
   SessionsZeroState: () => <p>No sessions</p>,
 }));
 
-import { PipelinePageClient } from "@/features/pipeline/pipeline-page-client";
+import {
+  cardMatchesPipelineFilters,
+  formatLaneStateSummary,
+  PipelinePageClient,
+} from "@/features/pipeline/pipeline-page-client";
 import { formatUtcTimestamp } from "@/components/shared/time-display";
 import { encodePipelineDashboardCursor } from "@/features/pipeline/cursor";
 import type { PipelineDashboardCard, PipelineDashboardData } from "@/features/pipeline/types";
@@ -56,7 +62,11 @@ const REVIEW_STAGE_ID = "50000000-0000-4000-8000-000000000001";
 
 type RealtimePayload = { eventType: string; new: unknown; old?: unknown };
 
-function card(number: number, stageId: string): PipelineDashboardCard {
+function card(
+  number: number,
+  stageId: string,
+  overrides: Partial<PipelineDashboardCard> = {},
+): PipelineDashboardCard {
   const updatedAt = new Date(Date.UTC(2026, 6, 17) + number * 1_000).toISOString();
   return {
     createdAt: updatedAt,
@@ -72,6 +82,7 @@ function card(number: number, stageId: string): PipelineDashboardCard {
     title: `Session ${number}`,
     updatedAt,
     workspaceId: WORKSPACE_ID,
+    ...overrides,
   };
 }
 
@@ -156,6 +167,35 @@ function installSupabaseMock() {
   };
 }
 
+describe("pipeline filter helpers", () => {
+  it("matches search across title, session number, and Linear id", () => {
+    const sample = card(12, PLAN_STAGE_ID, {
+      linearIssueId: "OP-353",
+      title: "Adaptive board",
+    });
+    expect(cardMatchesPipelineFilters(sample, "adaptive", "all")).toBe(true);
+    expect(cardMatchesPipelineFilters(sample, "#12", "all")).toBe(true);
+    expect(cardMatchesPipelineFilters(sample, "op-353", "all")).toBe(true);
+    expect(cardMatchesPipelineFilters(sample, "missing", "all")).toBe(false);
+    expect(cardMatchesPipelineFilters(sample, "", "awaiting_review")).toBe(false);
+  });
+
+  it("summarizes lane status with shared grammar labels", () => {
+    expect(
+      formatLaneStateSummary([
+        card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
+        card(2, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
+        card(3, PLAN_STAGE_ID, { phaseStatus: "agent_generating" }),
+      ]),
+    ).toBe("2 awaiting review · 1 agent generating");
+    expect(
+      formatLaneStateSummary([card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" })], {
+        isPartial: true,
+      }),
+    ).toBe("Loaded: 1 awaiting review");
+  });
+});
+
 describe("PipelinePageClient", () => {
   afterEach(() => {
     cleanup();
@@ -164,13 +204,22 @@ describe("PipelinePageClient", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders one semantic card tree with the same mobile selector names and destinations", async () => {
+  it("renders one semantic card tree with adaptive board geometry and mobile stage tabs", async () => {
     installSupabaseMock();
     const view = render(<PipelinePageClient initialData={initialData()} />);
 
     expect(view.container.firstElementChild?.classList).toContain(
       "min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
     );
+    expect(view.container.querySelector("[data-pipeline-board]")?.getAttribute("style")).toContain(
+      "--pipeline-stage-count: 2",
+    );
+    expect(view.container.querySelector("[data-pipeline-board]")?.className).toContain(
+      "minmax(280px,1fr)",
+    );
+    expect(
+      view.container.querySelector("[data-pipeline-board]")?.parentElement?.className,
+    ).toContain("overflow-auto");
 
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
     expect(screen.getAllByText("Session 3")).toHaveLength(1);
@@ -179,9 +228,16 @@ describe("PipelinePageClient", () => {
       "/w/wallie/sessions/1",
     );
 
-    const selector = screen.getByRole("combobox", { name: "Pipeline stage" });
-    expect(within(selector).getByRole("option", { name: "Plan (2)" })).toBeTruthy();
-    await userEvent.selectOptions(selector, `${PIPELINE_ID}:${BUILD_STAGE_ID}`);
+    const tablist = screen.getByRole("tablist", { name: "Pipeline stage" });
+    const planTab = within(tablist).getByRole("tab", { name: /Plan/ });
+    const buildTab = within(tablist).getByRole("tab", { name: /Build/ });
+    expect(planTab.getAttribute("tabindex")).toBe("0");
+    expect(buildTab.getAttribute("tabindex")).toBe("-1");
+
+    planTab.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(buildTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(buildTab);
 
     expect(
       screen
@@ -193,6 +249,204 @@ describe("PipelinePageClient", () => {
       screen.getByRole("heading", { name: "Build" }).closest("section")?.classList.contains("flex"),
     ).toBe(true);
     expect(screen.getAllByRole("article")).toHaveLength(2);
+  });
+
+  it("keeps Review CTA above the card-wide overlay hit target", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Needs review" }),
+        ])}
+      />,
+    );
+
+    const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
+    const overlay = screen.getByRole("link", { name: "Open session Needs review" });
+    const content = reviewLink.closest(".pointer-events-none");
+    expect(content?.className).toContain("z-20");
+    expect(overlay.className).toContain("z-10");
+    expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");
+  });
+
+  it("exposes Linear and pull-request destinations as interactive references", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, {
+            linearIssueId: "OP-353",
+            linearIssueUrl: "https://linear.app/issue/OP-353",
+            pullRequests: [
+              {
+                id: "pr-1",
+                pullRequestNumber: null,
+                pullRequestUrl: "https://github.com/wallie-dev/wallie/pull/400",
+              },
+            ],
+            title: "Linked session",
+          }),
+        ])}
+      />,
+    );
+
+    const linearLink = screen.getByRole("link", { name: "OP-353" });
+    expect(linearLink.getAttribute("href")).toBe("https://linear.app/issue/OP-353");
+    expect(linearLink.getAttribute("target")).toBe("_blank");
+    expect(linearLink.className).toContain("pointer-events-auto");
+
+    const prLink = screen.getByRole("link", { name: "PR" });
+    expect(prLink.getAttribute("href")).toBe("https://github.com/wallie-dev/wallie/pull/400");
+    expect(prLink.className).toContain("pointer-events-auto");
+
+    // Non-link metadata stays under the card-wide overlay (no pointer-events-auto on the row).
+    expect(linearLink.closest("p")?.className).not.toContain("pointer-events-auto");
+  });
+
+  it("labels partial lane status summaries when more sessions exist than loaded", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
+          card(2, PLAN_STAGE_ID, { phaseStatus: "agent_generating" }),
+        ])}
+      />,
+    );
+
+    const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
+    // Plan lane seeds totalCount >= 2 and keeps a cursor, so summaries are partial.
+    expect(
+      within(planLane).getByText("Loaded: 1 awaiting review · 1 agent generating"),
+    ).toBeTruthy();
+  });
+
+  it("falls back focus to the card overlay when the Review CTA disappears", async () => {
+    const supabase = installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, {
+            phaseStatus: "awaiting_review",
+            title: "Needs review",
+          }),
+        ])}
+      />,
+    );
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+
+    const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
+    reviewLink.focus();
+    expect(document.activeElement).toBe(reviewLink);
+
+    act(() => {
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow(
+          card(1, BUILD_STAGE_ID, {
+            phaseStatus: "agent_generating",
+            title: "Needs review",
+            updatedAt: "2026-07-18T06:00:00.000Z",
+          }),
+        ),
+      });
+    });
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("link", { name: "Open session Needs review" }),
+      ),
+    );
+    expect(screen.queryByRole("link", { name: "Review session Needs review" })).toBeNull();
+  });
+
+  it("describes filter misses against loaded pages when more results exist", async () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, { phaseStatus: "agent_generating", title: "Still generating" }),
+        ])}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Awaiting review" }));
+    const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
+    expect(within(planLane).getByText("No matching sessions in loaded results")).toBeTruthy();
+    expect(
+      within(planLane).getByText(
+        "Filters apply to loaded sessions in Plan. Load more to search further, or adjust filters.",
+      ),
+    ).toBeTruthy();
+    expect(within(planLane).getByRole("button", { name: "Load more Plan sessions" })).toBeTruthy();
+  });
+
+  it("filters cards by search and status without duplicating card DOM", async () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData(
+          [
+            card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Needs review" }),
+            card(2, PLAN_STAGE_ID, { phaseStatus: "agent_generating", title: "Still generating" }),
+          ],
+          [card(3, BUILD_STAGE_ID, { phaseStatus: "rejected", title: "Needs changes" })],
+        )}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Review session Needs review" })).toBeTruthy();
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+
+    await userEvent.click(screen.getByRole("button", { name: "Awaiting review" }));
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("Needs review")).toBeTruthy();
+    expect(screen.queryByText("Still generating")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "All statuses" }));
+    await userEvent.type(
+      screen.getByRole("searchbox", { name: "Search pipeline sessions" }),
+      "changes",
+    );
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("Needs changes")).toBeTruthy();
+  });
+
+  it("explains empty lanes with stage entry copy", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={{
+          ...initialData([], []),
+          lanes: [
+            {
+              cards: [],
+              cursor: null,
+              description: "Sessions enter Plan after intake.",
+              id: PLAN_STAGE_ID,
+              name: "Plan",
+              pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+              position: 1,
+              slug: "plan",
+              totalCount: 1,
+            },
+            {
+              cards: [],
+              cursor: null,
+              description: "Sessions enter Build after Plan approval.",
+              id: BUILD_STAGE_ID,
+              name: "Build",
+              pipeline: { id: PIPELINE_ID, isDefault: true, name: "Default" },
+              position: 2,
+              slug: "build",
+              totalCount: 0,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Sessions enter Build after Plan approval.")).toBeTruthy();
   });
 
   it("appends Load more results without refetching or replacing another lane", async () => {
@@ -303,9 +557,7 @@ describe("PipelinePageClient", () => {
         screen.getByRole("link", { name: "Open session Session 1" }),
       ),
     );
-    expect(
-      (screen.getByRole("combobox", { name: "Pipeline stage" }) as HTMLSelectElement).value,
-    ).toBe(`${PIPELINE_ID}:${BUILD_STAGE_ID}`);
+    expect(screen.getByRole("tab", { name: /Build/ }).getAttribute("aria-selected")).toBe("true");
     expect(
       within(screen.getByRole("heading", { name: "Build" }).closest("section")!).getByText(
         "Session 1",
@@ -395,7 +647,12 @@ describe("PipelinePageClient", () => {
     expect(commits.every(({ id, phase }) => id === "pipeline-board" && phase === "update")).toBe(
       true,
     );
-    expect([...mocked.cardLinkRenders.entries()]).toEqual([["Open session Session 1 updated", 1]]);
+    expect([...mocked.cardLinkRenders.entries()].sort()).toEqual(
+      [
+        ["Open session Session 1 updated", 1],
+        ["Review session Session 1 updated", 1],
+      ].sort(),
+    );
     expect(screen.getAllByRole("article")).toHaveLength(100);
   });
 });
