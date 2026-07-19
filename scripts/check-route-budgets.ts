@@ -8,7 +8,7 @@ export const establishedMaximumBytes = {
   sessions: 750 * 1024,
   settings: 850 * 1024,
   detail: 900 * 1024,
-  onboarding: 675 * 1024,
+  onboarding: 625 * 1024,
 } as const;
 
 export type BudgetName = keyof typeof establishedMaximumBytes;

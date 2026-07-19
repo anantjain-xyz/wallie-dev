@@ -7,7 +7,7 @@ import axe from "axe-core";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { OnboardingVercelSandboxPanel } from "@/features/onboarding/onboarding-page-client";
+import { OnboardingVercelSandboxPanel } from "@/features/onboarding/steps/runtime-step";
 
 beforeAll(() => {
   class ResizeObserverStub {
