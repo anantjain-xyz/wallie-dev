@@ -293,10 +293,14 @@ describe("PipelinePageClient", () => {
     const linearLink = screen.getByRole("link", { name: "OP-353" });
     expect(linearLink.getAttribute("href")).toBe("https://linear.app/issue/OP-353");
     expect(linearLink.getAttribute("target")).toBe("_blank");
+    expect(linearLink.className).toContain("pointer-events-auto");
 
     const prLink = screen.getByRole("link", { name: "PR" });
     expect(prLink.getAttribute("href")).toBe("https://github.com/wallie-dev/wallie/pull/400");
-    expect(prLink.closest(".pointer-events-auto")).toBeTruthy();
+    expect(prLink.className).toContain("pointer-events-auto");
+
+    // Non-link metadata stays under the card-wide overlay (no pointer-events-auto on the row).
+    expect(linearLink.closest("p")?.className).not.toContain("pointer-events-auto");
   });
 
   it("labels partial lane status summaries when more sessions exist than loaded", () => {

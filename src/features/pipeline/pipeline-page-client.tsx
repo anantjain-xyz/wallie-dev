@@ -793,7 +793,7 @@ function CardReferenceLine({
     parts.push(
       <a
         key="linear"
-        className="underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        className="pointer-events-auto underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
         href={linearIssueUrl}
         rel="noreferrer"
         target="_blank"
@@ -809,7 +809,7 @@ function CardReferenceLine({
     parts.push(
       <a
         key={pullRequest.id}
-        className="underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        className="pointer-events-auto underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
         href={pullRequest.pullRequestUrl!}
         rel="noreferrer"
         target="_blank"
@@ -824,7 +824,7 @@ function CardReferenceLine({
   }
 
   return (
-    <p className="pointer-events-auto type-annotation leading-4 text-muted">
+    <p className="type-annotation leading-4 text-muted">
       {parts.map((part, index) => (
         <span key={index}>
           {index > 0 ? " · " : null}
