@@ -123,7 +123,7 @@ describe("ArtifactPanel", () => {
     );
 
     fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
-    expect(await screen.findByRole("option", { name: /Version 1/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Version 1/i })).toBeTruthy();
     expect(screen.getByText("Changes requested")).toBeTruthy();
     expect(screen.getByText("Claude Code (opus)")).toBeTruthy();
     expect(screen.queryByText("Latest formatted")).toBeNull();
@@ -158,11 +158,14 @@ describe("ArtifactPanel", () => {
       );
 
     fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Version 1/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
 
-    expect(mockedNavigation.replace).toHaveBeenCalledWith("/w/demo/sessions/1?artifactVersion=1", {
-      scroll: false,
-    });
+    expect(mockedNavigation.replace).toHaveBeenCalledWith(
+      "/w/demo/sessions/1?artifactVersion=1&artifactStage=build",
+      {
+        scroll: false,
+      },
+    );
     expect(screen.getByRole("tab", { name: "Rendered" }).getAttribute("aria-selected")).toBe(
       "true",
     );
@@ -275,7 +278,7 @@ describe("ArtifactPanel", () => {
       );
     const view = renderPanel();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    await screen.findByRole("option", { name: /Version 1/i });
+    await screen.findByRole("button", { name: /Version 1/i });
     fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
 
     view.rerender(
@@ -298,14 +301,134 @@ describe("ArtifactPanel", () => {
 
     expect(await screen.findByText(/"newest": true/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    expect(await screen.findByRole("option", { name: /Version 3/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Version 3/i })).toBeTruthy();
     // Invalidate synthesized "Agent" metadata and refetch authoritative author labels.
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
   });
 
-  it("clears artifactVersion from the URL when the selected stage changes", async () => {
-    mockedNavigation.searchParams = new URLSearchParams("artifactVersion=1");
+  it("delays authoritative metadata refetch until drafting ends", async () => {
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      );
+
+    const view = renderPanel({ isDrafting: true });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 1/i });
+    fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: true,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByRole("button", { name: /Version 3/i })).toBeTruthy();
+    expect(screen.getByText("Agent")).toBeTruthy();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+  });
+
+  it("marks changes requested when rejectionCount increases", async () => {
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              changesRequested: true,
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      );
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+    expect(screen.queryByText("Changes requested")).toBeNull();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  });
+
+  it("clears artifactVersion and artifactStage from the URL when the selected stage changes", async () => {
+    mockedNavigation.searchParams = new URLSearchParams("artifactVersion=1&artifactStage=build");
     vi.mocked(fetch).mockImplementation(() =>
       response({
         artifact: {
@@ -379,7 +502,7 @@ describe("ArtifactPanel", () => {
     );
 
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Version 1/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
     expect(await screen.findByText("Earlier")).toBeTruthy();
 
     resolveLatest?.(
@@ -398,7 +521,7 @@ describe("ArtifactPanel", () => {
     );
 
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    expect(await screen.findByRole("option", { name: /Version 2.*Latest/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Version 2.*Latest/i })).toBeTruthy();
   });
 
   it("keeps a loaded prior-stage artifact cached when initial props omit it", async () => {

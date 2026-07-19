@@ -159,21 +159,20 @@ function ArtifactReaderFixtureInner({
             </div>
 
             {view === "versions" ? (
-              <ul aria-labelledby="artifact-version-heading" className="space-y-2" role="listbox">
+              <ul aria-labelledby="artifact-version-heading" className="space-y-2">
                 {VERSION_ROWS.map((artifact) => {
                   const isSelected = artifact.version === selectedVersion;
                   return (
-                    <li key={artifact.version} role="none">
+                    <li key={artifact.version}>
                       <button
                         type="button"
-                        aria-selected={isSelected}
+                        aria-current={isSelected ? "true" : undefined}
                         className={cn(
                           "w-full rounded-[6px] border px-3 py-2.5 text-left",
                           isSelected
                             ? "border-accent/40 bg-accent-soft"
                             : "border-border hover:bg-control-muted/40",
                         )}
-                        role="option"
                       >
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className="text-xs font-semibold text-foreground">

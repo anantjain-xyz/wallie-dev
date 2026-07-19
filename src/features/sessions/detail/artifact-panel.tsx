@@ -21,6 +21,8 @@ type ArtifactPanelProps = {
   isDrafting: boolean;
   latestArtifact: SessionArtifactSummary | null;
   loadLatest: boolean;
+  /** Bumps when a reject lands so Versions can show “Changes requested”. */
+  rejectionCount?: number;
   sessionId: string;
   stageSlug: string;
 };
@@ -31,7 +33,8 @@ type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
 };
 
 const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions"];
-const ARTIFACT_VERSION_PARAM = "artifactVersion";
+export const ARTIFACT_VERSION_PARAM = "artifactVersion";
+export const ARTIFACT_STAGE_PARAM = "artifactStage";
 
 function stageCacheKey(sessionId: string, stageSlug: string) {
   return `${sessionId}:${stageSlug}`;
@@ -105,14 +108,17 @@ function ArtifactPanelCache({ sessionId, stageSlug, ...props }: ArtifactPanelPro
   const stageJustChanged = trackedStageSlug !== stageSlug;
   const currentStageKey = stageCacheKey(sessionId, stageSlug);
 
-  // `artifactVersion` is stage-agnostic; clear it when the timeline selection changes so a
-  // historical selection cannot leak into another stage's panel.
+  // Version URLs are stage-scoped via `artifactStage`; clear both params when the timeline
+  // selection changes so a historical selection cannot leak into another stage's panel.
   useEffect(() => {
     if (!stageJustChanged) return;
     queueMicrotask(() => setTrackedStageSlug(stageSlug));
-    if (!searchParams.has(ARTIFACT_VERSION_PARAM)) return;
+    if (!searchParams.has(ARTIFACT_VERSION_PARAM) && !searchParams.has(ARTIFACT_STAGE_PARAM)) {
+      return;
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.delete(ARTIFACT_VERSION_PARAM);
+    params.delete(ARTIFACT_STAGE_PARAM);
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [pathname, router, searchParams, stageJustChanged, stageSlug]);
@@ -145,6 +151,7 @@ function ArtifactPanelStage({
   loadLatest,
   latestVersionCache,
   metadataCache,
+  rejectionCount = 0,
   sessionId,
   stageSlug,
 }: ArtifactPanelProps & {
@@ -168,6 +175,8 @@ function ArtifactPanelStage({
   const [selectedVersion, setSelectedVersion] = useState<number | null>(() =>
     ignoreUrlVersion ? null : urlVersion,
   );
+  const pendingAuthoritativeMetadata = useRef(false);
+  const trackedRejectionCount = useRef(rejectionCount);
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -208,8 +217,10 @@ function ArtifactPanelStage({
     const params = new URLSearchParams(searchParams.toString());
     if (version === null || (latestVersion !== null && version === latestVersion)) {
       params.delete(ARTIFACT_VERSION_PARAM);
+      params.delete(ARTIFACT_STAGE_PARAM);
     } else {
       params.set(ARTIFACT_VERSION_PARAM, String(version));
+      params.set(ARTIFACT_STAGE_PARAM, stageSlug);
     }
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
@@ -236,8 +247,8 @@ function ArtifactPanelStage({
 
       const cachedMetadata = metadataCache.get(currentStageKey);
       if (cachedMetadata && !cachedMetadata.some((row) => row.version === latestArtifact.version)) {
-        // Optimistic row for immediate UI, but invalidate the cache so Versions refetches
-        // authoritative author/attempt/changes-requested metadata from the API.
+        // Optimistic row for immediate UI. Delay the authoritative refetch until the
+        // producing run is no longer drafting — the API only returns successful runs.
         const nextMetadata = [
           {
             attempt: latestArtifact.version,
@@ -249,10 +260,17 @@ function ArtifactPanelStage({
           },
           ...cachedMetadata,
         ].sort((left, right) => right.version - left.version);
-        metadataCache.delete(currentStageKey);
         queueMicrotask(() => {
           setMetadata(nextMetadata);
-          setMetadataRetry((value) => value + 1);
+          if (isDrafting) {
+            // Keep optimistic rows cached so Versions does not refetch mid-run.
+            metadataCache.set(currentStageKey, nextMetadata);
+            pendingAuthoritativeMetadata.current = true;
+          } else {
+            metadataCache.delete(currentStageKey);
+            pendingAuthoritativeMetadata.current = false;
+            setMetadataRetry((value) => value + 1);
+          }
         });
       }
     } else if (previousLatestVersion !== undefined && !loadLatest) {
@@ -268,6 +286,7 @@ function ArtifactPanelStage({
   }, [
     bodyCache,
     currentStageKey,
+    isDrafting,
     latestArtifact,
     latestVersionCache,
     loadLatest,
@@ -275,6 +294,36 @@ function ArtifactPanelStage({
     sessionId,
     stageSlug,
   ]);
+
+  // After drafting ends, refetch metadata so author labels come from successful agent_runs.
+  useEffect(() => {
+    if (isDrafting || !pendingAuthoritativeMetadata.current) return;
+    pendingAuthoritativeMetadata.current = false;
+    metadataCache.delete(currentStageKey);
+    queueMicrotask(() => setMetadataRetry((value) => value + 1));
+  }, [currentStageKey, isDrafting, metadataCache]);
+
+  // Reject does not create a new artifact version; invalidate cached history so the
+  // “Changes requested” marker appears without waiting for the next generation.
+  useEffect(() => {
+    if (rejectionCount <= trackedRejectionCount.current) {
+      trackedRejectionCount.current = rejectionCount;
+      return;
+    }
+    trackedRejectionCount.current = rejectionCount;
+    const rejectedVersion =
+      latestArtifact?.version ?? latestVersionCache.get(currentStageKey) ?? null;
+    metadataCache.delete(currentStageKey);
+    queueMicrotask(() => {
+      setMetadata((rows) => {
+        if (!rows || rejectedVersion === null) return rows;
+        return rows.map((row) =>
+          row.version === rejectedVersion ? { ...row, changesRequested: true } : row,
+        );
+      });
+      setMetadataRetry((value) => value + 1);
+    });
+  }, [currentStageKey, latestArtifact, latestVersionCache, metadataCache, rejectionCount]);
 
   useEffect(() => {
     if (ignoreUrlVersion) {
@@ -605,15 +654,15 @@ function ArtifactPanelStage({
             <EmptyHint text="No artifact versions recorded for this stage." />
           ) : null}
           {metadata && metadata.length > 0 ? (
-            <ul aria-labelledby="artifact-version-heading" className="space-y-2" role="listbox">
+            <ul aria-labelledby="artifact-version-heading" className="space-y-2">
               {metadata.map((artifact) => {
                 const isSelected = viewingVersion === artifact.version;
                 const isLatest = artifact.version === latestVersion;
                 return (
-                  <li key={artifact.version} role="none">
+                  <li key={artifact.version}>
                     <button
                       type="button"
-                      aria-selected={isSelected}
+                      aria-current={isSelected ? "true" : undefined}
                       className={cn(
                         "w-full rounded-[6px] border px-3 py-2.5 text-left transition-colors",
                         isSelected
@@ -621,7 +670,6 @@ function ArtifactPanelStage({
                           : "border-border hover:border-border-strong hover:bg-control-muted/40",
                       )}
                       onClick={() => selectVersion(artifact.version)}
-                      role="option"
                     >
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="text-xs font-semibold text-foreground">

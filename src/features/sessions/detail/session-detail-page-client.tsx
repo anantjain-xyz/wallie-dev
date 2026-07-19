@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
@@ -23,7 +23,7 @@ import {
   unarchiveSessionFromClient,
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
-import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import { ARTIFACT_STAGE_PARAM, ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import type {
   SessionReviewData,
   SessionReviewRepository,
@@ -144,15 +144,20 @@ export function SessionDetailPageClient({
 }: SessionDetailPageClientProps) {
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { pushToast } = useOptionalToast();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
   const creatorDisplayName = initialData.creatorDisplayName;
-  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
-    initialData.session.currentStageSlug,
-  );
+  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(() => {
+    const fromUrl = searchParams.get(ARTIFACT_STAGE_PARAM);
+    if (fromUrl && initialData.session.pipeline.stages.some((stage) => stage.slug === fromUrl)) {
+      return fromUrl;
+    }
+    return initialData.session.currentStageSlug;
+  });
   const [canApprove, setCanApprove] = useState(canReview);
   const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
   const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
@@ -878,6 +883,7 @@ export function SessionDetailPageClient({
               isDrafting={isDraftingSelectedStage}
               latestArtifact={latestArtifact}
               loadLatest={shouldLoadLatestArtifact}
+              rejectionCount={session.rejectionCount ?? 0}
               sessionId={session.id}
               stageSlug={selectedStageSlug}
             />
