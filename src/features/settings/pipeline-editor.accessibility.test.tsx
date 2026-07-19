@@ -253,4 +253,42 @@ describe("PipelineEditor accessibility", () => {
     await user.click(screen.getByRole("button", { name: "Retry save" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
+
+  it("locks editing while save is in flight and restores focus after canceling remove", async () => {
+    const user = userEvent.setup();
+    let resolveFetch: ((value: { json: () => Promise<object>; ok: boolean }) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderEditor();
+
+    const nameField = screen.getByRole("textbox", { name: "Pipeline name" });
+    await user.clear(nameField);
+    await user.type(nameField, "Locked");
+    await user.click(screen.getByRole("button", { name: "Save pipeline" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(nameField).toBeDisabled();
+    expect(screen.getByRole("button", { name: "+ Add stage" })).toBeDisabled();
+
+    resolveFetch?.({
+      json: async () => ({ pipeline: { ...pipeline, name: "Locked" }, success: true }),
+      ok: true,
+    });
+    await waitFor(() => expect(nameField).not.toBeDisabled());
+
+    const removeBuild = screen.getByRole("button", {
+      name: "Remove Build from position 2 of 2",
+    });
+    removeBuild.focus();
+    await user.click(removeBuild);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(removeBuild).toHaveFocus());
+  });
 });

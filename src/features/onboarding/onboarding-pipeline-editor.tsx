@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, type DragEvent } from "react";
+import { useRef, useState, type DragEvent } from "react";
 
+import { useOptionalLiveRegion } from "@/components/ui/live-region";
 import {
   appendDraftStage,
   fieldErrorsForStage,
@@ -43,6 +44,7 @@ export function OnboardingPipelineEditor({
   workspaceId,
   workspaceMembers,
 }: OnboardingPipelineEditorProps) {
+  const { announce } = useOptionalLiveRegion();
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
@@ -53,10 +55,12 @@ export function OnboardingPipelineEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [removeIndex, setRemoveIndex] = useState<number | null>(null);
+  const removeFocusRef = useRef<HTMLElement | null>(null);
   const validation: PipelineDraftValidationResult = hasAttemptedSave
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
   const removeStage = removeIndex === null ? null : stages[removeIndex];
+  const editable = canManage && !isSaving;
 
   if (!pipeline) {
     return (
@@ -64,6 +68,48 @@ export function OnboardingPipelineEditor({
         Workspace has no default pipeline.
       </div>
     );
+  }
+
+  function announceStagePosition(nextStages: DraftPipelineStage[], index: number) {
+    const stage = nextStages[index];
+    if (!stage) return;
+    announce(
+      `${stageDisplayName(stage, index)} moved to position ${index + 1} of ${nextStages.length}.`,
+    );
+  }
+
+  function applyMove(index: number, direction: -1 | 1) {
+    const next = moveDraftStage(stages, index, direction);
+    if (next === stages) return;
+    setStages(next);
+    announceStagePosition(next, index + direction);
+  }
+
+  function handleDrop(targetIndex: number) {
+    if (dragIndex === null) {
+      setDragIndex(null);
+      return;
+    }
+    const next = reorderDraftStage(stages, dragIndex, targetIndex);
+    setDragIndex(null);
+    if (next === stages) return;
+    setStages(next);
+    announceStagePosition(next, targetIndex);
+  }
+
+  function handleAddStage() {
+    const next = appendDraftStage(stages);
+    const added = next[next.length - 1]!;
+    setStages(next);
+    announce(
+      `Added ${stageDisplayName(added, next.length - 1)} at position ${next.length} of ${next.length}.`,
+    );
+  }
+
+  function handleRemoveAt(index: number) {
+    const label = stageDisplayName(stages[index]!, index);
+    setStages(removeDraftStage(stages, index));
+    announce(`Removed ${label}.`);
   }
 
   async function savePipeline() {
@@ -132,7 +178,7 @@ export function OnboardingPipelineEditor({
             id="pipeline-name"
             type="text"
             value={name}
-            disabled={!canManage || isSaving}
+            disabled={!editable}
             onChange={(event) => setName(event.target.value)}
             className={`ui-input min-w-[240px] ${!validation.ok && validation.field === "pipeline-name" ? "border-danger" : ""}`}
             maxLength={80}
@@ -150,7 +196,7 @@ export function OnboardingPipelineEditor({
       </div>
 
       <OperatingRulesField
-        canManage={canManage && !isSaving}
+        canManage={editable}
         compact
         onChange={setOperatingRules}
         value={operatingRules}
@@ -161,7 +207,7 @@ export function OnboardingPipelineEditor({
           <StageRowEditor
             compact
             key={stage.key}
-            canManage={canManage && !isSaving}
+            canManage={editable}
             dragIndex={dragIndex}
             errors={fieldErrorsForStage(validation, index)}
             index={index}
@@ -180,17 +226,14 @@ export function OnboardingPipelineEditor({
               event.dataTransfer.dropEffect = "move";
             }}
             onDragStart={setDragIndex}
-            onDrop={(targetIndex) => {
-              setStages((current) => {
-                if (dragIndex === null) return current;
-                return reorderDraftStage(current, dragIndex, targetIndex);
-              });
-              setDragIndex(null);
+            onDrop={handleDrop}
+            onMoveDown={() => applyMove(index, 1)}
+            onMoveUp={() => applyMove(index, -1)}
+            onRemove={() => handleRemoveAt(index)}
+            onRemoveRequest={() => {
+              removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
+              setRemoveIndex(index);
             }}
-            onMoveDown={() => setStages((current) => moveDraftStage(current, index, 1))}
-            onMoveUp={() => setStages((current) => moveDraftStage(current, index, -1))}
-            onRemove={() => setStages((current) => removeDraftStage(current, index))}
-            onRemoveRequest={() => setRemoveIndex(index)}
             stage={stage}
             totalStages={stages.length}
             workspaceMembers={workspaceMembers}
@@ -201,20 +244,25 @@ export function OnboardingPipelineEditor({
       <PipelineEditorControls
         canManage={canManage}
         isPending={isSaving}
-        onAddStage={() => setStages((current) => appendDraftStage(current))}
+        onAddStage={handleAddStage}
         onSave={() => void savePipeline()}
       />
 
       <RemoveStageDialog
         onConfirm={() => {
           if (removeIndex === null) return;
-          setStages((current) => removeDraftStage(current, removeIndex));
+          const index = removeIndex;
+          removeFocusRef.current =
+            document.getElementById(`pipeline-stage-${Math.max(0, index - 1)}-name`) ??
+            document.getElementById("pipeline-add-stage");
           setRemoveIndex(null);
+          handleRemoveAt(index);
         }}
         onOpenChange={(open) => {
           if (!open) setRemoveIndex(null);
         }}
         open={removeIndex !== null && removeStage !== undefined}
+        restoreFocusRef={removeFocusRef}
         stageLabel={
           removeStage && removeIndex !== null ? stageDisplayName(removeStage, removeIndex) : "stage"
         }

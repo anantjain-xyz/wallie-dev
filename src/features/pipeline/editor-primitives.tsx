@@ -1,6 +1,11 @@
 "use client";
 
-import { useId, type DragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useId,
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
@@ -689,6 +694,7 @@ export function StageRowEditor({
                   <button
                     type="button"
                     className="ui-icon-button text-danger"
+                    id={`${fieldPrefix}-remove`}
                     onClick={() => {
                       if (stage.id) onRemoveRequest();
                       else onRemove();
@@ -826,11 +832,13 @@ export function RemoveStageDialog({
   onConfirm,
   onOpenChange,
   open,
+  restoreFocusRef,
   stageLabel,
 }: {
   onConfirm: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  restoreFocusRef?: RefObject<HTMLElement | null>;
   stageLabel: string;
 }) {
   return (
@@ -847,6 +855,7 @@ export function RemoveStageDialog({
       open={open}
       pending={false}
       pendingLabel="Removing…"
+      restoreFocusRef={restoreFocusRef}
       title={`Remove ${stageLabel}?`}
     />
   );
@@ -875,7 +884,13 @@ export function PipelineEditorControls({
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-      <button id="pipeline-add-stage" type="button" className="ui-button" onClick={onAddStage}>
+      <button
+        id="pipeline-add-stage"
+        type="button"
+        className="ui-button"
+        disabled={isPending}
+        onClick={onAddStage}
+      >
         {addLabel}
       </button>
       <button

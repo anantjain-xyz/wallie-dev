@@ -75,12 +75,14 @@ export function PipelineEditor({
   const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
   const saveInFlightRef = useRef(false);
+  const removeFocusRef = useRef<HTMLElement | null>(null);
 
   const dirty = serializePipelineDraft({ name, operatingRules, stages }) !== baseline;
   const validation: PipelineDraftValidationResult = hasAttemptedSave
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
   const removeStage = removeIndex === null ? null : stages[removeIndex];
+  const editable = canManage && !isPending;
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -251,7 +253,7 @@ export function PipelineEditor({
             id="pipeline-name"
             type="text"
             value={name}
-            disabled={!canManage}
+            disabled={!editable}
             onChange={(event) => setName(event.target.value)}
             className={`ui-input min-w-[240px] ${!validation.ok && validation.field === "pipeline-name" ? "border-danger" : ""}`}
             maxLength={80}
@@ -269,7 +271,7 @@ export function PipelineEditor({
       </div>
 
       <OperatingRulesField
-        canManage={canManage}
+        canManage={editable}
         onChange={setOperatingRules}
         value={operatingRules}
       />
@@ -280,7 +282,7 @@ export function PipelineEditor({
         {stages.map((stage, index) => (
           <StageRowEditor
             key={stage.key}
-            canManage={canManage}
+            canManage={editable}
             dragIndex={dragIndex}
             errors={fieldErrorsForStage(validation, index)}
             index={index}
@@ -303,7 +305,10 @@ export function PipelineEditor({
             onMoveDown={() => applyMove(index, 1)}
             onMoveUp={() => applyMove(index, -1)}
             onRemove={() => handleRemoveAt(index)}
-            onRemoveRequest={() => setRemoveIndex(index)}
+            onRemoveRequest={() => {
+              removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
+              setRemoveIndex(index);
+            }}
             stage={stage}
             totalStages={stages.length}
             workspaceMembers={workspaceMembers}
@@ -324,6 +329,10 @@ export function PipelineEditor({
         onConfirm={() => {
           if (removeIndex === null) return;
           const index = removeIndex;
+          // Row will unmount; restore to a surviving control.
+          removeFocusRef.current =
+            document.getElementById(`pipeline-stage-${Math.max(0, index - 1)}-name`) ??
+            document.getElementById("pipeline-add-stage");
           setRemoveIndex(null);
           handleRemoveAt(index);
         }}
@@ -331,6 +340,7 @@ export function PipelineEditor({
           if (!open) setRemoveIndex(null);
         }}
         open={removeIndex !== null && removeStage !== undefined}
+        restoreFocusRef={removeFocusRef}
         stageLabel={
           removeStage && removeIndex !== null ? stageDisplayName(removeStage, removeIndex) : "stage"
         }
