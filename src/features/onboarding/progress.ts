@@ -188,15 +188,25 @@ function selectedAgentProvider(health: OnboardingSetupHealth) {
     : RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider;
 }
 
-export function deriveOnboardingStepHealthFlags(health: OnboardingSetupHealth): {
+export function deriveOnboardingStepHealthFlags(
+  health: OnboardingSetupHealth,
+  onboarding: WorkspaceOnboardingState,
+): {
   blockedSteps: Set<WorkspaceOnboardingStep>;
   errorSteps: Set<WorkspaceOnboardingStep>;
 } {
   const errorSteps = new Set<WorkspaceOnboardingStep>();
   const blockedSteps = new Set<WorkspaceOnboardingStep>();
   const provider = selectedAgentProvider(health);
+  const githubWasCompleted =
+    onboarding.status === "completed" || onboarding.completedSteps.includes("github");
 
-  if (health.githubInstallation.suspended) {
+  // Suspended installs and deleted installs (connected=false after prior completion)
+  // are regressions — surface them as rail errors over historical Complete.
+  if (
+    health.githubInstallation.suspended ||
+    (!health.githubInstallation.connected && githubWasCompleted)
+  ) {
     errorSteps.add("github");
   }
   if (provider === "codex" && health.codexConnection.status === "expired") {

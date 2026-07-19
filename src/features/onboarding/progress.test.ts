@@ -145,6 +145,10 @@ describe("onboarding progress helpers", () => {
   });
 
   it("covers configured, partial, blocked, and failed health fixtures", () => {
+    const baseOnboarding = onboarding({
+      completedSteps: ["github"],
+      currentStep: "repository",
+    });
     const configured = deriveOnboardingStepHealthFlags(
       health({
         githubInstallation: {
@@ -168,6 +172,7 @@ describe("onboarding progress helpers", () => {
           status: "ready",
         },
       }),
+      baseOnboarding,
     );
     expect([...configured.blockedSteps]).toEqual([]);
     expect([...configured.errorSteps]).toEqual([]);
@@ -183,6 +188,7 @@ describe("onboarding progress helpers", () => {
           updatedAt: "2026-07-18T00:00:00.000Z",
         },
       }),
+      baseOnboarding,
     );
     expect(partial.blockedSteps.has("runtime")).toBe(true);
     expect(partial.blockedSteps.has("verify")).toBe(true);
@@ -233,6 +239,7 @@ describe("onboarding progress helpers", () => {
           updatedAt: "2026-07-18T00:00:00.000Z",
         },
       }),
+      baseOnboarding,
     );
     expect(failed.errorSteps.has("github")).toBe(true);
     expect(failed.errorSteps.has("verify")).toBe(true);
@@ -249,8 +256,38 @@ describe("onboarding progress helpers", () => {
           updatedAt: "2026-07-18T00:00:00.000Z",
         },
       }),
+      onboarding(),
     );
     expect(vercelRuntimeError.errorSteps.has("runtime")).toBe(true);
+  });
+
+  it("treats deleted GitHub installations as errors after prior completion", () => {
+    const deletedInstall = health({
+      githubInstallation: {
+        connected: false,
+        installationId: null,
+        status: "missing",
+        suspended: null,
+        targetName: null,
+        updatedAt: null,
+      },
+    });
+
+    expect(
+      deriveOnboardingStepHealthFlags(deletedInstall, onboarding()).errorSteps.has("github"),
+    ).toBe(false);
+    expect(
+      deriveOnboardingStepHealthFlags(
+        deletedInstall,
+        onboarding({ completedSteps: ["github"], currentStep: "repository" }),
+      ).errorSteps.has("github"),
+    ).toBe(true);
+    expect(
+      deriveOnboardingStepHealthFlags(
+        deletedInstall,
+        onboarding({ completedSteps: ["github"], currentStep: "verify", status: "completed" }),
+      ).errorSteps.has("github"),
+    ).toBe(true);
   });
 
   it("scopes Codex expiration errors to the selected agent provider", () => {
@@ -274,6 +311,7 @@ describe("onboarding progress helpers", () => {
           updatedAt: "2026-07-18T00:00:00.000Z",
         },
       }),
+      onboarding(),
     );
     expect(expiredCodexWhileClaudeSelected.errorSteps.has("runtime")).toBe(false);
 
@@ -297,6 +335,7 @@ describe("onboarding progress helpers", () => {
           updatedAt: "2026-07-18T00:00:00.000Z",
         },
       }),
+      onboarding(),
     );
     expect(expiredCodexWhileCodexSelected.errorSteps.has("runtime")).toBe(true);
   });
@@ -340,6 +379,7 @@ describe("onboarding progress helpers", () => {
           updatedAt: "2026-07-18T00:00:00.000Z",
         },
       }),
+      onboarding({ completedSteps: ["github"], currentStep: "verify" }),
     );
     expect(stale.errorSteps.has("verify")).toBe(false);
   });

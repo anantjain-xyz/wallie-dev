@@ -486,8 +486,8 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   }, []);
   const activeStep = ONBOARDING_STEPS.find((step) => step.id === onboarding.currentStep)!;
   const stepHealthFlags = useMemo(
-    () => deriveOnboardingStepHealthFlags(data.setupHealth),
-    [data.setupHealth],
+    () => deriveOnboardingStepHealthFlags(data.setupHealth, onboarding),
+    [data.setupHealth, onboarding],
   );
   const railItems = useMemo(
     () =>

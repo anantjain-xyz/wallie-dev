@@ -186,7 +186,7 @@ export function OnboardingMobileStepNav({
           </button>
         </DialogTrigger>
         <DialogContent
-          description="Jump to any setup step. Skipped steps stay incomplete until you finish them."
+          description="Jump to any setup step. Skipped steps stay incomplete and revisitable during setup."
           title="Setup steps"
         >
           <StepList

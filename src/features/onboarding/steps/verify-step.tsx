@@ -174,14 +174,15 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
       id: "summary-linear" as const,
       label: "Linear",
       step: "linear" as const,
+      // Badge reflects live health — historical completedSteps alone is not Configured.
       statusLabel: data.onboarding.skippedSteps.includes("linear")
         ? "Skipped"
-        : stepIsSatisfied(data.onboarding, "linear")
+        : data.setupHealth.linearKey.configured && data.setupHealth.linearRouting.configured
           ? "Configured"
           : "Missing",
       tone: data.onboarding.skippedSteps.includes("linear")
         ? ("warning" as const)
-        : stepIsSatisfied(data.onboarding, "linear")
+        : data.setupHealth.linearKey.configured && data.setupHealth.linearRouting.configured
           ? ("success" as const)
           : ("warning" as const),
     },
