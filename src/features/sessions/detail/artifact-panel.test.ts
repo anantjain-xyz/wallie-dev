@@ -540,6 +540,85 @@ describe("ArtifactPanel", () => {
     vi.useRealTimers();
   });
 
+  it("retries author metadata on the first Versions open after a new artifact", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=build") && !url.includes("version=") && !url.includes("latest=")) {
+        const callCount = vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([request]) =>
+              String(request).includes("stage=build") &&
+              !String(request).includes("version=") &&
+              !String(request).includes("latest="),
+          ).length;
+        if (callCount <= 1) {
+          return response({
+            artifacts: [
+              metadataRow({
+                authorLabel: "Agent",
+                createdAt: "2026-06-07T12:00:00.000Z",
+                version: 3,
+              }),
+              metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            ],
+          });
+        }
+        return response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          ],
+        });
+      }
+      return response({ error: "unexpected" }, 500);
+    });
+
+    // Seed latestVersionCache via an existing artifact without ever opening Versions.
+    const view = renderPanel();
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Agent")).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(350);
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([request]) =>
+              String(request).includes("stage=build") &&
+              !String(request).includes("version=") &&
+              !String(request).includes("latest="),
+          ).length,
+      ).toBe(2),
+    );
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
   it("clears the optimistic changes-requested marker when rejectionCount rolls back", async () => {
     vi.mocked(fetch).mockImplementation(() =>
       response({
@@ -616,6 +695,66 @@ describe("ArtifactPanel", () => {
 
     // Rerender without rejectionCount still must not invent a marker.
     expect(screen.queryByText("Changes requested")).toBeNull();
+  });
+
+  it("applies changes-requested after returning to a stage rejected while away", async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=plan")) {
+        return response({
+          artifacts: [metadataRow({ stageSlug: "plan", version: 1 })],
+        });
+      }
+      return response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      });
+    });
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+    expect(screen.queryByText("Changes requested")).toBeNull();
+
+    // Leave the current stage — keyed panel unmounts; metadata cache stays.
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Plan formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:plan:1`,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Plan",
+          stageSlug: "plan",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+    await screen.findByRole("heading", { level: 3, name: /plan artifact/i });
+
+    // Reject landed on the current stage while this panel was unmounted.
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
   });
 
   it("notifies when a historical version is selected", async () => {

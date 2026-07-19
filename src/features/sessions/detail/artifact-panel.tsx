@@ -149,6 +149,8 @@ function ArtifactPanelCache({
   const [metadataCache] = useState(() => new Map<string, SessionArtifactMetadata[]>());
   const [bodyCache] = useState(() => new Map<string, CachedArtifactBody>());
   const [latestVersionCache] = useState(() => new Map<string, number>());
+  /** Survives keyed stage remounts so rejection bumps while away are still detected. */
+  const [seenRejectionCountByStage] = useState(() => new Map<string, number>());
   const [trackedStageSlug, setTrackedStageSlug] = useState(stageSlug);
   const stageJustChanged = trackedStageSlug !== stageSlug;
   const currentStageKey = stageCacheKey(sessionId, stageSlug);
@@ -178,6 +180,7 @@ function ArtifactPanelCache({
       latestVersionCache={latestVersionCache}
       metadataCache={metadataCache}
       persistStageInUrl={persistStageInUrl}
+      seenRejectionCountByStage={seenRejectionCountByStage}
       sessionId={sessionId}
       stageSlug={stageSlug}
     />
@@ -200,6 +203,7 @@ function ArtifactPanelStage({
   onViewingHistoricalChange,
   persistStageInUrl = false,
   rejectionCount,
+  seenRejectionCountByStage,
   sessionId,
   stageSlug,
 }: ArtifactPanelProps & {
@@ -208,6 +212,7 @@ function ArtifactPanelStage({
   ignoreUrlVersion?: boolean;
   latestVersionCache: Map<string, number>;
   metadataCache: Map<string, SessionArtifactMetadata[]>;
+  seenRejectionCountByStage: Map<string, number>;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -228,7 +233,13 @@ function ArtifactPanelStage({
   const authorRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Version marked changes-requested while metadata was still null / in flight. */
   const pendingRejectedVersion = useRef<number | null>(null);
-  const trackedRejectionCount = useRef(rejectionCount ?? 0);
+  // Prefer the parent-persisted baseline so remounting after a stage switch still
+  // sees rejection bumps that landed while this stage panel was unmounted.
+  const trackedRejectionCount = useRef(
+    seenRejectionCountByStage.has(currentStageKey)
+      ? seenRejectionCountByStage.get(currentStageKey)!
+      : (rejectionCount ?? 0),
+  );
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -271,6 +282,14 @@ function ArtifactPanelStage({
     onViewingHistoricalChange?.(viewingHistorical);
     return () => onViewingHistoricalChange?.(false);
   }, [onViewingHistoricalChange, viewingHistorical]);
+
+  // Seed the parent-persisted rejection baseline once per stage key so remounts
+  // can detect bumps that landed while this panel was unmounted.
+  useEffect(() => {
+    if (rejectionCount === undefined) return;
+    if (seenRejectionCountByStage.has(currentStageKey)) return;
+    seenRejectionCountByStage.set(currentStageKey, trackedRejectionCount.current);
+  }, [currentStageKey, rejectionCount, seenRejectionCountByStage]);
 
   function writeArtifactVersionToUrl(version: number | null) {
     const params = currentSearchParams();
@@ -341,6 +360,20 @@ function ArtifactPanelStage({
             setMetadataRetry((value) => value + 1);
           }
         });
+      } else if (!cachedMetadata) {
+        // Versions never opened. Flag author refresh when a new artifact arrives so
+        // the first history fetch retries until markRunSuccess — but do not treat a
+        // cold mount of an already-complete latest as "new" (that wastes fetches).
+        const versionAdvanced =
+          previousLatestVersion !== undefined && latestArtifact.version > previousLatestVersion;
+        const firstArtifactDuringDraft = previousLatestVersion === undefined && isDrafting;
+        if (versionAdvanced || firstArtifactDuringDraft) {
+          pendingAuthoritativeMetadata.current = true;
+          if (!isDrafting && versionAdvanced) {
+            authorRefreshAttempts.current = 0;
+            queueMicrotask(() => setMetadataRetry((value) => value + 1));
+          }
+        }
       }
     } else if (previousLatestVersion !== undefined && !loadLatest) {
       queueMicrotask(() => {
@@ -393,6 +426,7 @@ function ArtifactPanelStage({
     if (rejectionCount < trackedRejectionCount.current) {
       // Optimistic reject rolled back — drop the patched cache and refetch truth.
       trackedRejectionCount.current = rejectionCount;
+      seenRejectionCountByStage.set(currentStageKey, rejectionCount);
       pendingRejectedVersion.current = null;
       metadataCache.delete(currentStageKey);
       queueMicrotask(() => {
@@ -403,6 +437,7 @@ function ArtifactPanelStage({
     }
     if (rejectionCount === trackedRejectionCount.current) return;
     trackedRejectionCount.current = rejectionCount;
+    seenRejectionCountByStage.set(currentStageKey, rejectionCount);
     const rejectedVersion =
       latestArtifact?.version ?? latestVersionCache.get(currentStageKey) ?? null;
     if (rejectedVersion !== null) {
@@ -417,7 +452,14 @@ function ArtifactPanelStage({
         return next;
       });
     });
-  }, [currentStageKey, latestArtifact, latestVersionCache, metadataCache, rejectionCount]);
+  }, [
+    currentStageKey,
+    latestArtifact,
+    latestVersionCache,
+    metadataCache,
+    rejectionCount,
+    seenRejectionCountByStage,
+  ]);
 
   useEffect(() => {
     if (ignoreUrlVersion) {
