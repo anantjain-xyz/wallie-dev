@@ -1,7 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const port = process.env.PLAYWRIGHT_PORT ?? "3100";
-const localAppUrl = `http://127.0.0.1:${port}`;
+const host = process.env.PLAYWRIGHT_HOST ?? "localhost";
+const localAppUrl = `http://${host}:${port}`;
 
 export default defineConfig({
   expect: {
@@ -18,7 +19,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `pnpm start --port ${port}`,
+    command: `pnpm start --hostname ${host} --port ${port}`,
     env: {
       ...process.env,
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? localAppUrl,
