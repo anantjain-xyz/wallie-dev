@@ -1,4 +1,4 @@
-import { formatRelativeTimestamp, formatUtcTimestamp } from "@/components/shared/time-format";
+import { TimeDisplay } from "@/components/shared/time-display";
 import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { SessionRowIsland } from "@/features/sessions/list/session-row-actions";
 import type { SessionFilterKey, SessionListItem } from "@/features/sessions/types";
@@ -22,8 +22,6 @@ export function SessionLedgerRow({
   workspaceSlug,
 }: SessionLedgerRowProps) {
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
-  const relativeUpdated = formatRelativeTimestamp(session.updatedAt, initialNow);
-  const absoluteLabel = formatUtcTimestamp(session.updatedAt);
 
   return (
     <SessionRowIsland
@@ -41,9 +39,7 @@ export function SessionLedgerRow({
           <span>·</span>
           <span>
             updated{" "}
-            <time aria-label={absoluteLabel} dateTime={session.updatedAt}>
-              {relativeUpdated}
-            </time>
+            <TimeDisplay initialNow={initialNow} value={session.updatedAt} variant="relative" />
           </span>
         </>
       }

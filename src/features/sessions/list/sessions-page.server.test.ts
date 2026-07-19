@@ -85,6 +85,7 @@ describe("Sessions ledger server render", () => {
     const pageSource = readFileSync(join(listDir, "sessions-page.tsx"), "utf8");
     const commandBarSource = readFileSync(join(listDir, "sessions-command-bar.tsx"), "utf8");
     const rowIslandSource = readFileSync(join(listDir, "session-row-actions.tsx"), "utf8");
+    const rowShellSource = readFileSync(join(listDir, "session-ledger-row.tsx"), "utf8");
     const legacyClientSource = readFileSync(join(listDir, "sessions-page-client.tsx"), "utf8");
 
     expect(pageSource).not.toMatch(/^["']use client["']/m);
@@ -93,5 +94,8 @@ describe("Sessions ledger server render", () => {
     expect(legacyClientSource).not.toContain("function SessionRow");
     expect(rowIslandSource).not.toContain("previousSessionTitleRef");
     expect(rowIslandSource).toContain("resolveOptimisticTitle");
+    expect(rowIslandSource).toContain("router.refresh()");
+    expect(rowShellSource).toContain('variant="relative"');
+    expect(rowShellSource).toContain("TimeDisplay");
   });
 });

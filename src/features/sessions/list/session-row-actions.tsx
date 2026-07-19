@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 
 import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { PencilIcon } from "@/components/shared/icons/pencil-icon";
@@ -45,6 +46,7 @@ export function SessionRowIsland({
   session,
   stageName,
 }: SessionRowIslandProps) {
+  const router = useRouter();
   const { dismissToast, pushToast } = useOptionalToast();
   const visibility = useSessionsLedgerVisibility();
   const archiveInFlightRef = useRef(false);
@@ -272,6 +274,8 @@ export function SessionRowIsland({
           title: result.title,
         });
         pushToast({ priority: "polite", title: "Session title updated.", tone: "success" });
+        // Refresh so the server ledger reorders by updated_at and metadata catches up.
+        router.refresh();
       } else {
         setTitleOverride(null);
       }
