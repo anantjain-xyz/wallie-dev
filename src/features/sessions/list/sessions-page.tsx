@@ -44,7 +44,11 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
       <VisibleInteractionBoundary action="pipeline_to_sessions" />
       <PageHeader title="Sessions" />
 
-      <SessionsCommandBar initialData={initialData} />
+      <SessionsCommandBar
+        queryState={initialData.queryState}
+        stageFacets={initialData.stageFacets}
+        workspaceSlug={workspaceSlug}
+      />
 
       {sessions.length === 0 ? (
         !initialData.hasAnySession ? (

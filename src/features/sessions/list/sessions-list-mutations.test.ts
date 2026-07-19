@@ -4,6 +4,7 @@ import {
   buildSessionsListHref,
   resolveOptimisticArchive,
   resolveOptimisticTitle,
+  shouldApplyArchiveResult,
 } from "@/features/sessions/list/sessions-list-mutations";
 
 describe("sessions list helpers", () => {
@@ -87,5 +88,38 @@ describe("sessions list helpers", () => {
       archivedAt: "2026-06-07T14:00:00.000Z",
       phaseStatus: "agent_generating",
     });
+  });
+
+  it("rejects stale archive results after a newer concurrent mutation", () => {
+    const archivedAtAtStart = "2026-06-07T10:00:00.000Z";
+    const staleUnarchive = { updatedAt: "2026-06-07T12:00:00.000Z" };
+    const newerRearchive = {
+      archivedAt: "2026-06-07T13:00:00.000Z",
+      updatedAt: "2026-06-07T13:00:00.000Z",
+    };
+
+    expect(shouldApplyArchiveResult(staleUnarchive, newerRearchive, archivedAtAtStart)).toBe(false);
+
+    expect(
+      shouldApplyArchiveResult(
+        { updatedAt: "2026-06-07T14:00:00.000Z" },
+        {
+          archivedAt: archivedAtAtStart,
+          updatedAt: "2026-06-07T11:00:00.000Z",
+        },
+        archivedAtAtStart,
+      ),
+    ).toBe(true);
+
+    expect(
+      shouldApplyArchiveResult(
+        { updatedAt: "2026-06-07T11:00:00.000Z" },
+        {
+          archivedAt: archivedAtAtStart,
+          updatedAt: "2026-06-07T11:00:00.000Z",
+        },
+        archivedAtAtStart,
+      ),
+    ).toBe(true);
   });
 });

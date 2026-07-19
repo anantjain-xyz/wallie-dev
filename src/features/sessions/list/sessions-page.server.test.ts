@@ -95,8 +95,14 @@ describe("Sessions ledger server render", () => {
     expect(rowIslandSource).not.toContain("previousSessionTitleRef");
     expect(rowIslandSource).toContain("resolveOptimisticTitle");
     expect(rowIslandSource).toContain("resolveOptimisticArchive");
+    expect(rowIslandSource).toContain("shouldApplyArchiveResult");
     expect(rowIslandSource).toContain("router.refresh()");
     expect(rowShellSource).toContain('variant="relative"');
     expect(rowShellSource).toContain("TimeDisplay");
+    expect(pageSource).not.toMatch(/SessionsCommandBar[^>]*initialData=\{initialData\}/);
+    expect(pageSource).toContain("queryState={initialData.queryState}");
+    expect(pageSource).toContain("stageFacets={initialData.stageFacets}");
+    expect(commandBarSource).not.toContain("initialData.sessions");
+    expect(commandBarSource).not.toContain("initialData.onboarding");
   });
 });

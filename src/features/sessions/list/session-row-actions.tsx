@@ -24,6 +24,7 @@ import {
 import {
   resolveOptimisticArchive,
   resolveOptimisticTitle,
+  shouldApplyArchiveResult,
   type ArchiveOverride,
   type TitleOverride,
 } from "@/features/sessions/list/sessions-list-mutations";
@@ -102,6 +103,8 @@ export function SessionRowIsland({
       title: `Archiving session #${session.number}…`,
     });
 
+    const archivedAtAtMutationStart = latestSessionRef.current.archivedAt;
+
     void archivePromise
       .then((result) => {
         archiveInFlightRef.current = false;
@@ -115,9 +118,16 @@ export function SessionRowIsland({
           return;
         }
 
+        const latestSession = latestSessionRef.current;
+        if (!shouldApplyArchiveResult(result, latestSession, archivedAtAtMutationStart)) {
+          setArchiveOverride(null);
+          setRowHidden(false);
+          return;
+        }
+
         const archivedAtResult = result.archivedAt;
         setArchiveOverride(
-          archiveOverrideFromSession(latestSessionRef.current, {
+          archiveOverrideFromSession(latestSession, {
             archivedAt: archivedAtResult,
             phaseStatus: result.phaseStatus,
           }),
@@ -129,13 +139,23 @@ export function SessionRowIsland({
             onClick: () => {
               void (async () => {
                 try {
+                  const archivedAtBeforeUndo = latestSessionRef.current.archivedAt;
                   const undoResult = await unarchiveSessionFromClient({
                     expectedArchivedAt: archivedAtResult,
                     sessionId: session.id,
                   });
                   if (undoResult.archivedAt !== null) return;
+                  const latestAfterUndo = latestSessionRef.current;
+                  if (
+                    !shouldApplyArchiveResult(undoResult, latestAfterUndo, archivedAtBeforeUndo)
+                  ) {
+                    setArchiveOverride(null);
+                    setRowHidden(false);
+                    archiveInFlightRef.current = false;
+                    return;
+                  }
                   setArchiveOverride(
-                    archiveOverrideFromSession(latestSessionRef.current, {
+                    archiveOverrideFromSession(latestAfterUndo, {
                       archivedAt: null,
                       phaseStatus: undoResult.phaseStatus,
                     }),
@@ -200,8 +220,14 @@ export function SessionRowIsland({
 
     try {
       const result = await unarchiveSessionFromClient({ sessionId: session.id });
+      const latestSession = latestSessionRef.current;
+      if (!shouldApplyArchiveResult(result, latestSession, authoritativeAtStart.archivedAt)) {
+        setArchiveOverride(null);
+        setRowHidden(false);
+        return;
+      }
       setArchiveOverride(
-        archiveOverrideFromSession(latestSessionRef.current, {
+        archiveOverrideFromSession(latestSession, {
           archivedAt: result.archivedAt,
           phaseStatus: result.phaseStatus,
         }),

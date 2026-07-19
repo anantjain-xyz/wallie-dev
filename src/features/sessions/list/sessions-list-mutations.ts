@@ -130,3 +130,19 @@ export function resolveOptimisticArchive(
     phaseStatus: session.phaseStatus,
   };
 }
+
+/**
+ * Accept an archive mutation result only when it is at least as new as the
+ * latest props, or props still match the snapshot the mutation started from.
+ * Rejects stale responses after a concurrent rearchive/unarchive + refresh.
+ */
+export function shouldApplyArchiveResult(
+  result: { updatedAt: string },
+  latestSession: Pick<SessionListItem, "archivedAt" | "updatedAt">,
+  archivedAtAtMutationStart: string | null,
+) {
+  return (
+    result.updatedAt >= latestSession.updatedAt ||
+    latestSession.archivedAt === archivedAtAtMutationStart
+  );
+}
