@@ -72,6 +72,17 @@ export type WallieRun = {
   stageName: string | null;
   stageSlug: string | null;
   status: Enums<"agent_run_status">;
+  updatedAt: string;
+};
+
+export type WallieRunCursor = {
+  createdAt: string;
+  id: string;
+};
+
+export type WallieRunPage = {
+  nextCursor: WallieRunCursor | null;
+  runs: WallieRun[];
 };
 
 export type WallieSessionData = {
@@ -80,9 +91,11 @@ export type WallieSessionData = {
   loadedMessageRunIds: string[];
   missingSecretKeys: string[];
   mode: WallieRunMode;
+  nextRunCursor: WallieRunCursor | null;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
   requiredSecretKeys: string[];
   runs: WallieRun[];
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+  workspaceMembers: WorkspaceMember[];
 };

@@ -21,6 +21,7 @@ const initialData: WallieSessionData = {
   loadedMessageRunIds: [],
   missingSecretKeys: [],
   mode: "project",
+  nextRunCursor: null,
   repository: null,
   requiredSecretKeys: [],
   requiresVercelSandbox: false,
@@ -33,6 +34,7 @@ const initialData: WallieSessionData = {
     status: "connected",
     teamId: "team-1",
   },
+  workspaceMembers: [],
 };
 
 function activityPanel() {
