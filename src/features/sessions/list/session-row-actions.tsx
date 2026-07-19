@@ -22,7 +22,9 @@ import {
   SessionDetailLinkPrefetchBoundary,
 } from "@/features/sessions/components/session-detail-link";
 import {
+  resolveOptimisticArchive,
   resolveOptimisticTitle,
+  type ArchiveOverride,
   type TitleOverride,
 } from "@/features/sessions/list/sessions-list-mutations";
 import { useSessionsLedgerVisibility } from "@/features/sessions/list/sessions-ledger-visibility";
@@ -38,6 +40,18 @@ type SessionRowIslandProps = {
   stageName: string;
 };
 
+function archiveOverrideFromSession(
+  session: SessionListItem,
+  next: Pick<SessionListItem, "archivedAt" | "phaseStatus">,
+): ArchiveOverride {
+  return {
+    authoritativeArchivedAt: session.archivedAt,
+    authoritativeUpdatedAt: session.updatedAt,
+    archivedAt: next.archivedAt,
+    phaseStatus: next.phaseStatus,
+  };
+}
+
 export function SessionRowIsland({
   connections,
   detailHref,
@@ -52,10 +66,7 @@ export function SessionRowIsland({
   const archiveInFlightRef = useRef(false);
   const [titleOverride, setTitleOverride] = useState<TitleOverride | null>(null);
   const [draftTitle, setDraftTitle] = useState(session.title);
-  const [optimisticArchive, setOptimisticArchive] = useState<{
-    archivedAt: string | null;
-    phaseStatus: SessionListItem["phaseStatus"];
-  } | null>(null);
+  const [archiveOverride, setArchiveOverride] = useState<ArchiveOverride | null>(null);
   const [locallyHidden, setLocallyHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -67,8 +78,7 @@ export function SessionRowIsland({
   latestSessionRef.current = session;
 
   const displayTitle = resolveOptimisticTitle(session, titleOverride);
-  const archivedAt = optimisticArchive ? optimisticArchive.archivedAt : session.archivedAt;
-  const phaseStatus = optimisticArchive ? optimisticArchive.phaseStatus : session.phaseStatus;
+  const { archivedAt, phaseStatus } = resolveOptimisticArchive(session, archiveOverride);
   const isArchived = Boolean(archivedAt);
 
   function setRowHidden(hidden: boolean) {
@@ -106,10 +116,12 @@ export function SessionRowIsland({
         }
 
         const archivedAtResult = result.archivedAt;
-        setOptimisticArchive({
-          archivedAt: archivedAtResult,
-          phaseStatus: result.phaseStatus,
-        });
+        setArchiveOverride(
+          archiveOverrideFromSession(latestSessionRef.current, {
+            archivedAt: archivedAtResult,
+            phaseStatus: result.phaseStatus,
+          }),
+        );
         pushToast({
           action: {
             altText: `Undo archive for session #${session.number}`,
@@ -122,10 +134,12 @@ export function SessionRowIsland({
                     sessionId: session.id,
                   });
                   if (undoResult.archivedAt !== null) return;
-                  setOptimisticArchive({
-                    archivedAt: null,
-                    phaseStatus: undoResult.phaseStatus,
-                  });
+                  setArchiveOverride(
+                    archiveOverrideFromSession(latestSessionRef.current, {
+                      archivedAt: null,
+                      phaseStatus: undoResult.phaseStatus,
+                    }),
+                  );
                   setRowHidden(false);
                   archiveInFlightRef.current = false;
                   pushToast({
@@ -173,20 +187,25 @@ export function SessionRowIsland({
     if (archivePending) return;
     setArchivePending("unarchive");
     setArchiveError(null);
-    setOptimisticArchive({
-      archivedAt: null,
-      phaseStatus,
-    });
+    const authoritativeAtStart = latestSessionRef.current;
+    setArchiveOverride(
+      archiveOverrideFromSession(authoritativeAtStart, {
+        archivedAt: null,
+        phaseStatus,
+      }),
+    );
     if (scope === "archived") {
       setRowHidden(true);
     }
 
     try {
       const result = await unarchiveSessionFromClient({ sessionId: session.id });
-      setOptimisticArchive({
-        archivedAt: result.archivedAt,
-        phaseStatus: result.phaseStatus,
-      });
+      setArchiveOverride(
+        archiveOverrideFromSession(latestSessionRef.current, {
+          archivedAt: result.archivedAt,
+          phaseStatus: result.phaseStatus,
+        }),
+      );
       if (scope === "archived" && result.archivedAt === null) {
         // stay hidden from archived scope
       } else {
@@ -198,11 +217,12 @@ export function SessionRowIsland({
         tone: "success",
       });
       // Refresh so server-owned metaTrailing / ordering catch up when the row stays visible.
+      // Override clears once refreshed props diverge from the keyed authoritative snapshot.
       router.refresh();
     } catch (errorValue) {
       const message =
         errorValue instanceof Error ? errorValue.message : "Failed to unarchive session.";
-      setOptimisticArchive(null);
+      setArchiveOverride(null);
       setRowHidden(false);
       // Toast survives even if this island was unmounted while the last archived row was hidden.
       pushToast({

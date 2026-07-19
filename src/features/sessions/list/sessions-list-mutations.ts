@@ -102,3 +102,31 @@ export function resolveOptimisticTitle(
   }
   return session.title;
 }
+
+export type ArchiveOverride = {
+  authoritativeArchivedAt: string | null;
+  authoritativeUpdatedAt: string;
+  archivedAt: string | null;
+  phaseStatus: SessionListItem["phaseStatus"];
+};
+
+/** Prefer the override only while props still match the snapshot it was keyed to. */
+export function resolveOptimisticArchive(
+  session: Pick<SessionListItem, "archivedAt" | "phaseStatus" | "updatedAt">,
+  override: ArchiveOverride | null,
+): Pick<SessionListItem, "archivedAt" | "phaseStatus"> {
+  if (
+    override &&
+    override.authoritativeArchivedAt === session.archivedAt &&
+    override.authoritativeUpdatedAt === session.updatedAt
+  ) {
+    return {
+      archivedAt: override.archivedAt,
+      phaseStatus: override.phaseStatus,
+    };
+  }
+  return {
+    archivedAt: session.archivedAt,
+    phaseStatus: session.phaseStatus,
+  };
+}

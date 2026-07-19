@@ -423,7 +423,8 @@ describe("optimistic session interactions", () => {
     await waitFor(() =>
       expect(screen.getByText("Could not unarchive session #1.", { exact: true })).toBeTruthy(),
     );
-    expect(screen.getByText("Network down", { exact: true })).toBeTruthy();
+    // Toast description + inline archiveError both surface the failure once the row restores.
+    expect(screen.getAllByText("Network down", { exact: true }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
   });
 

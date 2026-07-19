@@ -57,17 +57,14 @@ export function SessionsLedgerVisibilityProvider({
     [hideSession, hiddenCount, showSession],
   );
 
-  if (sessionIds.length > 0 && hiddenCount >= sessionIds.length) {
-    return (
-      <SessionsLedgerVisibilityContext.Provider value={value}>
-        {emptyFallback}
-      </SessionsLedgerVisibilityContext.Provider>
-    );
-  }
+  // Keep row islands mounted under the empty presentation so pending hide state
+  // survives when a concurrent archive fails and the ledger restores.
+  const allHidden = sessionIds.length > 0 && hiddenCount >= sessionIds.length;
 
   return (
     <SessionsLedgerVisibilityContext.Provider value={value}>
-      {children}
+      {allHidden ? emptyFallback : null}
+      <div hidden={allHidden}>{children}</div>
     </SessionsLedgerVisibilityContext.Provider>
   );
 }

@@ -94,6 +94,7 @@ describe("Sessions ledger server render", () => {
     expect(legacyClientSource).not.toContain("function SessionRow");
     expect(rowIslandSource).not.toContain("previousSessionTitleRef");
     expect(rowIslandSource).toContain("resolveOptimisticTitle");
+    expect(rowIslandSource).toContain("resolveOptimisticArchive");
     expect(rowIslandSource).toContain("router.refresh()");
     expect(rowShellSource).toContain('variant="relative"');
     expect(rowShellSource).toContain("TimeDisplay");
