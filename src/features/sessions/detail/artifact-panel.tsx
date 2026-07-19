@@ -23,11 +23,12 @@ type ArtifactPanelProps = {
   stageSlug: string;
 };
 
-type ArtifactTab = "artifact" | "versions";
-type ArtifactDisplayMode = "formatted" | "raw";
+type ArtifactTab = "rendered" | "raw" | "versions";
 type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
   sanitizedHtml?: string | null;
 };
+
+const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions"];
 
 function stageCacheKey(sessionId: string, stageSlug: string) {
   return `${sessionId}:${stageSlug}`;
@@ -111,7 +112,7 @@ function ArtifactPanelStage({
   latestVersionCache: Map<string, number>;
   metadataCache: Map<string, SessionArtifactMetadata[]>;
 }) {
-  const [activeTab, setActiveTab] = useState<ArtifactTab>("artifact");
+  const [activeTab, setActiveTab] = useState<ArtifactTab>("rendered");
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -135,8 +136,8 @@ function ArtifactPanelStage({
   const [selectedBodyRetry, setSelectedBodyRetry] = useState(0);
   const metadataController = useRef<AbortController | null>(null);
   const bodyController = useRef<AbortController | null>(null);
-  const artifactTabRef = useRef<HTMLButtonElement>(null);
-  const versionsTabRef = useRef<HTMLButtonElement>(null);
+  const tabRefs = useRef(new Map<ArtifactTab, HTMLButtonElement>());
+  const needsLatestBody = activeTab !== "versions";
   const latestArtifactKey = latestArtifact
     ? artifactBodyCacheKey(sessionId, latestArtifact.stageSlug, latestArtifact.version)
     : null;
@@ -195,7 +196,7 @@ function ArtifactPanelStage({
   ]);
 
   useEffect(() => {
-    if (activeTab !== "artifact") return;
+    if (!needsLatestBody) return;
 
     const cachedLatestVersion = latestArtifact?.version ?? latestVersionCache.get(currentStageKey);
     const cachedLatest =
@@ -270,7 +271,7 @@ function ArtifactPanelStage({
       controller.abort();
     };
   }, [
-    activeTab,
+    needsLatestBody,
     currentStageKey,
     initialFormattedArtifactKey,
     latestArtifact,
@@ -423,10 +424,16 @@ function ArtifactPanelStage({
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const nextTab: ArtifactTab =
-      event.key === "ArrowRight" || event.key === "End" ? "versions" : "artifact";
+    const currentIndex = ARTIFACT_TABS.indexOf(activeTab);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight")
+      nextIndex = Math.min(ARTIFACT_TABS.length - 1, currentIndex + 1);
+    if (event.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = ARTIFACT_TABS.length - 1;
+    const nextTab = ARTIFACT_TABS[nextIndex] ?? "rendered";
     selectTab(nextTab);
-    (nextTab === "artifact" ? artifactTabRef : versionsTabRef).current?.focus();
+    tabRefs.current.get(nextTab)?.focus();
   }
 
   const cachedSelectedBody =
@@ -436,57 +443,34 @@ function ArtifactPanelStage({
   const visibleSelectedBody =
     selectedBody?.version === selectedVersion ? selectedBody : cachedSelectedBody;
 
+  const tabLabels: Record<ArtifactTab, string> = {
+    raw: "Raw",
+    rendered: "Rendered",
+    versions: "Versions",
+  };
+
   return (
     <div>
       <div aria-label="Artifact views" className="mb-3 flex gap-1" role="tablist">
-        <TabButton
-          active={activeTab === "artifact"}
-          controls="artifact-current-panel"
-          onClick={() => selectTab("artifact")}
-          onKeyDown={handleTabKeyDown}
-          ref={artifactTabRef}
-        >
-          Artifact
-        </TabButton>
-        <TabButton
-          active={activeTab === "versions"}
-          controls="artifact-versions-panel"
-          onClick={() => selectTab("versions")}
-          onKeyDown={handleTabKeyDown}
-          ref={versionsTabRef}
-        >
-          Versions
-        </TabButton>
+        {ARTIFACT_TABS.map((tab) => (
+          <TabButton
+            key={tab}
+            active={activeTab === tab}
+            controls={`artifact-${tab}-panel`}
+            label={tabLabels[tab]}
+            onClick={() => selectTab(tab)}
+            onKeyDown={handleTabKeyDown}
+            ref={(node) => {
+              if (node) tabRefs.current.set(tab, node);
+              else tabRefs.current.delete(tab);
+            }}
+            tabId={`artifact-${tab}-tab`}
+          />
+        ))}
       </div>
 
-      {activeTab === "artifact" ? (
-        <div aria-labelledby="artifact-tab" id="artifact-current-panel" role="tabpanel">
-          {isDrafting && latestBody ? (
-            <ProgressHint text="Wallie is drafting the next artifact version." />
-          ) : null}
-          {latestError ? (
-            <FailureHint
-              message={latestError}
-              onRetry={() => setLatestRetry((value) => value + 1)}
-            />
-          ) : null}
-          {latestLoading ? <ProgressHint text="Loading the artifact." /> : null}
-          {latestBody ? (
-            <ArtifactBodyView
-              artifact={latestBody}
-              initialFormattedArtifact={initialFormattedArtifact}
-              initialFormattedArtifactKey={initialFormattedArtifactKey}
-              initialNow={initialNow}
-              sessionId={sessionId}
-            />
-          ) : latestLoading ? null : isDrafting ? (
-            <ProgressHint text="Wallie is drafting the artifact for this stage." />
-          ) : !latestError ? (
-            <EmptyHint text={emptyText} />
-          ) : null}
-        </div>
-      ) : (
-        <div aria-labelledby="versions-tab" id="artifact-versions-panel" role="tabpanel">
+      {activeTab === "versions" ? (
+        <div aria-labelledby="artifact-versions-tab" id="artifact-versions-panel" role="tabpanel">
           {metadataLoading ? <ProgressHint text="Loading version history." /> : null}
           {metadataError ? (
             <FailureHint
@@ -529,6 +513,7 @@ function ArtifactPanelStage({
               {visibleSelectedBody ? (
                 <ArtifactBodyView
                   artifact={visibleSelectedBody}
+                  displayMode="rendered"
                   initialFormattedArtifact={initialFormattedArtifact}
                   initialFormattedArtifactKey={initialFormattedArtifactKey}
                   initialNow={initialNow}
@@ -538,6 +523,37 @@ function ArtifactPanelStage({
             </>
           ) : null}
         </div>
+      ) : (
+        <div
+          aria-labelledby={`artifact-${activeTab}-tab`}
+          id={`artifact-${activeTab}-panel`}
+          role="tabpanel"
+        >
+          {isDrafting && latestBody ? (
+            <ProgressHint text="Wallie is drafting the next artifact version." />
+          ) : null}
+          {latestError ? (
+            <FailureHint
+              message={latestError}
+              onRetry={() => setLatestRetry((value) => value + 1)}
+            />
+          ) : null}
+          {latestLoading ? <ProgressHint text="Loading the artifact." /> : null}
+          {latestBody ? (
+            <ArtifactBodyView
+              artifact={latestBody}
+              displayMode={activeTab}
+              initialFormattedArtifact={initialFormattedArtifact}
+              initialFormattedArtifactKey={initialFormattedArtifactKey}
+              initialNow={initialNow}
+              sessionId={sessionId}
+            />
+          ) : latestLoading ? null : isDrafting ? (
+            <ProgressHint text="Wallie is drafting the artifact for this stage." />
+          ) : !latestError ? (
+            <EmptyHint text={emptyText} />
+          ) : null}
+        </div>
       )}
     </div>
   );
@@ -545,15 +561,15 @@ function ArtifactPanelStage({
 
 type TabButtonProps = {
   active: boolean;
-  children: ReactNode;
   controls: string;
+  label: string;
   onClick: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   ref: React.Ref<HTMLButtonElement>;
+  tabId: string;
 };
 
-function TabButton({ active, children, controls, onClick, onKeyDown, ref }: TabButtonProps) {
-  const id = controls === "artifact-current-panel" ? "artifact-tab" : "versions-tab";
+function TabButton({ active, controls, label, onClick, onKeyDown, ref, tabId }: TabButtonProps) {
   return (
     <button
       ref={ref}
@@ -563,32 +579,33 @@ function TabButton({ active, children, controls, onClick, onKeyDown, ref }: TabB
         "rounded-[4px] px-2.5 py-1 text-xs font-medium",
         active ? "bg-control-muted text-foreground" : "text-muted hover:text-foreground",
       )}
-      id={id}
+      id={tabId}
       onClick={onClick}
       onKeyDown={onKeyDown}
       role="tab"
       tabIndex={active ? 0 : -1}
       type="button"
     >
-      {children}
+      {label}
     </button>
   );
 }
 
 function ArtifactBodyView({
   artifact,
+  displayMode,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
   initialNow,
   sessionId,
 }: {
   artifact: CachedArtifactBody;
+  displayMode: "rendered" | "raw";
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
   initialNow: string;
   sessionId: string;
 }) {
-  const [displayMode, setDisplayMode] = useState<ArtifactDisplayMode>("formatted");
   const formatted = useMemo(() => {
     if (typeof artifact.payload === "string") return artifact.payload;
     try {
@@ -600,44 +617,14 @@ function ArtifactBodyView({
   const isMarkdown = typeof artifact.payload === "string";
   const key = artifactBodyCacheKey(sessionId, artifact.stageSlug, artifact.version);
   const serverTree = key === initialFormattedArtifactKey ? initialFormattedArtifact : null;
-
-  function handleDisplayKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    setDisplayMode(event.key === "ArrowRight" || event.key === "End" ? "raw" : "formatted");
-  }
+  const showRaw = !isMarkdown || displayMode === "raw";
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="type-annotation uppercase tracking-wide text-muted">
-          v{artifact.version} · <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
-        </p>
-        {isMarkdown ? (
-          <div aria-label="Artifact format" className="flex gap-1" role="tablist">
-            {(["formatted", "raw"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                aria-selected={displayMode === mode}
-                className={cn(
-                  "rounded-[4px] px-2 py-1 text-xs font-medium capitalize",
-                  displayMode === mode
-                    ? "bg-control-muted text-foreground"
-                    : "text-muted hover:text-foreground",
-                )}
-                onClick={() => setDisplayMode(mode)}
-                onKeyDown={handleDisplayKeyDown}
-                role="tab"
-                tabIndex={displayMode === mode ? 0 : -1}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-      {isMarkdown && displayMode === "formatted" ? (
+      <p className="mb-2 type-annotation uppercase tracking-wide text-muted">
+        v{artifact.version} · <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
+      </p>
+      {isMarkdown && !showRaw ? (
         (serverTree ?? (
           <div
             // The API creates this markup with the same server-only Markdown renderer and
@@ -648,7 +635,7 @@ function ArtifactBodyView({
       ) : (
         <pre
           className={cn(
-            "max-h-[480px] overflow-auto whitespace-pre-wrap rounded-[4px] p-3 text-xs leading-5 text-foreground",
+            "whitespace-pre-wrap break-words rounded-[4px] p-3 text-xs leading-5 text-foreground",
             !isMarkdown && "bg-canvas",
           )}
         >

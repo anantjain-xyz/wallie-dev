@@ -90,7 +90,7 @@ describe("ArtifactPanel", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain("version=1");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Artifact" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
     fireEvent.click(screen.getByRole("button", { name: "v1" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
@@ -102,9 +102,9 @@ describe("ArtifactPanel", () => {
       .mockImplementationOnce(() => response({ artifacts: [] }));
 
     renderPanel();
-    const artifactTab = screen.getByRole("tab", { name: "Artifact" });
+    const artifactTab = screen.getByRole("tab", { name: "Rendered" });
     artifactTab.focus();
-    fireEvent.keyDown(artifactTab, { key: "ArrowRight" });
+    fireEvent.keyDown(artifactTab, { key: "End" });
 
     expect(screen.getByRole("tab", { name: "Versions" }).getAttribute("aria-selected")).toBe(
       "true",
@@ -191,7 +191,7 @@ describe("ArtifactPanel", () => {
     const view = renderPanel();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
     await screen.findByRole("button", { name: "v1" });
-    fireEvent.click(screen.getByRole("tab", { name: "Artifact" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
 
     view.rerender(
       createElement(ArtifactPanel, {
@@ -277,7 +277,7 @@ describe("ArtifactPanel", () => {
     renderPanel({ initialFormattedArtifact: null, initialFormattedArtifactKey: null });
 
     expect((await screen.findByRole("alert")).textContent).toContain("Formatting unavailable");
-    fireEvent.click(screen.getByRole("tab", { name: "raw" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
     expect(screen.getByText("# Latest")).toBeTruthy();
   });
 });

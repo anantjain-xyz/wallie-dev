@@ -33,6 +33,7 @@ import {
   serializeSessionReviewData,
   type SessionReviewData,
 } from "@/features/sessions/detail/data";
+import type { WallieSessionRepository } from "@/features/wallie/types";
 import { approximatePayloadSizeBytes } from "@/lib/server-timing";
 
 const SEEDED_SESSION_18_BASELINE_RPC_BYTES = 10_603;
@@ -44,7 +45,7 @@ const detailMigration = readFileSync(
 function makeRpcPayload() {
   return {
     activity: {
-      repository: null,
+      repository: null as WallieSessionRepository | null,
       sessionGithubRepositoryId: "repo-private-to-server",
       sessionId: "session-18",
       workspaceId: "workspace-private-to-server",
@@ -176,8 +177,9 @@ describe("session detail loader", () => {
       resolveUser = resolve;
     });
     const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+    const from = vi.fn();
 
-    mocked.createSupabaseServerClient.mockResolvedValue({ rpc });
+    mocked.createSupabaseServerClient.mockResolvedValue({ from, rpc });
     mocked.getSupabaseUserOrNull.mockReturnValue(userPromise);
 
     const loadPromise = loadSessionDetailPageData("acme-corp", "18");
@@ -226,5 +228,54 @@ describe("session detail loader", () => {
     expect(mocked.redirect).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(from).not.toHaveBeenCalled();
+  });
+
+  it("resolves canReview and a slim repository for the workbench", async () => {
+    const payload = makeRpcPayload();
+    payload.activity.repository = {
+      defaultBranch: "main",
+      defaultProgrammingLanguage: null,
+      fullName: "acme/app",
+      htmlUrl: "https://github.com/acme/app",
+      id: "repo-1",
+      isArchived: false,
+      isPrivate: true,
+    };
+
+    const memberQuery = {
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: { id: "member-1", role: "owner" },
+        error: null,
+      }),
+      select: vi.fn().mockReturnThis(),
+    };
+    const stageQuery = {
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: { approver_member_ids: [] },
+        error: null,
+      }),
+      select: vi.fn().mockReturnThis(),
+    };
+    const from = vi.fn((table: string) => {
+      if (table === "workspace_members") return memberQuery;
+      if (table === "pipeline_stages") return stageQuery;
+      throw new Error(`unexpected table ${table}`);
+    });
+    const rpc = vi.fn().mockResolvedValue({ data: payload, error: null });
+
+    mocked.createSupabaseServerClient.mockResolvedValue({ from, rpc });
+    mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
+
+    const result = await loadSessionDetailPageData("acme-corp", "18");
+
+    expect(result.canReview).toBe(true);
+    expect(result.repository).toEqual({
+      defaultBranch: "main",
+      fullName: "acme/app",
+      htmlUrl: "https://github.com/acme/app",
+    });
+    expect(JSON.stringify(result.review)).not.toContain("must-not-cross");
   });
 });

@@ -73,8 +73,16 @@ export type SessionActivityContext = {
   workspaceId: string;
 };
 
+export type SessionReviewRepository = {
+  defaultBranch: string | null;
+  fullName: string;
+  htmlUrl: string;
+};
+
 export type SessionDetailPageData = {
   activityContext: SessionActivityContext;
+  canReview: boolean;
+  repository: SessionReviewRepository | null;
   review: SessionReviewData;
 };
 
@@ -157,6 +165,15 @@ async function loadSessionDetailPageDataWithTiming(
   if (!payload.session || !payload.activity) notFound();
 
   const review = serializeSessionReviewData(payload);
+  const repository = serializeSessionReviewRepository(payload.activity.repository);
+  const canReview = await timing.segment("review.authorization", () =>
+    resolveCanReview({
+      memberUserId: user.id,
+      stageId: payload.session.currentStageId,
+      supabase,
+      workspaceId: payload.activity.workspaceId,
+    }),
+  );
 
   await timing.segment("review-contract", () => review, {
     payloadBytes: approximatePayloadSizeBytes(review),
@@ -170,8 +187,59 @@ async function loadSessionDetailPageDataWithTiming(
       sessionId: payload.activity.sessionId,
       workspaceId: payload.activity.workspaceId,
     },
+    canReview,
+    repository,
     review,
   };
+}
+
+export function serializeSessionReviewRepository(
+  repository: WallieSessionRepository | null,
+): SessionReviewRepository | null {
+  if (!repository) return null;
+  return {
+    defaultBranch: repository.defaultBranch,
+    fullName: repository.fullName,
+    htmlUrl: repository.htmlUrl,
+  };
+}
+
+async function resolveCanReview({
+  memberUserId,
+  stageId,
+  supabase,
+  workspaceId,
+}: {
+  memberUserId: string;
+  stageId: string;
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+  workspaceId: string;
+}): Promise<boolean> {
+  const [{ data: member }, { data: stage }] = await Promise.all([
+    supabase
+      .from("workspace_members")
+      .select("id, role")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", memberUserId)
+      .eq("is_active", true)
+      .eq("kind", "human")
+      .maybeSingle(),
+    supabase
+      .from("pipeline_stages")
+      .select("approver_member_ids")
+      .eq("id", stageId)
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
+  ]);
+
+  if (!member || !stage) return false;
+
+  const approvers = stage.approver_member_ids ?? [];
+  if (approvers.length > 0) {
+    return approvers.includes(member.id);
+  }
+
+  return member.role === "owner" || member.role === "admin";
 }
 
 /**

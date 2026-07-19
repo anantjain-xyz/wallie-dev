@@ -40,10 +40,12 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
           />
         </Suspense>
       }
+      canReview={data.canReview}
       initialData={data.review}
       initialNow={initialNow}
       initialFormattedArtifact={initialFormattedArtifact}
       initialFormattedArtifactKey={initialFormattedArtifactKey}
+      repository={data.repository}
     />
   );
 }
