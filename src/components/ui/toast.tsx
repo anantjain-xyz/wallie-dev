@@ -5,13 +5,18 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { createPortal } from "react-dom";
 
 import { XIcon } from "@/components/shared/icons/x-icon";
-import { useAnnouncementContainer } from "@/components/ui/portal-root";
+import { useAnnouncementContainer, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 export type ToastPriority = "polite" | "assertive";
 export type ToastTone = "neutral" | "success" | "danger";
 
 export type ToastInput = {
+  action?: {
+    altText?: string;
+    label: ReactNode;
+    onClick: () => void;
+  };
   description?: ReactNode;
   duration?: number;
   priority?: ToastPriority;
@@ -20,9 +25,16 @@ export type ToastInput = {
 };
 
 type ToastRecord = ToastInput & { id: number };
-type ToastContextValue = { pushToast: (toast: ToastInput) => number };
+type ToastContextValue = {
+  dismissToast: (id: number) => void;
+  pushToast: (toast: ToastInput) => number;
+};
 
 const ToastContext = createContext<ToastContextValue | null>(null);
+const optionalToastContext: ToastContextValue = {
+  dismissToast: () => undefined,
+  pushToast: () => 0,
+};
 let toastId = 0;
 
 export function useToast() {
@@ -33,25 +45,34 @@ export function useToast() {
   return context;
 }
 
+/** Allows leaf screens to remain independently renderable in server/component tests. */
+export function useOptionalToast() {
+  return useContext(ToastContext) ?? optionalToastContext;
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const container = useAnnouncementContainer();
+  const announcementContainer = useAnnouncementContainer();
+  const overlayContainer = useOverlayContainer();
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
   const pushToast = useCallback((toast: ToastInput) => {
     const id = ++toastId;
     setToasts((current) => [...current, { ...toast, id }]);
     return id;
   }, []);
-  const context = useMemo(() => ({ pushToast }), [pushToast]);
+  const context = useMemo(() => ({ dismissToast, pushToast }), [dismissToast, pushToast]);
 
   return (
     <ToastContext value={context}>
       <ToastPrimitive.Provider
-        announcerContainer={container ?? undefined}
+        announcerContainer={announcementContainer ?? undefined}
         duration={5000}
         swipeDirection="right"
       >
         {children}
-        {container
+        {overlayContainer
           ? createPortal(
               <>
                 {toasts.map((toast) => (
@@ -75,6 +96,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                           {toast.description}
                         </ToastPrimitive.Description>
                       ) : null}
+                      {toast.action ? (
+                        <ToastPrimitive.Action
+                          altText={toast.action.altText ?? "Undo action"}
+                          asChild
+                        >
+                          <button
+                            className="ui-toast-action"
+                            onClick={toast.action.onClick}
+                            type="button"
+                          >
+                            {toast.action.label}
+                          </button>
+                        </ToastPrimitive.Action>
+                      ) : null}
                     </div>
                     <ToastPrimitive.Close
                       aria-label="Dismiss notification"
@@ -86,7 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 ))}
                 <ToastPrimitive.Viewport aria-label="Notifications" className="ui-toast-viewport" />
               </>,
-              container,
+              overlayContainer,
             )
           : null}
       </ToastPrimitive.Provider>

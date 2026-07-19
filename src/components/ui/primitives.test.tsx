@@ -294,6 +294,31 @@ describe("accessible overlay primitives", () => {
     expect(onValueChange).toHaveBeenCalledWith("");
   });
 
+  it("keeps a modal select inside the dialog within the shared overlay root", async () => {
+    const user = userEvent.setup();
+
+    renderWithOverlays(
+      <Dialog defaultOpen>
+        <DialogContent title="Configure runtime">
+          <SelectField
+            label="Agent provider"
+            onValueChange={() => undefined}
+            options={[{ label: "Codex", value: "codex" }]}
+            value="codex"
+          />
+        </DialogContent>
+      </Dialog>,
+    );
+
+    await user.click(await screen.findByRole("combobox", { name: "Agent provider" }));
+    const listbox = await screen.findByRole("listbox");
+    const overlayRoot = document.querySelector("[data-wallie-overlay-root]");
+    expect(document.querySelectorAll("[data-wallie-overlay-root]")).toHaveLength(1);
+    expect(overlayRoot).toContainElement(screen.getByRole("dialog", { hidden: true }));
+    expect(overlayRoot).toContainElement(listbox);
+    expect(screen.getByRole("dialog", { hidden: true })).toContainElement(listbox);
+  });
+
   it("reveals supplementary tooltip content on keyboard focus without title attributes", async () => {
     const user = userEvent.setup();
 
@@ -346,6 +371,37 @@ describe("accessible overlay primitives", () => {
     );
     await user.click(screen.getByRole("button", { name: "Announce failure" }));
     expect(await screen.findByText("Connection failed")).toBeTruthy();
+  });
+
+  it("offers an accessible toast action without duplicating the visible message", async () => {
+    const user = userEvent.setup();
+    const undo = vi.fn();
+
+    function ArchiveNotice() {
+      const { pushToast } = useToast();
+      return (
+        <button
+          onClick={() =>
+            pushToast({
+              action: { altText: "Undo session archive", label: "Undo", onClick: undo },
+              duration: 7000,
+              priority: "polite",
+              title: "Session archived.",
+              tone: "success",
+            })
+          }
+          type="button"
+        >
+          Archive
+        </button>
+      );
+    }
+
+    renderWithOverlays(<ArchiveNotice />);
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    expect(screen.getAllByText("Session archived.")).toHaveLength(1);
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+    expect(undo).toHaveBeenCalledTimes(1);
   });
 
   it("exercises light, dark, and reduced-motion display states", async () => {
@@ -449,6 +505,8 @@ describe("accessible overlay primitives", () => {
       expect(region).toHaveTextContent("Failed while modal open");
       return region;
     });
+    const toast = screen.getByText("Failed while modal open").closest(".ui-toast");
+    expect(overlayRoot).toContainElement(toast as HTMLElement);
     expect(announcementRoot).toContainElement(toastAnnouncement as HTMLElement);
     expect(toastAnnouncement?.closest("[aria-hidden='true']")).toBeNull();
   });
@@ -478,7 +536,7 @@ describe("accessible overlay primitives", () => {
     expect(screen.getByRole("listbox")).toHaveClass("ui-select-content");
   });
 
-  it("keeps SelectField content inside an existing custom modal", async () => {
+  it("keeps SelectField content inside a custom modal subtree", async () => {
     const user = userEvent.setup();
     renderWithOverlays(
       <div aria-label="Legacy modal" aria-modal="true" role="dialog">
@@ -492,7 +550,8 @@ describe("accessible overlay primitives", () => {
     );
 
     await user.click(screen.getByRole("combobox", { name: "Repository" }));
-    const modal = screen.getByRole("dialog", { name: "Legacy modal" });
-    expect(modal).toContainElement(await screen.findByRole("listbox"));
+    const listbox = await screen.findByRole("listbox");
+    const modal = document.querySelector("[role='dialog'][aria-label='Legacy modal']");
+    expect(modal).toContainElement(listbox);
   });
 });

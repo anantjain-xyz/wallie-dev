@@ -12,6 +12,7 @@ import type {
 import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
@@ -606,7 +607,11 @@ export function OnboardingVercelSandboxPanel({
               onClick={() => void handleSave()}
               type="button"
             >
-              {busyAction === "save" ? "Validating…" : "Save Vercel connection"}
+              <ActionButtonLabel
+                idle="Save Vercel connection"
+                pending={busyAction === "save"}
+                pendingLabel="Validating…"
+              />
             </button>
           </div>
         </>
@@ -1053,7 +1058,11 @@ export default function RuntimeStep({
               onClick={() => void handleSaveConfig()}
               type="button"
             >
-              {busyAction === "config" ? "Saving…" : "Save config"}
+              <ActionButtonLabel
+                idle="Save config"
+                pending={busyAction === "config"}
+                pendingLabel="Saving…"
+              />
             </button>
           </div>
         </div>
@@ -1201,7 +1210,11 @@ export default function RuntimeStep({
                 onClick={() => void handleSaveRepositoryConfig()}
                 type="button"
               >
-                {busyAction === "repository-config" ? "Saving…" : "Save config"}
+                <ActionButtonLabel
+                  idle="Save config"
+                  pending={busyAction === "repository-config"}
+                  pendingLabel="Saving…"
+                />
               </button>
             </div>
           </div>

@@ -8,6 +8,7 @@ import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { PencilIcon } from "@/components/shared/icons/pencil-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -114,7 +115,11 @@ export function WorkspaceAvatarSection({
 
         {canManage ? (
           <label className="ui-button cursor-pointer">
-            <span>{uploadAvatar.isBusy ? "Uploading…" : "Upload avatar"}</span>
+            <ActionButtonLabel
+              idle="Upload avatar"
+              pending={uploadAvatar.isBusy}
+              pendingLabel="Uploading…"
+            />
             <input
               accept=".jpg,.jpeg,.png,.webp"
               className="sr-only"

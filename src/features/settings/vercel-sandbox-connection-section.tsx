@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -201,7 +202,11 @@ export function VercelSandboxConnectionSection({
                 onClick={handleSave}
                 type="button"
               >
-                {saveConnection.isBusy ? "Validating…" : "Save Vercel connection"}
+                <ActionButtonLabel
+                  idle="Save Vercel connection"
+                  pending={saveConnection.isBusy}
+                  pendingLabel="Validating…"
+                />
               </button>
             </div>
           </div>

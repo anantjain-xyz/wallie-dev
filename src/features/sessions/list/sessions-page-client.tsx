@@ -7,11 +7,13 @@ import { useRouter } from "next/navigation";
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionMenu } from "@/components/ui/action-menu";
-import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { CommandBar, PageContainer, PageHeader } from "@/components/ui/page-shell";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   archiveSessionFromClient,
@@ -133,10 +135,17 @@ export function reconcileListMutations(
 export function SessionsPageClient({ initialData, initialNow }: SessionsPageClientProps) {
   const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const router = useRouter();
-  const [, startTransition] = useTransition();
+  const { startNavigation } = useOptionalRouteProgress();
+  const { dismissToast, pushToast } = useOptionalToast();
+  const [isFilterPending, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const shouldRestoreSearchFocusRef = useRef(false);
+  const archiveInFlightRef = useRef(new Set<string>());
   const [committedMutations, setCommittedMutations] = useState<ListCommittedMutation[]>([]);
+  const [filterPendingTarget, setFilterPendingTarget] = useState<string | null>(null);
+  const [hiddenArchivedSessionIds, setHiddenArchivedSessionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -147,22 +156,25 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
     searchInputRef.current?.focus();
   }, [initialData.queryState.query]);
 
-  function updateQueryState(next: Partial<SessionListQueryState>) {
+  function updateQueryState(next: Partial<SessionListQueryState>, pendingTarget: string) {
     const merged: SessionListQueryState = {
       cursor: next.cursor !== undefined ? next.cursor : null,
       query: next.query !== undefined ? next.query : initialData.queryState.query,
       scope: next.scope !== undefined ? next.scope : initialData.queryState.scope,
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : initialData.queryState.stageSlug,
     };
+    const href = buildHref(basePath, merged);
+    setFilterPendingTarget(pendingTarget);
+    startNavigation(href);
     startTransition(() => {
-      router.replace(buildHref(basePath, merged));
+      router.replace(href);
     });
   }
 
   function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = searchInputRef.current?.value ?? "";
-    updateQueryState({ query: value });
+    updateQueryState({ query: value }, "search");
   }
 
   function handleSearchClear() {
@@ -172,7 +184,7 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
     } else {
       searchInputRef.current?.focus();
     }
-    updateQueryState({ query: "" });
+    updateQueryState({ query: "" }, "clear");
   }
 
   const sessions = useMemo(
@@ -183,6 +195,13 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
         committedMutations,
       ),
     [committedMutations, initialData.queryState.scope, initialData.sessions],
+  );
+  const visibleSessions = useMemo(
+    () =>
+      initialData.queryState.scope === "archived"
+        ? sessions
+        : sessions.filter((session) => !hiddenArchivedSessionIds.has(session.id)),
+    [hiddenArchivedSessionIds, initialData.queryState.scope, sessions],
   );
 
   function handleTitleCommitted(result: { id: string; title: string; updatedAt: string }) {
@@ -196,6 +215,96 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
     updatedAt: string;
   }) {
     setCommittedMutations((current) => [...current, { kind: "archive", result }]);
+  }
+
+  function setArchiveHidden(sessionId: string, hidden: boolean) {
+    setHiddenArchivedSessionIds((current) => {
+      const next = new Set(current);
+      if (hidden) next.add(sessionId);
+      else next.delete(sessionId);
+      return next;
+    });
+  }
+
+  function handleArchiveRequested(session: SessionListItem) {
+    if (archiveInFlightRef.current.has(session.id)) return;
+
+    archiveInFlightRef.current.add(session.id);
+    setArchiveHidden(session.id, true);
+    const archivePromise = archiveSessionFromClient({ sessionId: session.id });
+
+    const pendingToastId = pushToast({
+      duration: Number.POSITIVE_INFINITY,
+      priority: "polite",
+      title: `Archiving session #${session.number}…`,
+    });
+
+    void archivePromise
+      .then((result) => {
+        handleArchiveCommitted(result);
+        archiveInFlightRef.current.delete(session.id);
+        dismissToast(pendingToastId);
+        if (!result.archivedAt) {
+          setArchiveHidden(session.id, false);
+          pushToast({
+            priority: "polite",
+            title: `Session #${session.number} remains active.`,
+          });
+          return;
+        }
+        const archivedAt = result.archivedAt;
+        pushToast({
+          action: {
+            altText: `Undo archive for session #${session.number}`,
+            label: "Undo",
+            onClick: () => {
+              void (async () => {
+                try {
+                  const undoResult = await unarchiveSessionFromClient({
+                    expectedArchivedAt: archivedAt,
+                    sessionId: session.id,
+                  });
+                  if (undoResult.archivedAt !== null) return;
+                  handleArchiveCommitted(undoResult);
+                  setArchiveHidden(session.id, false);
+                  archiveInFlightRef.current.delete(session.id);
+                  pushToast({
+                    priority: "polite",
+                    title: `Archive undone for session #${session.number}.`,
+                    tone: "success",
+                  });
+                } catch (errorValue) {
+                  pushToast({
+                    description:
+                      errorValue instanceof Error
+                        ? errorValue.message
+                        : "The session remains archived.",
+                    priority: "assertive",
+                    title: `Could not undo archive for session #${session.number}.`,
+                    tone: "danger",
+                  });
+                }
+              })();
+            },
+          },
+          duration: 7000,
+          priority: "polite",
+          title: `Session #${session.number} archived.`,
+          tone: "success",
+        });
+      })
+      .catch((errorValue) => {
+        archiveInFlightRef.current.delete(session.id);
+        setArchiveHidden(session.id, false);
+        dismissToast(pendingToastId);
+        pushToast({
+          description:
+            errorValue instanceof Error ? errorValue.message : "The session was restored.",
+          priority: "assertive",
+          title: `Could not archive session #${session.number}.`,
+          tone: "danger",
+        });
+      });
   }
   // Build the stage filter chips from whatever stages appear in the loaded
   // sessions. This keeps the chip set in sync with workspaces that have
@@ -238,11 +347,28 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
                 className="ui-input pl-8"
               />
             </div>
-            <button className="ui-button-primary" type="submit">
-              Search
+            <button
+              className="ui-button-primary"
+              disabled={isFilterPending && filterPendingTarget === "search"}
+              type="submit"
+            >
+              <ActionButtonLabel
+                idle="Search"
+                pending={isFilterPending && filterPendingTarget === "search"}
+                pendingLabel="Searching…"
+              />
             </button>
-            <button className="ui-button" onClick={handleSearchClear} type="button">
-              Clear
+            <button
+              className="ui-button"
+              disabled={isFilterPending && filterPendingTarget === "clear"}
+              onClick={handleSearchClear}
+              type="button"
+            >
+              <ActionButtonLabel
+                idle="Clear"
+                pending={isFilterPending && filterPendingTarget === "clear"}
+                pendingLabel="Clearing…"
+              />
             </button>
           </div>
         </form>
@@ -258,9 +384,14 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
                   key={chip.key}
                   type="button"
                   className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
-                  onClick={() => updateQueryState({ scope: chip.key })}
+                  disabled={isFilterPending && filterPendingTarget === `scope:${chip.key}`}
+                  onClick={() => updateQueryState({ scope: chip.key }, `scope:${chip.key}`)}
                 >
-                  {chip.label}
+                  <ActionButtonLabel
+                    idle={chip.label}
+                    pending={isFilterPending && filterPendingTarget === `scope:${chip.key}`}
+                    pendingLabel={`Loading ${chip.label}…`}
+                  />
                 </button>
               );
             })}
@@ -277,9 +408,14 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
                 "ui-filter-chip",
                 initialData.queryState.stageSlug === null && "ui-filter-chip-active",
               )}
-              onClick={() => updateQueryState({ stageSlug: null })}
+              disabled={isFilterPending && filterPendingTarget === "stage:all"}
+              onClick={() => updateQueryState({ stageSlug: null }, "stage:all")}
             >
-              All stages
+              <ActionButtonLabel
+                idle="All stages"
+                pending={isFilterPending && filterPendingTarget === "stage:all"}
+                pendingLabel="Loading stages…"
+              />
             </button>
             {stageGroups.order.map((stage) => {
               const isSelected = initialData.queryState.stageSlug === stage.slug;
@@ -291,9 +427,14 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
                   key={stage.slug}
                   type="button"
                   className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
-                  onClick={() => updateQueryState({ stageSlug: stage.slug })}
+                  disabled={isFilterPending && filterPendingTarget === `stage:${stage.slug}`}
+                  onClick={() => updateQueryState({ stageSlug: stage.slug }, `stage:${stage.slug}`)}
                 >
-                  {stage.name}
+                  <ActionButtonLabel
+                    idle={stage.name}
+                    pending={isFilterPending && filterPendingTarget === `stage:${stage.slug}`}
+                    pendingLabel={`Loading ${stage.name}…`}
+                  />
                   <span className="ml-1 type-annotation text-muted">{count}</span>
                 </button>
               );
@@ -302,7 +443,7 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
         </fieldset>
       </CommandBar>
 
-      {sessions.length === 0 ? (
+      {visibleSessions.length === 0 ? (
         !initialData.hasAnySession ? (
           <SessionsZeroState
             onboarding={initialData.onboarding}
@@ -322,11 +463,12 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
       ) : (
         <SessionDetailLinkPrefetchBoundary>
           <ul className="ui-sheet divide-y divide-border overflow-hidden">
-            {sessions.map((session) => (
+            {visibleSessions.map((session) => (
               <SessionRow
                 key={session.id}
                 initialNow={renderNow}
                 onArchiveCommitted={handleArchiveCommitted}
+                onArchiveRequested={handleArchiveRequested}
                 onTitleCommitted={handleTitleCommitted}
                 scope={initialData.queryState.scope}
                 session={session}
@@ -357,6 +499,7 @@ export function SessionsPageClient({ initialData, initialNow }: SessionsPageClie
 function SessionRow({
   initialNow,
   onArchiveCommitted,
+  onArchiveRequested,
   onTitleCommitted,
   scope,
   session,
@@ -369,11 +512,13 @@ function SessionRow({
     phaseStatus: SessionListItem["phaseStatus"];
     updatedAt: string;
   }) => void;
+  onArchiveRequested: (session: SessionListItem) => void;
   onTitleCommitted: (result: { id: string; title: string; updatedAt: string }) => void;
   scope: SessionFilterKey;
   session: SessionListItem;
   workspaceSlug: string;
 }) {
+  const { pushToast } = useOptionalToast();
   const detailHref = workspaceSessionDetailPath(workspaceSlug, session.number);
   const [displayTitle, setDisplayTitle] = useState(session.title);
   const [draftTitle, setDraftTitle] = useState(session.title);
@@ -384,10 +529,8 @@ function SessionRow({
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
-  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const [archivePending, setArchivePending] = useState<"unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const latestSessionRef = useRef(session);
   const previousSessionTitleRef = useRef(session.title);
@@ -396,35 +539,26 @@ function SessionRow({
   const archivedAt = optimisticArchive ? optimisticArchive.archivedAt : session.archivedAt;
   const phaseStatus = optimisticArchive ? optimisticArchive.phaseStatus : session.phaseStatus;
   const isArchived = Boolean(archivedAt);
-  const archiveActionLabel = archivePending
-    ? archivePending === "archive"
-      ? "Archive"
-      : "Unarchive"
-    : isArchived
-      ? "Unarchive"
-      : "Archive";
-
-  async function toggleArchive() {
+  async function unarchive() {
     if (archivePending) return;
-    const action = isArchived ? "unarchive" : "archive";
-    setArchivePending(action);
+    setArchivePending("unarchive");
     setArchiveError(null);
     setOptimisticArchive({
-      archivedAt: isArchived ? null : new Date().toISOString(),
-      phaseStatus: !isArchived && phaseStatus === "agent_generating" ? "rejected" : phaseStatus,
+      archivedAt: null,
+      phaseStatus,
     });
 
     try {
-      const result = isArchived
-        ? await unarchiveSessionFromClient({ sessionId: session.id })
-        : await archiveSessionFromClient({ sessionId: session.id });
-      setArchiveConfirming(false);
+      const result = await unarchiveSessionFromClient({ sessionId: session.id });
       onArchiveCommitted(result);
+      pushToast({
+        priority: "polite",
+        title: `Session #${session.number} unarchived.`,
+        tone: "success",
+      });
     } catch (errorValue) {
       setArchiveError(
-        errorValue instanceof Error
-          ? errorValue.message
-          : `Failed to ${archiveActionLabel.toLowerCase()} session.`,
+        errorValue instanceof Error ? errorValue.message : "Failed to unarchive session.",
       );
     } finally {
       setOptimisticArchive(null);
@@ -502,6 +636,7 @@ function SessionRow({
       setDisplayTitle(committedTitle);
       setDraftTitle(committedTitle);
       onTitleCommitted(result);
+      pushToast({ priority: "polite", title: "Session title updated.", tone: "success" });
     } catch (errorValue) {
       setDisplayTitle(previousTitle);
       setDraftTitle(normalizedTitle);
@@ -528,7 +663,7 @@ function SessionRow({
     <li
       className={cn(
         "session-list-row group relative flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center",
-        (isEditing || archiveConfirming || archivePending !== null || error || archiveError) &&
+        (isEditing || archivePending !== null || error || archiveError) &&
           "content-visibility-interacting",
       )}
     >
@@ -605,7 +740,6 @@ function SessionRow({
               className="pointer-events-auto relative z-30 h-7 w-7 shrink-0"
               disabled={isSaving || archivePending !== null}
               label={`Actions for session #${session.number}`}
-              ref={actionMenuTriggerRef}
             >
               <DropdownMenuItem onSelect={startEditing}>
                 <PencilIcon className="h-3.5 w-3.5" />
@@ -614,11 +748,12 @@ function SessionRow({
               <DropdownMenuItem
                 className="text-danger"
                 onSelect={() => {
-                  setArchiveConfirming(true);
                   setArchiveError(null);
+                  if (isArchived) void unarchive();
+                  else onArchiveRequested(session);
                 }}
               >
-                {archiveActionLabel} session
+                {isArchived ? "Unarchive" : "Archive"} session
               </DropdownMenuItem>
             </ActionMenu>
           </div>
@@ -660,26 +795,6 @@ function SessionRow({
           pullRequests={session.pullRequests}
         />
       </div>
-
-      <DestructiveConfirmationDialog
-        actionLabel={`${archiveActionLabel} session`}
-        description={`${archiveActionLabel} session #${session.number}, “${displayTitle}”? ${
-          archiveActionLabel === "Unarchive"
-            ? "It will return to active session views."
-            : "It will leave active session views but remain available in the archived filter."
-        }`}
-        errorMessage={archiveError}
-        onConfirm={() => void toggleArchive()}
-        onOpenChange={(open) => {
-          setArchiveConfirming(open);
-          if (!open) setArchiveError(null);
-        }}
-        open={archiveConfirming}
-        pending={archivePending !== null}
-        pendingLabel={`${archiveActionLabel === "Archive" ? "Archiving" : "Unarchiving"}…`}
-        restoreFocusRef={actionMenuTriggerRef}
-        title={`${archiveActionLabel} session #${session.number}?`}
-      />
     </li>
   );
 }

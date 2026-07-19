@@ -4,7 +4,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { TimeDisplay } from "@/components/shared/time-display";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
@@ -555,6 +558,8 @@ export function scrollOnboardingSetupToTop(target?: {
 export function OnboardingPageClient({ initialData, initialNow }: OnboardingPageClientProps) {
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
+  const { startNavigation } = useOptionalRouteProgress();
+  const { pushToast } = useOptionalToast();
   const [data, setData] = useState(initialData);
   const [error, setError] = useState<string | null>(null);
   const [runtimeCompletionState, setRuntimeCompletionState] = useState<RuntimeCompletionState>(
@@ -668,7 +673,14 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       setData(nextData);
       return nextData;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to save onboarding state.");
+      const message = caught instanceof Error ? caught.message : "Failed to save onboarding state.";
+      setError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Setup could not be saved.",
+        tone: "danger",
+      });
       return null;
     } finally {
       saveInFlightRef.current = false;
@@ -697,7 +709,15 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       setData(nextData);
       return nextData;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to refresh onboarding state.");
+      const message =
+        caught instanceof Error ? caught.message : "Failed to refresh onboarding state.";
+      setError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Setup could not be refreshed.",
+        tone: "danger",
+      });
       return null;
     } finally {
       setSavingAction(null);
@@ -792,9 +812,18 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
       const nextData = reduceOnboardingMutationData(latestDataRef.current, body);
       latestDataRef.current = nextData;
       setData(nextData);
-      router.push(workspaceBasePath(data.workspace.slug));
+      const destination = workspaceBasePath(data.workspace.slug);
+      startNavigation(destination);
+      router.push(destination);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to complete onboarding.");
+      const message = caught instanceof Error ? caught.message : "Failed to complete onboarding.";
+      setError(message);
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: "Setup could not be completed.",
+        tone: "danger",
+      });
     } finally {
       saveInFlightRef.current = false;
       setSavingAction(null);
@@ -849,7 +878,9 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         })
       : data;
     if (nextData) {
-      router.push(workspaceBasePath(data.workspace.slug));
+      const destination = workspaceBasePath(data.workspace.slug);
+      startNavigation(destination);
+      router.push(destination);
     }
   }
 
@@ -914,7 +945,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
             disabled={isSaving}
             onClick={() => void exitSetup()}
           >
-            {savingAction === "exit" ? "Exiting…" : "Exit setup"}
+            <ActionButtonLabel
+              idle="Exit setup"
+              pending={savingAction === "exit"}
+              pendingLabel="Exiting…"
+            />
           </button>
         </div>
       </header>
@@ -942,10 +977,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           </div>
 
           {error ? (
-            <div
-              className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
-              role="alert"
-            >
+            <div className="mt-5 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger">
               {error}
             </div>
           ) : null}
@@ -986,7 +1018,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               disabled={!data.canManage || !canGoBack || isSaving}
               onClick={() => void goBack()}
             >
-              {savingAction === "back" ? "Saving…" : "Back"}
+              <ActionButtonLabel
+                idle="Back"
+                pending={savingAction === "back"}
+                pendingLabel="Saving…"
+              />
             </button>
             {skipAllowed && !isCompleted ? (
               <button
@@ -995,7 +1031,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
                 disabled={!data.canManage || isSaving}
                 onClick={() => void skipStep()}
               >
-                {savingAction === "skip" ? "Saving…" : "Skip"}
+                <ActionButtonLabel
+                  idle="Skip"
+                  pending={savingAction === "skip"}
+                  pendingLabel="Saving…"
+                />
               </button>
             ) : null}
             <button
@@ -1013,15 +1053,19 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
               }
               onClick={() => void continueSetup()}
             >
-              {isCompleted
-                ? "Setup complete"
-                : requiresInlineCompletion
-                  ? inlineCompletionLabel
-                  : savingAction === "continue" || savingAction === "complete"
-                    ? "Saving…"
-                    : activeStep.id === "verify"
-                      ? "Complete setup"
-                      : "Continue"}
+              <ActionButtonLabel
+                idle={
+                  isCompleted
+                    ? "Setup complete"
+                    : requiresInlineCompletion
+                      ? inlineCompletionLabel
+                      : activeStep.id === "verify"
+                        ? "Complete setup"
+                        : "Continue"
+                }
+                pending={savingAction === "continue" || savingAction === "complete"}
+                pendingLabel="Saving…"
+              />
             </button>
           </div>
         </div>
