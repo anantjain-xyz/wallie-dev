@@ -1,7 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useState } from "react";
 
+import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import { Section } from "@/features/settings/settings-ui";
 
@@ -18,14 +20,20 @@ export function preloadPipelineEditor() {
 }
 
 export function PipelineIsland({ data }: { data: SettingsPageData }) {
+  const [pipelineDirty, setPipelineDirty] = useState(false);
+
   return (
     <Section
       anchorId="pipeline"
-      tagline="Stages run in order; each stage prompt is sent to the agent, and an approver reviews the output before the session advances."
+      statusBadge={
+        pipelineDirty ? <Status label="Unsaved changes" value="needs_attention" /> : null
+      }
+      tagline="Stages run in order; each stage prompt is sent to the agent, and an approver reviews the output before the session advances. Only future sessions use pipeline edits — historical sessions and artifacts stay unchanged."
       title="Pipeline"
     >
       <PipelineEditor
         canManage={data.canManage}
+        onDirtyChange={setPipelineDirty}
         pipeline={data.pipeline}
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
