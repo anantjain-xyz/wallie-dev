@@ -134,7 +134,7 @@ export function SettingsAnchorNav({
     <div className="hidden lg:block">
       <nav
         aria-label="Settings sections"
-        className="sticky top-[calc(5rem+env(safe-area-inset-top))] flex flex-col gap-5"
+        className="sticky top-[var(--shell-scroll-padding)] flex flex-col gap-5"
       >
         {groups.map((group) => (
           <div key={group.label}>
