@@ -33,6 +33,7 @@ export function SessionReviewBar({
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const feedbackFieldId = useId();
   const feedbackRef = useRef<HTMLTextAreaElement | null>(null);
+  const requestChangesTriggerRef = useRef<HTMLButtonElement | null>(null);
   const phaseActionBusy = phaseActionPending !== null;
 
   useEffect(() => {
@@ -118,6 +119,7 @@ export function SessionReviewBar({
       >
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
           <button
+            ref={requestChangesTriggerRef}
             type="button"
             className="ui-button"
             disabled={phaseActionBusy}
@@ -157,6 +159,10 @@ export function SessionReviewBar({
         <DialogContent
           description="Wallie will rerun the current stage with your feedback injected into the prompt."
           dismissible={!phaseActionBusy}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            requestChangesTriggerRef.current?.focus();
+          }}
           title="Request changes"
         >
           <label className="block text-xs font-semibold text-foreground" htmlFor={feedbackFieldId}>

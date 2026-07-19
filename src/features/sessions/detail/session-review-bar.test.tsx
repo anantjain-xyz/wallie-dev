@@ -122,4 +122,16 @@ describe("SessionReviewBar", () => {
     expect(container.innerHTML).toContain("pb-[max(0.75rem,env(safe-area-inset-bottom))]");
     expect(container.innerHTML).toContain("sticky bottom-0");
   });
+
+  it("restores focus to Request changes when the dialog closes", async () => {
+    renderBar();
+    const trigger = screen.getByRole("button", { name: "Request changes" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(trigger);
+    });
+  });
 });
