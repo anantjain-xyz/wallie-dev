@@ -291,4 +291,20 @@ describe("PipelineEditor accessibility", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(removeBuild).toHaveFocus());
   });
+
+  it("restores focus to a surviving row after removing the first stage", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "Remove Plan from position 1 of 2" }));
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Remove Plan?");
+    await user.click(screen.getByRole("button", { name: "Remove Plan" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(1);
+    });
+    const survivingName = screen.getByRole("textbox", { name: "Name" });
+    expect(survivingName).toHaveValue("Build");
+    await waitFor(() => expect(survivingName).toHaveFocus());
+  });
 });

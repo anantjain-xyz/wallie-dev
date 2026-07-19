@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   appendDraftStage,
+  focusElementIdAfterStageRemoval,
   keepKnownApproverIds,
   moveDraftStage,
   reorderDraftStage,
@@ -32,6 +33,13 @@ function stage(overrides: Partial<DraftPipelineStage> = {}): DraftPipelineStage 
 }
 
 describe("pipeline editor primitives", () => {
+  it("picks post-removal focus ids for surviving rows and Add stage", () => {
+    expect(focusElementIdAfterStageRemoval(1, 0)).toBe("pipeline-add-stage");
+    expect(focusElementIdAfterStageRemoval(3, 0)).toBe("pipeline-stage-0-name");
+    expect(focusElementIdAfterStageRemoval(3, 1)).toBe("pipeline-stage-1-name");
+    expect(focusElementIdAfterStageRemoval(3, 2)).toBe("pipeline-stage-1-name");
+  });
+
   it("validates required pipeline and stage fields including prompt and approver", () => {
     expect(validatePipelineDraft({ name: "", stages: [stage()] })).toMatchObject({
       code: "missing-pipeline-name",

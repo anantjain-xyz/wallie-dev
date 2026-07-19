@@ -16,6 +16,7 @@ import {
   RemoveStageDialog,
   reorderDraftStage,
   removeDraftStage,
+  resolveFocusAfterStageRemoval,
   StageRowEditor,
   stageDisplayName,
   stageToDraft,
@@ -252,9 +253,7 @@ export function OnboardingPipelineEditor({
         onConfirm={() => {
           if (removeIndex === null) return;
           const index = removeIndex;
-          removeFocusRef.current =
-            document.getElementById(`pipeline-stage-${Math.max(0, index - 1)}-name`) ??
-            document.getElementById("pipeline-add-stage");
+          removeFocusRef.current = resolveFocusAfterStageRemoval(stages.length, index);
           setRemoveIndex(null);
           handleRemoveAt(index);
         }}

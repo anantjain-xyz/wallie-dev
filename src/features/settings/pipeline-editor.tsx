@@ -18,6 +18,7 @@ import {
   RemoveStageDialog,
   reorderDraftStage,
   removeDraftStage,
+  resolveFocusAfterStageRemoval,
   serializePipelineDraft,
   StageRowEditor,
   stageDisplayName,
@@ -329,10 +330,8 @@ export function PipelineEditor({
         onConfirm={() => {
           if (removeIndex === null) return;
           const index = removeIndex;
-          // Row will unmount; restore to a surviving control.
-          removeFocusRef.current =
-            document.getElementById(`pipeline-stage-${Math.max(0, index - 1)}-name`) ??
-            document.getElementById("pipeline-add-stage");
+          // Capture a surviving control before the row unmounts (not the removed row).
+          removeFocusRef.current = resolveFocusAfterStageRemoval(stages.length, index);
           setRemoveIndex(null);
           handleRemoveAt(index);
         }}

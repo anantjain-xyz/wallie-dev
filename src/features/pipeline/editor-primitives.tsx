@@ -217,6 +217,36 @@ export function removeDraftStage(
   return stages.filter((_, currentIndex) => currentIndex !== index);
 }
 
+/**
+ * Element id to focus after a stage row is removed (post-removal indices).
+ * Empty pipeline → Add stage; otherwise the row that occupies the removed slot
+ * (or the new last row when the last stage was removed).
+ */
+export function focusElementIdAfterStageRemoval(stageCount: number, removedIndex: number): string {
+  const remaining = stageCount - 1;
+  if (remaining <= 0) return "pipeline-add-stage";
+  return `pipeline-stage-${Math.min(removedIndex, remaining - 1)}-name`;
+}
+
+/**
+ * Resolve a still-mounted focus target before React unmounts the removed row.
+ * Prefer the next surviving row (it will shift into the removed index); else the
+ * previous row; else Add stage. Never return the row about to unmount.
+ */
+export function resolveFocusAfterStageRemoval(
+  stageCount: number,
+  removedIndex: number,
+): HTMLElement | null {
+  if (stageCount <= 1) {
+    return document.getElementById("pipeline-add-stage");
+  }
+  const survivorDomIndex = removedIndex < stageCount - 1 ? removedIndex + 1 : removedIndex - 1;
+  return (
+    document.getElementById(`pipeline-stage-${survivorDomIndex}-name`) ??
+    document.getElementById("pipeline-add-stage")
+  );
+}
+
 export function stageDisplayName(stage: DraftPipelineStage, index: number): string {
   const trimmed = stage.name.trim();
   return trimmed || `Stage ${index + 1}`;
