@@ -25,9 +25,7 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
     : null;
   const initialFormattedArtifact =
     latestArtifact && typeof latestArtifact.payload === "string" ? (
-      <MarkdownContent className="max-h-[480px] overflow-auto">
-        {latestArtifact.payload}
-      </MarkdownContent>
+      <MarkdownContent>{latestArtifact.payload}</MarkdownContent>
     ) : null;
 
   return (

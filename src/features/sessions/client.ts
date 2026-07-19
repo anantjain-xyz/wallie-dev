@@ -192,8 +192,17 @@ async function mutateSessionArchive(
   sessionId: string,
   method: "DELETE" | "POST",
   fallbackError: string,
+  expectedArchivedAt?: string,
 ): Promise<SessionArchiveResult> {
-  const response = await fetch(`/api/sessions/${sessionId}/archive`, { method });
+  const response = await fetch(`/api/sessions/${sessionId}/archive`, {
+    ...(expectedArchivedAt
+      ? {
+          body: JSON.stringify({ expectedArchivedAt }),
+          headers: { "content-type": "application/json" },
+        }
+      : {}),
+    method,
+  });
   const responsePayload = (await response.json().catch(() => null)) as {
     archivedAt?: string | null;
     error?: string;
@@ -229,7 +238,13 @@ export async function archiveSessionFromClient(input: {
 }
 
 export async function unarchiveSessionFromClient(input: {
+  expectedArchivedAt?: string;
   sessionId: string;
 }): Promise<SessionArchiveResult> {
-  return mutateSessionArchive(input.sessionId, "DELETE", "Failed to unarchive session.");
+  return mutateSessionArchive(
+    input.sessionId,
+    "DELETE",
+    "Failed to unarchive session.",
+    input.expectedArchivedAt,
+  );
 }

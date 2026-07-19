@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
 import {
@@ -69,6 +71,8 @@ export function CreateSessionDialog(props: CreateSessionDialogProps) {
 
 function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSessionDialogProps) {
   const router = useRouter();
+  const { startNavigation } = useOptionalRouteProgress();
+  const submitInFlightRef = useRef(false);
 
   useEffect(() => {
     finishInteraction("open_create_dialog", "success");
@@ -110,7 +114,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (isSubmitting) {
+    if (submitInFlightRef.current) {
       return;
     }
 
@@ -137,6 +141,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     }
 
     setErrorMessage(null);
+    submitInFlightRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -151,8 +156,10 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
       onClose();
+      startNavigation(result.canonicalUrl);
       router.push(result.canonicalUrl);
     } catch (error) {
+      submitInFlightRef.current = false;
       setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
       setIsSubmitting(false);
     }
@@ -178,7 +185,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       }}
     >
       <DialogContent
-        className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto sm:max-h-[calc(100dvh-5rem)]"
+        className="max-w-xl"
         description="Describe the work, choose its repository, and optionally link a Linear issue."
         dismissible={!isSubmitting}
         title="Start a new session"
@@ -190,6 +197,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             </label>
             <textarea
               id="session-prompt"
+              aria-describedby={errorMessage ? "create-session-error" : undefined}
               autoComplete="off"
               autoFocus
               name="prompt"
@@ -231,6 +239,14 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             </label>
             <input
               id="session-linear"
+              aria-describedby={
+                [
+                  linearError ? "session-linear-error" : null,
+                  errorMessage ? "create-session-error" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
               autoComplete="off"
               name="linearUrl"
               value={linearUrl}
@@ -240,12 +256,17 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
               placeholder="https://linear.app/acme/issue/TEAM-123"
               type="url"
             />
-            {linearError ? <p className="text-xs text-danger">{linearError}</p> : null}
+            {linearError ? (
+              <p className="text-xs text-danger" id="session-linear-error" role="alert">
+                {linearError}
+              </p>
+            ) : null}
           </div>
 
           {errorMessage ? (
             <div
               aria-live="polite"
+              id="create-session-error"
               role="status"
               className="rounded-[6px] border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
             >
@@ -267,7 +288,11 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
               })}
               className="ui-button-primary"
             >
-              {isSubmitting ? "Starting…" : "Start session"}
+              <ActionButtonLabel
+                idle="Start session"
+                pending={isSubmitting}
+                pendingLabel="Starting…"
+              />
             </button>
           </div>
         </form>

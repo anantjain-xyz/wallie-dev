@@ -251,6 +251,36 @@ describe("loadSettingsPageData", () => {
     await Promise.all([loader.initialData, loader.setupData, loader.usage]);
   });
 
+  it("does not start usage or invitation reads for the pipeline category", async () => {
+    const { currentMember, supabase } = buildSupabase({
+      member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
+      usageResult: Promise.resolve({ data: null, error: null }),
+    });
+    mocked.loadAuthenticatedWorkspaceContext.mockResolvedValue({
+      currentMember,
+      supabase,
+      user,
+      workspace,
+    });
+    mocked.createWorkspaceOnboardingSnapshot.mockReturnValue({
+      data: Promise.resolve(onboardingData("owner")),
+      github: Promise.resolve(github),
+    });
+
+    const loader = await loadSettingsPageData(workspace.slug, "pipeline");
+
+    await expect(loader.usage).resolves.toEqual({
+      totalCostUsd: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalRuns: 0,
+    });
+    await expect(loader.workspaceInvitations).resolves.toEqual([]);
+    expect(supabase.rpc).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
+    await Promise.all([loader.initialData, loader.setupData]);
+  });
+
   it("observes below-fold failures before the above-fold section resolves", async () => {
     const githubResult = deferred<typeof github>();
     const usageResult = deferred<{ data: unknown; error: unknown }>();

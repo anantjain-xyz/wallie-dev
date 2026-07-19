@@ -16,6 +16,7 @@ import {
   type WorkspaceInvitation,
   type WorkspaceInvitationRow,
 } from "@/lib/workspace-invitations/contracts";
+import type { SettingsCategory } from "@/features/settings/settings-categories";
 
 export type AgentConfigMap = WorkspaceOnboardingData["agentConfig"];
 
@@ -142,7 +143,10 @@ function mapSettingsSetupData(onboardingData: WorkspaceOnboardingData): Settings
   };
 }
 
-export async function loadSettingsPageData(workspaceSlug: string): Promise<SettingsPageDataLoader> {
+export async function loadSettingsPageData(
+  workspaceSlug: string,
+  category?: SettingsCategory,
+): Promise<SettingsPageDataLoader> {
   return withServerTiming("settings.loader", { workspaceSlug }, async (timing) => {
     const authenticatedContext = await timing.segment(
       "authenticated-workspace-context",
@@ -209,42 +213,48 @@ export async function loadSettingsPageData(workspaceSlug: string): Promise<Setti
       },
     );
 
-    const usage = withServerTiming(
-      "settings.section.usage",
-      { workspaceId: workspace.id },
-      async (sectionTiming) => {
-        const { data, error } = await sectionTiming.segment(
-          "workspace-usage-rpc",
-          () =>
-            supabase
-              .rpc("get_workspace_usage", { target_workspace_id: workspace.id })
-              .maybeSingle(),
-          (result) => ({
-            payloadBytes: approximatePayloadSizeBytes(result.data),
-            rows: result.data ? 1 : 0,
-          }),
-        );
+    const usage =
+      category && category !== "advanced"
+        ? Promise.resolve(mapWorkspaceUsageRow(null))
+        : withServerTiming(
+            "settings.section.usage",
+            { workspaceId: workspace.id },
+            async (sectionTiming) => {
+              const { data, error } = await sectionTiming.segment(
+                "workspace-usage-rpc",
+                () =>
+                  supabase
+                    .rpc("get_workspace_usage", { target_workspace_id: workspace.id })
+                    .maybeSingle(),
+                (result) => ({
+                  payloadBytes: approximatePayloadSizeBytes(result.data),
+                  rows: result.data ? 1 : 0,
+                }),
+              );
 
-        if (error) throw error;
-        return mapWorkspaceUsageRow(data);
-      },
-    );
+              if (error) throw error;
+              return mapWorkspaceUsageRow(data);
+            },
+          );
 
-    const workspaceInvitations = withServerTiming(
-      "settings.section.invitations",
-      { workspaceId: workspace.id },
-      async (sectionTiming) => {
-        if (!canManage) return [];
-        return sectionTiming.segment(
-          "pending-invitations",
-          () => loadWorkspaceInvitations(workspace.id),
-          (invitations) => ({
-            payloadBytes: approximatePayloadSizeBytes(invitations),
-            rows: invitations.length,
-          }),
-        );
-      },
-    );
+    const workspaceInvitations =
+      category && category !== "workspace"
+        ? Promise.resolve([])
+        : withServerTiming(
+            "settings.section.invitations",
+            { workspaceId: workspace.id },
+            async (sectionTiming) => {
+              if (!canManage) return [];
+              return sectionTiming.segment(
+                "pending-invitations",
+                () => loadWorkspaceInvitations(workspace.id),
+                (invitations) => ({
+                  payloadBytes: approximatePayloadSizeBytes(invitations),
+                  rows: invitations.length,
+                }),
+              );
+            },
+          );
 
     return {
       initialData,

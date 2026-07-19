@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
 import { Status, type StatusValue } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
@@ -216,7 +217,11 @@ export function SandboxCapabilitySection({
           onClick={() => void runCheck.run()}
           type="button"
         >
-          {runCheck.isBusy ? "Starting…" : isPolling ? "Checking…" : "Run capability check"}
+          <ActionButtonLabel
+            idle="Run capability check"
+            pending={runCheck.isBusy || isPolling}
+            pendingLabel={runCheck.isBusy ? "Starting…" : "Checking…"}
+          />
         </button>
       </div>
       {!vercelSandboxConnected ? (

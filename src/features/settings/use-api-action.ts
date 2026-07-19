@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
+import { idleActionFeedback, type ActionFeedback } from "@/components/ui/action-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
 
 type ApiActionText<TResponse, TArgs extends unknown[]> =
@@ -75,10 +76,17 @@ export function useApiAction<TResponse, TArgs extends unknown[] = [], TResult = 
   successText,
 }: ApiActionOptions<TResponse, TArgs, TResult>) {
   const [isBusy, setIsBusy] = useState(false);
+  const [feedback, setFeedback] = useState<ActionFeedback>(idleActionFeedback);
+  const inFlightRef = useRef(false);
 
   const run = useCallback(
     async (...args: TArgs): Promise<TResult | undefined> => {
+      // React state does not update until the next render. The ref closes the
+      // same-frame gap so rapid clicks can never start duplicate requests.
+      if (inFlightRef.current) return undefined;
+      inFlightRef.current = true;
       setIsBusy(true);
+      setFeedback({ message: null, status: "pending" });
 
       try {
         const response = await call(...args);
@@ -90,18 +98,22 @@ export function useApiAction<TResponse, TArgs extends unknown[] = [], TResult = 
           setFlashMessage({ kind: "success", text: message });
         }
 
+        setFeedback({ message, status: "success" });
+
         return result;
       } catch (error) {
         const message = resolveErrorText(errorText, error, args);
 
         setFlashMessage({ kind: "error", text: message });
+        setFeedback({ message, status: "error" });
         return onError?.(message, error, args);
       } finally {
+        inFlightRef.current = false;
         setIsBusy(false);
       }
     },
     [call, errorText, onError, onSuccess, setFlashMessage, successText],
   );
 
-  return { isBusy, run };
+  return { feedback, isBusy, run };
 }

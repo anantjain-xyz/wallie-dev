@@ -62,10 +62,19 @@
   --dropdown-item-foreground: var(--text-secondary);
   --overlay-backdrop: rgba(14, 17, 23, 0.46);
   --overlay-gutter: 16px;
+  --overlay-gutter-block-start: max(var(--overlay-gutter), env(safe-area-inset-top));
+  --overlay-gutter-block-end: max(var(--overlay-gutter), env(safe-area-inset-bottom));
+  --overlay-gutter-inline-end: max(var(--overlay-gutter), env(safe-area-inset-right));
+  --shell-scroll-padding: calc(3rem + env(safe-area-inset-top));
+  --wallie-visual-viewport-center: 50dvh;
+  --wallie-visual-viewport-height: 100dvh;
+  --wallie-visual-viewport-offset-top: 0px;
+  --wallie-visual-viewport-bottom-offset: 0px;
   --overlay-motion-duration: 160ms;
   --overlay-motion-easing: cubic-bezier(0.16, 1, 0.3, 1);
   --z-overlay-backdrop: 60;
   --z-overlay-content: 70;
+  --z-route-progress: 75;
   --z-toast: 80;
   --z-tooltip: 90;
 }
@@ -139,21 +148,17 @@
   }
 
   html {
+    min-height: 100%;
+    overflow-x: clip;
     background: var(--surface-canvas);
+    scroll-padding-block-start: var(--shell-scroll-padding);
     -webkit-tap-highlight-color: var(--accent-soft);
-    /* Sticky command header (48px) + safe area so in-page anchors stay visible. */
-    scroll-padding-top: calc(3rem + env(safe-area-inset-top));
-  }
-
-  @media (max-width: 1023px) {
-    html {
-      /* Mobile shell header is 56px. */
-      scroll-padding-top: calc(3.5rem + env(safe-area-inset-top));
-    }
   }
 
   body {
     min-height: 100vh;
+    min-height: 100svh;
+    max-width: 100%;
     background: var(--surface-canvas);
     color: var(--foreground);
     font-feature-settings:
@@ -182,6 +187,10 @@
   textarea {
     font: inherit;
     touch-action: manipulation;
+  }
+
+  :where(input, textarea, [contenteditable="true"], [role="alert"], [role="status"]) {
+    scroll-margin-block: var(--shell-scroll-padding) var(--overlay-gutter-block-end);
   }
 
   button {
@@ -519,13 +528,19 @@
   .ui-dialog-content {
     position: fixed;
     left: 50%;
-    top: 50%;
+    top: calc(var(--wallie-visual-viewport-offset-top) + var(--overlay-gutter-block-start));
+    bottom: calc(var(--wallie-visual-viewport-bottom-offset) + var(--overlay-gutter-block-end));
     z-index: var(--z-overlay-content);
     width: min(32rem, calc(100vw - (var(--overlay-gutter) * 2)));
-    max-height: calc(100dvh - (var(--overlay-gutter) * 2));
+    height: fit-content;
+    max-height: calc(
+      var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
+        var(--overlay-gutter-block-end)
+    );
+    margin-block: auto;
     overflow-y: auto;
     overscroll-behavior: contain;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
     border: 1px solid var(--border);
     border-radius: var(--overlay-radius);
     background: var(--surface-overlay);
@@ -650,12 +665,15 @@
 
   .ui-toast-viewport {
     position: fixed;
-    right: var(--overlay-gutter);
-    bottom: var(--overlay-gutter);
+    right: var(--overlay-gutter-inline-end);
+    bottom: calc(var(--wallie-visual-viewport-bottom-offset) + var(--overlay-gutter-block-end));
     z-index: var(--z-toast);
     display: flex;
     width: min(24rem, calc(100vw - (var(--overlay-gutter) * 2)));
-    max-height: calc(100dvh - (var(--overlay-gutter) * 2));
+    max-height: calc(
+      var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
+        var(--overlay-gutter-block-end)
+    );
     flex-direction: column;
     gap: 0.5rem;
     margin: 0;
@@ -677,6 +695,32 @@
 
   .ui-toast-danger {
     border-color: color-mix(in srgb, var(--danger) 32%, var(--border));
+  }
+
+  .ui-toast-action {
+    @apply mt-3 inline-flex min-h-8 items-center rounded-[6px] border border-border bg-sheet px-3 text-[13px] font-semibold text-foreground outline-none transition-[color,background-color,border-color,box-shadow] duration-150;
+  }
+
+  .ui-toast-action:hover {
+    @apply border-border-strong bg-control-hover;
+  }
+
+  .ui-route-progress {
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: var(--z-route-progress);
+    height: 3px;
+    overflow: hidden;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .ui-route-progress-value {
+    display: block;
+    width: 42%;
+    height: 100%;
+    background: var(--accent);
+    animation: wallie-route-progress 1.1s ease-in-out infinite;
   }
 
   /* Fully rounded treatment is reserved for product status. */
@@ -951,6 +995,12 @@
   }
 }
 
+@media (max-width: 1023px) {
+  :root {
+    --shell-scroll-padding: calc(3.5rem + env(safe-area-inset-top));
+  }
+}
+
 @media (forced-colors: active) {
   .ui-status {
     border-color: CanvasText;
@@ -978,6 +1028,49 @@
 
   .ui-status-progress-value {
     background: Highlight;
+  }
+}
+
+/* Browser rendering skips independent, off-screen work while retaining a
+   measured placeholder. `auto` remembers the rendered block size after the
+   first visit, which prevents repeat visits from shifting the scroll range. */
+.settings-contained-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0 auto 680px;
+}
+
+.settings-contained-section-large {
+  contain-intrinsic-size: auto 0 auto 920px;
+}
+
+.settings-contained-section-compact {
+  contain-intrinsic-size: auto 0 auto 360px;
+}
+
+.session-list-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0 auto 116px;
+}
+
+.content-visibility-benchmark-disabled .session-list-row {
+  content-visibility: visible;
+}
+
+.run-history-group {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 0 auto 166px;
+}
+
+/* Focused and actively changing content must be fully rendered. This also
+   lets keyboard navigation and browser find-in-page reveal skipped targets. */
+:where(.settings-contained-section, .session-list-row, .run-history-group):focus-within,
+.content-visibility-interacting {
+  content-visibility: visible;
+}
+
+@media (min-width: 768px) {
+  .session-list-row {
+    contain-intrinsic-size: auto 0 auto 76px;
   }
 }
 
@@ -1096,7 +1189,7 @@ html:has([data-app-shell-fixture]) nextjs-portal {
 @keyframes wallie-dialog-enter {
   from {
     opacity: 0;
-    transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+    transform: translate(-50%, 8px) scale(0.98);
   }
 }
 
@@ -1128,6 +1221,16 @@ html:has([data-app-shell-fixture]) nextjs-portal {
   }
 }
 
+@keyframes wallie-route-progress {
+  from {
+    transform: translateX(-110%);
+  }
+
+  to {
+    transform: translateX(340%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1137,48 +1240,10 @@ html:has([data-app-shell-fixture]) nextjs-portal {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
-}
 
-/* Browser rendering skips independent, off-screen work while retaining a
-   measured placeholder. `auto` remembers the rendered block size after the
-   first visit, which prevents repeat visits from shifting the scroll range. */
-.settings-contained-section {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 0 auto 680px;
-}
-
-.settings-contained-section-large {
-  contain-intrinsic-size: auto 0 auto 920px;
-}
-
-.settings-contained-section-compact {
-  contain-intrinsic-size: auto 0 auto 360px;
-}
-
-.session-list-row {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 0 auto 116px;
-}
-
-.content-visibility-benchmark-disabled .session-list-row {
-  content-visibility: visible;
-}
-
-.run-history-group {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 0 auto 166px;
-}
-
-/* Focused and actively changing content must be fully rendered. This also
-   lets keyboard navigation and browser find-in-page reveal skipped targets. */
-:where(.settings-contained-section, .session-list-row, .run-history-group):focus-within,
-.content-visibility-interacting {
-  content-visibility: visible;
-}
-
-@media (min-width: 768px) {
-  .session-list-row {
-    contain-intrinsic-size: auto 0 auto 76px;
+  .ui-route-progress-value {
+    width: 68%;
+    transform: none;
   }
 }
 
@@ -1189,4 +1254,9 @@ html:has([data-app-shell-fixture]) nextjs-portal {
   animation-iteration-count: 1 !important;
   scroll-behavior: auto !important;
   transition-duration: 0.01ms !important;
+}
+
+:root[data-reduced-motion="reduce"] .ui-route-progress-value {
+  width: 68%;
+  transform: none;
 }
