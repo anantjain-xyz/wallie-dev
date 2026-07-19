@@ -24,7 +24,7 @@ afterEach(() => {
 const routeStats = [
   ["/w/[workspaceSlug]", 700_000],
   ["/w/[workspaceSlug]/sessions", 700_000],
-  ["/w/[workspaceSlug]/settings", 800_000],
+  ["/w/[workspaceSlug]/settings/[category]", 800_000],
   ["/w/[workspaceSlug]/sessions/[sessionNumber]", 900_000],
   ["/w/[workspaceSlug]/onboarding", 680_000],
 ].map(([route, bytes]) => ({
@@ -40,7 +40,7 @@ describe("route bundle budgets", () => {
       budgets: establishedMaximumBytes,
       sharedRootBytes: 450_000,
       stats: stats.map((stat) =>
-        stat.route.endsWith("/settings")
+        stat.route.endsWith("/settings/[category]")
           ? {
               ...stat,
               firstLoadUncompressedJsBytes: 450_000 + establishedMaximumBytes.settings + 1,

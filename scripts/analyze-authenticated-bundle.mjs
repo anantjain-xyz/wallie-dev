@@ -13,7 +13,12 @@ const routes = ["pipeline", "sessions", "settings"];
 // "pipeline" resolves to the canonical dashboard route group `(pipeline)` at the
 // workspace root, not the legacy `pipeline/` redirect page — the redirect page's
 // manifest would trivially omit the dialog and miss eager imports in PipelinePageClient.
-const routeSegments = { pipeline: "(pipeline)", sessions: "sessions", settings: "settings" };
+// "settings" points at the category route; `/settings` is only a redirect shell.
+const routeSegments = {
+  pipeline: "(pipeline)",
+  sessions: "sessions",
+  settings: "settings/[category]",
+};
 const commonLayoutEntry = "[project]/src/app/w/[workspaceSlug]/(app)/layout";
 
 function readManifest(route) {

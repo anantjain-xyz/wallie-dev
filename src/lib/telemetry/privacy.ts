@@ -10,7 +10,8 @@ export type SafeRouteTemplate =
   | "/w/[workspaceSlug]/pipeline"
   | "/w/[workspaceSlug]/sessions"
   | "/w/[workspaceSlug]/sessions/[sessionNumber]"
-  | "/w/[workspaceSlug]/settings";
+  | "/w/[workspaceSlug]/settings"
+  | "/w/[workspaceSlug]/settings/[category]";
 
 export function routeTemplateForPath(pathname: string): SafeRouteTemplate {
   if (pathname === "/") return "/";
@@ -29,6 +30,9 @@ export function routeTemplateForPath(pathname: string): SafeRouteTemplate {
   }
   if (segments.length === 4 && segments[2] === "sessions") {
     return "/w/[workspaceSlug]/sessions/[sessionNumber]";
+  }
+  if (segments.length === 4 && segments[2] === "settings") {
+    return "/w/[workspaceSlug]/settings/[category]";
   }
   return "/redacted";
 }

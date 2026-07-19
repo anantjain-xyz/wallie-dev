@@ -91,10 +91,28 @@ export function SettingsDirtyRegistryProvider({ children }: { children: ReactNod
   );
 
   useEffect(() => {
+    let restoringHistory = false;
+
     function onBeforeUnload(event: BeforeUnloadEvent) {
       if (!hasUnsavedChangesRef.current) return;
       event.preventDefault();
       event.returnValue = UNSAVED_MESSAGE;
+    }
+
+    function onPopState() {
+      if (restoringHistory) return;
+      if (!hasUnsavedChangesRef.current) return;
+
+      if (!window.confirm(UNSAVED_MESSAGE)) {
+        restoringHistory = true;
+        window.history.go(1);
+        queueMicrotask(() => {
+          restoringHistory = false;
+        });
+        return;
+      }
+
+      markSettingsLeaveConfirmed();
     }
 
     function onDocumentClick(event: MouseEvent) {
@@ -145,9 +163,11 @@ export function SettingsDirtyRegistryProvider({ children }: { children: ReactNod
     }
 
     window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("popstate", onPopState);
     document.addEventListener("click", onDocumentClick, true);
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("popstate", onPopState);
       document.removeEventListener("click", onDocumentClick, true);
     };
   }, []);

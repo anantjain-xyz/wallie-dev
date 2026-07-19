@@ -23,7 +23,7 @@ export type RouteBundleStat = Readonly<{
 const routeByBudget: Record<Exclude<BudgetName, "shared/root">, string> = {
   pipeline: "/w/[workspaceSlug]",
   sessions: "/w/[workspaceSlug]/sessions",
-  settings: "/w/[workspaceSlug]/settings",
+  settings: "/w/[workspaceSlug]/settings/[category]",
   detail: "/w/[workspaceSlug]/sessions/[sessionNumber]",
   onboarding: "/w/[workspaceSlug]/onboarding",
 };

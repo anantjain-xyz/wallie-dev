@@ -111,4 +111,36 @@ describe("SettingsDirtyRegistry", () => {
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
+
+  it("prompts on popstate history navigation while dirty and restores when cancelled", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+
+    render(
+      <SettingsDirtyRegistryProvider>
+        <DirtyProbe canEdit isDirty />
+      </SettingsDirtyRegistryProvider>,
+    );
+
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(goSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("allows popstate navigation after confirming leave", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const goSpy = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+
+    render(
+      <SettingsDirtyRegistryProvider>
+        <DirtyProbe canEdit isDirty />
+      </SettingsDirtyRegistryProvider>,
+    );
+
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(goSpy).not.toHaveBeenCalled();
+  });
 });

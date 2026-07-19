@@ -6,6 +6,7 @@ import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -44,6 +45,12 @@ export function VercelSandboxConnectionSection({
   const [projectId, setProjectId] = useState(connection?.projectId ?? "");
   const [disconnectOpen, setDisconnectOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+
+  const isDirty =
+    token.trim() !== "" ||
+    teamId !== (connection?.teamId ?? "") ||
+    projectId !== (connection?.projectId ?? "");
+  useRegisterSettingsDirtySource("vercel-sandbox", isDirty, canManage);
 
   const saveConnection = useApiAction<VercelSandboxConnectionResponse>({
     call: () =>

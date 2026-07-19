@@ -10,7 +10,7 @@
     "firstLoadChunkPaths": [".next/static/chunks/sessions.js"]
   },
   {
-    "route": "/w/[workspaceSlug]/settings",
+    "route": "/w/[workspaceSlug]/settings/[category]",
     "firstLoadUncompressedJsBytes": 1320401,
     "firstLoadChunkPaths": [".next/static/chunks/settings.js"]
   },

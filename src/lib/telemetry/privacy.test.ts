@@ -14,6 +14,16 @@ describe("telemetry route privacy", () => {
     expect(sanitized).not.toMatch(/acme-corp|42|secret|artifact/);
   });
 
+  it("templates settings category routes without redacting them", () => {
+    expect(routeTemplateForPath("/w/acme-corp/settings")).toBe("/w/[workspaceSlug]/settings");
+    expect(routeTemplateForPath("/w/acme-corp/settings/general")).toBe(
+      "/w/[workspaceSlug]/settings/[category]",
+    );
+    expect(routeTemplateForPath("/w/acme-corp/settings/integrations")).toBe(
+      "/w/[workspaceSlug]/settings/[category]",
+    );
+  });
+
   it("redacts unknown routes instead of leaking identifiers", () => {
     expect(sanitizeTelemetryUrl("https://wallie.dev/invite/private-token")).toBe(
       "https://wallie.dev/redacted",

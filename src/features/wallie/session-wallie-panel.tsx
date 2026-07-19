@@ -22,11 +22,11 @@ import {
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
-import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
+import type { WallieBlockingReason, WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
-import { workspaceSettingsCategoryPath, workspaceSettingsPath } from "@/lib/routes";
+import { workspaceSettingsCategoryPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type FlashMessage = {
@@ -47,6 +47,26 @@ type SessionWalliePanelProps = {
   supabase?: SupabaseClient<Database>;
   workspaceSlug: string;
 };
+
+export function settingsHrefForBlockingReasons(
+  workspaceSlug: string,
+  reasons: readonly WallieBlockingReason[],
+) {
+  const codes = new Set(reasons.map((reason) => reason.code));
+  if (
+    codes.has("vercel_sandbox_connection_missing") ||
+    codes.has("vercel_sandbox_connection_invalid")
+  ) {
+    return `${workspaceSettingsCategoryPath(workspaceSlug, "integrations")}#vercel`;
+  }
+  if (codes.has("repository_unavailable") || codes.has("repository_archived")) {
+    return `${workspaceSettingsCategoryPath(workspaceSlug, "integrations")}#github`;
+  }
+  if (codes.has("missing_secret")) {
+    return `${workspaceSettingsCategoryPath(workspaceSlug, "agent-execution")}#runtime`;
+  }
+  return workspaceSettingsCategoryPath(workspaceSlug, "integrations");
+}
 
 const interactiveLinkClass =
   "font-semibold text-foreground transition-colors duration-150 hover:text-accent focus-visible:rounded-[4px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30";
@@ -593,7 +613,10 @@ export function SessionWalliePanel({
             ))}
           </ul>
           <div className="mt-4">
-            <Link className={interactiveLinkClass} href={workspaceSettingsPath(workspaceSlug)}>
+            <Link
+              className={interactiveLinkClass}
+              href={settingsHrefForBlockingReasons(workspaceSlug, blockingReasons)}
+            >
               Open Workspace Settings
             </Link>
           </div>

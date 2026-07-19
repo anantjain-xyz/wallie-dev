@@ -14,6 +14,8 @@ import type { FlashMessage } from "@/features/settings/settings-types";
 import { updateGithubInSettingsData } from "@/features/settings/settings-data-updates";
 import {
   dispatchSettingsEvent,
+  peekSettingsSecrets,
+  peekSettingsVercelConnection,
   SETTINGS_GITHUB_CHANGED,
   SETTINGS_SECRETS_CHANGED,
   SETTINGS_VERCEL_CHANGED,
@@ -121,7 +123,9 @@ export function RepositoryIntegrationIsland({ initialData }: { initialData: Sett
 }
 
 export function VercelIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [connection, setConnection] = useState(initialData.vercelSandboxConnection);
+  const [connection, setConnection] = useState(() =>
+    peekSettingsVercelConnection(initialData.vercelSandboxConnection),
+  );
   const { feedback, setMessage } = useIslandFeedback();
   return (
     <>
@@ -142,7 +146,7 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
 
 export function LinearIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
   const [routing, setRouting] = useState(initialData.linearRouting);
-  const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
+  const [secrets, setSecrets] = useState(() => peekSettingsSecrets(initialData.workspaceSecrets));
   const broadcastSecrets = useRef(false);
   const updateSecrets: Dispatch<SetStateAction<SecretsChangedDetail>> = (update) => {
     broadcastSecrets.current = true;
@@ -181,13 +185,15 @@ export function RuntimeIntegrationIsland({
   codexStatus: string | null;
   initialData: SettingsPageData;
 }) {
-  const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
+  const [secrets, setSecrets] = useState(() => peekSettingsSecrets(initialData.workspaceSecrets));
   const broadcastSecrets = useRef(false);
   const updateSecrets: Dispatch<SetStateAction<SecretsChangedDetail>> = (update) => {
     broadcastSecrets.current = true;
     setSecrets(update);
   };
-  const [vercelConnection, setVercelConnection] = useState(initialData.vercelSandboxConnection);
+  const [vercelConnection, setVercelConnection] = useState(() =>
+    peekSettingsVercelConnection(initialData.vercelSandboxConnection),
+  );
   const { feedback, setMessage } = useIslandFeedback();
   useEffect(() => {
     const handleVercelChange = (event: Event) =>

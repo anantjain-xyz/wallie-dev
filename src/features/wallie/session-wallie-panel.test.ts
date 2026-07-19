@@ -2,7 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { SessionWalliePanel } from "@/features/wallie/session-wallie-panel";
+import {
+  SessionWalliePanel,
+  settingsHrefForBlockingReasons,
+} from "@/features/wallie/session-wallie-panel";
 import type { WallieRun, WallieSessionData } from "@/features/wallie/types";
 import type { WorkspaceMember } from "@/features/workspace-members/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -296,5 +299,24 @@ describe("SessionWalliePanel", () => {
 
     expect(html).toContain("Requested by workspace owner");
     expect(html).not.toContain("unavailable member");
+  });
+});
+
+describe("settingsHrefForBlockingReasons", () => {
+  it("routes vercel and repository blockers to Integrations", () => {
+    expect(
+      settingsHrefForBlockingReasons("acme", [
+        { code: "vercel_sandbox_connection_missing", message: "missing" },
+      ]),
+    ).toBe("/w/acme/settings/integrations#vercel");
+    expect(
+      settingsHrefForBlockingReasons("acme", [{ code: "repository_unavailable", message: "repo" }]),
+    ).toBe("/w/acme/settings/integrations#github");
+  });
+
+  it("routes missing secrets to Agent execution", () => {
+    expect(
+      settingsHrefForBlockingReasons("acme", [{ code: "missing_secret", message: "secret" }]),
+    ).toBe("/w/acme/settings/agent-execution#runtime");
   });
 });

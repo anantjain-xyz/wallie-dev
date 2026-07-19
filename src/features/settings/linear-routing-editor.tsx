@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField } from "@/components/ui/select";
 import type { PipelineStage } from "@/features/sessions/types";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -99,6 +100,19 @@ function buildRoutingPayload(draft: LinearRoutingDraft) {
   };
 }
 
+function isRoutingDraftDirty(draft: LinearRoutingDraft, routing: LinearRoutingConfig) {
+  const baseline = routingDraftFromConfig(routing);
+  if (
+    draft.landStageSlug !== baseline.landStageSlug ||
+    draft.reworkStageSlug !== baseline.reworkStageSlug
+  ) {
+    return true;
+  }
+  return LINEAR_ROUTE_KEYS.some(
+    (key) => draft.statusMappings[key] !== baseline.statusMappings[key],
+  );
+}
+
 function actionLabelForRoute(key: LinearRouteKey, draft: LinearRoutingDraft) {
   switch (key) {
     case "merging":
@@ -138,6 +152,8 @@ export function LinearRoutingControls({
 }: LinearRoutingEditorProps) {
   const [draft, setDraft] = useState(() => routingDraftFromConfig(routing));
   const [feedbackMessage, setFeedbackMessage] = useState<FlashMessage | null>(null);
+
+  useRegisterSettingsDirtySource("linear-routing", isRoutingDraftDirty(draft, routing), canManage);
 
   const stageOptions = useMemo(() => stages.map((stage) => stage.slug), [stages]);
   const stageSelectOptions = useMemo(

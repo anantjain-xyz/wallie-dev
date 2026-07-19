@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { dateFormatter, InlineActionMessage } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -43,6 +44,8 @@ export function LinearKeyControls({
   const [feedbackSlot, setFeedbackSlot] = useState<LinearKeyFeedbackSlot>("initial");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useRegisterSettingsDirtySource("linear-key", linearApiKeyDraft.trim() !== "", canManage);
 
   const testLinearConnection = useApiAction<{ ok: true }>({
     call: () =>
