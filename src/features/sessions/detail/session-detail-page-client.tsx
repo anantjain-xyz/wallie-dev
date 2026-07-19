@@ -231,7 +231,7 @@ export function SessionDetailPageClient({
     const controller = new AbortController();
 
     // Skip the mount pass — RSC already supplied canApprove / hasFailedRun.
-    // Recompute when the current stage changes (Realtime or local advance).
+    // Recompute when the current stage or phase status changes (Realtime / local).
     if (capabilitiesEffectSkipRef.current) {
       capabilitiesEffectSkipRef.current = false;
       return () => {
@@ -248,6 +248,8 @@ export function SessionDetailPageClient({
       };
     }
 
+    const phaseStatusAtFetch = session.phaseStatus;
+
     void fetch(`/api/sessions/${session.id}/review-capabilities`, {
       signal: controller.signal,
     })
@@ -259,6 +261,13 @@ export function SessionDetailPageClient({
         } | null;
         if (!response.ok || !body || cancelled) return;
         if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
+        // Generating / awaiting_review clear failure UI immediately (sibling effect).
+        // Ignore a stale error run so refetch-on-phaseStatus cannot resurrect it.
+        if (phaseStatusAtFetch === "agent_generating" || phaseStatusAtFetch === "awaiting_review") {
+          setHasFailedRun(false);
+          setFailedStageSlug(null);
+          return;
+        }
         if (typeof body.hasFailedRun === "boolean") setHasFailedRun(body.hasFailedRun);
         if ("failedStageSlug" in body) setFailedStageSlug(body.failedStageSlug ?? null);
       })
@@ -270,7 +279,7 @@ export function SessionDetailPageClient({
       cancelled = true;
       controller.abort();
     };
-  }, [phaseActionPending, session.currentStageId, session.id]);
+  }, [phaseActionPending, session.currentStageId, session.id, session.phaseStatus]);
 
   useEffect(() => {
     if (session.phaseStatus === "agent_generating" || session.phaseStatus === "awaiting_review") {

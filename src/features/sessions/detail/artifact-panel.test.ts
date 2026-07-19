@@ -280,4 +280,36 @@ describe("ArtifactPanel", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
     expect(screen.getByText("# Latest")).toBeTruthy();
   });
+
+  it("lets Versions inspect raw Markdown for a historical version", async () => {
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
+            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifact: {
+            createdAt: "2026-06-07T10:00:00.000Z",
+            payload: "# Earlier raw",
+            sanitizedHtml: '<div class="text-[13px]"><h1>Earlier</h1></div>',
+            stageSlug: "build",
+            version: 1,
+          },
+        }),
+      );
+
+    fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "v1" }));
+    expect(await screen.findByText("Earlier")).toBeTruthy();
+    expect(screen.queryByText("# Earlier raw")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "raw" }));
+    expect(screen.getByText("# Earlier raw")).toBeTruthy();
+    expect(screen.queryByText("Earlier")).toBeNull();
+  });
 });

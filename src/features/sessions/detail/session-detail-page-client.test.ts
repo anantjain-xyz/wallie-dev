@@ -262,7 +262,7 @@ describe("SessionDetailPageClient", () => {
   it("keeps Run input collapsed by default in Context", () => {
     const html = renderDetail();
     expect(html).toContain("Run input");
-    expect(html).toContain("Collapsed — expand to inspect");
+    expect(html).toContain("Collapsed — expand to inspect the original session input");
     expect(html).not.toContain("Build the title editor");
   });
 });

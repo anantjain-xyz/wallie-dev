@@ -134,6 +134,7 @@ function ArtifactPanelStage({
   const [selectedBodyLoading, setSelectedBodyLoading] = useState(false);
   const [selectedBodyError, setSelectedBodyError] = useState<string | null>(null);
   const [selectedBodyRetry, setSelectedBodyRetry] = useState(0);
+  const [versionDisplayMode, setVersionDisplayMode] = useState<"rendered" | "raw">("rendered");
   const metadataController = useRef<AbortController | null>(null);
   const bodyController = useRef<AbortController | null>(null);
   const tabRefs = useRef(new Map<ArtifactTab, HTMLButtonElement>());
@@ -483,23 +484,43 @@ function ArtifactPanelStage({
           ) : null}
           {metadata && metadata.length > 0 ? (
             <>
-              <div className="mb-3 flex flex-wrap gap-2" aria-label="Artifact versions">
-                {metadata.map((artifact) => (
-                  <button
-                    key={artifact.version}
-                    type="button"
-                    aria-pressed={selectedVersion === artifact.version}
-                    className={cn(
-                      "rounded-[6px] border px-2.5 py-1 text-xs font-medium",
-                      selectedVersion === artifact.version
-                        ? "border-accent/40 bg-accent-soft text-accent"
-                        : "border-border text-muted hover:text-foreground",
-                    )}
-                    onClick={() => selectVersion(artifact.version)}
-                  >
-                    v{artifact.version}
-                  </button>
-                ))}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-2" aria-label="Artifact versions">
+                  {metadata.map((artifact) => (
+                    <button
+                      key={artifact.version}
+                      type="button"
+                      aria-pressed={selectedVersion === artifact.version}
+                      className={cn(
+                        "rounded-[6px] border px-2.5 py-1 text-xs font-medium",
+                        selectedVersion === artifact.version
+                          ? "border-accent/40 bg-accent-soft text-accent"
+                          : "border-border text-muted hover:text-foreground",
+                      )}
+                      onClick={() => selectVersion(artifact.version)}
+                    >
+                      v{artifact.version}
+                    </button>
+                  ))}
+                </div>
+                <div aria-label="Version display mode" className="flex gap-1" role="group">
+                  {(["rendered", "raw"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={versionDisplayMode === mode}
+                      className={cn(
+                        "rounded-[4px] px-2 py-1 text-xs font-medium capitalize",
+                        versionDisplayMode === mode
+                          ? "bg-control-muted text-foreground"
+                          : "text-muted hover:text-foreground",
+                      )}
+                      onClick={() => setVersionDisplayMode(mode)}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
               </div>
               {selectedBodyLoading && !visibleSelectedBody ? (
                 <ProgressHint text={`Loading version ${selectedVersion}.`} />
@@ -513,7 +534,7 @@ function ArtifactPanelStage({
               {visibleSelectedBody ? (
                 <ArtifactBodyView
                   artifact={visibleSelectedBody}
-                  displayMode="rendered"
+                  displayMode={versionDisplayMode}
                   initialFormattedArtifact={initialFormattedArtifact}
                   initialFormattedArtifactKey={initialFormattedArtifactKey}
                   initialNow={initialNow}

@@ -213,7 +213,7 @@ export function SessionInspector({
               </pre>
             ) : (
               <p className="mt-1 type-annotation text-muted">
-                Collapsed — expand to inspect the prompt Wallie used.
+                Collapsed — expand to inspect the original session input.
               </p>
             )}
           </div>
