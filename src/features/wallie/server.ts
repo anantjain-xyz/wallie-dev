@@ -52,6 +52,11 @@ function toBuildableRunRow(row: AgentRunRow, attemptCount: number) {
  * Do not read mutable `agent_jobs.attempt_count` — that value advances on later
  * claims and would relabel historical runs.
  */
+export async function loadAttemptOrdinalForRun(sessionId: string, runId: string) {
+  const ordinals = await loadAttemptOrdinalsByRunId(createSupabaseAdminClient(), sessionId);
+  return ordinals.get(runId) ?? 1;
+}
+
 async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string) {
   const { data, error } = await admin
     .from("agent_runs")

@@ -31,6 +31,7 @@ import {
   mapAgentRunMessageRow,
   mapAgentRunRow,
   mergeWallieRuns,
+  nextAttemptOrdinal,
   upsertWallieRun,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
@@ -41,6 +42,9 @@ import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { cn } from "@/lib/utils";
+
+/** Cap auto-loaded message history so opening a busy run cannot mount unbounded logs. */
+export const WALLIE_RUN_MESSAGE_LIMIT = 100;
 
 type FlashMessage = {
   kind: "error" | "info" | "success";
@@ -208,6 +212,7 @@ export function SessionWalliePanel({
   const sessionIdRef = useRef(session.id);
   const reconcileGenerationRef = useRef(0);
   const hadDisconnectRef = useRef(false);
+  const runsChannelLiveRef = useRef(false);
   sessionIdRef.current = session.id;
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
@@ -238,6 +243,7 @@ export function SessionWalliePanel({
     setConnectionState("connecting");
     setConnectionAnnouncement(null);
     hadDisconnectRef.current = false;
+    runsChannelLiveRef.current = false;
   }, [initialData.loadedMessageRunIds, initialData.nextRunCursor, initialData.runs, session.id]);
 
   useEffect(() => {
@@ -263,7 +269,8 @@ export function SessionWalliePanel({
         .from("agent_run_messages")
         .select("agent_run_id, created_at, id, kind, message_md")
         .eq("agent_run_id", runId)
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false })
+        .limit(WALLIE_RUN_MESSAGE_LIMIT);
 
       if (error) {
         console.error("Wallie could not load run messages", {
@@ -274,10 +281,13 @@ export function SessionWalliePanel({
         return;
       }
 
+      // Query returns newest-first; restore chronological order for the timeline.
+      const rows = [...(data ?? [])].reverse();
+
       setRuns((currentRuns) => {
         let nextRuns = currentRuns;
 
-        for (const row of data ?? []) {
+        for (const row of rows) {
           nextRuns = upsertWallieRunMessage(nextRuns, {
             agentRunId: row.agent_run_id,
             message: mapAgentRunMessageRow(row),
@@ -295,6 +305,30 @@ export function SessionWalliePanel({
     [supabase],
   );
 
+  const markConnectionDisconnected = useEffectEvent(() => {
+    hadDisconnectRef.current = true;
+    setConnectionState("disconnected");
+    setConnectionAnnouncement(connectionStateCopy("disconnected"));
+  });
+
+  const markConnectionLive = useEffectEvent((options?: { reconcile?: boolean }) => {
+    if (options?.reconcile) {
+      void reconcileLatestRuns();
+    }
+
+    if (hadDisconnectRef.current) {
+      setConnectionState("recovered");
+      setConnectionAnnouncement(connectionStateCopy("recovered"));
+      hadDisconnectRef.current = false;
+      window.setTimeout(() => {
+        setConnectionState((current) => (current === "recovered" ? "live" : current));
+      }, 4_000);
+      return;
+    }
+
+    setConnectionState("live");
+  });
+
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
     setRuns((currentRuns) => {
       const previousRun = currentRuns.find((run) => run.id === row.id);
@@ -302,7 +336,9 @@ export function SessionWalliePanel({
       return upsertWallieRun(
         currentRuns,
         mapAgentRunRow(row, memberIndex, previousRun?.messages ?? [], {
-          attemptCount: previousRun?.attemptCount,
+          attemptCount:
+            previousRun?.attemptCount ??
+            nextAttemptOrdinal(currentRuns, { id: row.id, stageSlug: row.stage_slug }),
         }),
       );
     });
@@ -404,28 +440,19 @@ export function SessionWalliePanel({
         if (!mapped) return;
 
         if (mapped === "disconnected") {
-          hadDisconnectRef.current = true;
-          setConnectionState("disconnected");
-          setConnectionAnnouncement(connectionStateCopy("disconnected"));
+          runsChannelLiveRef.current = false;
+          markConnectionDisconnected();
           return;
         }
 
         if (mapped === "live") {
-          void reconcileLatestRuns();
-          if (hadDisconnectRef.current) {
-            setConnectionState("recovered");
-            setConnectionAnnouncement(connectionStateCopy("recovered"));
-            hadDisconnectRef.current = false;
-            window.setTimeout(() => {
-              setConnectionState((current) => (current === "recovered" ? "live" : current));
-            }, 4_000);
-          } else {
-            setConnectionState("live");
-          }
+          runsChannelLiveRef.current = true;
+          markConnectionLive({ reconcile: true });
         }
       });
 
     return () => {
+      runsChannelLiveRef.current = false;
       void supabase.removeChannel(runChannel);
     };
   }, [realtimeReady, session.id, supabase]);
@@ -471,8 +498,17 @@ export function SessionWalliePanel({
         },
       )
       .subscribe((status) => {
+        const mapped = mapRealtimeStatus(status);
+        if (mapped === "disconnected") {
+          markConnectionDisconnected();
+          return;
+        }
+
         if (status === "SUBSCRIBED") {
           void loadRunMessages(runId);
+          if (runsChannelLiveRef.current) {
+            markConnectionLive();
+          }
         }
       });
 
@@ -505,8 +541,17 @@ export function SessionWalliePanel({
         },
       )
       .subscribe((status) => {
+        const mapped = mapRealtimeStatus(status);
+        if (mapped === "disconnected") {
+          markConnectionDisconnected();
+          return;
+        }
+
         if (status === "SUBSCRIBED") {
           void loadRunMessages(runId);
+          if (runsChannelLiveRef.current) {
+            markConnectionLive();
+          }
         }
       });
 
@@ -555,7 +600,15 @@ export function SessionWalliePanel({
 
         const run = hydrateRequestedByMember(payload.run, memberIndex);
 
-        setRuns((currentRuns) => upsertWallieRun(currentRuns, run));
+        setRuns((currentRuns) =>
+          upsertWallieRun(currentRuns, {
+            ...run,
+            attemptCount: Math.max(
+              run.attemptCount,
+              nextAttemptOrdinal(currentRuns, { id: run.id, stageSlug: run.stageSlug }),
+            ),
+          }),
+        );
         setExpandedRunId(run.id);
         setFlashMessage(
           payload.created
@@ -768,9 +821,9 @@ export function SessionWalliePanel({
               key={run.id}
               actionPending={pendingActionId === run.id}
               branchName={
-                run.stageSlug
+                run.sandboxId && run.stageSlug
                   ? buildStageBranchName(session.id, run.stageSlug)
-                  : (initialData.repository?.defaultBranch ?? null)
+                  : null
               }
               cancelLocked={pendingActionId !== null}
               connectionState={connectionState}

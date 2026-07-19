@@ -4,6 +4,7 @@ import { RATE_LIMITS, clearRateLimitsForTesting } from "@/lib/rate-limit";
 
 const mocked = vi.hoisted(() => ({
   enqueueWallieRun: vi.fn(),
+  loadAttemptOrdinalForRun: vi.fn(),
   processQueuedAgentJobs: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
@@ -11,6 +12,10 @@ const mocked = vi.hoisted(() => ({
 vi.mock("@/lib/wallie/service", () => ({
   enqueueWallieRun: mocked.enqueueWallieRun,
   processQueuedAgentJobs: mocked.processQueuedAgentJobs,
+}));
+
+vi.mock("@/features/wallie/server", () => ({
+  loadAttemptOrdinalForRun: mocked.loadAttemptOrdinalForRun,
 }));
 
 vi.mock("@/lib/workspaces/access", () => ({
@@ -49,6 +54,7 @@ const existingRunRow = {
   model_name: "claude-sonnet-4-20250514",
   model_provider: "claude-code",
   run_type: "project",
+  session_id: "11111111-1111-1111-1111-111111111111",
   started_at: null,
   stage_id: null,
   stage_name: null,
@@ -75,8 +81,9 @@ describe("POST /api/agent-runs rate limiting", () => {
     mocked.enqueueWallieRun.mockResolvedValue({
       created: true,
       jobId: "job-1",
-      run: { id: "run-1" },
+      run: { id: "run-1", session_id: validBody.sessionId },
     });
+    mocked.loadAttemptOrdinalForRun.mockResolvedValue(1);
     mocked.processQueuedAgentJobs.mockResolvedValue({});
   });
 

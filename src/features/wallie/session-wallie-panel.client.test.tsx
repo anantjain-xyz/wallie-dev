@@ -127,10 +127,12 @@ function fakeSupabase(messages: Record<string, Array<Record<string, string>>> = 
     from: vi.fn(() => ({
       select: () => ({
         eq: (_column: string, runId: string) => ({
-          order: async () => {
-            messageQueries.push(runId);
-            return { data: messages[runId] ?? [], error: null };
-          },
+          order: () => ({
+            limit: async () => {
+              messageQueries.push(runId);
+              return { data: messages[runId] ?? [], error: null };
+            },
+          }),
         }),
       }),
     })),
@@ -715,5 +717,126 @@ describe("SessionWalliePanel activity states", () => {
     expect(screen.getByText("Waiting in queue")).not.toBeNull();
     expect(screen.getByText("3")).not.toBeNull();
     expect(screen.getAllByText("Queued").length).toBeGreaterThan(0);
+  });
+
+  it("marks the connection disconnected when the message channel fails", async () => {
+    const initialRun = run(1, {
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      messages: [
+        {
+          createdAt: "2026-07-18T12:01:00.000Z",
+          id: "msg-1",
+          kind: "progress",
+          messageMd: "Cloning repository",
+        },
+      ],
+      status: "running",
+    });
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [initialRun] }), { status: 200 }),
+      ),
+    );
+    render(
+      <SessionWalliePanel
+        initialData={data([initialRun], false, { loadedMessageRunIds: ["run-1"] })}
+        initialNow="2026-07-18T12:56:00.000Z"
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    expect(screen.getByText("Live")).not.toBeNull();
+
+    const messageChannel = fake.channels.find((channel) =>
+      channel.name.startsWith("wallie-run-messages:"),
+    );
+    await act(async () => messageChannel?.statusCallback?.("CHANNEL_ERROR"));
+    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
+  });
+
+  it("assigns the next stage attempt ordinal when a retry run is inserted live", async () => {
+    const first = run(1, {
+      attemptCount: 1,
+      stageName: "Build",
+      stageSlug: "build",
+      status: "error",
+      canRetry: true,
+    });
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [first] }), { status: 200 }),
+      ),
+    );
+    const view = panel(data([first]), fake.supabase);
+
+    await act(async () => idleCallback?.());
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
+    await act(async () => {
+      sessionChannel?.changeCallback?.({
+        eventType: "INSERT",
+        new: {
+          created_at: "2026-07-18T13:30:00.000Z",
+          finished_at: null,
+          id: "run-retry-live",
+          last_activity_at: "2026-07-18T13:30:00.000Z",
+          model_name: "gpt-5",
+          model_provider: "codex",
+          run_type: "code",
+          sandbox_id: null,
+          sandbox_provider: null,
+          stage_id: null,
+          stage_name: "Build",
+          stage_slug: "build",
+          started_at: "2026-07-18T13:30:00.000Z",
+          status: "queued",
+          triggered_by_member_id: null,
+          updated_at: "2026-07-18T13:30:00.000Z",
+        },
+      });
+    });
+
+    expect(view.container.querySelector('[data-run-id="run-retry-live"]')).not.toBeNull();
+    expect(
+      within(
+        view.container.querySelector('[data-run-id="run-retry-live"]') as HTMLElement,
+      ).getByText("Attempt 2"),
+    ).not.toBeNull();
+  });
+
+  it("hides the derived branch when no sandbox was created", () => {
+    const failed = run(1, {
+      sandboxId: null,
+      stageSlug: "build",
+      status: "error",
+    });
+    const fake = fakeSupabase();
+    const view = render(
+      <SessionWalliePanel
+        initialData={data([failed])}
+        session={{ archivedAt: null, id: "session-1", workspaceId: "workspace-1" }}
+        supabase={fake.supabase}
+        workspaceSlug="acme"
+      />,
+    );
+
+    const details = view.container.querySelector('[data-run-id="run-1"] details');
+    expect(details).not.toBeNull();
+    fireEvent.click(within(details as HTMLElement).getByText("Run details"));
+    expect(within(details as HTMLElement).queryByText("Branch")).toBeNull();
+    expect(within(details as HTMLElement).getByText("Run ID")).not.toBeNull();
   });
 });

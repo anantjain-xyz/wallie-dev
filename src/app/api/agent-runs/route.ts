@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { enqueueAgentRunSchema, type AgentRunActionResponse } from "@/features/wallie/contracts";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { loadAttemptOrdinalForRun } from "@/features/wallie/server";
 import { buildAgentRunActionErrorResponse, buildAgentRunActionResponse } from "@/lib/wallie/http";
 import { enqueueWallieRun } from "@/lib/wallie/service";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
@@ -49,8 +50,12 @@ export async function POST(request: Request) {
       workspace: access.context.workspace,
     });
     const processScheduled = result.created && result.jobId !== null;
+    const attemptCount = await loadAttemptOrdinalForRun(result.run.session_id, result.run.id).catch(
+      () => 1,
+    );
 
     const response: AgentRunActionResponse = buildAgentRunActionResponse({
+      attemptCount,
       created: result.created,
       processScheduled,
       run: result.run,

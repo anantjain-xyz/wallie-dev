@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   mergeWallieRuns,
+  nextAttemptOrdinal,
   normalizeWallieRuns,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
@@ -97,5 +98,20 @@ describe("Wallie run history data", () => {
     });
 
     expect(mergeWallieRuns([live], [stale])[0]?.status).toBe("success");
+  });
+
+  it("derives the next attempt ordinal for a newly inserted stage retry", () => {
+    const first = run("run-1", "2026-07-18T12:00:00.000Z", {
+      attemptCount: 1,
+      stageSlug: "build",
+    });
+    const second = run("run-2", "2026-07-18T12:05:00.000Z", {
+      attemptCount: 2,
+      stageSlug: "build",
+    });
+
+    expect(nextAttemptOrdinal([first, second], { id: "run-3", stageSlug: "build" })).toBe(3);
+    expect(nextAttemptOrdinal([first, second], { id: "run-1", stageSlug: "build" })).toBe(1);
+    expect(nextAttemptOrdinal([first], { id: "run-plan", stageSlug: "plan" })).toBe(1);
   });
 });

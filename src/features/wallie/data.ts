@@ -73,6 +73,30 @@ export function normalizeWallieRuns(runs: readonly WallieRun[]) {
   });
 }
 
+/**
+ * Stable per-run attempt ordinal within a stage for live inserts that lack a
+ * server-computed count (realtime INSERT, action responses before reconcile).
+ */
+export function nextAttemptOrdinal(
+  runs: readonly Pick<WallieRun, "attemptCount" | "id" | "stageSlug">[],
+  input: { id: string; stageSlug: string | null },
+) {
+  const existing = runs.find((run) => run.id === input.id);
+  if (existing) {
+    return existing.attemptCount;
+  }
+
+  let maxOrdinal = 0;
+  for (const run of runs) {
+    if ((run.stageSlug ?? null) !== (input.stageSlug ?? null)) {
+      continue;
+    }
+    maxOrdinal = Math.max(maxOrdinal, run.attemptCount);
+  }
+
+  return maxOrdinal + 1;
+}
+
 export function mapAgentRunRow(
   row: Pick<
     Tables<"agent_runs">,
