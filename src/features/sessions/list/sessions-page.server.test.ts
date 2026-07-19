@@ -12,6 +12,7 @@ import type { SessionSummary } from "@/features/sessions/types";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
+    push: vi.fn(),
     refresh: vi.fn(),
     replace: vi.fn(),
   }),
@@ -37,6 +38,7 @@ function makeSession(index: number): SessionSummary {
     pullRequestCount: 0,
     pullRequests: [],
     rejectionCount: 0,
+    repositoryFullName: null,
     title: `Session ${index}`,
     updatedAt: `2026-06-07T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
     workspaceId: "22222222-2222-4222-8222-222222222222",
@@ -46,13 +48,13 @@ function makeSession(index: number): SessionSummary {
 function makeData(count: number): SessionListPageData {
   const sessions = Array.from({ length: count }, (_, index) => makeSession(index + 1));
   return {
-    hasAnySession: true,
+    hasAnySession: count > 0,
     hasMore: false,
     nextCursor: null,
     onboarding: null,
-    queryState: { cursor: null, query: "", scope: "all", stageSlug: null },
+    queryState: { cursor: null, query: "", scope: "all", sort: "updated", stageSlug: null },
     sessions,
-    stageFacets: [{ count, name: "Plan", position: 0, slug: "plan" }],
+    stageFacets: count > 0 ? [{ count, name: "Plan", position: 0, slug: "plan" }] : [],
     totalCount: count,
     workspace: {
       id: "22222222-2222-4222-8222-222222222222",
@@ -63,6 +65,75 @@ function makeData(count: number): SessionListPageData {
 }
 
 describe("Sessions ledger server render", () => {
+  it("covers zero, one, fifty, and paginated fixtures", () => {
+    const zero = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, { initialData: makeData(0) }),
+      ),
+    );
+    expect(zero).toContain("No sessions yet");
+
+    const one = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, { initialData: makeData(1) }),
+      ),
+    );
+    expect(one.match(/session-list-row/g)?.length).toBe(1);
+    expect(one).toContain("Session 1");
+
+    const fifty = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, { initialData: makeData(50) }),
+      ),
+    );
+    expect(fifty.match(/session-list-row/g)?.length).toBe(50);
+
+    const paginated = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, {
+          initialData: {
+            ...makeData(2),
+            hasMore: true,
+            nextCursor: "cursor-token",
+          },
+        }),
+      ),
+    );
+    expect(paginated).toContain("Load older sessions");
+    expect(paginated).toContain("cursor=cursor-token");
+
+    const paginatedOldest = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, {
+          initialData: {
+            ...makeData(2),
+            hasMore: true,
+            nextCursor: "cursor-token",
+            queryState: {
+              cursor: null,
+              query: "",
+              scope: "all",
+              sort: "oldest",
+              stageSlug: null,
+            },
+          },
+        }),
+      ),
+    );
+    expect(paginatedOldest).toContain("Load newer sessions");
+    expect(paginatedOldest).toContain("sort=oldest");
+  });
+
   it("keeps static row text in SSR HTML for 50 rows without absolute overlay links", () => {
     const html = renderToStaticMarkup(
       createElement(
@@ -78,6 +149,12 @@ describe("Sessions ledger server render", () => {
     expect(html).toContain('href="/w/acme/sessions/1"');
     expect(html).toContain('href="/w/acme/sessions/50"');
     expect(html).not.toContain("absolute inset-0");
+    expect(html).toContain("sessions-ledger-header");
+    expect(html).toContain('role="table"');
+    expect(html).toContain('role="columnheader"');
+    expect(html).toContain("sessions-ledger-cell-label");
+    expect(html).toContain(">Repository<");
+    expect(html).not.toContain('aria-hidden="true" class="sessions-ledger-header"');
   });
 
   it("hydrates command bar and row islands instead of a monolithic page client", () => {
@@ -108,5 +185,11 @@ describe("Sessions ledger server render", () => {
     expect(pageSource).toContain("stageFacets={initialData.stageFacets}");
     expect(commandBarSource).not.toContain("initialData.sessions");
     expect(commandBarSource).not.toContain("initialData.onboarding");
+
+    const stylesheet = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+    expect(stylesheet).toContain("container-type: inline-size");
+    expect(stylesheet).toContain("@container sessions-ledger (max-width: 50rem)");
+    expect(stylesheet).toContain(".sessions-ledger-cell-label");
+    expect(stylesheet).not.toContain(".sessions-ledger-cell-stage::before");
   });
 });

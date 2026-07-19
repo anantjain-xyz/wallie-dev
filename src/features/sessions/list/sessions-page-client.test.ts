@@ -13,12 +13,14 @@ import type { SessionListPageData, SessionStageFacet } from "@/features/sessions
 import type { SessionSummary } from "@/features/sessions/types";
 
 const mocked = vi.hoisted(() => ({
+  push: vi.fn(),
   refresh: vi.fn(),
   replace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
+    push: mocked.push,
     refresh: mocked.refresh,
     replace: mocked.replace,
   }),
@@ -49,6 +51,7 @@ function makeSession(overrides: Partial<SessionSummary> = {}): SessionSummary {
     pullRequestCount: 0,
     pullRequests: [],
     rejectionCount: 0,
+    repositoryFullName: null,
     title: "Editable Session",
     updatedAt: "2026-06-07T11:00:00.000Z",
     workspaceId: "22222222-2222-4222-8222-222222222222",
@@ -89,6 +92,7 @@ function makeSessionListData(
       cursor: null,
       query: "",
       scope: "all",
+      sort: "updated",
       stageSlug: null,
     },
     sessions,
@@ -111,7 +115,7 @@ describe("SessionsPageClient", () => {
     expect(html).toContain("session-list-row");
     expect(html).toContain("Open session #7: Editable Session");
     expect(html).toContain('aria-label="Actions for session #7"');
-    expect(html).not.toContain('title="Edit title"');
+    expect(html).not.toContain('title="Rename"');
     expect(html).not.toContain('aria-label="Session #7 title"');
   });
 

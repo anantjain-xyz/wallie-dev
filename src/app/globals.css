@@ -1052,6 +1052,96 @@
   contain-intrinsic-size: auto 0 auto 116px;
 }
 
+/* Size the ledger container so cards activate when columns no longer fit —
+   including desktop widths at ~200% zoom after page padding. */
+.sessions-ledger {
+  container-type: inline-size;
+  container-name: sessions-ledger;
+}
+
+.sessions-ledger-header,
+.sessions-ledger-row {
+  display: grid;
+  gap: 0.75rem 1rem;
+  grid-template-columns:
+    minmax(12rem, 2.2fr)
+    minmax(5.5rem, 0.7fr)
+    minmax(7.5rem, 0.9fr)
+    minmax(7rem, 1fr)
+    minmax(5.5rem, 0.7fr)
+    2.5rem;
+  align-items: center;
+  padding: 0.85rem 1.25rem;
+}
+
+.sessions-ledger-header {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sessions-ledger-cell {
+  min-width: 0;
+}
+
+.sessions-ledger-cell-label {
+  display: none;
+}
+
+.sessions-ledger-cell-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sessions-ledger-connections {
+  max-width: 100%;
+}
+
+/*
+  Card layout when the ledger itself is narrower than the column mins (~760px)
+  plus breathing room. Container query covers padded/zoomed viewports (e.g.
+  768–823px CSS width) where a viewport-only md breakpoint would still clip.
+*/
+@container sessions-ledger (max-width: 50rem) {
+  .sessions-ledger-header {
+    display: none;
+  }
+
+  .sessions-ledger-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+    padding: 1rem;
+  }
+
+  .sessions-ledger-cell-stage,
+  .sessions-ledger-cell-status,
+  .sessions-ledger-cell-repository,
+  .sessions-ledger-cell-updated {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .sessions-ledger-cell-label {
+    display: block;
+    flex: 0 0 5.5rem;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .sessions-ledger-cell-actions {
+    justify-content: flex-start;
+  }
+}
+
 .content-visibility-benchmark-disabled .session-list-row {
   content-visibility: visible;
 }
@@ -1070,7 +1160,7 @@
 
 @media (min-width: 768px) {
   .session-list-row {
-    contain-intrinsic-size: auto 0 auto 76px;
+    contain-intrinsic-size: auto 0 auto 64px;
   }
 }
 
