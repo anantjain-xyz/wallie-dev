@@ -401,14 +401,15 @@ export function SessionRowIsland({
   }
 
   return (
-    <li
+    <div
+      role="row"
       className={cn(
         "session-list-row sessions-ledger-row group",
         (isEditing || archivePending !== null || error || archiveError) &&
           "content-visibility-interacting",
       )}
     >
-      <div className="sessions-ledger-cell sessions-ledger-cell-session">
+      <div className="sessions-ledger-cell sessions-ledger-cell-session" role="cell">
         {isEditing ? (
           <form onSubmit={handleEditSubmit}>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
@@ -490,25 +491,29 @@ export function SessionRowIsland({
         ) : null}
       </div>
 
-      <div className="sessions-ledger-cell sessions-ledger-cell-stage" data-label="Stage">
+      <div className="sessions-ledger-cell sessions-ledger-cell-stage" role="cell">
+        <span className="sessions-ledger-cell-label">Stage</span>
         <span className="text-[13px] text-foreground">{stageName}</span>
       </div>
 
-      <div className="sessions-ledger-cell sessions-ledger-cell-status" data-label="Status">
+      <div className="sessions-ledger-cell sessions-ledger-cell-status" role="cell">
+        <span className="sessions-ledger-cell-label">Status</span>
         <LedgerStatus phaseStatus={phaseStatus} />
       </div>
 
-      <div className="sessions-ledger-cell sessions-ledger-cell-repository" data-label="Repository">
+      <div className="sessions-ledger-cell sessions-ledger-cell-repository" role="cell">
+        <span className="sessions-ledger-cell-label">Repository</span>
         <span className="truncate text-[13px] text-muted" title={repositoryLabel ?? undefined}>
           {repositoryLabel ?? "—"}
         </span>
       </div>
 
-      <div className="sessions-ledger-cell sessions-ledger-cell-updated" data-label="Updated">
+      <div className="sessions-ledger-cell sessions-ledger-cell-updated" role="cell">
+        <span className="sessions-ledger-cell-label">Updated</span>
         <span className="type-annotation text-muted">{updated}</span>
       </div>
 
-      <div className="sessions-ledger-cell sessions-ledger-cell-actions">
+      <div className="sessions-ledger-cell sessions-ledger-cell-actions" role="cell">
         {!isEditing ? (
           <>
             <ActionMenu
@@ -546,23 +551,27 @@ export function SessionRowIsland({
           </>
         ) : null}
       </div>
-    </li>
+    </div>
   );
 }
 
 export function SessionsLedger({ children }: { children: ReactNode }) {
   return (
     <SessionDetailLinkPrefetchBoundary>
-      <div className="ui-sheet sessions-ledger overflow-hidden">
-        <div aria-hidden="true" className="sessions-ledger-header">
-          <span>Session</span>
-          <span>Stage</span>
-          <span>Status</span>
-          <span>Repository</span>
-          <span>Updated</span>
-          <span className="sr-only">Actions</span>
+      <div className="ui-sheet sessions-ledger overflow-hidden" role="table" aria-label="Sessions">
+        <div role="row" className="sessions-ledger-header">
+          <div role="columnheader">Session</div>
+          <div role="columnheader">Stage</div>
+          <div role="columnheader">Status</div>
+          <div role="columnheader">Repository</div>
+          <div role="columnheader">Updated</div>
+          <div role="columnheader" className="sr-only">
+            Actions
+          </div>
         </div>
-        <ul className="divide-y divide-border">{children}</ul>
+        <div role="rowgroup" className="divide-y divide-border">
+          {children}
+        </div>
       </div>
     </SessionDetailLinkPrefetchBoundary>
   );

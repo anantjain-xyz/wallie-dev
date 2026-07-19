@@ -195,11 +195,15 @@ describe("SessionsPageClient accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByText("Session")).toBeInTheDocument();
-    expect(screen.getAllByText("Stage").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Status").length).toBeGreaterThan(0);
-    expect(screen.getByText("Repository")).toBeInTheDocument();
-    expect(screen.getByText("Updated")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Sessions" })).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader").map((node) => node.textContent)).toEqual([
+      "Session",
+      "Stage",
+      "Status",
+      "Repository",
+      "Updated",
+      "Actions",
+    ]);
     expect(screen.getByText("acme/wallie")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open session #339/ })).toHaveAttribute(
       "href",

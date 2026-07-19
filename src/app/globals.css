@@ -1052,6 +1052,13 @@
   contain-intrinsic-size: auto 0 auto 116px;
 }
 
+/* Size the ledger container so cards activate when columns no longer fit —
+   including desktop widths at ~200% zoom after page padding. */
+.sessions-ledger {
+  container-type: inline-size;
+  container-name: sessions-ledger;
+}
+
 .sessions-ledger-header,
 .sessions-ledger-row {
   display: grid;
@@ -1080,6 +1087,10 @@
   min-width: 0;
 }
 
+.sessions-ledger-cell-label {
+  display: none;
+}
+
 .sessions-ledger-cell-actions {
   display: flex;
   justify-content: flex-end;
@@ -1089,8 +1100,12 @@
   max-width: 100%;
 }
 
-/* Card layout below the ledger breakpoint — also covers ~200% zoom on desktop widths. */
-@media (max-width: 767px) {
+/*
+  Card layout when the ledger itself is narrower than the column mins (~760px)
+  plus breathing room. Container query covers padded/zoomed viewports (e.g.
+  768–823px CSS width) where a viewport-only md breakpoint would still clip.
+*/
+@container sessions-ledger (max-width: 50rem) {
   .sessions-ledger-header {
     display: none;
   }
@@ -1112,11 +1127,8 @@
     gap: 0.5rem;
   }
 
-  .sessions-ledger-cell-stage::before,
-  .sessions-ledger-cell-status::before,
-  .sessions-ledger-cell-repository::before,
-  .sessions-ledger-cell-updated::before {
-    content: attr(data-label);
+  .sessions-ledger-cell-label {
+    display: block;
     flex: 0 0 5.5rem;
     color: var(--muted);
     font-size: 11px;

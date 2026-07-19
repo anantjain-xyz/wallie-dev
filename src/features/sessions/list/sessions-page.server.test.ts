@@ -127,7 +127,11 @@ describe("Sessions ledger server render", () => {
     expect(html).toContain('href="/w/acme/sessions/50"');
     expect(html).not.toContain("absolute inset-0");
     expect(html).toContain("sessions-ledger-header");
+    expect(html).toContain('role="table"');
+    expect(html).toContain('role="columnheader"');
+    expect(html).toContain("sessions-ledger-cell-label");
     expect(html).toContain(">Repository<");
+    expect(html).not.toContain('aria-hidden="true" class="sessions-ledger-header"');
   });
 
   it("hydrates command bar and row islands instead of a monolithic page client", () => {
@@ -158,5 +162,11 @@ describe("Sessions ledger server render", () => {
     expect(pageSource).toContain("stageFacets={initialData.stageFacets}");
     expect(commandBarSource).not.toContain("initialData.sessions");
     expect(commandBarSource).not.toContain("initialData.onboarding");
+
+    const stylesheet = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+    expect(stylesheet).toContain("container-type: inline-size");
+    expect(stylesheet).toContain("@container sessions-ledger (max-width: 50rem)");
+    expect(stylesheet).toContain(".sessions-ledger-cell-label");
+    expect(stylesheet).not.toContain(".sessions-ledger-cell-stage::before");
   });
 });
