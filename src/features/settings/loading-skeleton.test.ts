@@ -14,6 +14,7 @@ describe("SettingsLoadingSkeleton", () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('aria-label="Loading settings"');
     expect(html).toContain("lg:grid-cols-[180px_minmax(0,1fr)]");
+    expect(html).toContain("top-[var(--shell-scroll-padding)]");
     expect(html).toContain("settings-section-header");
     expect((html.match(/scroll-mt-8/g) ?? []).length).toBe(1);
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);

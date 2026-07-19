@@ -65,7 +65,7 @@
   --overlay-gutter-block-start: max(var(--overlay-gutter), env(safe-area-inset-top));
   --overlay-gutter-block-end: max(var(--overlay-gutter), env(safe-area-inset-bottom));
   --overlay-gutter-inline-end: max(var(--overlay-gutter), env(safe-area-inset-right));
-  --shell-scroll-padding: calc(4.5rem + env(safe-area-inset-top));
+  --shell-scroll-padding: calc(3rem + env(safe-area-inset-top));
   --wallie-visual-viewport-center: 50dvh;
   --wallie-visual-viewport-height: 100dvh;
   --wallie-visual-viewport-offset-top: 0px;
@@ -206,6 +206,58 @@
 @layer components {
   .ui-shell-header {
     padding-top: env(safe-area-inset-top);
+  }
+
+  .ui-shell-rail {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .ui-shell-nav-link {
+    @apply inline-flex min-h-9 w-full items-center rounded-[6px] px-3 text-[13px] font-medium text-muted transition-[color,background-color,transform] duration-150;
+  }
+
+  .ui-shell-nav-link:hover {
+    @apply bg-control-hover text-foreground;
+  }
+
+  .ui-shell-nav-link-active {
+    @apply bg-control-muted text-foreground;
+  }
+
+  .ui-nav-sheet-content {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: var(--z-overlay-content);
+    display: flex;
+    width: min(20rem, 100vw);
+    max-width: 100vw;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+    background: var(--surface-overlay);
+    padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+    color: var(--foreground);
+    box-shadow: var(--shadow-elevated);
+    animation: wallie-nav-sheet-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
+  }
+
+  .ui-nav-sheet-content-end {
+    inset-inline-start: auto;
+    inset-inline-end: 0;
+    border-right: 0;
+    border-left: 1px solid var(--border);
+    animation-name: wallie-nav-sheet-enter-end;
+  }
+
+  .ui-nav-sheet-content:focus {
+    outline: none;
+  }
+
+  .ui-nav-sheet-content:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -4px;
   }
 
   /* Semantic type roles. Prefer these over one-off text sizes in product UI. */
@@ -943,9 +995,9 @@
   }
 }
 
-@media (max-width: 639px) {
+@media (max-width: 1023px) {
   :root {
-    --shell-scroll-padding: calc(8.5rem + env(safe-area-inset-top));
+    --shell-scroll-padding: calc(3.5rem + env(safe-area-inset-top));
   }
 }
 
@@ -1064,7 +1116,8 @@
 }
 
 /* Keep development chrome out of fixture proof captures. */
-html:has([data-precision-console-fixture]) nextjs-portal {
+html:has([data-precision-console-fixture]) nextjs-portal,
+html:has([data-app-shell-fixture]) nextjs-portal {
   display: none;
 }
 
@@ -1137,6 +1190,20 @@ html:has([data-precision-console-fixture]) nextjs-portal {
   from {
     opacity: 0;
     transform: translate(-50%, 8px) scale(0.98);
+  }
+}
+
+@keyframes wallie-nav-sheet-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+  }
+}
+
+@keyframes wallie-nav-sheet-enter-end {
+  from {
+    opacity: 0;
+    transform: translateX(0.75rem);
   }
 }
 
