@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   mergeWallieRuns,
+  nextAttemptOrdinal,
   normalizeWallieRuns,
   upsertWallieRunMessage,
 } from "@/features/wallie/data";
@@ -13,6 +14,7 @@ function run(
   overrides: Partial<WallieRun> = {},
 ): WallieRun {
   return {
+    attemptCount: 1,
     canCancel: false,
     canRetry: false,
     createdAt,
@@ -20,12 +22,15 @@ function run(
     id,
     isActive: false,
     isTerminal: true,
+    lastActivityAt: createdAt,
     messages: [],
     modelName: "gpt-5",
     modelProvider: "codex",
     requestedByMember: null,
     requestedByMemberId: null,
     runType: "code",
+    sandboxId: null,
+    sandboxProvider: null,
     startedAt: createdAt,
     stageId: null,
     stageName: "Build",
@@ -93,5 +98,37 @@ describe("Wallie run history data", () => {
     });
 
     expect(mergeWallieRuns([live], [stale])[0]?.status).toBe("success");
+  });
+
+  it("derives the next attempt ordinal for a newly inserted stage retry", () => {
+    const first = run("run-1", "2026-07-18T12:00:00.000Z", {
+      attemptCount: 1,
+      stageId: "stage-build",
+      stageSlug: "build",
+    });
+    const second = run("run-2", "2026-07-18T12:05:00.000Z", {
+      attemptCount: 2,
+      stageId: "stage-build",
+      stageSlug: "build",
+    });
+
+    expect(nextAttemptOrdinal([first, second], { id: "run-3", stageId: "stage-build" })).toBe(3);
+    expect(nextAttemptOrdinal([first, second], { id: "run-1", stageId: "stage-build" })).toBe(1);
+    expect(nextAttemptOrdinal([first], { id: "run-plan", stageId: "stage-plan" })).toBe(1);
+  });
+
+  it("keeps attempt ordinals continuous when a stage slug is renamed", () => {
+    const beforeRename = run("run-1", "2026-07-18T12:00:00.000Z", {
+      attemptCount: 2,
+      stageId: "stage-build",
+      stageSlug: "build",
+    });
+
+    expect(
+      nextAttemptOrdinal([beforeRename], {
+        id: "run-after-rename",
+        stageId: "stage-build",
+      }),
+    ).toBe(3);
   });
 });
