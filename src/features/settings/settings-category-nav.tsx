@@ -9,6 +9,8 @@ import {
   SETTINGS_CATEGORY_LINKS,
   type SettingsCategory,
 } from "@/features/settings/settings-categories";
+import { useConfirmSettingsLeave } from "@/features/settings/settings-dirty-registry";
+import { resolveSettingsHashRoute } from "@/features/settings/settings-hash-routes";
 import { workspaceSettingsCategoryPath } from "@/lib/routes";
 
 type SettingsCategoryNavProps = {
@@ -16,34 +18,7 @@ type SettingsCategoryNavProps = {
   workspaceSlug: string;
 };
 
-type SettingsHashRoute = {
-  anchor: string;
-  category: SettingsCategory;
-};
-
-const HASH_ROUTES: Record<string, SettingsHashRoute> = {
-  "cloud-execution": { anchor: "verify", category: "advanced" },
-  "coding-agent": { anchor: "runtime", category: "agent-execution" },
-  "danger-zone": { anchor: "danger-zone", category: "advanced" },
-  github: { anchor: "github", category: "integrations" },
-  linear: { anchor: "linear", category: "integrations" },
-  "linear-routing": { anchor: "linear", category: "integrations" },
-  members: { anchor: "members", category: "members" },
-  pipeline: { anchor: "pipeline", category: "pipeline" },
-  "rate-limits": { anchor: "rate-limits", category: "advanced" },
-  repository: { anchor: "repository", category: "integrations" },
-  runtime: { anchor: "runtime", category: "agent-execution" },
-  secrets: { anchor: "runtime", category: "agent-execution" },
-  usage: { anchor: "usage", category: "advanced" },
-  vercel: { anchor: "vercel", category: "integrations" },
-  verify: { anchor: "verify", category: "advanced" },
-  workspace: { anchor: "workspace", category: "general" },
-};
-
-export function resolveSettingsHashRoute(hash: string): SettingsHashRoute | null {
-  const anchorId = hash.replace(/^#/u, "");
-  return HASH_ROUTES[anchorId] ?? null;
-}
+export { resolveSettingsHashRoute } from "@/features/settings/settings-hash-routes";
 
 export function preloadSettingsCategory(category: SettingsCategory) {
   switch (category) {
@@ -77,6 +52,7 @@ function categoryHref(workspaceSlug: string, category: SettingsCategory, hash?: 
 export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsCategoryNavProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const confirmLeaveIfDirty = useConfirmSettingsLeave();
 
   useEffect(() => {
     function routeHash() {
@@ -88,13 +64,22 @@ export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsC
       const needsAnchorRewrite = route.anchor !== hash;
       if (!needsCategoryChange && !needsAnchorRewrite) return;
 
+      if (needsCategoryChange && !confirmLeaveIfDirty()) {
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}`,
+        );
+        return;
+      }
+
       router.replace(categoryHref(workspaceSlug, route.category, route.anchor));
     }
 
     routeHash();
     window.addEventListener("hashchange", routeHash);
     return () => window.removeEventListener("hashchange", routeHash);
-  }, [activeCategory, pathname, router, workspaceSlug]);
+  }, [activeCategory, confirmLeaveIfDirty, pathname, router, workspaceSlug]);
 
   return (
     <div className="space-y-3">
@@ -102,6 +87,8 @@ export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsC
         <SelectField
           label="Settings category"
           onValueChange={(value) => {
+            if (value === activeCategory) return;
+            if (!confirmLeaveIfDirty()) return;
             preloadSettingsCategory(value as SettingsCategory);
             router.push(categoryHref(workspaceSlug, value as SettingsCategory));
           }}

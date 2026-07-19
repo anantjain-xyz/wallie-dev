@@ -26,7 +26,7 @@ import type { WallieSessionData, WallieRun } from "@/features/wallie/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
-import { workspaceSettingsPath } from "@/lib/routes";
+import { workspaceSettingsCategoryPath, workspaceSettingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 type FlashMessage = {
@@ -563,7 +563,10 @@ export function SessionWalliePanel({
           </p>
           {initialData.missingSecretKeys.length > 0 ? (
             <div className="mt-3">
-              <Link className={interactiveLinkClass} href={workspaceSettingsPath(workspaceSlug)}>
+              <Link
+                className={interactiveLinkClass}
+                href={`${workspaceSettingsCategoryPath(workspaceSlug, "agent-execution")}#runtime`}
+              >
                 Open Workspace Settings
               </Link>
             </div>

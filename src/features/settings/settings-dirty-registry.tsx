@@ -11,12 +11,18 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  resolveSettingsHashRoute,
+  settingsCategoryFromPathname,
+} from "@/features/settings/settings-hash-routes";
+
 type DirtyRegistration = {
   canEdit: boolean;
   isDirty: boolean;
 };
 
 type SettingsDirtyRegistryValue = {
+  confirmLeaveIfDirty: () => boolean;
   hasUnsavedChanges: boolean;
   registerDirtySource: (id: string, registration: DirtyRegistration) => void;
   unregisterDirtySource: (id: string) => void;
@@ -25,6 +31,22 @@ type SettingsDirtyRegistryValue = {
 const SettingsDirtyRegistryContext = createContext<SettingsDirtyRegistryValue | null>(null);
 
 const UNSAVED_MESSAGE = "You have unsaved settings changes. Leave this page anyway?";
+
+/** Set when a click handler already confirmed leave; consumed by the next programmatic nav. */
+let suppressNextLeaveConfirm = false;
+
+export function markSettingsLeaveConfirmed() {
+  suppressNextLeaveConfirm = true;
+}
+
+export function confirmSettingsLeave(hasUnsavedChanges: boolean): boolean {
+  if (!hasUnsavedChanges) return true;
+  if (suppressNextLeaveConfirm) {
+    suppressNextLeaveConfirm = false;
+    return true;
+  }
+  return window.confirm(UNSAVED_MESSAGE);
+}
 
 export function SettingsDirtyRegistryProvider({ children }: { children: ReactNode }) {
   const [sources, setSources] = useState<Record<string, DirtyRegistration>>({});
@@ -63,6 +85,11 @@ export function SettingsDirtyRegistryProvider({ children }: { children: ReactNod
     hasUnsavedChangesRef.current = hasUnsavedChanges;
   }, [hasUnsavedChanges]);
 
+  const confirmLeaveIfDirty = useCallback(
+    () => confirmSettingsLeave(hasUnsavedChangesRef.current),
+    [],
+  );
+
   useEffect(() => {
     function onBeforeUnload(event: BeforeUnloadEvent) {
       if (!hasUnsavedChangesRef.current) return;
@@ -83,7 +110,24 @@ export function SettingsDirtyRegistryProvider({ children }: { children: ReactNod
       if (anchor.target === "_blank" || anchor.hasAttribute("download")) return;
 
       const href = anchor.getAttribute("href");
-      if (!href || href.startsWith("#")) return;
+      if (!href) return;
+
+      if (href.startsWith("#")) {
+        const route = resolveSettingsHashRoute(href);
+        const currentCategory = settingsCategoryFromPathname(window.location.pathname);
+        if (!route || !currentCategory || route.category === currentCategory) {
+          return;
+        }
+
+        if (!window.confirm(UNSAVED_MESSAGE)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+
+        markSettingsLeaveConfirmed();
+        return;
+      }
 
       const nextUrl = new URL(anchor.href, window.location.href);
       if (nextUrl.origin !== window.location.origin) return;
@@ -110,11 +154,12 @@ export function SettingsDirtyRegistryProvider({ children }: { children: ReactNod
 
   const value = useMemo(
     () => ({
+      confirmLeaveIfDirty,
       hasUnsavedChanges,
       registerDirtySource,
       unregisterDirtySource,
     }),
-    [hasUnsavedChanges, registerDirtySource, unregisterDirtySource],
+    [confirmLeaveIfDirty, hasUnsavedChanges, registerDirtySource, unregisterDirtySource],
   );
 
   return (
@@ -136,4 +181,9 @@ export function useRegisterSettingsDirtySource(id: string, isDirty: boolean, can
 
 export function useSettingsHasUnsavedChanges() {
   return useContext(SettingsDirtyRegistryContext)?.hasUnsavedChanges ?? false;
+}
+
+export function useConfirmSettingsLeave() {
+  const registry = useContext(SettingsDirtyRegistryContext);
+  return registry?.confirmLeaveIfDirty ?? (() => true);
 }

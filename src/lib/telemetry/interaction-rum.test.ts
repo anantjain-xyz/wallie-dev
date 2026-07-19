@@ -107,6 +107,12 @@ describe("interaction RUM", () => {
     expect(interactionRouteTemplateForPath("/w/acme-corp/settings")).toBe(
       "/w/[workspaceSlug]/settings",
     );
+    expect(interactionRouteTemplateForPath("/w/acme-corp/settings/general")).toBe(
+      "/w/[workspaceSlug]/settings",
+    );
+    expect(interactionRouteTemplateForPath("/w/settings-team/sessions")).toBe(
+      "/w/[workspaceSlug]/sessions",
+    );
     expect(interactionRouteTemplateForPath("/w/acme-corp/sessions/42")).toBe(
       "/w/[workspaceSlug]/sessions/[sessionNumber]",
     );

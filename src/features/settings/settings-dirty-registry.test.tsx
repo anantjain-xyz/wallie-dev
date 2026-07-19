@@ -14,6 +14,7 @@ import {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  window.history.replaceState(null, "", "/");
 });
 
 function DirtyProbe({ canEdit, isDirty }: { canEdit: boolean; isDirty: boolean }) {
@@ -70,6 +71,44 @@ describe("SettingsDirtyRegistry", () => {
     const event = new Event("beforeunload", { cancelable: true }) as BeforeUnloadEvent;
     Object.defineProperty(event, "returnValue", { configurable: true, value: "", writable: true });
     window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("prompts for hash links that change settings category while dirty", () => {
+    window.history.replaceState(null, "", "/w/acme/settings/agent-execution");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <SettingsDirtyRegistryProvider>
+        <DirtyProbe canEdit isDirty />
+        <a href="#vercel">Open Vercel</a>
+      </SettingsDirtyRegistryProvider>,
+    );
+
+    const anchor = screen.getByRole("link", { name: "Open Vercel" });
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    anchor.dispatchEvent(event);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("allows same-category hash links without prompting", () => {
+    window.history.replaceState(null, "", "/w/acme/settings/integrations");
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <SettingsDirtyRegistryProvider>
+        <DirtyProbe canEdit isDirty />
+        <a href="#github">Open GitHub</a>
+      </SettingsDirtyRegistryProvider>,
+    );
+
+    const anchor = screen.getByRole("link", { name: "Open GitHub" });
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    anchor.dispatchEvent(event);
+
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 });

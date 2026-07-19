@@ -11,6 +11,10 @@ import {
 } from "@/features/settings/settings-category-nav";
 import { SETTINGS_CATEGORY_LINKS } from "@/features/settings/settings-categories";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+import {
+  SettingsDirtyRegistryProvider,
+  useRegisterSettingsDirtySource,
+} from "@/features/settings/settings-dirty-registry";
 
 const push = vi.fn();
 const replace = vi.fn();
@@ -20,6 +24,32 @@ vi.mock("next/navigation", () => ({
   usePathname: () => pathname,
   useRouter: () => ({ push, replace }),
 }));
+
+function DirtySource() {
+  useRegisterSettingsDirtySource("nav-probe", true, true);
+  return null;
+}
+
+function renderNav(activeCategory: "advanced" | "general" | "integrations" = "advanced") {
+  return render(
+    <OverlayProvider>
+      <SettingsDirtyRegistryProvider>
+        <SettingsCategoryNav activeCategory={activeCategory} workspaceSlug="acme" />
+      </SettingsDirtyRegistryProvider>
+    </OverlayProvider>,
+  );
+}
+
+function renderDirtyNav(activeCategory: "advanced" | "general" | "integrations" = "general") {
+  return render(
+    <OverlayProvider>
+      <SettingsDirtyRegistryProvider>
+        <DirtySource />
+        <SettingsCategoryNav activeCategory={activeCategory} workspaceSlug="acme" />
+      </SettingsDirtyRegistryProvider>
+    </OverlayProvider>,
+  );
+}
 
 vi.mock("next/link", () => ({
   default: ({
@@ -119,11 +149,7 @@ describe("resolveSettingsHashRoute", () => {
 
 describe("SettingsCategoryNav", () => {
   it("sticks below the safe-area-aware shell header on desktop", () => {
-    const { getByRole } = render(
-      <OverlayProvider>
-        <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />
-      </OverlayProvider>,
-    );
+    const { getByRole } = renderNav("advanced");
 
     expect(getByRole("navigation", { name: "Settings categories" })).toHaveClass(
       "top-[var(--shell-scroll-padding)]",
@@ -131,11 +157,7 @@ describe("SettingsCategoryNav", () => {
   });
 
   it("links every category to a path-backed route", () => {
-    render(
-      <OverlayProvider>
-        <SettingsCategoryNav activeCategory="general" workspaceSlug="acme" />
-      </OverlayProvider>,
-    );
+    renderNav("general");
 
     for (const category of SETTINGS_CATEGORY_LINKS) {
       expect(screen.getByRole("link", { name: new RegExp(category.label, "i") })).toHaveAttribute(
@@ -147,11 +169,7 @@ describe("SettingsCategoryNav", () => {
 
   it("exposes a labelled mobile category select", async () => {
     const user = userEvent.setup();
-    render(
-      <OverlayProvider>
-        <SettingsCategoryNav activeCategory="general" workspaceSlug="acme" />
-      </OverlayProvider>,
-    );
+    renderNav("general");
 
     const trigger = screen.getByRole("combobox", { name: "Settings category" });
     expect(trigger).toBeInTheDocument();
@@ -162,12 +180,22 @@ describe("SettingsCategoryNav", () => {
     expect(push).toHaveBeenCalledWith("/w/acme/settings/pipeline");
   });
 
+  it("prompts before mobile category changes when drafts are dirty", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    pathname = "/w/acme/settings/general";
+    renderDirtyNav("general");
+
+    const trigger = screen.getByRole("combobox", { name: "Settings category" });
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "Pipeline" }));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("routes hash-only Open actions to the matching category path", async () => {
-    render(
-      <OverlayProvider>
-        <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />
-      </OverlayProvider>,
-    );
+    renderNav("advanced");
 
     window.history.replaceState(null, "", "/w/acme/settings/advanced#github");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -179,11 +207,7 @@ describe("SettingsCategoryNav", () => {
 
   it("rewrites legacy hashes to their current anchors on the owning route", async () => {
     pathname = "/w/acme/settings/integrations";
-    render(
-      <OverlayProvider>
-        <SettingsCategoryNav activeCategory="integrations" workspaceSlug="acme" />
-      </OverlayProvider>,
-    );
+    renderNav("integrations");
 
     window.history.replaceState(null, "", "/w/acme/settings/integrations#coding-agent");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -195,14 +219,26 @@ describe("SettingsCategoryNav", () => {
 
   it("does not navigate when the hash already matches the active category and anchor", async () => {
     window.history.replaceState(null, "", "/w/acme/settings/advanced#verify");
-    render(
-      <OverlayProvider>
-        <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />
-      </OverlayProvider>,
-    );
+    renderNav("advanced");
 
     await waitFor(() => {
       expect(replace).not.toHaveBeenCalled();
     });
+  });
+
+  it("blocks cross-category hash routing when drafts are dirty and the user cancels", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    pathname = "/w/acme/settings/general";
+    window.history.replaceState(null, "", "/w/acme/settings/general");
+    renderDirtyNav("general");
+
+    window.history.replaceState(null, "", "/w/acme/settings/general#vercel");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalled();
+    });
+    expect(replace).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
   });
 });
