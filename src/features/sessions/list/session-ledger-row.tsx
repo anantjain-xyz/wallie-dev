@@ -44,7 +44,14 @@ export function SessionLedgerRow({
         </>
       }
       scope={scope}
-      session={session}
+      session={{
+        archivedAt: session.archivedAt,
+        id: session.id,
+        number: session.number,
+        phaseStatus: session.phaseStatus,
+        title: session.title,
+        updatedAt: session.updatedAt,
+      }}
       stageName={session.currentStageName}
     />
   );

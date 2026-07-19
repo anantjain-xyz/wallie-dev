@@ -97,6 +97,10 @@ describe("Sessions ledger server render", () => {
     expect(rowIslandSource).toContain("resolveOptimisticArchive");
     expect(rowIslandSource).toContain("shouldApplyArchiveResult");
     expect(rowIslandSource).toContain("router.refresh()");
+    expect(rowIslandSource).toContain("SessionRowIslandSession");
+    expect(rowShellSource).toContain("archivedAt: session.archivedAt");
+    expect(rowShellSource).toContain("phaseStatus: session.phaseStatus");
+    expect(rowShellSource).not.toMatch(/session=\{session\}/);
     expect(rowShellSource).toContain('variant="relative"');
     expect(rowShellSource).toContain("TimeDisplay");
     expect(pageSource).not.toMatch(/SessionsCommandBar[^>]*initialData=\{initialData\}/);

@@ -32,18 +32,24 @@ import { useSessionsLedgerVisibility } from "@/features/sessions/list/sessions-l
 import type { SessionFilterKey, SessionListItem } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
 
+/** Mutation + display fields only — keep the hydrated payload off full list RPC rows. */
+export type SessionRowIslandSession = Pick<
+  SessionListItem,
+  "archivedAt" | "id" | "number" | "phaseStatus" | "title" | "updatedAt"
+>;
+
 type SessionRowIslandProps = {
   connections: ReactNode;
   detailHref: string;
   metaTrailing: ReactNode;
   scope: SessionFilterKey;
-  session: SessionListItem;
+  session: SessionRowIslandSession;
   stageName: string;
 };
 
 function archiveOverrideFromSession(
-  session: SessionListItem,
-  next: Pick<SessionListItem, "archivedAt" | "phaseStatus">,
+  session: SessionRowIslandSession,
+  next: Pick<SessionRowIslandSession, "archivedAt" | "phaseStatus">,
 ): ArchiveOverride {
   return {
     authoritativeArchivedAt: session.archivedAt,
@@ -109,19 +115,28 @@ export function SessionRowIsland({
       .then((result) => {
         archiveInFlightRef.current = false;
         dismissToast(pendingToastId);
+        const latestSession = latestSessionRef.current;
+        if (!shouldApplyArchiveResult(result, latestSession, archivedAtAtMutationStart)) {
+          setArchiveOverride(null);
+          setRowHidden(false);
+          return;
+        }
+
+        // Archive can return archivedAt: null when a concurrent unarchive won, or
+        // when cancel parked the session active with a newer phaseStatus/updatedAt.
         if (!result.archivedAt) {
+          setArchiveOverride(
+            archiveOverrideFromSession(latestSession, {
+              archivedAt: null,
+              phaseStatus: result.phaseStatus,
+            }),
+          );
           setRowHidden(false);
           pushToast({
             priority: "polite",
             title: `Session #${session.number} remains active.`,
           });
-          return;
-        }
-
-        const latestSession = latestSessionRef.current;
-        if (!shouldApplyArchiveResult(result, latestSession, archivedAtAtMutationStart)) {
-          setArchiveOverride(null);
-          setRowHidden(false);
+          router.refresh();
           return;
         }
 
