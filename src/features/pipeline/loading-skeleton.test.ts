@@ -15,6 +15,7 @@ describe("PipelineLoadingSkeleton", () => {
     );
     expect(html).toContain("minmax(280px,1fr)");
     expect(html).toContain("--pipeline-stage-count");
+    expect(html).toContain("overflow-auto");
     expect((html.match(/<article/g) ?? []).length).toBe(3);
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
     expect(html).not.toMatch(/<(?:a|button|input|select|textarea)\b/);
@@ -24,5 +25,7 @@ describe("PipelineLoadingSkeleton", () => {
     const html = renderToStaticMarkup(createElement(PipelineLoadingSkeleton, { stageCount: 7 }));
     expect(html).toContain("--pipeline-stage-count:7");
     expect((html.match(/<article/g) ?? []).length).toBe(7);
+    expect(html).toContain("hidden md:flex");
+    expect((html.match(/hidden md:flex/g) ?? []).length).toBe(6);
   });
 });

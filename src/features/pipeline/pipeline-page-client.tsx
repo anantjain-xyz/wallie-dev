@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
 } from "react";
 
 import { SearchIcon } from "@/components/shared/icons/search-icon";
@@ -404,6 +405,34 @@ function PipelinePageContent({
   const hasAnySession = board.lanes.some((lane) => lane.totalCount > 0);
   const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
   const stageCount = Math.max(board.lanes.length, 1);
+  const laneKeys = board.lanes.map((lane) => pipelineLaneKey(lane));
+
+  function handleStageTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    if (!(event.target instanceof Element)) return;
+
+    const tab = event.target.closest<HTMLElement>('[role="tab"]');
+    if (!tab || !event.currentTarget.contains(tab)) return;
+
+    event.preventDefault();
+    const currentKey = tab.dataset.pipelineStageTab ?? activeLaneKey;
+    const currentIndex = laneKeys.indexOf(currentKey);
+    if (currentIndex < 0) return;
+
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") nextIndex = Math.min(currentIndex + 1, laneKeys.length - 1);
+    if (event.key === "ArrowLeft") nextIndex = Math.max(currentIndex - 1, 0);
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = laneKeys.length - 1;
+
+    const nextKey = laneKeys[nextIndex];
+    if (!nextKey || nextKey === currentKey) return;
+
+    setActiveLaneKey(nextKey);
+    document
+      .querySelector<HTMLElement>(`[data-pipeline-stage-tab="${nextKey}"]`)
+      ?.focus({ preventScroll: true });
+  }
 
   return (
     <div className="min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas">
@@ -472,6 +501,7 @@ function PipelinePageContent({
             <div
               aria-labelledby="pipeline-stage-label"
               className="mt-2 flex gap-2 overflow-x-auto overscroll-x-contain pb-1"
+              onKeyDown={handleStageTabKeyDown}
               role="tablist"
             >
               {board.lanes.map((lane) => {
@@ -487,6 +517,7 @@ function PipelinePageContent({
                     key={key}
                     onClick={() => setActiveLaneKey(key)}
                     role="tab"
+                    tabIndex={selected ? 0 : -1}
                     type="button"
                   >
                     <span className="truncate">
@@ -501,7 +532,7 @@ function PipelinePageContent({
             </div>
           </div>
 
-          <div className="overflow-x-auto overscroll-x-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12">
+          <div className="max-h-[calc(100svh-12.5rem)] overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:max-h-[calc(100svh-11rem)] md:px-6 md:pb-12">
             <div
               className="pipeline-board grid w-full grid-cols-1 md:[grid-template-columns:repeat(var(--pipeline-stage-count),minmax(280px,1fr))]"
               data-pipeline-board=""
@@ -584,7 +615,7 @@ const PipelineLane = memo(
         id={`pipeline-lane-panel-${key}`}
         role="tabpanel"
       >
-        <header className="sticky top-14 z-10 -mx-1 mb-3 border-b border-border/60 bg-canvas/95 px-1 pb-3 backdrop-blur-sm lg:top-12">
+        <header className="sticky top-0 z-10 -mx-1 mb-3 border-b border-border/60 bg-canvas/95 px-1 pb-3 backdrop-blur-sm">
           <div className="flex items-baseline justify-between gap-3">
             <h2 className="truncate text-[15px] font-semibold text-foreground" id={headingId}>
               {lane.name}
@@ -615,9 +646,13 @@ const PipelineLane = memo(
                 </>
               ) : filtersActive ? (
                 <>
-                  <span className="block font-medium text-foreground">No matching sessions</span>
+                  <span className="block font-medium text-foreground">
+                    No matching sessions in loaded results
+                  </span>
                   <span className="mt-1 block">
-                    Adjust search or status filters to see sessions in {lane.name}.
+                    {lane.cursor
+                      ? `Filters apply to loaded sessions in ${lane.name}. Load more to search further, or adjust filters.`
+                      : `Adjust search or status filters to see sessions in ${lane.name}.`}
                   </span>
                 </>
               ) : (
@@ -791,7 +826,7 @@ export const PipelineCard = memo(function PipelineCard({
         aria-label={`Open session ${title}`}
         className="absolute inset-0 z-10 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
       />
-      <div className="relative z-0 space-y-2">
+      <div className="pointer-events-none relative z-20 space-y-2">
         <h3 className="min-w-0 text-[13px] font-semibold leading-5 text-foreground">
           <span className="line-clamp-3 break-words">{title}</span>
         </h3>
@@ -805,10 +840,10 @@ export const PipelineCard = memo(function PipelineCard({
         </p>
 
         {awaitingReview ? (
-          <div className="pt-1">
+          <div className="pointer-events-auto pt-1">
             <SessionDetailLink
               aria-label={`Review session ${title}`}
-              className="ui-button-primary relative z-20 inline-flex"
+              className="ui-button-primary inline-flex"
               href={sessionHref}
             >
               Review

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 
 import { SkeletonBlock } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 const LANE_MIN_WIDTH_PX = 280;
 const cardTitleWidths = ["w-10/12", "w-8/12", "w-11/12"];
@@ -18,10 +19,15 @@ function PipelineCardSkeleton({ index }: { index: number }) {
   );
 }
 
-function PipelineLaneSkeleton({ index }: { index: number }) {
+function PipelineLaneSkeleton({ index, mobileVisible }: { index: number; mobileVisible: boolean }) {
   return (
-    <section className="border-t border-border/70 pt-4 first:border-t-0 md:flex md:min-h-[calc(100vh-230px)] md:flex-col md:border-l md:border-t-0 md:px-3 md:pt-0 md:first:border-l-0 md:first:pl-0 md:last:pr-0">
-      <header className="sticky top-14 z-10 mb-3 border-b border-border/60 bg-canvas/95 pb-3 lg:top-12">
+    <section
+      className={cn(
+        "border-t border-border/70 pt-4 md:flex md:min-h-[calc(100vh-230px)] md:flex-col md:border-l md:border-t-0 md:px-3 md:pt-0 md:first:border-l-0 md:first:pl-0 md:last:pr-0",
+        mobileVisible ? "flex" : "hidden md:flex",
+      )}
+    >
+      <header className="sticky top-0 z-10 mb-3 border-b border-border/60 bg-canvas/95 pb-3">
         <div className="flex items-baseline justify-between gap-3">
           <SkeletonBlock className="h-4 w-24" />
           <SkeletonBlock className="h-3 w-5" />
@@ -70,7 +76,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
 
         <div
           aria-hidden="true"
-          className="overflow-x-auto overscroll-x-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
+          className="max-h-[calc(100svh-12.5rem)] overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:max-h-[calc(100svh-11rem)] md:px-6 md:pb-12"
         >
           <div
             className="pipeline-board grid w-full grid-cols-1 md:[grid-template-columns:repeat(var(--pipeline-stage-count),minmax(280px,1fr))]"
@@ -82,7 +88,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
             }
           >
             {Array.from({ length: lanes }, (_, index) => (
-              <PipelineLaneSkeleton key={index} index={index} />
+              <PipelineLaneSkeleton key={index} index={index} mobileVisible={index === 0} />
             ))}
           </div>
         </div>

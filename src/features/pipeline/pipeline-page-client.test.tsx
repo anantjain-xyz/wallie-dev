@@ -212,6 +212,9 @@ describe("PipelinePageClient", () => {
     expect(view.container.querySelector("[data-pipeline-board]")?.className).toContain(
       "minmax(280px,1fr)",
     );
+    expect(
+      view.container.querySelector("[data-pipeline-board]")?.parentElement?.className,
+    ).toContain("overflow-auto");
 
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
     expect(screen.getAllByText("Session 3")).toHaveLength(1);
@@ -221,8 +224,15 @@ describe("PipelinePageClient", () => {
     );
 
     const tablist = screen.getByRole("tablist", { name: "Pipeline stage" });
-    expect(within(tablist).getByRole("tab", { name: /Plan/ })).toBeTruthy();
-    await userEvent.click(within(tablist).getByRole("tab", { name: /Build/ }));
+    const planTab = within(tablist).getByRole("tab", { name: /Plan/ });
+    const buildTab = within(tablist).getByRole("tab", { name: /Build/ });
+    expect(planTab.getAttribute("tabindex")).toBe("0");
+    expect(buildTab.getAttribute("tabindex")).toBe("-1");
+
+    planTab.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(buildTab.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(buildTab);
 
     expect(
       screen
@@ -234,6 +244,45 @@ describe("PipelinePageClient", () => {
       screen.getByRole("heading", { name: "Build" }).closest("section")?.classList.contains("flex"),
     ).toBe(true);
     expect(screen.getAllByRole("article")).toHaveLength(2);
+  });
+
+  it("keeps Review CTA above the card-wide overlay hit target", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Needs review" }),
+        ])}
+      />,
+    );
+
+    const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
+    const overlay = screen.getByRole("link", { name: "Open session Needs review" });
+    const content = reviewLink.closest(".pointer-events-none");
+    expect(content?.className).toContain("z-20");
+    expect(overlay.className).toContain("z-10");
+    expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");
+  });
+
+  it("describes filter misses against loaded pages when more results exist", async () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, { phaseStatus: "agent_generating", title: "Still generating" }),
+        ])}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Awaiting review" }));
+    const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
+    expect(within(planLane).getByText("No matching sessions in loaded results")).toBeTruthy();
+    expect(
+      within(planLane).getByText(
+        "Filters apply to loaded sessions in Plan. Load more to search further, or adjust filters.",
+      ),
+    ).toBeTruthy();
+    expect(within(planLane).getByRole("button", { name: "Load more Plan sessions" })).toBeTruthy();
   });
 
   it("filters cards by search and status without duplicating card DOM", async () => {
