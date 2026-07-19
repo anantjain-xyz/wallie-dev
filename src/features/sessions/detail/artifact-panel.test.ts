@@ -262,10 +262,15 @@ describe("ArtifactPanel", () => {
       )
       .mockImplementationOnce(() =>
         response({
-          artifact: {
-            ...latestArtifact,
-            sanitizedHtml: "<h1>Latest</h1>",
-          },
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
         }),
       );
     const view = renderPanel();
@@ -294,7 +299,106 @@ describe("ArtifactPanel", () => {
     expect(await screen.findByText(/"newest": true/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
     expect(await screen.findByRole("option", { name: /Version 3/i })).toBeTruthy();
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    // Invalidate synthesized "Agent" metadata and refetch authoritative author labels.
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+  });
+
+  it("clears artifactVersion from the URL when the selected stage changes", async () => {
+    mockedNavigation.searchParams = new URLSearchParams("artifactVersion=1");
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifact: {
+          createdAt: "2026-06-07T10:00:00.000Z",
+          payload: "# Earlier",
+          sanitizedHtml: "<h1>Earlier</h1>",
+          stageSlug: "build",
+          version: 1,
+        },
+      }),
+    );
+    const view = renderPanel();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "This stage has not started yet.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: null,
+        loadLatest: false,
+        sessionId: SESSION_ID,
+        stageSlug: "land",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockedNavigation.replace).toHaveBeenCalledWith("/w/demo/sessions/1", {
+        scroll: false,
+      }),
+    );
+    expect(screen.getByRole("heading", { level: 3, name: /^land artifact$/i })).toBeTruthy();
+  });
+
+  it("keeps latest body loading independent from a selected-version fetch", async () => {
+    let resolveLatest: ((value: Response) => void) | undefined;
+    const latestPromise = new Promise<Response>((resolve) => {
+      resolveLatest = resolve;
+    });
+
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("latest=true")) return latestPromise;
+      if (/[?&]version=1(?:&|$)/.test(url)) {
+        return response({
+          artifact: {
+            createdAt: "2026-06-07T10:00:00.000Z",
+            payload: "# Earlier",
+            sanitizedHtml: '<div class="artifact-content"><h1>Earlier</h1></div>',
+            stageSlug: "plan",
+            version: 1,
+          },
+        });
+      }
+      return response({
+        artifacts: [metadataRow({ version: 2 }), metadataRow({ version: 1 })],
+      });
+    });
+
+    renderPanel({
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+      latestArtifact: null,
+      stageSlug: "plan",
+    });
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("latest=true")),
+      ).toBe(true),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Version 1/i }));
+    expect(await screen.findByText("Earlier")).toBeTruthy();
+
+    resolveLatest?.(
+      new Response(
+        JSON.stringify({
+          artifact: {
+            createdAt: "2026-06-07T11:00:00.000Z",
+            payload: "# Plan latest",
+            sanitizedHtml: '<div class="artifact-content"><h1>Plan latest</h1></div>',
+            stageSlug: "plan",
+            version: 2,
+          },
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByRole("option", { name: /Version 2.*Latest/i })).toBeTruthy();
   });
 
   it("keeps a loaded prior-stage artifact cached when initial props omit it", async () => {

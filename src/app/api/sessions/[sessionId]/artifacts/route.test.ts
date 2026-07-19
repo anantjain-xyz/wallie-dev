@@ -27,7 +27,9 @@ function request(query: string) {
 
 function buildSupabaseMock({
   artifactRows = [],
+  feedbackError = null,
   feedbackRows = [],
+  runError = null,
   runRows = [],
   sessionRow = { id: SESSION_ID },
 }: {
@@ -38,7 +40,9 @@ function buildSupabaseMock({
     stage_slug: string;
     version: number;
   }>;
+  feedbackError?: { message: string } | null;
   feedbackRows?: Array<{ target_version: number }>;
+  runError?: { message: string } | null;
   runRows?: Array<{
     created_at: string;
     model_name: string;
@@ -70,19 +74,25 @@ function buildSupabaseMock({
                 eq() {
                   return builder;
                 },
-                then<TResult1 = { data: typeof feedbackRows; error: null }, TResult2 = never>(
+                then<
+                  TResult1 = {
+                    data: typeof feedbackRows | null;
+                    error: { message: string } | null;
+                  },
+                  TResult2 = never,
+                >(
                   onfulfilled?:
                     | ((value: {
-                        data: typeof feedbackRows;
-                        error: null;
+                        data: typeof feedbackRows | null;
+                        error: { message: string } | null;
                       }) => TResult1 | PromiseLike<TResult1>)
                     | null,
                   onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
                 ) {
-                  return Promise.resolve({ data: feedbackRows, error: null }).then(
-                    onfulfilled,
-                    onrejected,
-                  );
+                  return Promise.resolve({
+                    data: feedbackError ? null : feedbackRows,
+                    error: feedbackError,
+                  }).then(onfulfilled, onrejected);
                 },
               };
               return builder;
@@ -100,19 +110,25 @@ function buildSupabaseMock({
                 order() {
                   return builder;
                 },
-                then<TResult1 = { data: typeof runRows; error: null }, TResult2 = never>(
+                then<
+                  TResult1 = {
+                    data: typeof runRows | null;
+                    error: { message: string } | null;
+                  },
+                  TResult2 = never,
+                >(
                   onfulfilled?:
                     | ((value: {
-                        data: typeof runRows;
-                        error: null;
+                        data: typeof runRows | null;
+                        error: { message: string } | null;
                       }) => TResult1 | PromiseLike<TResult1>)
                     | null,
                   onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
                 ) {
-                  return Promise.resolve({ data: runRows, error: null }).then(
-                    onfulfilled,
-                    onrejected,
-                  );
+                  return Promise.resolve({
+                    data: runError ? null : runRows,
+                    error: runError,
+                  }).then(onfulfilled, onrejected);
                 },
               };
               return builder;
@@ -229,6 +245,42 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     expect(supabase.selects).toContain("created_at, id, stage_slug, version");
     expect(supabase.selects).toContain("feedback");
     expect(supabase.selects).toContain("runs");
+  });
+
+  it("returns 500 when feedback or agent-run metadata queries fail", async () => {
+    const feedbackFailure = buildSupabaseMock({
+      artifactRows: [
+        {
+          created_at: "2026-06-07T10:00:00.000Z",
+          id: "artifact-1",
+          stage_slug: "build",
+          version: 1,
+        },
+      ],
+      feedbackError: { message: "feedback unavailable" },
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(feedbackFailure.client);
+
+    const feedbackResult = await GET(request("stage=build"), routeContext());
+    expect(feedbackResult.status).toBe(500);
+    await expect(feedbackResult.json()).resolves.toEqual({ error: "feedback unavailable" });
+
+    const runFailure = buildSupabaseMock({
+      artifactRows: [
+        {
+          created_at: "2026-06-07T10:00:00.000Z",
+          id: "artifact-1",
+          stage_slug: "build",
+          version: 1,
+        },
+      ],
+      runError: { message: "runs unavailable" },
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(runFailure.client);
+
+    const runResult = await GET(request("stage=build"), routeContext());
+    expect(runResult.status).toBe(500);
+    await expect(runResult.json()).resolves.toEqual({ error: "runs unavailable" });
   });
 
   it("returns one requested body with sanitized server-rendered Markdown", async () => {

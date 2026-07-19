@@ -95,10 +95,27 @@ export function ArtifactPanel(props: ArtifactPanelProps) {
 }
 
 function ArtifactPanelCache({ sessionId, stageSlug, ...props }: ArtifactPanelProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [metadataCache] = useState(() => new Map<string, SessionArtifactMetadata[]>());
   const [bodyCache] = useState(() => new Map<string, CachedArtifactBody>());
   const [latestVersionCache] = useState(() => new Map<string, number>());
+  const [trackedStageSlug, setTrackedStageSlug] = useState(stageSlug);
+  const stageJustChanged = trackedStageSlug !== stageSlug;
   const currentStageKey = stageCacheKey(sessionId, stageSlug);
+
+  // `artifactVersion` is stage-agnostic; clear it when the timeline selection changes so a
+  // historical selection cannot leak into another stage's panel.
+  useEffect(() => {
+    if (!stageJustChanged) return;
+    queueMicrotask(() => setTrackedStageSlug(stageSlug));
+    if (!searchParams.has(ARTIFACT_VERSION_PARAM)) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(ARTIFACT_VERSION_PARAM);
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams, stageJustChanged, stageSlug]);
 
   return (
     <ArtifactPanelStage
@@ -106,6 +123,7 @@ function ArtifactPanelCache({ sessionId, stageSlug, ...props }: ArtifactPanelPro
       {...props}
       bodyCache={bodyCache}
       currentStageKey={currentStageKey}
+      ignoreUrlVersion={stageJustChanged}
       latestVersionCache={latestVersionCache}
       metadataCache={metadataCache}
       sessionId={sessionId}
@@ -118,6 +136,7 @@ function ArtifactPanelStage({
   bodyCache,
   currentStageKey,
   emptyText,
+  ignoreUrlVersion = false,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
   initialNow = "1970-01-01T00:00:00.000Z",
@@ -131,6 +150,7 @@ function ArtifactPanelStage({
 }: ArtifactPanelProps & {
   bodyCache: Map<string, CachedArtifactBody>;
   currentStageKey: string;
+  ignoreUrlVersion?: boolean;
   latestVersionCache: Map<string, number>;
   metadataCache: Map<string, SessionArtifactMetadata[]>;
 }) {
@@ -143,7 +163,11 @@ function ArtifactPanelStage({
   const [activeTab, setActiveTab] = useState<ArtifactTab>("rendered");
   // URL is authoritative for shared links and back/forward; local state updates
   // immediately on click so the UI does not wait for the router replace echo.
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(urlVersion);
+  // When the stage just changed, ignore a leftover stage-agnostic URL version.
+  const [suppressUrlVersion, setSuppressUrlVersion] = useState(ignoreUrlVersion);
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(() =>
+    ignoreUrlVersion ? null : urlVersion,
+  );
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -165,7 +189,8 @@ function ArtifactPanelStage({
   const [selectedBodyError, setSelectedBodyError] = useState<string | null>(null);
   const [selectedBodyRetry, setSelectedBodyRetry] = useState(0);
   const metadataController = useRef<AbortController | null>(null);
-  const bodyController = useRef<AbortController | null>(null);
+  const latestBodyController = useRef<AbortController | null>(null);
+  const selectedBodyController = useRef<AbortController | null>(null);
   const tabRefs = useRef(new Map<ArtifactTab, HTMLButtonElement>());
   const latestArtifactKey = latestArtifact
     ? artifactBodyCacheKey(sessionId, latestArtifact.stageSlug, latestArtifact.version)
@@ -210,7 +235,9 @@ function ArtifactPanelStage({
       latestVersionCache.set(currentStageKey, latestArtifact.version);
 
       const cachedMetadata = metadataCache.get(currentStageKey);
-      if (cachedMetadata) {
+      if (cachedMetadata && !cachedMetadata.some((row) => row.version === latestArtifact.version)) {
+        // Optimistic row for immediate UI, but invalidate the cache so Versions refetches
+        // authoritative author/attempt/changes-requested metadata from the API.
         const nextMetadata = [
           {
             attempt: latestArtifact.version,
@@ -220,10 +247,13 @@ function ArtifactPanelStage({
             stageSlug: latestArtifact.stageSlug,
             version: latestArtifact.version,
           },
-          ...cachedMetadata.filter((artifact) => artifact.version !== latestArtifact.version),
+          ...cachedMetadata,
         ].sort((left, right) => right.version - left.version);
-        metadataCache.set(currentStageKey, nextMetadata);
-        queueMicrotask(() => setMetadata(nextMetadata));
+        metadataCache.delete(currentStageKey);
+        queueMicrotask(() => {
+          setMetadata(nextMetadata);
+          setMetadataRetry((value) => value + 1);
+        });
       }
     } else if (previousLatestVersion !== undefined && !loadLatest) {
       queueMicrotask(() => {
@@ -247,8 +277,23 @@ function ArtifactPanelStage({
   ]);
 
   useEffect(() => {
+    if (ignoreUrlVersion) {
+      queueMicrotask(() => setSuppressUrlVersion(true));
+    }
+  }, [ignoreUrlVersion]);
+
+  useEffect(() => {
+    // After a stage switch we intentionally ignore a leftover URL version until the
+    // router clears the param (or the user picks a version again).
+    if (suppressUrlVersion) {
+      if (urlVersion !== null) {
+        queueMicrotask(() => setSelectedVersion(null));
+        return;
+      }
+      queueMicrotask(() => setSuppressUrlVersion(false));
+    }
     queueMicrotask(() => setSelectedVersion(urlVersion));
-  }, [urlVersion]);
+  }, [suppressUrlVersion, urlVersion]);
 
   // Load latest body for cache / default view.
   useEffect(() => {
@@ -283,8 +328,8 @@ function ArtifactPanelStage({
     }
 
     const controller = new AbortController();
-    bodyController.current?.abort();
-    bodyController.current = controller;
+    latestBodyController.current?.abort();
+    latestBodyController.current = controller;
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       setLatestBody(body);
@@ -418,8 +463,8 @@ function ArtifactPanelStage({
     }
 
     const controller = new AbortController();
-    bodyController.current?.abort();
-    bodyController.current = controller;
+    selectedBodyController.current?.abort();
+    selectedBodyController.current = controller;
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       setSelectedBodyLoading(true);
@@ -473,6 +518,7 @@ function ArtifactPanelStage({
   }
 
   function selectVersion(version: number) {
+    setSuppressUrlVersion(false);
     setSelectedVersion(version === latestVersion ? null : version);
     setSelectedBody(null);
     setSelectedBodyError(null);

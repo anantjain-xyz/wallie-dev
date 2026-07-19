@@ -123,20 +123,28 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: artifactError.message }, { status: 500 });
   }
 
-  const [{ data: feedbackRows }, { data: runRows }] = await Promise.all([
-    supabase
-      .from("session_artifact_feedback")
-      .select("target_version")
-      .eq("session_id", parsedParams.data.sessionId)
-      .eq("stage_slug", stage),
-    supabase
-      .from("agent_runs")
-      .select("created_at, model_name, model_provider, status")
-      .eq("session_id", parsedParams.data.sessionId)
-      .eq("stage_slug", stage)
-      .eq("status", "success")
-      .order("created_at", { ascending: true }),
-  ]);
+  const [{ data: feedbackRows, error: feedbackError }, { data: runRows, error: runError }] =
+    await Promise.all([
+      supabase
+        .from("session_artifact_feedback")
+        .select("target_version")
+        .eq("session_id", parsedParams.data.sessionId)
+        .eq("stage_slug", stage),
+      supabase
+        .from("agent_runs")
+        .select("created_at, model_name, model_provider, status")
+        .eq("session_id", parsedParams.data.sessionId)
+        .eq("stage_slug", stage)
+        .eq("status", "success")
+        .order("created_at", { ascending: true }),
+    ]);
+
+  if (feedbackError) {
+    return NextResponse.json({ error: feedbackError.message }, { status: 500 });
+  }
+  if (runError) {
+    return NextResponse.json({ error: runError.message }, { status: 500 });
+  }
 
   const rejectedVersions = new Set((feedbackRows ?? []).map((row) => row.target_version));
   const runsByAttempt = new Map(
