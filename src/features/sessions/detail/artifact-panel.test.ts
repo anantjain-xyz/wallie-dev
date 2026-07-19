@@ -619,6 +619,41 @@ describe("ArtifactPanel", () => {
     vi.useRealTimers();
   });
 
+  it("retries author metadata on an awaiting-review cold mount", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Agent",
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+          ],
+        }),
+      );
+
+    fireEvent.click(renderPanel({ isAwaitingReview: true }).getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Agent")).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(350);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
   it("preserves pending author refresh across stage switches", async () => {
     let allowAuthoritativeAuthor = false;
     let buildHistoryCalls = 0;
@@ -1175,6 +1210,76 @@ describe("ArtifactPanel", () => {
 
     expect(await screen.findByText("Planned")).toBeTruthy();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  });
+
+  it("evicts every stage body cache when artifact versions reset", async () => {
+    let versionOneRequests = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("version=1")) {
+        versionOneRequests += 1;
+        const replacement = versionOneRequests > 1;
+        return response({
+          artifact: {
+            createdAt: replacement ? "2026-06-07T12:30:00.000Z" : "2026-06-07T10:00:00.000Z",
+            payload: replacement ? "# Replacement version one" : "# Old version one",
+            sanitizedHtml: replacement
+              ? "<h1>Replacement version one</h1>"
+              : "<h1>Old version one</h1>",
+            stageSlug: "build",
+            version: 1,
+          },
+        });
+      }
+      return response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      });
+    });
+
+    const view = renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
+    expect(await screen.findByText("Old version one")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: null,
+        loadLatest: false,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+    expect(await screen.findByText("No artifact recorded for this stage.")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isAwaitingReview: true,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:30:00.000Z",
+          payload: "# Replacement version one",
+          stageSlug: "build",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    expect(await screen.findByText("Replacement version one")).toBeTruthy();
+    expect(screen.queryByText("Old version one")).toBeNull();
+    expect(versionOneRequests).toBe(2);
   });
 
   it("keeps raw Markdown available when formatted rendering fails", async () => {

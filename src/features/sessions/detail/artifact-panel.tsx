@@ -14,6 +14,11 @@ import type {
 import { cn } from "@/lib/utils";
 
 type ArtifactPanelProps = {
+  /**
+   * The current stage is visible in awaiting_review. Its artifact can arrive just
+   * before the successful agent_run row used for the Versions author label.
+   */
+  isAwaitingReview?: boolean;
   emptyText: string;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
@@ -188,7 +193,7 @@ function ArtifactPanelCache({
 
   return (
     <ArtifactPanelStage
-      key={currentStageKey}
+      key={`${currentStageKey}:${props.loadLatest ? "loaded" : "empty"}`}
       {...props}
       bodyCache={bodyCache}
       currentStageKey={currentStageKey}
@@ -212,6 +217,7 @@ function ArtifactPanelStage({
   initialFormattedArtifact,
   initialFormattedArtifactKey,
   initialNow = "1970-01-01T00:00:00.000Z",
+  isAwaitingReview = false,
   isDrafting,
   latestArtifact,
   loadLatest,
@@ -243,9 +249,9 @@ function ArtifactPanelStage({
   // click. Client-side URL writes use history.replaceState (not router.replace)
   // so selecting a version does not trigger an RSC reload. When the stage just
   // changed, ignore a leftover stage-agnostic URL version.
-  const [suppressUrlVersion, setSuppressUrlVersion] = useState(ignoreUrlVersion);
+  const [suppressUrlVersion, setSuppressUrlVersion] = useState(ignoreUrlVersion || !loadLatest);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(() =>
-    ignoreUrlVersion ? null : urlVersion,
+    ignoreUrlVersion || !loadLatest ? null : urlVersion,
   );
   const pendingAuthoritativeMetadata = useRef(
     pendingAuthorRefreshByStage.get(currentStageKey) === true,
@@ -395,12 +401,14 @@ function ArtifactPanelStage({
         });
       } else if (!cachedMetadata) {
         // Versions never opened. Flag author refresh when a new artifact arrives so
-        // the first history fetch retries until markRunSuccess — but do not treat a
-        // cold mount of an already-complete latest as "new" (that wastes fetches).
+        // the first history fetch retries until markRunSuccess. Awaiting-review is
+        // included because the session update precedes markRunSuccess; completed
+        // prior-stage cold mounts do not opt into the retry path.
         const versionAdvanced =
           previousLatestVersion !== undefined && latestArtifact.version > previousLatestVersion;
-        const firstArtifactDuringDraft = previousLatestVersion === undefined && isDrafting;
-        if (versionAdvanced || firstArtifactDuringDraft) {
+        const firstArtifactMayHavePendingAuthor =
+          previousLatestVersion === undefined && (isDrafting || isAwaitingReview);
+        if (versionAdvanced || firstArtifactMayHavePendingAuthor) {
           setPendingAuthorRefreshState(
             pendingAuthoritativeMetadata,
             pendingAuthorRefreshByStage,
@@ -413,25 +421,67 @@ function ArtifactPanelStage({
           }
         }
       }
-    } else if (previousLatestVersion !== undefined && !loadLatest) {
+    } else if (!loadLatest) {
+      latestBodyController.current?.abort();
+      selectedBodyController.current?.abort();
+      metadataController.current?.abort();
+      if (authorRefreshTimer.current !== null) {
+        clearTimeout(authorRefreshTimer.current);
+        authorRefreshTimer.current = null;
+      }
+      authorRefreshAttempts.current = 0;
+      pendingRejectedVersion.current = null;
+      setPendingAuthorRefreshState(
+        pendingAuthoritativeMetadata,
+        pendingAuthorRefreshByStage,
+        currentStageKey,
+        false,
+      );
+
+      const bodyKeyPrefix = `${currentStageKey}:`;
+      for (const key of bodyCache.keys()) {
+        if (key.startsWith(bodyKeyPrefix)) bodyCache.delete(key);
+      }
+      metadataCache.delete(currentStageKey);
+      latestVersionCache.delete(currentStageKey);
+      seenRejectionCountByStage.delete(currentStageKey);
+
+      const params = currentSearchParams();
+      params.delete(ARTIFACT_VERSION_PARAM);
+      if (persistStageInUrl) {
+        params.set(ARTIFACT_STAGE_PARAM, stageSlug);
+      } else {
+        params.delete(ARTIFACT_STAGE_PARAM);
+      }
+      replaceClientSearchUrl(pathname, params);
+
       queueMicrotask(() => {
         setLatestBody(null);
         setLatestLoading(false);
         setLatestError(null);
+        setMetadata(null);
+        setMetadataLoading(false);
+        setMetadataError(null);
+        setSelectedVersion(null);
+        setSelectedBody(null);
+        setSelectedBodyLoading(false);
+        setSelectedBodyError(null);
+        setSuppressUrlVersion(true);
       });
-      metadataCache.delete(currentStageKey);
-      latestVersionCache.delete(currentStageKey);
-      queueMicrotask(() => setMetadata(null));
     }
   }, [
     bodyCache,
     currentStageKey,
+    isAwaitingReview,
     isDrafting,
     latestArtifact,
     latestVersionCache,
     loadLatest,
     metadataCache,
+    pathname,
     pendingAuthorRefreshByStage,
+    persistStageInUrl,
+    seenRejectionCountByStage,
     sessionId,
     stageSlug,
   ]);
@@ -620,7 +670,7 @@ function ArtifactPanelStage({
   ]);
 
   useEffect(() => {
-    if (activeTab !== "versions") return;
+    if (activeTab !== "versions" || !loadLatest) return;
     const cached = metadataCache.get(currentStageKey);
     // Pending author refresh must not trust an optimistic "Agent" cache left by a
     // prior mount — invalidate and refetch so retries survive stage switches.
@@ -715,6 +765,7 @@ function ArtifactPanelStage({
   }, [
     activeTab,
     currentStageKey,
+    loadLatest,
     metadataCache,
     metadataRetry,
     pendingAuthorRefreshByStage,

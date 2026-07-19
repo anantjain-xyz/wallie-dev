@@ -892,6 +892,7 @@ export function SessionDetailPageClient({
               initialFormattedArtifact={initialFormattedArtifact}
               initialFormattedArtifactKey={initialFormattedArtifactKey}
               initialNow={renderNow}
+              isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
               isDrafting={isDraftingSelectedStage}
               latestArtifact={latestArtifact}
               loadLatest={shouldLoadLatestArtifact}
