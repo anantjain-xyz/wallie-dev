@@ -1661,6 +1661,94 @@ describe("OnboardingPageClient", () => {
     expect(agentSummary.slice(0, agentSummary.indexOf("Open Agent"))).not.toContain(">Configured<");
   });
 
+  it("requires full runtime readiness for the Agent review badge, not only connections", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          agentConfig: {
+            agent_model: "gpt-5.5",
+            agent_provider: "claude-code",
+          },
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            agentConfig: {
+              configured: true,
+              configuredKeys: ["agent_model", "agent_provider"],
+              status: "present",
+              values: {
+                agent_model: "gpt-5.5",
+                agent_provider: "claude-code",
+              },
+            },
+            claudeCodeConnection: {
+              checkedAt: "2026-05-16T18:00:01.000Z",
+              connected: true,
+              status: "connected",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+            codexConnection: {
+              accountEmail: null,
+              checkedAt: "2026-05-16T18:00:01.000Z",
+              connected: true,
+              credentialType: "codex_access_token",
+              expiresAt: "2026-05-16T20:00:00.000Z",
+              reconnectReason: null,
+              reconnectRequired: false,
+              status: "connected",
+              updatedAt: "2026-05-16T18:00:00.000Z",
+            },
+          },
+        }),
+      }),
+    );
+
+    const agentSummary = html.slice(html.indexOf(">Agent</p>"));
+    expect(agentSummary.slice(0, agentSummary.indexOf("Open Agent"))).toContain(">Missing<");
+    expect(agentSummary.slice(0, agentSummary.indexOf("Open Agent"))).not.toContain(">Configured<");
+  });
+
+  it("derives the Pipeline review badge from live pipeline health, not historical completion", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          pipeline: null,
+        }),
+      }),
+    );
+
+    const pipelineSummary = html.slice(html.indexOf(">Pipeline</p>"));
+    expect(pipelineSummary).toContain("No default pipeline");
+    expect(pipelineSummary.slice(0, pipelineSummary.indexOf("Open Pipeline"))).toContain(
+      ">Missing<",
+    );
+    expect(pipelineSummary.slice(0, pipelineSummary.indexOf("Open Pipeline"))).not.toContain(
+      ">Configured<",
+    );
+  });
+
   it("enables the Verify completion CTA when every blocker passes", () => {
     const repo = repository("repo-a", {
       onboarding: {

@@ -5,8 +5,11 @@ import { useEffect, useState } from "react";
 import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { ONBOARDING_STEPS } from "@/features/onboarding/flow";
-import { ONBOARDING_FOCUS_TARGETS, stepIsSatisfied } from "@/features/onboarding/progress";
-import { buildVerifyChecklist } from "@/features/onboarding/runtime-readiness";
+import { ONBOARDING_FOCUS_TARGETS } from "@/features/onboarding/progress";
+import {
+  buildRuntimeReadiness,
+  buildVerifyChecklist,
+} from "@/features/onboarding/runtime-readiness";
 import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 import type {
   SandboxCapabilityCheckLatestResponse,
@@ -127,12 +130,17 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
     typeof data.agentConfig.agent_provider === "string"
       ? (normalizeAgentProviderName(data.agentConfig.agent_provider) ?? "codex")
       : "codex";
-  const selectedProviderConnected =
-    selectedProvider === "codex"
-      ? data.setupHealth.codexConnection.connected
-      : data.setupHealth.claudeCodeConnection.connected;
   const vercelConnected = data.setupHealth.vercelSandboxConnection.connected;
-  const runtimeLiveReady = selectedProviderConnected && vercelConnected;
+  const runtimeReadiness = buildRuntimeReadiness({
+    agentConfig: data.agentConfig,
+    claudeCodeConnection: data.setupHealth.claudeCodeConnection,
+    codexConnection: data.setupHealth.codexConnection,
+    primaryRepositoryId: data.setupHealth.primaryRepositoryProfile.repositoryId,
+    repositorySetup: data.setupHealth.repositorySetup,
+  });
+  // Full readiness: provider/model pairing + credentials + Claude repo setup, plus Vercel.
+  const runtimeLiveReady = runtimeReadiness.canComplete && vercelConnected;
+  const pipelineConfigured = data.setupHealth.defaultPipeline.configured;
   const setupSummary = [
     {
       detail: data.setupHealth.githubInstallation.connected
@@ -163,10 +171,9 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
       id: "summary-pipeline" as const,
       label: "Pipeline",
       step: "pipeline" as const,
-      statusLabel: stepIsSatisfied(data.onboarding, "pipeline") ? "Configured" : "Not finished",
-      tone: stepIsSatisfied(data.onboarding, "pipeline")
-        ? ("success" as const)
-        : ("neutral" as const),
+      // Badge reflects live pipeline health — historical completedSteps alone is not Configured.
+      statusLabel: pipelineConfigured ? "Configured" : "Missing",
+      tone: pipelineConfigured ? ("success" as const) : ("warning" as const),
     },
     {
       detail:
@@ -199,7 +206,7 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
       id: "summary-runtime" as const,
       label: "Agent",
       step: "runtime" as const,
-      // Badge reflects live readiness — historical completedSteps alone is not Configured.
+      // Badge reflects full live readiness — connection alone is not Configured.
       statusLabel: data.onboarding.skippedSteps.includes("runtime")
         ? "Skipped"
         : runtimeLiveReady

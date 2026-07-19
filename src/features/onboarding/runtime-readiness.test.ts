@@ -447,4 +447,32 @@ describe("buildVerifyChecklist", () => {
       statusTone: "warning",
     });
   });
+
+  it("treats capability errors raised before sandbox metadata as failed, not stale", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: "Failed to mint installation token",
+          githubRepositoryId: repositoryId,
+          id: "check-early",
+          sandboxProvider: null,
+          sandboxVercelProjectId: null,
+          sandboxVercelTeamId: null,
+          status: "error",
+        },
+      }),
+      onboarding: onboarding(),
+    });
+    const sandboxItem = checklist.find((item) => item.id === "sandbox");
+
+    expect(sandboxItem).toMatchObject({
+      detail: "Failed to mint installation token",
+      passed: false,
+      statusLabel: "Failed",
+      statusTone: "danger",
+    });
+  });
 });

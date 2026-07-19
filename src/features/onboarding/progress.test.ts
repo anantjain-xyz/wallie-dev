@@ -485,6 +485,47 @@ describe("onboarding progress helpers", () => {
     expect(stale.errorSteps.has("verify")).toBe(false);
   });
 
+  it("flags capability errors raised before sandbox metadata exists", () => {
+    const earlyFailure = deriveOnboardingStepHealthFlags(
+      health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-07-18T00:00:00.000Z",
+          errorText: "Failed to mint installation token",
+          githubRepositoryId: "repo-1",
+          id: "check-early",
+          sandboxProvider: null,
+          sandboxVercelProjectId: null,
+          sandboxVercelTeamId: null,
+          status: "error",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        selectedRepository: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        vercelSandboxConnection: {
+          connected: true,
+          lastValidationError: null,
+          projectId: "prj_new",
+          projectName: "wallie",
+          status: "connected",
+          teamId: "team_new",
+          updatedAt: "2026-07-18T00:00:00.000Z",
+        },
+      }),
+      onboarding({ completedSteps: ["github"], currentStep: "verify" }),
+    );
+    expect(earlyFailure.errorSteps.has("verify")).toBe(true);
+  });
+
   it("builds operation-specific primary actions with disabled reasons", () => {
     const blockedGithub = buildOnboardingPrimaryAction({
       activeStepAlreadyResolved: false,

@@ -207,14 +207,27 @@ function capabilityCheckMatchesVercelConnection(
   );
 }
 
-function capabilityCheckIsPendingSandboxMetadata(
+function capabilityCheckLacksSandboxMetadata(
   check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
 ) {
   return (
-    check.status === "running" &&
     check.sandboxProvider === null &&
     check.sandboxVercelTeamId === null &&
     check.sandboxVercelProjectId === null
+  );
+}
+
+/**
+ * True when a check still applies to the current attempt even though sandbox
+ * provider/team/project were never written — either still running, or a
+ * terminal error raised before `onSandboxCreated` (token mint / create throws).
+ */
+function capabilityCheckAppliesWithoutSandboxMetadata(
+  check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
+) {
+  return (
+    (check.status === "running" || check.status === "error") &&
+    capabilityCheckLacksSandboxMetadata(check)
   );
 }
 
@@ -232,7 +245,7 @@ export function isActionableSandboxCapabilityFailure(health: OnboardingSetupHeal
 
   return (
     capabilityCheckMatchesVercelConnection(latestCheck, health.vercelSandboxConnection) ||
-    capabilityCheckIsPendingSandboxMetadata(latestCheck)
+    capabilityCheckAppliesWithoutSandboxMetadata(latestCheck)
   );
 }
 
@@ -260,7 +273,7 @@ export function buildVerifyChecklist(input: {
     latestCheckMatchesPrimaryRepository &&
     latestCheck !== null &&
     (capabilityCheckMatchesVercelConnection(latestCheck, vercelSandboxConnection) ||
-      capabilityCheckIsPendingSandboxMetadata(latestCheck));
+      capabilityCheckAppliesWithoutSandboxMetadata(latestCheck));
   const latestSelectedRepositoryCheckStatus = latestCheckMatchesPrimaryRepository
     ? latestCheckMatchesVercelConnection
       ? latestCheck?.status
