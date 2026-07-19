@@ -32,7 +32,7 @@ create_session_with_first_job RPC
   -> session created (pinned to workspace's default pipeline)
   (current_stage_id = first stage, phase_status = agent_generating)
   -> first agent job + queued run created in the same transaction
-  -> worker atomically claims the job, then CAS-claims the session stage
+  -> worker atomically claims the job, then confirms the session stage is eligible
   -> runStage() renders prompt, runs agent in sandbox,
      streams run activity, writes the markdown artifact,
      best-effort syncs a stage PR, status=awaiting_review
@@ -89,7 +89,7 @@ Workspace (tenant)
        |-- Phase Completions (one row per approved stage; preserves
        |                      stage_slug snapshot for history)
        |-- Pull Requests (one recorded branch/PR per stage branch)
-       |-- Jobs (work queue entries; at most one active job per session)
+       |-- Jobs (work queue entries; active dedupe keys vary by enqueue path)
        `-- Runs (one agent execution; provider, usage, messages, sandbox)
 ```
 
@@ -100,12 +100,12 @@ Workspace (tenant)
 ```
 create_session_with_first_job RPC
       | atomically creates session + first job + first run
-      | active-job dedup: session:<session_id>:active
+      | first-job dedupe key: session:<session_id>:active
       v
 Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
       |- atomic, concurrency-aware job claim
       `- processPipelineJob()
-           |- CAS claim (atomic phase_status update)
+           |- guarded phase_status eligibility update
            |- Generic runStage():
            |    * load current stage + prior artifacts
            |    * render prompt_template_md against session
@@ -126,13 +126,13 @@ Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
 
 If you read only five files to understand Wallie, read these:
 
-| #   | File                                                                                                             | Role                                                                                                              |
-| --- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)                                                   | Generic stage runner. CAS claim, render prompt, run agent in sandbox, write artifact/PR. Approve/reject handlers. |
-| 2   | [src/lib/pipeline/stages.ts](src/lib/pipeline/stages.ts)                                                         | Pipeline + stage loaders. Maps `pipeline_stages` rows into the runtime stage shape and gathers prior artifacts.   |
-| 3   | [src/app/api/sessions/[sessionId]/phase-action/route.ts](src/app/api/sessions/[sessionId]/phase-action/route.ts) | In-app approve/reject handler. Workspace membership + RLS, calls handleApproval / handleRejection.                |
-| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                                                           | Transactional session creation plus job enqueue/run tracking, readiness checks, and deduplication.                |
-| 5   | [src/worker/index.ts](src/worker/index.ts)                                                                       | Background daemon. Bounded scheduler, heartbeat, stall detector, Linear reconciler, and sandbox reaper.           |
+| #   | File                                                                                                             | Role                                                                                                                |
+| --- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1   | [src/lib/pipeline/processor.ts](src/lib/pipeline/processor.ts)                                                   | Generic stage runner. Guard session state, render prompt, run agent in sandbox, write artifact/PR. Review handlers. |
+| 2   | [src/lib/pipeline/stages.ts](src/lib/pipeline/stages.ts)                                                         | Pipeline + stage loaders. Maps `pipeline_stages` rows into the runtime stage shape and gathers prior artifacts.     |
+| 3   | [src/app/api/sessions/[sessionId]/phase-action/route.ts](src/app/api/sessions/[sessionId]/phase-action/route.ts) | In-app approve/reject handler. Workspace membership + RLS, calls handleApproval / handleRejection.                  |
+| 4   | [src/lib/wallie/service.ts](src/lib/wallie/service.ts)                                                           | Transactional session creation plus job enqueue/run tracking, readiness checks, and deduplication.                  |
+| 5   | [src/worker/index.ts](src/worker/index.ts)                                                                       | Background daemon. Bounded scheduler, heartbeat, stall detector, Linear reconciler, and sandbox reaper.             |
 
 ### Walkthrough by Domain
 
@@ -532,11 +532,11 @@ Tenant-owned data rows are scoped to a `workspace_id`, and Supabase RLS policies
 
 ### Concurrency
 
-Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals also use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. Rejection, cancellation, and the processor's final status update have matching race guards.
+Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `agent_generating` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection CAS-claims the status, version, and rejection count before recording feedback, but its later enqueue and status update are a multi-step workflow rather than one atomic transaction.
 
 ### Deduplication
 
-Linear-linked sessions are deduplicated on `(workspace_id, linear_issue_id)`; sessions without a Linear issue are not subject to that constraint. Active agent jobs use `session:<session_id>:active`, enforced by a partial unique index, so only one queued/started/running job exists for a session at a time.
+Linear-linked sessions are deduplicated on `(workspace_id, linear_issue_id)`; sessions without a Linear issue are not subject to that constraint. Interactive create/run/retry paths use `session:<session_id>:active`, while the Linear reconciler retains `pipeline:<linear_issue_id>:active` and `pipeline:session:<session_id>:active` keys. The partial unique index prevents two active jobs with the same `(workspace_id, dedupe_key)`; it does not enforce a universal one-active-job-per-session invariant across different keys.
 
 ### Security
 
