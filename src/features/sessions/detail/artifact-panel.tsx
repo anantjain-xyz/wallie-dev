@@ -1,9 +1,11 @@
 "use client";
 
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Spinner } from "@/components/shared/spinner";
 import { TimeDisplay } from "@/components/shared/time-display";
+import { useOptionalToast } from "@/components/ui/toast";
 import type {
   SessionArtifactBody,
   SessionArtifactMetadata,
@@ -29,6 +31,7 @@ type CachedArtifactBody = Omit<SessionArtifactBody, "sanitizedHtml"> & {
 };
 
 const ARTIFACT_TABS: ArtifactTab[] = ["rendered", "raw", "versions"];
+const ARTIFACT_VERSION_PARAM = "artifactVersion";
 
 function stageCacheKey(sessionId: string, stageSlug: string) {
   return `${sessionId}:${stageSlug}`;
@@ -57,15 +60,34 @@ function isArtifactBody(value: unknown): value is SessionArtifactBody {
 function isArtifactMetadataList(value: unknown): value is SessionArtifactMetadata[] {
   return (
     Array.isArray(value) &&
-    value.every(
-      (artifact) =>
-        !!artifact &&
-        typeof artifact === "object" &&
-        typeof (artifact as SessionArtifactMetadata).createdAt === "string" &&
-        typeof (artifact as SessionArtifactMetadata).stageSlug === "string" &&
-        typeof (artifact as SessionArtifactMetadata).version === "number",
-    )
+    value.every((artifact) => {
+      if (!artifact || typeof artifact !== "object") return false;
+      const row = artifact as Partial<SessionArtifactMetadata>;
+      return (
+        typeof row.createdAt === "string" &&
+        typeof row.stageSlug === "string" &&
+        typeof row.version === "number" &&
+        typeof row.attempt === "number" &&
+        typeof row.authorLabel === "string" &&
+        typeof row.changesRequested === "boolean"
+      );
+    })
   );
+}
+
+function parseArtifactVersionParam(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatPayload(payload: unknown): string {
+  if (typeof payload === "string") return payload;
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return String(payload);
+  }
 }
 
 export function ArtifactPanel(props: ArtifactPanelProps) {
@@ -112,7 +134,16 @@ function ArtifactPanelStage({
   latestVersionCache: Map<string, number>;
   metadataCache: Map<string, SessionArtifactMetadata[]>;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { pushToast } = useOptionalToast();
+
+  const urlVersion = parseArtifactVersionParam(searchParams.get(ARTIFACT_VERSION_PARAM));
   const [activeTab, setActiveTab] = useState<ArtifactTab>("rendered");
+  // URL is authoritative for shared links and back/forward; local state updates
+  // immediately on click so the UI does not wait for the router replace echo.
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(urlVersion);
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -129,19 +160,35 @@ function ArtifactPanelStage({
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [metadataRetry, setMetadataRetry] = useState(0);
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const [selectedBody, setSelectedBody] = useState<CachedArtifactBody | null>(null);
   const [selectedBodyLoading, setSelectedBodyLoading] = useState(false);
   const [selectedBodyError, setSelectedBodyError] = useState<string | null>(null);
   const [selectedBodyRetry, setSelectedBodyRetry] = useState(0);
-  const [versionDisplayMode, setVersionDisplayMode] = useState<"rendered" | "raw">("rendered");
   const metadataController = useRef<AbortController | null>(null);
   const bodyController = useRef<AbortController | null>(null);
   const tabRefs = useRef(new Map<ArtifactTab, HTMLButtonElement>());
-  const needsLatestBody = activeTab !== "versions";
   const latestArtifactKey = latestArtifact
     ? artifactBodyCacheKey(sessionId, latestArtifact.stageSlug, latestArtifact.version)
     : null;
+  const latestVersion =
+    latestArtifact?.version ??
+    latestBody?.version ??
+    latestVersionCache.get(currentStageKey) ??
+    null;
+  const viewingVersion = selectedVersion ?? latestVersion;
+  const viewingIsLatest =
+    viewingVersion !== null && latestVersion !== null && viewingVersion === latestVersion;
+
+  function writeArtifactVersionToUrl(version: number | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (version === null || (latestVersion !== null && version === latestVersion)) {
+      params.delete(ARTIFACT_VERSION_PARAM);
+    } else {
+      params.set(ARTIFACT_VERSION_PARAM, String(version));
+    }
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
 
   useEffect(() => {
     const previousLatestVersion = latestVersionCache.get(currentStageKey);
@@ -166,6 +213,9 @@ function ArtifactPanelStage({
       if (cachedMetadata) {
         const nextMetadata = [
           {
+            attempt: latestArtifact.version,
+            authorLabel: "Agent",
+            changesRequested: false,
             createdAt: latestArtifact.createdAt,
             stageSlug: latestArtifact.stageSlug,
             version: latestArtifact.version,
@@ -197,8 +247,11 @@ function ArtifactPanelStage({
   ]);
 
   useEffect(() => {
-    if (!needsLatestBody) return;
+    queueMicrotask(() => setSelectedVersion(urlVersion));
+  }, [urlVersion]);
 
+  // Load latest body for cache / default view.
+  useEffect(() => {
     const cachedLatestVersion = latestArtifact?.version ?? latestVersionCache.get(currentStageKey);
     const cachedLatest =
       cachedLatestVersion === undefined
@@ -272,7 +325,6 @@ function ArtifactPanelStage({
       controller.abort();
     };
   }, [
-    needsLatestBody,
     currentStageKey,
     initialFormattedArtifactKey,
     latestArtifact,
@@ -328,7 +380,6 @@ function ArtifactPanelStage({
         }
         metadataCache.set(currentStageKey, result);
         setMetadata(result);
-        setSelectedVersion(result[0]?.version ?? null);
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -345,9 +396,12 @@ function ArtifactPanelStage({
     };
   }, [activeTab, currentStageKey, metadataCache, metadataRetry, sessionId, stageSlug]);
 
+  // Load non-latest selected version body when Rendered/Raw need it.
   useEffect(() => {
-    if (activeTab !== "versions" || selectedVersion === null) return;
-    const key = artifactBodyCacheKey(sessionId, stageSlug, selectedVersion);
+    if (activeTab === "versions" || viewingVersion === null || viewingIsLatest) {
+      return;
+    }
+    const key = artifactBodyCacheKey(sessionId, stageSlug, viewingVersion);
     const cached = bodyCache.get(key);
     const canUseCached =
       cached &&
@@ -355,6 +409,11 @@ function ArtifactPanelStage({
         typeof cached.sanitizedHtml === "string" ||
         key === initialFormattedArtifactKey);
     if (canUseCached) {
+      queueMicrotask(() => {
+        setSelectedBody(cached);
+        setSelectedBodyLoading(false);
+        setSelectedBodyError(null);
+      });
       return;
     }
 
@@ -368,7 +427,7 @@ function ArtifactPanelStage({
     });
 
     void fetch(
-      `/api/sessions/${sessionId}/artifacts?stage=${encodeURIComponent(stageSlug)}&version=${selectedVersion}`,
+      `/api/sessions/${sessionId}/artifacts?stage=${encodeURIComponent(stageSlug)}&version=${viewingVersion}`,
       { signal: controller.signal },
     )
       .then(async (response) => {
@@ -403,23 +462,23 @@ function ArtifactPanelStage({
     bodyCache,
     initialFormattedArtifactKey,
     selectedBodyRetry,
-    selectedVersion,
     sessionId,
     stageSlug,
+    viewingIsLatest,
+    viewingVersion,
   ]);
 
   function selectTab(tab: ArtifactTab) {
     setActiveTab(tab);
-    if (tab === "versions" && selectedVersion === null) {
-      setSelectedVersion(metadata?.[0]?.version ?? null);
-    }
   }
 
   function selectVersion(version: number) {
-    setSelectedVersion(version);
+    setSelectedVersion(version === latestVersion ? null : version);
     setSelectedBody(null);
     setSelectedBodyError(null);
     setSelectedBodyLoading(false);
+    writeArtifactVersionToUrl(version === latestVersion ? null : version);
+    setActiveTab("rendered");
   }
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -438,11 +497,20 @@ function ArtifactPanelStage({
   }
 
   const cachedSelectedBody =
-    selectedVersion === null
+    viewingVersion === null
       ? null
-      : (bodyCache.get(artifactBodyCacheKey(sessionId, stageSlug, selectedVersion)) ?? null);
-  const visibleSelectedBody =
-    selectedBody?.version === selectedVersion ? selectedBody : cachedSelectedBody;
+      : (bodyCache.get(artifactBodyCacheKey(sessionId, stageSlug, viewingVersion)) ?? null);
+  const visibleBody = viewingIsLatest
+    ? latestBody
+    : selectedBody?.version === viewingVersion
+      ? selectedBody
+      : cachedSelectedBody;
+  const bodyLoading = viewingIsLatest ? latestLoading : selectedBodyLoading;
+  const bodyError = viewingIsLatest ? latestError : selectedBodyError;
+  const retryBody = () => {
+    if (viewingIsLatest) setLatestRetry((value) => value + 1);
+    else setSelectedBodyRetry((value) => value + 1);
+  };
 
   const tabLabels: Record<ArtifactTab, string> = {
     raw: "Raw",
@@ -450,8 +518,16 @@ function ArtifactPanelStage({
     versions: "Versions",
   };
 
+  const versionHeading =
+    viewingVersion === null
+      ? `${stageSlug} artifact`
+      : `${stageSlug} artifact · version ${viewingVersion}${viewingIsLatest ? " (latest)" : ""}`;
+
   return (
     <div>
+      <h3 className="sr-only" id="artifact-version-heading">
+        {versionHeading}
+      </h3>
       <div aria-label="Artifact views" className="mb-3 flex gap-1" role="tablist">
         {ARTIFACT_TABS.map((tab) => (
           <TabButton
@@ -483,65 +559,60 @@ function ArtifactPanelStage({
             <EmptyHint text="No artifact versions recorded for this stage." />
           ) : null}
           {metadata && metadata.length > 0 ? (
-            <>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap gap-2" aria-label="Artifact versions">
-                  {metadata.map((artifact) => (
+            <ul aria-labelledby="artifact-version-heading" className="space-y-2" role="listbox">
+              {metadata.map((artifact) => {
+                const isSelected = viewingVersion === artifact.version;
+                const isLatest = artifact.version === latestVersion;
+                return (
+                  <li key={artifact.version} role="none">
                     <button
-                      key={artifact.version}
                       type="button"
-                      aria-pressed={selectedVersion === artifact.version}
+                      aria-selected={isSelected}
                       className={cn(
-                        "rounded-[6px] border px-2.5 py-1 text-xs font-medium",
-                        selectedVersion === artifact.version
-                          ? "border-accent/40 bg-accent-soft text-accent"
-                          : "border-border text-muted hover:text-foreground",
+                        "w-full rounded-[6px] border px-3 py-2.5 text-left transition-colors",
+                        isSelected
+                          ? "border-accent/40 bg-accent-soft"
+                          : "border-border hover:border-border-strong hover:bg-control-muted/40",
                       )}
                       onClick={() => selectVersion(artifact.version)}
+                      role="option"
                     >
-                      v{artifact.version}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-xs font-semibold text-foreground">
+                          Version {artifact.version}
+                          {isLatest ? " · Latest" : ""}
+                        </span>
+                        {artifact.changesRequested ? (
+                          <span className="rounded-[4px] bg-warning-soft px-1.5 py-0.5 type-annotation font-medium uppercase tracking-wide text-warning">
+                            Changes requested
+                          </span>
+                        ) : null}
+                      </div>
+                      <dl className="mt-1.5 grid gap-1 type-annotation text-muted sm:grid-cols-2">
+                        <div className="flex gap-1.5">
+                          <dt className="after:content-[':']">Created</dt>
+                          <dd>
+                            <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
+                          </dd>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <dt className="after:content-[':']">Stage</dt>
+                          <dd className="font-mono tracking-normal">{artifact.stageSlug}</dd>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <dt className="after:content-[':']">Attempt</dt>
+                          <dd>{artifact.attempt}</dd>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <dt className="after:content-[':']">Author</dt>
+                          <dd>{artifact.authorLabel}</dd>
+                        </div>
+                      </dl>
                     </button>
-                  ))}
-                </div>
-                <div aria-label="Version display mode" className="flex gap-1" role="group">
-                  {(["rendered", "raw"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      aria-pressed={versionDisplayMode === mode}
-                      className={cn(
-                        "rounded-[4px] px-2 py-1 text-xs font-medium capitalize",
-                        versionDisplayMode === mode
-                          ? "bg-control-muted text-foreground"
-                          : "text-muted hover:text-foreground",
-                      )}
-                      onClick={() => setVersionDisplayMode(mode)}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {selectedBodyLoading && !visibleSelectedBody ? (
-                <ProgressHint text={`Loading version ${selectedVersion}.`} />
-              ) : null}
-              {selectedBodyError ? (
-                <FailureHint
-                  message={selectedBodyError}
-                  onRetry={() => setSelectedBodyRetry((value) => value + 1)}
-                />
-              ) : null}
-              {visibleSelectedBody ? (
-                <ArtifactBodyView
-                  artifact={visibleSelectedBody}
-                  displayMode={versionDisplayMode}
-                  initialFormattedArtifact={initialFormattedArtifact}
-                  initialFormattedArtifactKey={initialFormattedArtifactKey}
-                  initialNow={initialNow}
-                  sessionId={sessionId}
-                />
-              ) : null}
-            </>
+                  </li>
+                );
+              })}
+            </ul>
           ) : null}
         </div>
       ) : (
@@ -550,28 +621,39 @@ function ArtifactPanelStage({
           id={`artifact-${activeTab}-panel`}
           role="tabpanel"
         >
-          {isDrafting && latestBody ? (
+          {isDrafting && visibleBody ? (
             <ProgressHint text="Wallie is drafting the next artifact version." />
           ) : null}
-          {latestError ? (
-            <FailureHint
-              message={latestError}
-              onRetry={() => setLatestRetry((value) => value + 1)}
-            />
-          ) : null}
-          {latestLoading ? <ProgressHint text="Loading the artifact." /> : null}
-          {latestBody ? (
+          {bodyError ? <FailureHint message={bodyError} onRetry={retryBody} /> : null}
+          {bodyLoading && !visibleBody ? <ProgressHint text="Loading the artifact." /> : null}
+          {visibleBody ? (
             <ArtifactBodyView
-              artifact={latestBody}
+              artifact={visibleBody}
               displayMode={activeTab}
               initialFormattedArtifact={initialFormattedArtifact}
               initialFormattedArtifactKey={initialFormattedArtifactKey}
               initialNow={initialNow}
+              onCopyResult={(result) => {
+                if (result === "success") {
+                  pushToast({
+                    priority: "polite",
+                    title: "Markdown copied.",
+                    tone: "success",
+                  });
+                } else {
+                  pushToast({
+                    priority: "assertive",
+                    title: "Could not copy Markdown.",
+                    tone: "danger",
+                  });
+                }
+              }}
               sessionId={sessionId}
+              showLatestBadge={viewingIsLatest}
             />
-          ) : latestLoading ? null : isDrafting ? (
+          ) : bodyLoading ? null : isDrafting ? (
             <ProgressHint text="Wallie is drafting the artifact for this stage." />
-          ) : !latestError ? (
+          ) : !bodyError ? (
             <EmptyHint text={emptyText} />
           ) : null}
         </div>
@@ -618,33 +700,60 @@ function ArtifactBodyView({
   initialFormattedArtifact,
   initialFormattedArtifactKey,
   initialNow,
+  onCopyResult,
   sessionId,
+  showLatestBadge,
 }: {
   artifact: CachedArtifactBody;
   displayMode: "rendered" | "raw";
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
   initialNow: string;
+  onCopyResult: (result: "success" | "failure") => void;
   sessionId: string;
+  showLatestBadge: boolean;
 }) {
-  const formatted = useMemo(() => {
-    if (typeof artifact.payload === "string") return artifact.payload;
-    try {
-      return JSON.stringify(artifact.payload, null, 2);
-    } catch {
-      return String(artifact.payload);
-    }
-  }, [artifact.payload]);
+  const formatted = useMemo(() => formatPayload(artifact.payload), [artifact.payload]);
   const isMarkdown = typeof artifact.payload === "string";
   const key = artifactBodyCacheKey(sessionId, artifact.stageSlug, artifact.version);
   const serverTree = key === initialFormattedArtifactKey ? initialFormattedArtifact : null;
   const showRaw = !isMarkdown || displayMode === "raw";
+  const [copyPending, setCopyPending] = useState(false);
+
+  async function handleCopyMarkdown() {
+    if (copyPending) return;
+    setCopyPending(true);
+    try {
+      await navigator.clipboard.writeText(formatted);
+      onCopyResult("success");
+    } catch {
+      onCopyResult("failure");
+    } finally {
+      setCopyPending(false);
+    }
+  }
 
   return (
     <div>
-      <p className="mb-2 type-annotation uppercase tracking-wide text-muted">
-        v{artifact.version} · <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
-      </p>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="type-annotation uppercase tracking-wide text-muted">
+          v{artifact.version}
+          {showLatestBadge ? " · Latest" : ""} ·{" "}
+          <TimeDisplay initialNow={initialNow} value={artifact.createdAt} />
+        </p>
+        {showRaw && isMarkdown ? (
+          <button
+            type="button"
+            className="rounded-[4px] border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-control-muted"
+            disabled={copyPending}
+            onClick={() => {
+              void handleCopyMarkdown();
+            }}
+          >
+            {copyPending ? "Copying…" : "Copy Markdown"}
+          </button>
+        ) : null}
+      </div>
       {isMarkdown && !showRaw ? (
         (serverTree ?? (
           <div

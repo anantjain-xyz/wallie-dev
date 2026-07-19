@@ -7,6 +7,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
 
+const mockedNavigation = vi.hoisted(() => ({
+  pathname: "/w/demo/sessions/1",
+  replace: vi.fn(),
+  searchParams: new URLSearchParams(),
+}));
+
+const mockedToast = vi.hoisted(() => ({
+  pushToast: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => mockedNavigation.pathname,
+  useRouter: () => ({ replace: mockedNavigation.replace }),
+  useSearchParams: () => mockedNavigation.searchParams,
+}));
+
+vi.mock("@/components/ui/toast", () => ({
+  useOptionalToast: () => ({
+    dismissToast: vi.fn(),
+    pushToast: mockedToast.pushToast,
+  }),
+}));
+
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const latestArtifact: SessionArtifactSummary = {
   createdAt: "2026-06-07T11:00:00.000Z",
@@ -14,6 +37,27 @@ const latestArtifact: SessionArtifactSummary = {
   stageSlug: "build",
   version: 2,
 };
+
+function metadataRow(
+  overrides: Partial<{
+    attempt: number;
+    authorLabel: string;
+    changesRequested: boolean;
+    createdAt: string;
+    stageSlug: string;
+    version: number;
+  }> = {},
+) {
+  const version = overrides.version ?? 1;
+  return {
+    attempt: overrides.attempt ?? version,
+    authorLabel: overrides.authorLabel ?? "Claude Code",
+    changesRequested: overrides.changesRequested ?? false,
+    createdAt: overrides.createdAt ?? "2026-06-07T10:00:00.000Z",
+    stageSlug: overrides.stageSlug ?? "build",
+    version,
+  };
+}
 
 function response(body: unknown, status = 200) {
   return Promise.resolve(
@@ -43,6 +87,9 @@ function renderPanel(overrides: Partial<Parameters<typeof ArtifactPanel>[0]> = {
 describe("ArtifactPanel", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    mockedNavigation.searchParams = new URLSearchParams();
+    mockedNavigation.replace.mockReset();
+    mockedToast.pushToast.mockReset();
   });
 
   afterEach(() => {
@@ -55,16 +102,45 @@ describe("ArtifactPanel", () => {
 
     expect(screen.getByText("Latest formatted")).toBeTruthy();
     expect(screen.queryByText("# Latest")).toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 3, name: /build artifact · version 2/i }),
+    ).toBeTruthy();
     await waitFor(() => expect(fetch).not.toHaveBeenCalled());
   });
 
-  it("loads metadata once on demand and fetches only uncached selected bodies", async () => {
+  it("loads metadata once on demand and does not mount Markdown trees in Versions", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifacts: [
+          metadataRow({
+            authorLabel: "Claude Code (opus)",
+            createdAt: latestArtifact.createdAt,
+            version: 2,
+          }),
+          metadataRow({ changesRequested: true, version: 1 }),
+        ],
+      }),
+    );
+
+    fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByRole("option", { name: /Version 1/i })).toBeTruthy();
+    expect(screen.getByText("Changes requested")).toBeTruthy();
+    expect(screen.getByText("Claude Code (opus)")).toBeTruthy();
+    expect(screen.queryByText("Latest formatted")).toBeNull();
+    expect(screen.queryByText("# Latest")).toBeNull();
+    expect(document.querySelector(".artifact-content")).toBeNull();
+    expect(document.querySelector("[dangerouslySetInnerHTML]")).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
+  });
+
+  it("selecting a version updates the URL, heading, and Rendered body only", async () => {
     vi.mocked(fetch)
       .mockImplementationOnce(() =>
         response({
           artifacts: [
-            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
-            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
           ],
         }),
       )
@@ -73,7 +149,8 @@ describe("ArtifactPanel", () => {
           artifact: {
             createdAt: "2026-06-07T10:00:00.000Z",
             payload: "# Earlier",
-            sanitizedHtml: '<div class="text-[13px]"><h1>Earlier</h1></div>',
+            sanitizedHtml:
+              '<div class="artifact-content"><h1 class="artifact-heading-1">Earlier</h1></div>',
             stageSlug: "build",
             version: 1,
           },
@@ -81,19 +158,22 @@ describe("ArtifactPanel", () => {
       );
 
     fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
-    await screen.findByRole("button", { name: "v1" });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
+    fireEvent.click(await screen.findByRole("option", { name: /Version 1/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: "v1" }));
+    expect(mockedNavigation.replace).toHaveBeenCalledWith("/w/demo/sessions/1?artifactVersion=1", {
+      scroll: false,
+    });
+    expect(screen.getByRole("tab", { name: "Rendered" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
     expect(await screen.findByText("Earlier")).toBeTruthy();
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain("version=1");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    fireEvent.click(screen.getByRole("button", { name: "v1" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByRole("heading", { level: 3, name: /build artifact · version 1$/i }),
+    ).toBeTruthy();
+    expect(
+      document.querySelectorAll(".artifact-content, .artifact-heading-1").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Latest formatted")).toBeNull();
   });
 
   it("supports keyboard tab selection plus failure, retry, and empty states", async () => {
@@ -175,8 +255,8 @@ describe("ArtifactPanel", () => {
       .mockImplementationOnce(() =>
         response({
           artifacts: [
-            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
-            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
           ],
         }),
       )
@@ -190,7 +270,7 @@ describe("ArtifactPanel", () => {
       );
     const view = renderPanel();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    await screen.findByRole("button", { name: "v1" });
+    await screen.findByRole("option", { name: /Version 1/i });
     fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
 
     view.rerender(
@@ -213,10 +293,8 @@ describe("ArtifactPanel", () => {
 
     expect(await screen.findByText(/"newest": true/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    expect(await screen.findByRole("button", { name: "v3" })).toBeTruthy();
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
-    expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain("version=2");
+    expect(await screen.findByRole("option", { name: /Version 3/i })).toBeTruthy();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   });
 
   it("keeps a loaded prior-stage artifact cached when initial props omit it", async () => {
@@ -281,35 +359,43 @@ describe("ArtifactPanel", () => {
     expect(screen.getByText("# Latest")).toBeTruthy();
   });
 
-  it("lets Versions inspect raw Markdown for a historical version", async () => {
-    vi.mocked(fetch)
-      .mockImplementationOnce(() =>
-        response({
-          artifacts: [
-            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
-            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
-          ],
-        }),
-      )
-      .mockImplementationOnce(() =>
-        response({
-          artifact: {
-            createdAt: "2026-06-07T10:00:00.000Z",
-            payload: "# Earlier raw",
-            sanitizedHtml: '<div class="text-[13px]"><h1>Earlier</h1></div>',
-            stageSlug: "build",
-            version: 1,
-          },
-        }),
-      );
+  it("copies Markdown through the shared toast feedback system", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
 
-    fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "v1" }));
-    expect(await screen.findByText("Earlier")).toBeTruthy();
-    expect(screen.queryByText("# Earlier raw")).toBeNull();
+    renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "raw" }));
-    expect(screen.getByText("# Earlier raw")).toBeTruthy();
-    expect(screen.queryByText("Earlier")).toBeNull();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("# Latest"));
+    expect(mockedToast.pushToast).toHaveBeenCalledWith({
+      priority: "polite",
+      title: "Markdown copied.",
+      tone: "success",
+    });
+  });
+
+  it("reports copy failure through the shared toast feedback system", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockRejectedValue(new Error("denied")),
+      },
+    });
+
+    renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
+
+    await waitFor(() =>
+      expect(mockedToast.pushToast).toHaveBeenCalledWith({
+        priority: "assertive",
+        title: "Could not copy Markdown.",
+        tone: "danger",
+      }),
+    );
   });
 });

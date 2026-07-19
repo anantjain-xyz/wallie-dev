@@ -67,7 +67,12 @@ const markdownComponents: Components = {
   pre: ({ children }) => <pre className="artifact-pre first:mt-0 last:mb-0">{children}</pre>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   table: ({ children }) => (
-    <div className="my-3 overflow-x-auto">
+    <div
+      aria-label="Table"
+      className="artifact-table-scroll my-3 overflow-x-auto"
+      role="region"
+      tabIndex={0}
+    >
       <table className="w-full border-collapse text-left text-[13px]">{children}</table>
     </div>
   ),

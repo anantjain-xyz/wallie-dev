@@ -14,9 +14,12 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/w/acme/sessions/7",
   useRouter: () => ({
     refresh: mocked.refresh,
+    replace: vi.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({

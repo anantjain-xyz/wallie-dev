@@ -18,4 +18,11 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain("artifact-pre");
     expect(html).toContain("artifact-code-block");
   });
+
+  it("wraps tables in a labelled scroll region", async () => {
+    const html = await renderMarkdownToHtml("| A | B |\n| - | - |\n| x | y |");
+    expect(html).toContain('aria-label="Table"');
+    expect(html).toContain('role="region"');
+    expect(html).toContain("artifact-table-scroll");
+  });
 });

@@ -27,6 +27,8 @@ function request(query: string) {
 
 function buildSupabaseMock({
   artifactRows = [],
+  feedbackRows = [],
+  runRows = [],
   sessionRow = { id: SESSION_ID },
 }: {
   artifactRows?: Array<{
@@ -35,6 +37,13 @@ function buildSupabaseMock({
     id: string;
     stage_slug: string;
     version: number;
+  }>;
+  feedbackRows?: Array<{ target_version: number }>;
+  runRows?: Array<{
+    created_at: string;
+    model_name: string;
+    model_provider: string;
+    status: string;
   }>;
   sessionRow?: { id: string } | null;
 } = {}) {
@@ -51,6 +60,63 @@ function buildSupabaseMock({
                 maybeSingle: async () => ({ data: sessionRow, error: null }),
               }),
             }),
+          };
+        }
+        if (table === "session_artifact_feedback") {
+          return {
+            select() {
+              selects.push("feedback");
+              const builder = {
+                eq() {
+                  return builder;
+                },
+                then<TResult1 = { data: typeof feedbackRows; error: null }, TResult2 = never>(
+                  onfulfilled?:
+                    | ((value: {
+                        data: typeof feedbackRows;
+                        error: null;
+                      }) => TResult1 | PromiseLike<TResult1>)
+                    | null,
+                  onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+                ) {
+                  return Promise.resolve({ data: feedbackRows, error: null }).then(
+                    onfulfilled,
+                    onrejected,
+                  );
+                },
+              };
+              return builder;
+            },
+          };
+        }
+        if (table === "agent_runs") {
+          return {
+            select() {
+              selects.push("runs");
+              const builder = {
+                eq() {
+                  return builder;
+                },
+                order() {
+                  return builder;
+                },
+                then<TResult1 = { data: typeof runRows; error: null }, TResult2 = never>(
+                  onfulfilled?:
+                    | ((value: {
+                        data: typeof runRows;
+                        error: null;
+                      }) => TResult1 | PromiseLike<TResult1>)
+                    | null,
+                  onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+                ) {
+                  return Promise.resolve({ data: runRows, error: null }).then(
+                    onfulfilled,
+                    onrejected,
+                  );
+                },
+              };
+              return builder;
+            },
           };
         }
         if (table !== "session_artifacts") throw new Error(`Unexpected table ${table}`);
@@ -101,7 +167,7 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });
   });
 
-  it("returns version metadata without selecting or returning artifact bodies", async () => {
+  it("returns version metadata with attempt, author, and changes-requested markers", async () => {
     const supabase = buildSupabaseMock({
       artifactRows: [
         {
@@ -117,6 +183,21 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
           version: 1,
         },
       ],
+      feedbackRows: [{ target_version: 1 }],
+      runRows: [
+        {
+          created_at: "2026-06-07T09:50:00.000Z",
+          model_name: "opus",
+          model_provider: "claude-code",
+          status: "success",
+        },
+        {
+          created_at: "2026-06-07T10:50:00.000Z",
+          model_name: "gpt-5",
+          model_provider: "codex",
+          status: "success",
+        },
+      ],
     });
     mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
 
@@ -126,12 +207,18 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     await expect(result.json()).resolves.toEqual({
       artifacts: [
         {
+          attempt: 2,
+          authorLabel: "Codex (gpt-5)",
+          changesRequested: false,
           createdAt: "2026-06-07T11:00:00.000Z",
           id: "artifact-2",
           stageSlug: "build",
           version: 2,
         },
         {
+          attempt: 1,
+          authorLabel: "Claude Code (opus)",
+          changesRequested: true,
           createdAt: "2026-06-07T10:00:00.000Z",
           id: "artifact-1",
           stageSlug: "build",
@@ -139,7 +226,9 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
         },
       ],
     });
-    expect(supabase.selects).toEqual(["created_at, id, stage_slug, version"]);
+    expect(supabase.selects).toContain("created_at, id, stage_slug, version");
+    expect(supabase.selects).toContain("feedback");
+    expect(supabase.selects).toContain("runs");
   });
 
   it("returns one requested body with sanitized server-rendered Markdown", async () => {
@@ -167,6 +256,8 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     expect(payload.artifact.sanitizedHtml).toContain("<h1");
     expect(payload.artifact.sanitizedHtml).toContain("<table");
     expect(payload.artifact.sanitizedHtml).toContain('type="checkbox"');
+    expect(payload.artifact.sanitizedHtml).toContain('aria-label="Table"');
+    expect(payload.artifact.sanitizedHtml).toContain("artifact-table-scroll");
     expect(payload.artifact.sanitizedHtml).not.toContain("<script");
     expect(payload.artifact.sanitizedHtml).not.toContain("javascript:");
     expect(supabase.filters).toContainEqual(["version", 1]);

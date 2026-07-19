@@ -57,7 +57,14 @@ export type SessionArtifactSummary = {
   version: number;
 };
 
-export type SessionArtifactMetadata = Omit<SessionArtifactSummary, "payload">;
+export type SessionArtifactMetadata = Omit<SessionArtifactSummary, "payload"> & {
+  /** Attempt number within the stage (same as version for that stage). */
+  attempt: number;
+  /** Display label for the producing agent or author. */
+  authorLabel: string;
+  /** True when this version received rejection feedback. */
+  changesRequested: boolean;
+};
 
 export type SessionArtifactBody = SessionArtifactSummary & {
   /** Sanitized server-rendered markup for Markdown payloads; null for structured payloads. */

@@ -27,6 +27,14 @@ const artifactQuerySchema = z
     message: "Choose either latest or a version, not both.",
   });
 
+function formatAuthorLabel(provider: string | null | undefined, model: string | null | undefined) {
+  if (!provider && !model) return "Agent";
+  if (provider === "claude-code") return model ? `Claude Code (${model})` : "Claude Code";
+  if (provider === "codex") return model ? `Codex (${model})` : "Codex";
+  if (provider && model) return `${provider} (${model})`;
+  return provider ?? model ?? "Agent";
+}
+
 export async function GET(request: Request, context: RouteContext) {
   const params = await context.params;
   const parsedParams = paramsSchema.safeParse(params);
@@ -115,8 +123,34 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: artifactError.message }, { status: 500 });
   }
 
+  const [{ data: feedbackRows }, { data: runRows }] = await Promise.all([
+    supabase
+      .from("session_artifact_feedback")
+      .select("target_version")
+      .eq("session_id", parsedParams.data.sessionId)
+      .eq("stage_slug", stage),
+    supabase
+      .from("agent_runs")
+      .select("created_at, model_name, model_provider, status")
+      .eq("session_id", parsedParams.data.sessionId)
+      .eq("stage_slug", stage)
+      .eq("status", "success")
+      .order("created_at", { ascending: true }),
+  ]);
+
+  const rejectedVersions = new Set((feedbackRows ?? []).map((row) => row.target_version));
+  const runsByAttempt = new Map(
+    (runRows ?? []).map((run, index) => [
+      index + 1,
+      formatAuthorLabel(run.model_provider, run.model_name),
+    ]),
+  );
+
   return NextResponse.json({
     artifacts: (artifactRows ?? []).map((row) => ({
+      attempt: row.version,
+      authorLabel: runsByAttempt.get(row.version) ?? "Agent",
+      changesRequested: rejectedVersions.has(row.version),
       createdAt: row.created_at,
       id: row.id,
       stageSlug: row.stage_slug,
