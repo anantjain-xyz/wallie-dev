@@ -108,6 +108,14 @@ export type EnqueueWallieRunResult = {
   run: AgentRunRow;
 };
 
+export type CreateSessionWithFirstJobResult = {
+  jobId: string;
+  number: number;
+  runId: string;
+  sessionId: string;
+  workspaceSlug: string;
+};
+
 export type ProcessQueuedJobsResult = {
   jobId: string | null;
   processed: boolean;
@@ -198,6 +206,103 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
     missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
     statusCode: 422,
   });
+}
+
+export type SessionFirstRunPrerequisites = {
+  agentConfig: Awaited<ReturnType<typeof loadWorkspaceAgentConfig>>;
+  missingSecretKeys: string[];
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+};
+
+export async function loadSessionFirstRunPrerequisites(input: {
+  admin?: AdminClient;
+  workspaceId: string;
+}): Promise<SessionFirstRunPrerequisites> {
+  const admin = input.admin ?? createSupabaseAdminClient();
+  const [agentConfig, missingSecretKeys, vercelSandboxConnection] = await Promise.all([
+    loadWorkspaceAgentConfig(admin, input.workspaceId),
+    loadMissingSecretKeys(admin, input.workspaceId),
+    loadWallieVercelSandboxConnection(admin, input.workspaceId),
+  ]);
+
+  return { agentConfig, missingSecretKeys, vercelSandboxConnection };
+}
+
+export function assertSessionFirstRunReady(input: {
+  agentConfig: SessionFirstRunPrerequisites["agentConfig"];
+  missingSecretKeys: string[];
+  repository: WallieSessionRepository | null;
+  vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
+}) {
+  const blockingReasons = buildWallieBlockingReasons({
+    hasActiveRun: false,
+    missingSecretKeys: input.missingSecretKeys,
+    mode: inferWallieRunMode(input.repository?.id ?? null),
+    repository: input.repository,
+    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
+    vercelSandboxConnection: input.vercelSandboxConnection,
+  });
+  const blockingError = toBlockingActionError(blockingReasons, input.missingSecretKeys);
+
+  if (blockingError) {
+    throw blockingError;
+  }
+
+  return input.agentConfig;
+}
+
+export async function prepareSessionFirstRun(input: {
+  admin?: AdminClient;
+  repository: WallieSessionRepository | null;
+  workspaceId: string;
+}) {
+  const prerequisites = await loadSessionFirstRunPrerequisites(input);
+  return assertSessionFirstRunReady({
+    ...prerequisites,
+    repository: input.repository,
+  });
+}
+
+export async function createSessionWithFirstJob(input: {
+  admin?: AdminClient;
+  creatorMemberId: string;
+  githubRepositoryId: string | null;
+  linearIssueId: string | null;
+  linearIssueUrl: string | null;
+  modelName: string;
+  modelProvider: string;
+  pipelineId?: string | null;
+  promptMd: string;
+  title: string;
+  workspaceId: string;
+}): Promise<CreateSessionWithFirstJobResult> {
+  const admin = input.admin ?? createSupabaseAdminClient();
+  const { data, error } = await admin
+    .rpc("create_session_with_first_job", {
+      agent_model_name: input.modelName,
+      agent_model_provider: input.modelProvider,
+      creator_member_id: input.creatorMemberId,
+      selected_pipeline_id: input.pipelineId ?? undefined,
+      session_github_repository_id: input.githubRepositoryId ?? undefined,
+      session_linear_issue_id: input.linearIssueId ?? undefined,
+      session_linear_issue_url: input.linearIssueUrl ?? undefined,
+      session_prompt_md: input.promptMd,
+      session_title: input.title,
+      target_workspace_id: input.workspaceId,
+    })
+    .single();
+
+  if (error || !data) {
+    throw error ?? new Error("Wallie could not create that session.");
+  }
+
+  return {
+    jobId: data.job_id,
+    number: data.session_number,
+    runId: data.run_id,
+    sessionId: data.session_id,
+    workspaceSlug: data.workspace_slug,
+  };
 }
 
 function createRunInsert(input: {
