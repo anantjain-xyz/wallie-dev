@@ -221,6 +221,8 @@ function capabilityCheckLacksSandboxMetadata(
  * True when a check still applies to the current attempt even though sandbox
  * provider/team/project were never written — either still running, or a
  * terminal error raised before `onSandboxCreated` (token mint / create throws).
+ * Callers must also require a live Vercel connection; after disconnect the
+ * missing connection is the blocker, not a retained pre-sandbox error.
  */
 function capabilityCheckAppliesWithoutSandboxMetadata(
   check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
@@ -243,9 +245,10 @@ export function isActionableSandboxCapabilityFailure(health: OnboardingSetupHeal
     return false;
   }
 
+  const vercelConnected = health.vercelSandboxConnection.connected;
   return (
     capabilityCheckMatchesVercelConnection(latestCheck, health.vercelSandboxConnection) ||
-    capabilityCheckAppliesWithoutSandboxMetadata(latestCheck)
+    (vercelConnected && capabilityCheckAppliesWithoutSandboxMetadata(latestCheck))
   );
 }
 
@@ -273,7 +276,8 @@ export function buildVerifyChecklist(input: {
     latestCheckMatchesPrimaryRepository &&
     latestCheck !== null &&
     (capabilityCheckMatchesVercelConnection(latestCheck, vercelSandboxConnection) ||
-      capabilityCheckAppliesWithoutSandboxMetadata(latestCheck));
+      (vercelSandboxConnection.connected &&
+        capabilityCheckAppliesWithoutSandboxMetadata(latestCheck)));
   const latestSelectedRepositoryCheckStatus = latestCheckMatchesPrimaryRepository
     ? latestCheckMatchesVercelConnection
       ? latestCheck?.status

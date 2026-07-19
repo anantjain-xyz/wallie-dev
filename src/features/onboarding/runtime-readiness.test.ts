@@ -475,4 +475,40 @@ describe("buildVerifyChecklist", () => {
       statusTone: "danger",
     });
   });
+
+  it("labels sandbox Blocked when Vercel is disconnected, even with a pre-metadata error", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: "Failed to mint installation token",
+          githubRepositoryId: repositoryId,
+          id: "check-early",
+          sandboxProvider: null,
+          sandboxVercelProjectId: null,
+          sandboxVercelTeamId: null,
+          status: "error",
+        },
+        vercelSandboxConnection: {
+          connected: false,
+          lastValidationError: null,
+          projectId: null,
+          projectName: null,
+          status: "missing",
+          teamId: null,
+          updatedAt: null,
+        },
+      }),
+      onboarding: onboarding(),
+    });
+    const sandboxItem = checklist.find((item) => item.id === "sandbox");
+
+    expect(sandboxItem).toMatchObject({
+      passed: false,
+      statusLabel: "Blocked",
+      statusTone: "warning",
+    });
+  });
 });

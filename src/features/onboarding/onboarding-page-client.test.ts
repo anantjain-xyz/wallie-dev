@@ -1749,6 +1749,54 @@ describe("OnboardingPageClient", () => {
     );
   });
 
+  it("requires repository setup readiness for the Repository review badge, not only a saved profile", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, {
+        initialData: onboardingData({
+          onboarding: {
+            completedAt: null,
+            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+            createdAt: "2026-05-16T18:00:00.000Z",
+            currentStep: "verify",
+            dismissedAt: null,
+            id: "onboarding-1",
+            skippedSteps: [],
+            status: "in_progress",
+            updatedAt: "2026-05-16T18:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          setupHealth: {
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+            repositorySetup: {
+              configured: false,
+              repositoryId: "repo-a",
+              status: "pr_open",
+            },
+            selectedRepository: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
+            },
+          },
+        }),
+      }),
+    );
+
+    const repositorySummary = html.slice(html.indexOf(">Repository</p>"));
+    const repositoryBadge = repositorySummary.slice(
+      0,
+      repositorySummary.indexOf('data-step-link="repository"'),
+    );
+    expect(repositoryBadge).toContain(">Partial<");
+    expect(repositoryBadge).not.toContain(">Configured<");
+  });
+
   it("enables the Verify completion CTA when every blocker passes", () => {
     const repo = repository("repo-a", {
       onboarding: {

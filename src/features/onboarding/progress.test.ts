@@ -526,6 +526,47 @@ describe("onboarding progress helpers", () => {
     expect(earlyFailure.errorSteps.has("verify")).toBe(true);
   });
 
+  it("does not retain early-check capability errors after Vercel disconnects", () => {
+    const afterDisconnect = deriveOnboardingStepHealthFlags(
+      health({
+        latestSandboxCapabilityCheck: {
+          capabilities: {},
+          checkedAt: "2026-07-18T00:00:00.000Z",
+          errorText: "Failed to mint installation token",
+          githubRepositoryId: "repo-1",
+          id: "check-early",
+          sandboxProvider: null,
+          sandboxVercelProjectId: null,
+          sandboxVercelTeamId: null,
+          status: "error",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        selectedRepository: {
+          configured: true,
+          fullName: "acme/repo",
+          repositoryId: "repo-1",
+          status: "ready",
+        },
+        vercelSandboxConnection: {
+          connected: false,
+          lastValidationError: null,
+          projectId: null,
+          projectName: null,
+          status: "missing",
+          teamId: null,
+          updatedAt: null,
+        },
+      }),
+      onboarding({ completedSteps: ["github"], currentStep: "verify" }),
+    );
+    expect(afterDisconnect.errorSteps.has("verify")).toBe(false);
+  });
+
   it("builds operation-specific primary actions with disabled reasons", () => {
     const blockedGithub = buildOnboardingPrimaryAction({
       activeStepAlreadyResolved: false,

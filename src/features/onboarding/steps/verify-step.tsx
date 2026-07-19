@@ -141,6 +141,12 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
   // Full readiness: provider/model pairing + credentials + Claude repo setup, plus Vercel.
   const runtimeLiveReady = runtimeReadiness.canComplete && vercelConnected;
   const pipelineConfigured = data.setupHealth.defaultPipeline.configured;
+  // Profile alone is not enough — match the checklist's repository-setup readiness item.
+  const repositoryLiveReady =
+    data.setupHealth.primaryRepositoryProfile.configured &&
+    data.setupHealth.repositorySetup.status === "ready" &&
+    data.setupHealth.repositorySetup.repositoryId ===
+      data.setupHealth.primaryRepositoryProfile.repositoryId;
   const setupSummary = [
     {
       detail: data.setupHealth.githubInstallation.connected
@@ -159,10 +165,8 @@ export default function VerifyStep({ data, onDataChange, onSelectStep }: Onboard
       id: "summary-repository" as const,
       label: "Repository",
       step: "repository" as const,
-      statusLabel: data.setupHealth.primaryRepositoryProfile.configured ? "Configured" : "Partial",
-      tone: data.setupHealth.primaryRepositoryProfile.configured
-        ? ("success" as const)
-        : ("warning" as const),
+      statusLabel: repositoryLiveReady ? "Configured" : "Partial",
+      tone: repositoryLiveReady ? ("success" as const) : ("warning" as const),
     },
     {
       detail: data.pipeline
