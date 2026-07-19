@@ -26,8 +26,13 @@ type ArtifactPanelProps = {
    * prior-stage selection survives refresh/share. Current-stage views omit it.
    */
   persistStageInUrl?: boolean;
-  /** Bumps when a reject lands so Versions can show “Changes requested”. */
+  /**
+   * Session-wide reject counter. Only pass for the session’s current stage —
+   * prior-stage panels must omit it so a reject elsewhere cannot mark them.
+   */
   rejectionCount?: number;
+  /** Fires when the reviewer is (or is not) viewing a non-latest version. */
+  onViewingHistoricalChange?: (viewingHistorical: boolean) => void;
   sessionId: string;
   stageSlug: string;
 };
@@ -102,7 +107,12 @@ export function ArtifactPanel(props: ArtifactPanelProps) {
   return <ArtifactPanelCache key={props.sessionId} {...props} />;
 }
 
-function ArtifactPanelCache({ sessionId, stageSlug, ...props }: ArtifactPanelProps) {
+function ArtifactPanelCache({
+  sessionId,
+  stageSlug,
+  persistStageInUrl = false,
+  ...props
+}: ArtifactPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -113,20 +123,25 @@ function ArtifactPanelCache({ sessionId, stageSlug, ...props }: ArtifactPanelPro
   const stageJustChanged = trackedStageSlug !== stageSlug;
   const currentStageKey = stageCacheKey(sessionId, stageSlug);
 
-  // Version URLs are stage-scoped via `artifactStage`; clear both params when the timeline
-  // selection changes so a historical selection cannot leak into another stage's panel.
+  // Timeline stage changes: drop any historical version, and either pin the prior
+  // stage in the URL (`artifactStage`) or clear stage params for the current stage.
   useEffect(() => {
     if (!stageJustChanged) return;
     queueMicrotask(() => setTrackedStageSlug(stageSlug));
-    if (!searchParams.has(ARTIFACT_VERSION_PARAM) && !searchParams.has(ARTIFACT_STAGE_PARAM)) {
-      return;
-    }
     const params = new URLSearchParams(searchParams.toString());
     params.delete(ARTIFACT_VERSION_PARAM);
-    params.delete(ARTIFACT_STAGE_PARAM);
+    if (persistStageInUrl) {
+      params.set(ARTIFACT_STAGE_PARAM, stageSlug);
+    } else {
+      params.delete(ARTIFACT_STAGE_PARAM);
+    }
     const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [pathname, router, searchParams, stageJustChanged, stageSlug]);
+    const nextUrl = query ? `${pathname}?${query}` : pathname;
+    const currentQuery = searchParams.toString();
+    const currentUrl = currentQuery ? `${pathname}?${currentQuery}` : pathname;
+    if (nextUrl === currentUrl) return;
+    router.replace(nextUrl, { scroll: false });
+  }, [pathname, persistStageInUrl, router, searchParams, stageJustChanged, stageSlug]);
 
   return (
     <ArtifactPanelStage
@@ -137,6 +152,7 @@ function ArtifactPanelCache({ sessionId, stageSlug, ...props }: ArtifactPanelPro
       ignoreUrlVersion={stageJustChanged}
       latestVersionCache={latestVersionCache}
       metadataCache={metadataCache}
+      persistStageInUrl={persistStageInUrl}
       sessionId={sessionId}
       stageSlug={stageSlug}
     />
@@ -156,8 +172,9 @@ function ArtifactPanelStage({
   loadLatest,
   latestVersionCache,
   metadataCache,
+  onViewingHistoricalChange,
   persistStageInUrl = false,
-  rejectionCount = 0,
+  rejectionCount,
   sessionId,
   stageSlug,
 }: ArtifactPanelProps & {
@@ -182,7 +199,7 @@ function ArtifactPanelStage({
     ignoreUrlVersion ? null : urlVersion,
   );
   const pendingAuthoritativeMetadata = useRef(false);
-  const trackedRejectionCount = useRef(rejectionCount);
+  const trackedRejectionCount = useRef(rejectionCount ?? 0);
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -218,6 +235,13 @@ function ArtifactPanelStage({
   const viewingVersion = selectedVersion ?? latestVersion;
   const viewingIsLatest =
     viewingVersion !== null && latestVersion !== null && viewingVersion === latestVersion;
+  const viewingHistorical =
+    selectedVersion !== null && latestVersion !== null && selectedVersion !== latestVersion;
+
+  useEffect(() => {
+    onViewingHistoricalChange?.(viewingHistorical);
+    return () => onViewingHistoricalChange?.(false);
+  }, [onViewingHistoricalChange, viewingHistorical]);
 
   function writeArtifactVersionToUrl(version: number | null) {
     const params = new URLSearchParams(searchParams.toString());
@@ -319,11 +343,20 @@ function ArtifactPanelStage({
   // write it into the cache — do not refetch yet. `rejection_count` can land
   // (optimistic UI or server CAS) before `session_artifact_feedback`, so an
   // immediate fetch can overwrite the marker with `changesRequested: false`.
+  // Only the current-stage panel receives `rejectionCount`; prior stages omit it.
   useEffect(() => {
-    if (rejectionCount <= trackedRejectionCount.current) {
+    if (rejectionCount === undefined) return;
+    if (rejectionCount < trackedRejectionCount.current) {
+      // Optimistic reject rolled back — drop the patched cache and refetch truth.
       trackedRejectionCount.current = rejectionCount;
+      metadataCache.delete(currentStageKey);
+      queueMicrotask(() => {
+        setMetadata(null);
+        setMetadataRetry((value) => value + 1);
+      });
       return;
     }
+    if (rejectionCount === trackedRejectionCount.current) return;
     trackedRejectionCount.current = rejectionCount;
     const rejectedVersion =
       latestArtifact?.version ?? latestVersionCache.get(currentStageKey) ?? null;

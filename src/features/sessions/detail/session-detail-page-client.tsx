@@ -165,6 +165,7 @@ export function SessionDetailPageClient({
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [viewingHistoricalArtifact, setViewingHistoricalArtifact] = useState(false);
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
   const capabilitiesEffectSkipRef = useRef(true);
@@ -211,11 +212,21 @@ export function SessionDetailPageClient({
   });
   // Optimistic approve/reject flips phaseStatus before the network settles.
   // Keep the reviewable pending surface so Stop/dialog cannot race the action.
-  const stickyReviewMode =
+  // Historical version selections disable approve/reject — those actions always
+  // target session.currentArtifactVersion, not the on-screen older body.
+  const pendingKeepsReviewable =
     (phaseActionPending === "approve" || phaseActionPending === "reject") &&
-    (reviewMode.kind === "running" || reviewMode.kind === "canceled")
-      ? ({ canApprove, kind: "reviewable" } as const)
-      : reviewMode;
+    (reviewMode.kind === "running" || reviewMode.kind === "canceled");
+  const stickyReviewMode =
+    viewingHistoricalArtifact && (reviewMode.kind === "reviewable" || pendingKeepsReviewable)
+      ? ({
+          kind: "historical_version",
+          reason:
+            "You’re viewing an older version. Return to Latest to approve or request changes.",
+        } as const)
+      : pendingKeepsReviewable
+        ? ({ canApprove, kind: "reviewable" } as const)
+        : reviewMode;
 
   useEffect(() => {
     setSession(initialData.session);
@@ -464,6 +475,7 @@ export function SessionDetailPageClient({
     feedbackText?: string,
   ): Promise<boolean> {
     if (phaseActionPending !== null) return false;
+    if (viewingHistoricalArtifact) return false;
 
     if (action === "reject") {
       if (!feedbackText?.trim()) {
@@ -883,8 +895,9 @@ export function SessionDetailPageClient({
               isDrafting={isDraftingSelectedStage}
               latestArtifact={latestArtifact}
               loadLatest={shouldLoadLatestArtifact}
+              onViewingHistoricalChange={setViewingHistoricalArtifact}
               persistStageInUrl={!selectedStageIsCurrent}
-              rejectionCount={session.rejectionCount ?? 0}
+              rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
               sessionId={session.id}
               stageSlug={selectedStageSlug}
             />

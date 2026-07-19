@@ -8,6 +8,7 @@ export type ReviewMode =
   | { kind: "archived"; reason: string }
   | { kind: "canceled"; reason: string }
   | { kind: "unauthorized"; reason: string }
+  | { kind: "historical_version"; reason: string }
   | { kind: "other_stage" };
 
 export type ResolveReviewModeInput = {

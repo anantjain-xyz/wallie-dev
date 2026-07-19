@@ -247,6 +247,56 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
     expect(supabase.selects).toContain("runs");
   });
 
+  it("maps authors from post-reset runs only when older successful runs remain", async () => {
+    const supabase = buildSupabaseMock({
+      artifactRows: [
+        {
+          created_at: "2026-06-08T10:00:00.000Z",
+          id: "artifact-1",
+          stage_slug: "build",
+          version: 1,
+        },
+      ],
+      runRows: [
+        {
+          created_at: "2026-06-07T09:50:00.000Z",
+          model_name: "opus",
+          model_provider: "claude-code",
+          status: "success",
+        },
+        {
+          created_at: "2026-06-07T10:50:00.000Z",
+          model_name: "gpt-4.1",
+          model_provider: "codex",
+          status: "success",
+        },
+        {
+          created_at: "2026-06-08T09:50:00.000Z",
+          model_name: "gpt-5",
+          model_provider: "codex",
+          status: "success",
+        },
+      ],
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+
+    const result = await GET(request("stage=build"), routeContext());
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toEqual({
+      artifacts: [
+        {
+          attempt: 1,
+          authorLabel: "Codex (gpt-5)",
+          changesRequested: false,
+          createdAt: "2026-06-08T10:00:00.000Z",
+          id: "artifact-1",
+          stageSlug: "build",
+          version: 1,
+        },
+      ],
+    });
+  });
+
   it("returns 500 when feedback or agent-run metadata queries fail", async () => {
     const feedbackFailure = buildSupabaseMock({
       artifactRows: [

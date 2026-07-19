@@ -415,6 +415,115 @@ describe("ArtifactPanel", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the optimistic changes-requested marker when rejectionCount rolls back", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 0,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() => expect(screen.queryByText("Changes requested")).toBeNull());
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores rejectionCount bumps when the prop is omitted (prior-stage panels)", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    const view = renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    // Rerender without rejectionCount still must not invent a marker.
+    expect(screen.queryByText("Changes requested")).toBeNull();
+  });
+
+  it("notifies when a historical version is selected", async () => {
+    const onViewingHistoricalChange = vi.fn();
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("version=1")) {
+        return response({
+          artifact: {
+            createdAt: "2026-06-07T10:00:00.000Z",
+            payload: "# Earlier",
+            sanitizedHtml: "<h1>Earlier</h1>",
+            stageSlug: "build",
+            version: 1,
+          },
+        });
+      }
+      return response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      });
+    });
+
+    fireEvent.click(
+      renderPanel({ onViewingHistoricalChange }).getByRole("tab", { name: "Versions" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
+
+    await waitFor(() => expect(onViewingHistoricalChange).toHaveBeenCalledWith(true));
+  });
+
   it("keeps artifactStage when selecting Latest on a prior stage", async () => {
     vi.mocked(fetch).mockImplementation(() =>
       response({
@@ -433,6 +542,36 @@ describe("ArtifactPanel", () => {
     expect(mockedNavigation.replace).toHaveBeenCalledWith(
       "/w/demo/sessions/1?artifactStage=build",
       { scroll: false },
+    );
+  });
+
+  it("writes artifactStage when the timeline selects a prior stage", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifacts: [metadataRow({ createdAt: latestArtifact.createdAt, version: 2 })],
+      }),
+    );
+    const view = renderPanel({ persistStageInUrl: false, stageSlug: "land" });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        persistStageInUrl: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockedNavigation.replace).toHaveBeenCalledWith(
+        "/w/demo/sessions/1?artifactStage=build",
+        { scroll: false },
+      ),
     );
   });
 

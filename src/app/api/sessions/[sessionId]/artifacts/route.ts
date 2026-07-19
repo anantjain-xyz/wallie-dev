@@ -147,8 +147,12 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   const rejectedVersions = new Set((feedbackRows ?? []).map((row) => row.target_version));
+  // After a stage reset, successful agent_runs from the prior generation remain.
+  // Map authors from only the trailing N runs that correspond to current artifacts.
+  const maxArtifactVersion = Math.max(0, ...(artifactRows ?? []).map((row) => row.version));
+  const relevantRuns = (runRows ?? []).slice(-maxArtifactVersion);
   const runsByAttempt = new Map(
-    (runRows ?? []).map((run, index) => [
+    relevantRuns.map((run, index) => [
       index + 1,
       formatAuthorLabel(run.model_provider, run.model_name),
     ]),
