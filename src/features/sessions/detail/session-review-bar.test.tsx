@@ -139,6 +139,8 @@ describe("SessionReviewBar", () => {
   it("uses safe-area-aware sticky padding", () => {
     const { container } = renderBar();
     expect(container.innerHTML).toContain("pb-[max(0.75rem,env(safe-area-inset-bottom))]");
+    expect(container.innerHTML).toContain("env(safe-area-inset-left)");
+    expect(container.innerHTML).toContain("env(safe-area-inset-right)");
     expect(container.innerHTML).toContain("sticky bottom-0");
   });
 

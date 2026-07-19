@@ -64,6 +64,11 @@
   --overlay-gutter: 16px;
   --overlay-gutter-block-start: max(var(--overlay-gutter), env(safe-area-inset-top));
   --overlay-gutter-block-end: max(var(--overlay-gutter), env(safe-area-inset-bottom));
+  --overlay-gutter-inline: max(
+    var(--overlay-gutter),
+    env(safe-area-inset-left),
+    env(safe-area-inset-right)
+  );
   --overlay-gutter-inline-end: max(var(--overlay-gutter), env(safe-area-inset-right));
   --shell-scroll-padding: calc(3rem + env(safe-area-inset-top));
   --wallie-visual-viewport-center: 50dvh;
@@ -210,6 +215,7 @@
 
   .ui-shell-rail {
     padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
     padding-bottom: env(safe-area-inset-bottom);
   }
 
@@ -238,6 +244,8 @@
     border-right: 1px solid var(--border);
     background: var(--surface-overlay);
     padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+    padding-inline-start: max(1rem, env(safe-area-inset-left));
+    padding-inline-end: max(1rem, env(safe-area-inset-right));
     color: var(--foreground);
     box-shadow: var(--shadow-elevated);
     animation: wallie-nav-sheet-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
@@ -536,7 +544,7 @@
     top: calc(var(--wallie-visual-viewport-offset-top) + var(--overlay-gutter-block-start));
     bottom: calc(var(--wallie-visual-viewport-bottom-offset) + var(--overlay-gutter-block-end));
     z-index: var(--z-overlay-content);
-    width: min(32rem, calc(100vw - (var(--overlay-gutter) * 2)));
+    width: min(32rem, calc(100vw - (var(--overlay-gutter-inline) * 2)));
     height: fit-content;
     max-height: calc(
       var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
@@ -647,7 +655,7 @@
     width: max(12rem, var(--radix-select-trigger-width));
     max-width: min(
       var(--radix-select-content-available-width),
-      calc(100vw - (var(--overlay-gutter) * 2))
+      calc(100vw - (var(--overlay-gutter-inline) * 2))
     );
     max-height: min(22rem, var(--radix-select-content-available-height));
     transform-origin: var(--radix-select-content-transform-origin);
@@ -655,7 +663,7 @@
 
   .ui-tooltip-content {
     z-index: var(--z-tooltip);
-    max-width: min(18rem, calc(100vw - (var(--overlay-gutter) * 2)));
+    max-width: min(18rem, calc(100vw - (var(--overlay-gutter-inline) * 2)));
     border-radius: 6px;
     border: 1px solid var(--border);
     background: var(--surface-overlay);
@@ -674,7 +682,7 @@
     bottom: calc(var(--wallie-visual-viewport-bottom-offset) + var(--overlay-gutter-block-end));
     z-index: var(--z-toast);
     display: flex;
-    width: min(24rem, calc(100vw - (var(--overlay-gutter) * 2)));
+    width: min(24rem, calc(100vw - (var(--overlay-gutter-inline) * 2)));
     max-height: calc(
       var(--wallie-visual-viewport-height) - var(--overlay-gutter-block-start) -
         var(--overlay-gutter-block-end)
@@ -1179,6 +1187,7 @@
   summary,
   [role="button"],
   [role="combobox"],
+  [role="region"][tabindex],
   .ui-dropdown-item,
   .ui-menu-item,
   .ui-select-item,

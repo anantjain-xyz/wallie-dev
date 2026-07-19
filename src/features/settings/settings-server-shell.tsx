@@ -287,7 +287,7 @@ function ActiveCategory(props: SettingsServerShellProps) {
 
 export function SettingsServerShell(props: SettingsServerShellProps) {
   return (
-    <main className="min-h-full">
+    <div className="min-h-full">
       <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
         <header className="mb-8 sm:mb-10">
           <h1 className="type-page-title">Settings</h1>
@@ -305,6 +305,6 @@ export function SettingsServerShell(props: SettingsServerShellProps) {
           </div>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

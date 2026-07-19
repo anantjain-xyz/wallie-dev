@@ -118,14 +118,11 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
 
   return (
     <nav aria-label="Pipeline stages" className="border-b border-border pb-3">
-      <ol
-        className="flex snap-x items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-visible"
-        ref={railRef}
-      >
+      <ol className="flex flex-wrap items-center gap-1.5" ref={railRef}>
         {timeline.map((entry, index) => {
           const isSelected = entry.stage.slug === selectedStageSlug;
           return (
-            <li key={entry.stage.id} className="flex shrink-0 snap-start items-center gap-1.5">
+            <li key={entry.stage.id} className="flex min-w-0 items-center gap-1.5">
               <button
                 ref={(node) => {
                   if (node) {
@@ -137,7 +134,7 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                 type="button"
                 onClick={() => onSelect(entry.stage.slug)}
                 className={cn(
-                  "group flex items-center gap-1.5 rounded-[4px] px-2 py-1 text-xs font-medium transition-colors",
+                  "group flex min-w-0 max-w-full items-center gap-1.5 rounded-[4px] px-2 py-1 text-xs font-medium transition-colors",
                   isSelected
                     ? "bg-accent-soft text-accent"
                     : "text-muted hover:bg-control-muted hover:text-foreground",
@@ -145,7 +142,7 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                 aria-current={isSelected ? "step" : undefined}
               >
                 <Status compact value={timelineStatusValue(entry)} />
-                <span>{entry.stage.name}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">{entry.stage.name}</span>
               </button>
               {index < timeline.length - 1 ? (
                 <span aria-hidden="true" className="hidden h-px w-3 bg-border sm:block" />

@@ -217,9 +217,9 @@ describe("PipelinePageClient", () => {
     expect(view.container.querySelector("[data-pipeline-board]")?.className).toContain(
       "minmax(280px,1fr)",
     );
-    expect(
-      view.container.querySelector("[data-pipeline-board]")?.parentElement?.className,
-    ).toContain("overflow-auto");
+    const boardRegion = screen.getByRole("region", { name: "Pipeline board" });
+    expect(boardRegion.className).toContain("overflow-auto");
+    expect(boardRegion.getAttribute("tabindex")).toBe("0");
 
     expect(screen.getAllByText("Session 1")).toHaveLength(1);
     expect(screen.getAllByText("Session 3")).toHaveLength(1);

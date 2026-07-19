@@ -1,6 +1,9 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  StageTimeline,
   buildStageTimeline,
   centerStageTimelineSelection,
 } from "@/features/sessions/detail/stage-timeline";
@@ -68,5 +71,33 @@ describe("centerStageTimelineSelection", () => {
     centerStageTimelineSelection(rail, selectedButton);
 
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 380 });
+  });
+});
+
+describe("StageTimeline", () => {
+  it("contains long unbroken stage names at narrow widths", () => {
+    const session = makeSession({
+      pipeline: {
+        stages: [
+          {
+            description: "Custom stage",
+            id: "stage-2",
+            name: "ImplementationReviewWithAnExtremelyLongUnbrokenName",
+            position: 0,
+            slug: "build",
+          },
+        ],
+      },
+    });
+    const html = renderToStaticMarkup(
+      createElement(StageTimeline, {
+        onSelect: vi.fn(),
+        selectedStageSlug: "build",
+        timeline: buildStageTimeline(session),
+      }),
+    );
+
+    expect(html).toContain("min-w-0 max-w-full");
+    expect(html).toContain("[overflow-wrap:anywhere]");
   });
 });

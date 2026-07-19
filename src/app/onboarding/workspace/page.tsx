@@ -27,9 +27,9 @@ export default async function WorkspaceOnboardingPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-sheet text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border bg-sheet">
-        <div className="mx-auto flex h-14 w-full max-w-[640px] items-center justify-between gap-3 px-6 sm:px-8">
+    <div className="flex min-h-[100svh] flex-col bg-sheet text-foreground">
+      <header className="sticky top-0 z-20 border-b border-border bg-sheet pt-[env(safe-area-inset-top)]">
+        <div className="mx-auto flex h-14 w-full max-w-[640px] items-center justify-between gap-3 pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
           <Link
             href="/"
             aria-label="Wallie home"
@@ -51,7 +51,7 @@ export default async function WorkspaceOnboardingPage() {
 
       <main
         id="main-content"
-        className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-24 pt-10 sm:px-8"
+        className="mx-auto w-full max-w-[640px] flex-1 px-6 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-10 sm:px-8"
       >
         <PageHeader
           eyebrow="Step 1 of 2"

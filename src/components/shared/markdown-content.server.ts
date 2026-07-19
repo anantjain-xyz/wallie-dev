@@ -67,6 +67,12 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
       parent?.tagName === "pre" ? ["artifact-code-block", ...inherited] : ["artifact-inline-code"];
   }
 
+  if (node.tagName === "pre") {
+    node.properties.ariaLabel = "Code block";
+    node.properties.role = "group";
+    node.properties.tabIndex = 0;
+  }
+
   // Preserve the existing click-only image policy: no untrusted remote resource
   // is fetched until the reviewer explicitly opens the sanitized link.
   if (node.tagName === "img" && parent?.children && index >= 0) {

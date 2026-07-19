@@ -64,7 +64,16 @@ const markdownComponents: Components = {
   p: ({ children }) => (
     <p className="my-2 leading-6 text-foreground first:mt-0 last:mb-0">{children}</p>
   ),
-  pre: ({ children }) => <pre className="artifact-pre first:mt-0 last:mb-0">{children}</pre>,
+  pre: ({ children }) => (
+    <pre
+      aria-label="Code block"
+      className="artifact-pre first:mt-0 last:mb-0"
+      role="group"
+      tabIndex={0}
+    >
+      {children}
+    </pre>
+  ),
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   table: ({ children }) => (
     <div

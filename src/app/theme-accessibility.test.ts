@@ -170,6 +170,13 @@ describe("shared interaction accessibility tokens", () => {
     expect(stylesheet).not.toContain("minmax(44px, 1fr)");
     expect(stylesheet).not.toContain("@container email-code-form (max-width: 283px)");
   });
+
+  it("keeps overlays inside inline safe areas and focusable scroll regions visible", () => {
+    expect(stylesheet).toContain("--overlay-gutter-inline: max(");
+    expect(stylesheet).toContain("env(safe-area-inset-left)");
+    expect(stylesheet).toContain("env(safe-area-inset-right)");
+    expect(stylesheet).toContain('[role="region"][tabindex]');
+  });
 });
 
 describe("Precision Console surface contract", () => {

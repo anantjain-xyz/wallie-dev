@@ -29,6 +29,19 @@ describe("MarkdownContent", () => {
     expect(html).toContain("artifact-inline-code");
     expect(html).toContain("artifact-pre");
     expect(html).toContain("artifact-code-block");
+    expect(html).toContain('aria-label="Code block"');
+    expect(html).toContain('role="group"');
+    expect(html).not.toContain('role="region"');
+    expect(html).toContain('tabindex="0"');
+  });
+
+  it("keeps multiple code blocks focusable without duplicate region landmarks", () => {
+    const html = render("```ts\nconst one = 1;\n```\n\n```ts\nconst two = 2;\n```");
+
+    expect(html.match(/aria-label="Code block"/gu)).toHaveLength(2);
+    expect(html.match(/role="group"/gu)).toHaveLength(2);
+    expect(html.match(/tabindex="0"/gu)).toHaveLength(2);
+    expect(html).not.toContain('role="region"');
   });
 
   it("uses materially distinct semantic classes for artifact heading levels", () => {

@@ -90,14 +90,14 @@ export function SettingsCategoryNav({ activeCategory, workspaceSlug }: SettingsC
 
   return (
     <nav aria-label="Settings categories" className="sticky top-[var(--shell-scroll-padding)]">
-      <ul className="flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
+      <ul className="grid grid-cols-2 gap-2 pb-2 lg:flex lg:flex-col lg:pb-0">
         {SETTINGS_CATEGORY_LINKS.map((category) => {
           const isActive = category.id === activeCategory;
           return (
             <li key={category.id}>
               <Link
                 aria-current={isActive ? "page" : undefined}
-                className={`settings-anchor block min-w-36 lg:min-w-0 ${
+                className={`settings-anchor block min-w-0 ${
                   isActive ? "settings-anchor-active" : ""
                 }`}
                 href={`/w/${workspaceSlug}/settings?category=${category.id}`}

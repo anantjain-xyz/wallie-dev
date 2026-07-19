@@ -314,7 +314,7 @@ function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html.match(
     new RegExp(
-      `<button[^>]*>[^]*?<span class="block truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
+      `<button[^>]*>[^]*?<span class="min-w-0 flex-1 truncate">${escapedLabel}<\\/span>[^]*?<\\/button>`,
     ),
   )?.[0];
   if (!match) {
@@ -548,6 +548,17 @@ describe("OnboardingPageClient", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("renders one responsive setup navigation tree without a horizontal rail", () => {
+    const html = renderToStaticMarkup(
+      createElement(OnboardingPageClient, { initialData: onboardingData() }),
+    );
+
+    expect(html.match(/aria-label="Setup steps"/gu)).toHaveLength(1);
+    expect(html).toContain("grid-cols-2");
+    expect(html).not.toContain("overflow-x-auto");
+    expect(html).toContain("env(safe-area-inset-bottom)");
   });
 
   it("merges a saved repository profile into the latest GitHub state", () => {
@@ -876,8 +887,8 @@ describe("OnboardingPageClient", () => {
     expect(linearHtml).toContain(">Connect Linear</h2>");
     expect(desktopRailButton(runtimeHtml, "Connect Agent")).toContain('aria-current="step"');
     expect(runtimeHtml).toContain(">Connect Agent</h2>");
-    expect(runtimeHtml).toContain('<span class="truncate">Agent</span>');
-    expect(runtimeHtml).not.toContain('<span class="truncate">Runtime</span>');
+    expect(runtimeHtml).toContain('<span class="min-w-0 flex-1 truncate">Connect Agent</span>');
+    expect(runtimeHtml).not.toContain(">Runtime</span>");
   });
 
   it("shows setup actions in Analyze repositories for every synced repository", () => {

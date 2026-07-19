@@ -74,13 +74,15 @@ describe("resolveSettingsHashRoute", () => {
 
 describe("SettingsCategoryNav hash routing", () => {
   it("sticks below the safe-area-aware shell header", () => {
-    const { getByRole } = render(
+    const { container, getByRole } = render(
       <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />,
     );
 
     expect(getByRole("navigation", { name: "Settings categories" })).toHaveClass(
       "top-[var(--shell-scroll-padding)]",
     );
+    expect(container.querySelector("ul")).toHaveClass("grid", "grid-cols-2");
+    expect(container.querySelector("ul")).not.toHaveClass("overflow-x-auto");
   });
 
   it("routes hash-only Open actions to the matching category", async () => {

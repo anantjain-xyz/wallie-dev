@@ -206,8 +206,11 @@ export function SessionInspector({
             </button>
             {runInputOpen ? (
               <pre
+                aria-label="Run input"
                 id={runInputId}
                 className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-[4px] border border-border bg-canvas p-3 text-xs leading-5 text-foreground"
+                role="region"
+                tabIndex={0}
               >
                 {session.promptMd || "No run input recorded."}
               </pre>
