@@ -17,6 +17,7 @@ import {
   RepositorySetupStatus,
 } from "@/features/repositories/repository-setup-controls";
 import type { SettingsPageData } from "@/features/settings/data";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import type {
@@ -155,6 +156,8 @@ export function RepositoryAnalysisSection({
   const activeRepositoryRef = useRef(selectedRepository?.id ?? null);
   const selectedRepositoryId = selectedRepository?.id ?? null;
   const profileBusy = profileAction !== null;
+
+  useRegisterSettingsDirtySource("repository-profile", profileDirty, data.canManage);
 
   function beginProfileAction(action: Exclude<ProfileAction, null>) {
     if (profileActionRef.current) return false;

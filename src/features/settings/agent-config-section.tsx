@@ -20,6 +20,7 @@ import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
 import {
@@ -242,6 +243,8 @@ export function AgentConfigSection({
   const dirtyFields = fieldStatuses.filter((status) => status.isDirty);
   const saveableFields = dirtyFields.filter((status) => status.validation?.ok === true);
   const canSave = !isSaving && saveableFields.length > 0 && !hasErrors;
+
+  useRegisterSettingsDirtySource("agent-config", dirtyFields.length > 0, canManage);
 
   function handleFieldChange(key: AgentConfigKey, next: string) {
     setDrafts((current) => applyAgentConfigDraftChange(current, key, next));

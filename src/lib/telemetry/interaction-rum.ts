@@ -93,7 +93,7 @@ export function buildInteractionPayload(input: {
 }
 
 export function interactionRouteTemplateForPath(pathname: string | null): RouteTemplate {
-  if (pathname?.endsWith("/settings")) return "/w/[workspaceSlug]/settings";
+  if (pathname?.includes("/settings")) return "/w/[workspaceSlug]/settings";
   if (/\/sessions\/[^/]+$/.test(pathname ?? "")) {
     return "/w/[workspaceSlug]/sessions/[sessionNumber]";
   }

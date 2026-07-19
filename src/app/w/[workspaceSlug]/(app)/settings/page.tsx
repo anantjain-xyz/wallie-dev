@@ -1,36 +1,48 @@
-import { loadSettingsPageData } from "@/features/settings/data";
-import { parseSettingsCategory } from "@/features/settings/settings-categories";
-import { SettingsServerShell } from "@/features/settings/settings-server-shell";
+import { redirect } from "next/navigation";
 
-type SettingsPageProps = {
+import {
+  DEFAULT_SETTINGS_CATEGORY,
+  parseSettingsCategory,
+} from "@/features/settings/settings-categories";
+import { workspaceSettingsCategoryPath } from "@/lib/routes";
+
+type SettingsIndexPageProps = {
   params: Promise<{
     workspaceSlug: string;
   }>;
   searchParams: Promise<{
-    github?: string;
-    codex_connect?: string;
     category?: string | string[];
+    codex_connect?: string;
+    github?: string;
   }>;
 };
 
-export default async function SettingsPage({ params, searchParams }: SettingsPageProps) {
+function resolveRedirectCategory(searchParams: {
+  category?: string | string[];
+  codex_connect?: string;
+  github?: string;
+}) {
+  if (searchParams.category !== undefined) {
+    return parseSettingsCategory(searchParams.category);
+  }
+  if (searchParams.github) {
+    return "integrations" as const;
+  }
+  if (searchParams.codex_connect) {
+    return "agent-execution" as const;
+  }
+  return DEFAULT_SETTINGS_CATEGORY;
+}
+
+export default async function SettingsIndexPage({ params, searchParams }: SettingsIndexPageProps) {
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
-  const category = parseSettingsCategory(resolvedSearchParams.category);
-  const data = await loadSettingsPageData(workspaceSlug, category);
-  const initialData = await data.initialData;
+  const category = resolveRedirectCategory(resolvedSearchParams);
 
-  return (
-    <SettingsServerShell
-      category={category}
-      initialData={initialData}
-      searchState={{
-        githubStatus: resolvedSearchParams.github ?? null,
-        codexStatus: resolvedSearchParams.codex_connect ?? null,
-      }}
-      setupData={data.setupData}
-      usage={data.usage}
-      workspaceInvitations={data.workspaceInvitations}
-    />
+  redirect(
+    workspaceSettingsCategoryPath(workspaceSlug, category, {
+      codex_connect: resolvedSearchParams.codex_connect,
+      github: resolvedSearchParams.github,
+    }),
   );
 }

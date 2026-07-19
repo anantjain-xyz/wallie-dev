@@ -238,7 +238,7 @@ export async function loadSettingsPageData(
           );
 
     const workspaceInvitations =
-      category && category !== "workspace"
+      category && category !== "members"
         ? Promise.resolve([])
         : withServerTiming(
             "settings.section.invitations",

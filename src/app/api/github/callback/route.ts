@@ -4,7 +4,7 @@ import { getGitHubConfigStatus } from "@/features/github/config";
 import { syncGitHubInstallationAndRepositories } from "@/features/github/service";
 import { type GitHubInstallState, verifyGitHubInstallState } from "@/features/github/state";
 import { parseServerEnv } from "@/env/server";
-import { workspaceOnboardingPath, workspaceSettingsPath } from "@/lib/routes";
+import { workspaceOnboardingPath, workspaceSettingsCategoryPath } from "@/lib/routes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 function buildCallbackRedirectPath(
@@ -20,7 +20,7 @@ function buildCallbackRedirectPath(
     return `${workspaceOnboardingPath(state.workspaceSlug)}?${params.toString()}`;
   }
 
-  return workspaceSettingsPath(state.workspaceSlug, {
+  return workspaceSettingsCategoryPath(state.workspaceSlug, "integrations", {
     github: status,
   });
 }

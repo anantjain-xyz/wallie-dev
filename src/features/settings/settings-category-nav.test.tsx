@@ -1,21 +1,24 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   resolveSettingsHashRoute,
   SettingsCategoryNav,
 } from "@/features/settings/settings-category-nav";
+import { SETTINGS_CATEGORY_LINKS } from "@/features/settings/settings-categories";
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 
+const push = vi.fn();
 const replace = vi.fn();
-let searchParams = new URLSearchParams("category=advanced");
+let pathname = "/w/acme/settings/advanced";
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/w/acme/settings",
-  useRouter: () => ({ replace }),
-  useSearchParams: () => searchParams,
+  usePathname: () => pathname,
+  useRouter: () => ({ push, replace }),
 }));
 
 vi.mock("next/link", () => ({
@@ -33,24 +36,58 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-afterEach(() => {
-  cleanup();
-  replace.mockClear();
-  searchParams = new URLSearchParams("category=advanced");
-  window.history.replaceState(null, "", "/w/acme/settings?category=advanced");
-});
+vi.mock("@/features/settings/islands/integration-islands", () => ({}));
+vi.mock("@/features/settings/islands/pipeline-island", () => ({
+  preloadPipelineEditor: vi.fn(),
+}));
+vi.mock("@/features/settings/islands/advanced-islands", () => ({}));
+vi.mock("@/features/settings/islands/workspace-islands", () => ({}));
 
 beforeEach(() => {
+  push.mockClear();
   replace.mockClear();
-  searchParams = new URLSearchParams("category=advanced");
-  window.history.replaceState(null, "", "/w/acme/settings?category=advanced");
+  pathname = "/w/acme/settings/advanced";
+  window.history.replaceState(null, "", "/w/acme/settings/advanced");
+
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  vi.stubGlobal("PointerEvent", MouseEvent);
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: () => false,
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: () => undefined,
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: () => undefined,
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => undefined,
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  push.mockClear();
+  replace.mockClear();
+  pathname = "/w/acme/settings/advanced";
+  window.history.replaceState(null, "", "/w/acme/settings/advanced");
+  vi.unstubAllGlobals();
 });
 
 describe("resolveSettingsHashRoute", () => {
-  it("maps legacy aliases to their current category and anchor", () => {
+  it("maps legacy aliases to their owning category and anchor", () => {
     expect(resolveSettingsHashRoute("#coding-agent")).toEqual({
       anchor: "runtime",
-      category: "integrations",
+      category: "agent-execution",
     });
     expect(resolveSettingsHashRoute("cloud-execution")).toEqual({
       anchor: "verify",
@@ -62,20 +99,30 @@ describe("resolveSettingsHashRoute", () => {
     });
     expect(resolveSettingsHashRoute("#secrets")).toEqual({
       anchor: "runtime",
-      category: "integrations",
+      category: "agent-execution",
     });
-    expect(resolveSettingsHashRoute("#github")).toEqual({
-      anchor: "github",
-      category: "integrations",
+    expect(resolveSettingsHashRoute("#danger-zone")).toEqual({
+      anchor: "danger-zone",
+      category: "advanced",
+    });
+    expect(resolveSettingsHashRoute("#members")).toEqual({
+      anchor: "members",
+      category: "members",
+    });
+    expect(resolveSettingsHashRoute("#workspace")).toEqual({
+      anchor: "workspace",
+      category: "general",
     });
     expect(resolveSettingsHashRoute("#unknown")).toBeNull();
   });
 });
 
-describe("SettingsCategoryNav hash routing", () => {
-  it("sticks below the safe-area-aware shell header", () => {
+describe("SettingsCategoryNav", () => {
+  it("sticks below the safe-area-aware shell header on desktop", () => {
     const { getByRole } = render(
-      <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />,
+      <OverlayProvider>
+        <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />
+      </OverlayProvider>,
     );
 
     expect(getByRole("navigation", { name: "Settings categories" })).toHaveClass(
@@ -83,32 +130,76 @@ describe("SettingsCategoryNav hash routing", () => {
     );
   });
 
-  it("routes hash-only Open actions to the matching category", async () => {
-    render(<SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />);
+  it("links every category to a path-backed route", () => {
+    render(
+      <OverlayProvider>
+        <SettingsCategoryNav activeCategory="general" workspaceSlug="acme" />
+      </OverlayProvider>,
+    );
 
-    window.history.replaceState(null, "", "/w/acme/settings?category=advanced#github");
+    for (const category of SETTINGS_CATEGORY_LINKS) {
+      expect(screen.getByRole("link", { name: new RegExp(category.label, "i") })).toHaveAttribute(
+        "href",
+        `/w/acme/settings/${category.id}`,
+      );
+    }
+  });
+
+  it("exposes a labelled mobile category select", async () => {
+    const user = userEvent.setup();
+    render(
+      <OverlayProvider>
+        <SettingsCategoryNav activeCategory="general" workspaceSlug="acme" />
+      </OverlayProvider>,
+    );
+
+    const trigger = screen.getByRole("combobox", { name: "Settings category" });
+    expect(trigger).toBeInTheDocument();
+
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "Pipeline" }));
+
+    expect(push).toHaveBeenCalledWith("/w/acme/settings/pipeline");
+  });
+
+  it("routes hash-only Open actions to the matching category path", async () => {
+    render(
+      <OverlayProvider>
+        <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />
+      </OverlayProvider>,
+    );
+
+    window.history.replaceState(null, "", "/w/acme/settings/advanced#github");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/w/acme/settings?category=integrations#github");
+      expect(replace).toHaveBeenCalledWith("/w/acme/settings/integrations#github");
     });
   });
 
-  it("rewrites legacy hashes to their current anchors", async () => {
-    searchParams = new URLSearchParams("category=integrations");
-    render(<SettingsCategoryNav activeCategory="integrations" workspaceSlug="acme" />);
+  it("rewrites legacy hashes to their current anchors on the owning route", async () => {
+    pathname = "/w/acme/settings/integrations";
+    render(
+      <OverlayProvider>
+        <SettingsCategoryNav activeCategory="integrations" workspaceSlug="acme" />
+      </OverlayProvider>,
+    );
 
-    window.history.replaceState(null, "", "/w/acme/settings?category=integrations#coding-agent");
+    window.history.replaceState(null, "", "/w/acme/settings/integrations#coding-agent");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/w/acme/settings?category=integrations#runtime");
+      expect(replace).toHaveBeenCalledWith("/w/acme/settings/agent-execution#runtime");
     });
   });
 
   it("does not navigate when the hash already matches the active category and anchor", async () => {
-    window.history.replaceState(null, "", "/w/acme/settings?category=advanced#verify");
-    render(<SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />);
+    window.history.replaceState(null, "", "/w/acme/settings/advanced#verify");
+    render(
+      <OverlayProvider>
+        <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />
+      </OverlayProvider>,
+    );
 
     await waitFor(() => {
       expect(replace).not.toHaveBeenCalled();

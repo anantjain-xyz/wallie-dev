@@ -8,6 +8,7 @@ import {
   workspaceOnboardingPath,
   workspaceSessionDetailPath,
   workspaceSessionsPath,
+  workspaceSettingsCategoryPath,
   workspaceSettingsPath,
 } from "@/lib/routes";
 
@@ -36,6 +37,12 @@ describe("workspace route helpers", () => {
         github: "connected",
       }),
     ).toBe("/w/northwind-labs/settings?github=connected");
+    expect(workspaceSettingsCategoryPath("northwind-labs", "general")).toBe(
+      "/w/northwind-labs/settings/general",
+    );
+    expect(
+      workspaceSettingsCategoryPath("northwind-labs", "integrations", { github: "connected" }),
+    ).toBe("/w/northwind-labs/settings/integrations?github=connected");
   });
 
   it("formats a workspace label from the slug", () => {

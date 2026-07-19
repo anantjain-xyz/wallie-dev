@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 
 import {
   appendDraftStage,
@@ -21,6 +21,7 @@ import {
   type WorkspaceMemberSummary,
 } from "@/features/pipeline/editor-primitives";
 import type { SessionPipeline } from "@/features/sessions/types";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction-rum";
 
 type PipelineEditorProps = {
@@ -29,6 +30,14 @@ type PipelineEditorProps = {
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 };
+
+function pipelineDraftProjection(
+  name: string,
+  operatingRules: string,
+  stages: DraftPipelineStage[],
+) {
+  return JSON.stringify({ name, operatingRules, stages });
+}
 
 export function PipelineEditor({
   canManage,
@@ -41,6 +50,13 @@ export function PipelineEditor({
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
     keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
   );
+  const [confirmedProjection, setConfirmedProjection] = useState(() =>
+    pipelineDraftProjection(
+      pipeline?.name ?? "Default",
+      pipeline?.operatingRulesMd ?? "",
+      keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
+    ),
+  );
   const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -49,6 +65,12 @@ export function PipelineEditor({
   const validation: PipelineDraftValidationResult = hasAttemptedSave
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
+
+  const isDirty = useMemo(
+    () => pipelineDraftProjection(name, operatingRules, stages) !== confirmedProjection,
+    [confirmedProjection, name, operatingRules, stages],
+  );
+  useRegisterSettingsDirtySource("pipeline-editor", isDirty, canManage);
 
   if (!pipeline) {
     return (
@@ -77,6 +99,7 @@ export function PipelineEditor({
     }
 
     setHasAttemptedSave(false);
+    setConfirmedProjection(pipelineDraftProjection(name, operatingRules, stagesToSave));
     setSavedAt(new Date());
     finishInteraction("save_settings", "success");
   }

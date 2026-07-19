@@ -11,6 +11,7 @@ import { Spinner } from "@/components/shared/spinner";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { SettingsPageData } from "@/features/settings/data";
+import { useRegisterSettingsDirtySource } from "@/features/settings/settings-dirty-registry";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { AvatarFallback, Section } from "@/features/settings/settings-ui";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -153,6 +154,8 @@ function EditableWorkspaceName({
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+
+  useRegisterSettingsDirtySource("workspace-name", isEditing && draftName.trim() !== name, true);
 
   useEffect(() => {
     if (!isEditing) return;

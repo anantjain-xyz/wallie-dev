@@ -10,7 +10,6 @@ import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/island
 import {
   GithubIntegrationIsland,
   LinearIntegrationIsland,
-  ProviderIntentLink,
   RepositoryIntegrationIsland,
   RuntimeIntegrationIsland,
   VercelIntegrationIsland,
@@ -22,10 +21,13 @@ import {
   WorkspaceMembersIsland,
 } from "@/features/settings/islands/workspace-islands";
 import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
-import type { SettingsCategory } from "@/features/settings/settings-categories";
+import {
+  settingsCategoryMeta,
+  type SettingsCategory,
+} from "@/features/settings/settings-categories";
+import { SettingsDirtyRegistryProvider } from "@/features/settings/settings-dirty-registry";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
 import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
-import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 
 type SettingsServerShellProps = {
   category: SettingsCategory;
@@ -102,20 +104,27 @@ export function SettingsSectionError({
   );
 }
 
+function CategoryPermissionNotice({ canManage }: { canManage: boolean }) {
+  if (canManage) return null;
+  return (
+    <div
+      className="rounded-[6px] border border-border bg-sheet px-4 py-3 text-sm text-muted"
+      role="status"
+    >
+      You can view this category. Workspace admins and owners can change these settings.
+    </div>
+  );
+}
+
 async function IntegrationDetails({
   initialData,
-  searchState,
   setupData,
-}: Pick<SettingsServerShellProps, "initialData" | "searchState" | "setupData">) {
+}: Pick<SettingsServerShellProps, "initialData" | "setupData">) {
   const setup = await settle(setupData);
   if (!setup.ok) {
     return <SettingsSectionError label="Integration details" minHeight="min-h-96" />;
   }
   const data = completeSettingsData(initialData, setup.value);
-  const providerValue = data.agentConfig.agent_provider;
-  const provider =
-    normalizeAgentProviderName(typeof providerValue === "string" ? providerValue : undefined) ??
-    "codex";
   return (
     <>
       <div aria-label="Integration sections" className="flex flex-wrap gap-2">
@@ -128,12 +137,10 @@ async function IntegrationDetails({
         <a className="ui-button" href="#linear">
           Linear
         </a>
-        <ProviderIntentLink provider={provider} />
       </div>
       <RepositoryIntegrationIsland initialData={data} />
       <VercelIntegrationIsland initialData={data} />
       <LinearIntegrationIsland initialData={data} />
-      <RuntimeIntegrationIsland codexStatus={searchState.codexStatus} initialData={data} />
     </>
   );
 }
@@ -141,6 +148,7 @@ async function IntegrationDetails({
 function IntegrationsCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-16">
+      <CategoryPermissionNotice canManage={props.initialData.canManage} />
       <GithubIntegrationIsland
         canManage={props.initialData.canManage}
         github={props.initialData.github}
@@ -150,9 +158,26 @@ function IntegrationsCategory(props: SettingsServerShellProps) {
       <Suspense
         fallback={<SettingsSectionFallback label="integration details" minHeight="min-h-96" />}
       >
-        <IntegrationDetails {...props} />
+        <IntegrationDetails initialData={props.initialData} setupData={props.setupData} />
       </Suspense>
     </div>
+  );
+}
+
+async function AgentExecutionCategory({
+  initialData,
+  searchState,
+  setupData,
+}: SettingsServerShellProps) {
+  const setup = await settle(setupData);
+  if (!setup.ok) {
+    return <SettingsSectionError label="Agent execution" minHeight="min-h-96" />;
+  }
+  return (
+    <RuntimeIntegrationIsland
+      codexStatus={searchState.codexStatus}
+      initialData={completeSettingsData(initialData, setup.value)}
+    />
   );
 }
 
@@ -224,6 +249,7 @@ async function AdvancedDetails({ initialData, setupData }: SettingsServerShellPr
 function AdvancedCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-16">
+      <CategoryPermissionNotice canManage={props.initialData.canManage} />
       <Suspense fallback={<SettingsSectionFallback label="setup health" minHeight="min-h-96" />}>
         <AdvancedDetails {...props} />
       </Suspense>
@@ -234,6 +260,16 @@ function AdvancedCategory(props: SettingsServerShellProps) {
           workspaceId={props.initialData.workspace.id}
         />
       </Suspense>
+      <DangerActionsIsland initialData={props.initialData} />
+    </div>
+  );
+}
+
+function GeneralCategory(props: SettingsServerShellProps) {
+  return (
+    <div className="space-y-8">
+      <CategoryPermissionNotice canManage={props.initialData.canManage} />
+      <WorkspaceIdentityIsland initialData={props.initialData} />
     </div>
   );
 }
@@ -256,55 +292,73 @@ async function MembersSection({
   );
 }
 
-function WorkspaceCategory(props: SettingsServerShellProps) {
+function MembersCategory(props: SettingsServerShellProps) {
   return (
-    <div className="space-y-16">
-      <WorkspaceIdentityIsland initialData={props.initialData} />
+    <div className="space-y-8">
+      <CategoryPermissionNotice canManage={props.initialData.canManage} />
       <Suspense fallback={<SettingsSectionFallback label="members and invitations" />}>
         <MembersSection {...props} />
       </Suspense>
-      <DangerActionsIsland initialData={props.initialData} />
     </div>
   );
 }
 
 function ActiveCategory(props: SettingsServerShellProps) {
   switch (props.category) {
+    case "general":
+      return <GeneralCategory {...props} />;
+    case "integrations":
+      return <IntegrationsCategory {...props} />;
+    case "agent-execution":
+      return (
+        <div className="space-y-8">
+          <CategoryPermissionNotice canManage={props.initialData.canManage} />
+          <Suspense
+            fallback={<SettingsSectionFallback label="agent execution" minHeight="min-h-96" />}
+          >
+            <AgentExecutionCategory {...props} />
+          </Suspense>
+        </div>
+      );
     case "pipeline":
       return (
-        <Suspense fallback={<SettingsSectionFallback label="pipeline" minHeight="min-h-96" />}>
-          <PipelineCategory {...props} />
-        </Suspense>
+        <div className="space-y-8">
+          <CategoryPermissionNotice canManage={props.initialData.canManage} />
+          <Suspense fallback={<SettingsSectionFallback label="pipeline" minHeight="min-h-96" />}>
+            <PipelineCategory {...props} />
+          </Suspense>
+        </div>
       );
+    case "members":
+      return <MembersCategory {...props} />;
     case "advanced":
       return <AdvancedCategory {...props} />;
-    case "workspace":
-      return <WorkspaceCategory {...props} />;
-    default:
-      return <IntegrationsCategory {...props} />;
   }
 }
 
 export function SettingsServerShell(props: SettingsServerShellProps) {
+  const meta = settingsCategoryMeta(props.category);
+
   return (
-    <main className="min-h-full">
-      <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
-        <header className="mb-8 sm:mb-10">
-          <h1 className="type-page-title">Settings</h1>
-          <p className="type-body mt-2 max-w-2xl text-muted">
-            Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
-          </p>
-        </header>
-        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
-          <SettingsCategoryNav
-            activeCategory={props.category}
-            workspaceSlug={props.initialData.workspace.slug}
-          />
-          <div className="min-w-0">
-            <ActiveCategory {...props} />
+    <SettingsDirtyRegistryProvider>
+      <main className="min-h-full">
+        <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-8 sm:pt-10">
+          <header className="mb-8 sm:mb-10">
+            <p className="type-annotation text-muted">Settings</p>
+            <h1 className="type-page-title mt-1">{meta.label}</h1>
+            <p className="type-body mt-2 max-w-2xl text-muted">{meta.purpose}</p>
+          </header>
+          <div className="grid grid-cols-1 gap-10 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
+            <SettingsCategoryNav
+              activeCategory={props.category}
+              workspaceSlug={props.initialData.workspace.slug}
+            />
+            <div className="min-w-0">
+              <ActiveCategory {...props} />
+            </div>
           </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </SettingsDirtyRegistryProvider>
   );
 }

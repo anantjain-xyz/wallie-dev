@@ -60,6 +60,14 @@ export function workspaceSettingsPath(workspaceSlug: string, query?: Record<stri
   return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings`, query);
 }
 
+export function workspaceSettingsCategoryPath(
+  workspaceSlug: string,
+  category: string,
+  query?: Record<string, QueryValue>,
+) {
+  return withSearchParams(`${workspaceBasePath(workspaceSlug)}/settings/${category}`, query);
+}
+
 export function getWorkspaceNavItems(workspaceSlug: string): WorkspaceNavItem[] {
   return [
     {
