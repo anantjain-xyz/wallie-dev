@@ -619,6 +619,114 @@ describe("ArtifactPanel", () => {
     vi.useRealTimers();
   });
 
+  it("preserves pending author refresh across stage switches", async () => {
+    let allowAuthoritativeAuthor = false;
+    let buildHistoryCalls = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=build") && !url.includes("version=") && !url.includes("latest=")) {
+        buildHistoryCalls += 1;
+        if (!allowAuthoritativeAuthor) {
+          return response({
+            artifacts: [
+              metadataRow({
+                authorLabel: "Agent",
+                createdAt: "2026-06-07T12:00:00.000Z",
+                version: 3,
+              }),
+              metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            ],
+          });
+        }
+        return response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          ],
+        });
+      }
+      if (url.includes("stage=plan") && !url.includes("version=") && !url.includes("latest=")) {
+        return response({
+          artifacts: [metadataRow({ stageSlug: "plan", version: 1 })],
+        });
+      }
+      return response({ error: "unexpected" }, 500);
+    });
+
+    const view = renderPanel();
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Agent")).toBeTruthy();
+    const callsBeforeSwitch = buildHistoryCalls;
+
+    // Switch away while author refresh is still pending — unmounts the keyed stage
+    // panel while the parent metadata cache retains the optimistic "Agent" row.
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Plan formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:plan:1`,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Plan",
+          stageSlug: "plan",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 3, name: /plan artifact/i })).toBeTruthy(),
+    );
+
+    allowAuthoritativeAuthor = true;
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await waitFor(() => expect(buildHistoryCalls).toBeGreaterThan(callsBeforeSwitch));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+  });
+
   it("clears the optimistic changes-requested marker when rejectionCount rolls back", async () => {
     vi.mocked(fetch).mockImplementation(() =>
       response({

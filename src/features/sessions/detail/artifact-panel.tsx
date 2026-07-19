@@ -126,6 +126,20 @@ function applyPendingRejectionMarker(
   );
 }
 
+function setPendingAuthorRefreshState(
+  pendingRef: { current: boolean },
+  pendingByStage: Map<string, boolean>,
+  stageKey: string,
+  pending: boolean,
+) {
+  pendingRef.current = pending;
+  if (pending) {
+    pendingByStage.set(stageKey, true);
+  } else {
+    pendingByStage.delete(stageKey);
+  }
+}
+
 function formatPayload(payload: unknown): string {
   if (typeof payload === "string") return payload;
   try {
@@ -151,6 +165,8 @@ function ArtifactPanelCache({
   const [latestVersionCache] = useState(() => new Map<string, number>());
   /** Survives keyed stage remounts so rejection bumps while away are still detected. */
   const [seenRejectionCountByStage] = useState(() => new Map<string, number>());
+  /** Survives keyed stage remounts so optimistic "Agent" author rows keep refreshing. */
+  const [pendingAuthorRefreshByStage] = useState(() => new Map<string, boolean>());
   const [trackedStageSlug, setTrackedStageSlug] = useState(stageSlug);
   const stageJustChanged = trackedStageSlug !== stageSlug;
   const currentStageKey = stageCacheKey(sessionId, stageSlug);
@@ -179,6 +195,7 @@ function ArtifactPanelCache({
       ignoreUrlVersion={stageJustChanged}
       latestVersionCache={latestVersionCache}
       metadataCache={metadataCache}
+      pendingAuthorRefreshByStage={pendingAuthorRefreshByStage}
       persistStageInUrl={persistStageInUrl}
       seenRejectionCountByStage={seenRejectionCountByStage}
       sessionId={sessionId}
@@ -201,6 +218,7 @@ function ArtifactPanelStage({
   latestVersionCache,
   metadataCache,
   onViewingHistoricalChange,
+  pendingAuthorRefreshByStage,
   persistStageInUrl = false,
   rejectionCount,
   seenRejectionCountByStage,
@@ -212,6 +230,7 @@ function ArtifactPanelStage({
   ignoreUrlVersion?: boolean;
   latestVersionCache: Map<string, number>;
   metadataCache: Map<string, SessionArtifactMetadata[]>;
+  pendingAuthorRefreshByStage: Map<string, boolean>;
   seenRejectionCountByStage: Map<string, number>;
 }) {
   const pathname = usePathname();
@@ -228,7 +247,9 @@ function ArtifactPanelStage({
   const [selectedVersion, setSelectedVersion] = useState<number | null>(() =>
     ignoreUrlVersion ? null : urlVersion,
   );
-  const pendingAuthoritativeMetadata = useRef(false);
+  const pendingAuthoritativeMetadata = useRef(
+    pendingAuthorRefreshByStage.get(currentStageKey) === true,
+  );
   const authorRefreshAttempts = useRef(0);
   const authorRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Version marked changes-requested while metadata was still null / in flight. */
@@ -240,6 +261,7 @@ function ArtifactPanelStage({
       ? seenRejectionCountByStage.get(currentStageKey)!
       : (rejectionCount ?? 0),
   );
+
   const [latestBody, setLatestBody] = useState<CachedArtifactBody | null>(() => {
     if (latestArtifact) return asCachedBody(latestArtifact);
     const cachedVersion = latestVersionCache.get(currentStageKey);
@@ -250,9 +272,15 @@ function ArtifactPanelStage({
   const [latestLoading, setLatestLoading] = useState(false);
   const [latestError, setLatestError] = useState<string | null>(null);
   const [latestRetry, setLatestRetry] = useState(0);
-  const [metadata, setMetadata] = useState<SessionArtifactMetadata[] | null>(
-    () => metadataCache.get(currentStageKey) ?? null,
-  );
+  // Drop optimistic "Agent" cache on remount when a refresh is still pending —
+  // otherwise Versions would reuse the stale parent cache with a fresh false ref.
+  const [metadata, setMetadata] = useState<SessionArtifactMetadata[] | null>(() => {
+    if (pendingAuthorRefreshByStage.get(currentStageKey)) {
+      metadataCache.delete(currentStageKey);
+      return null;
+    }
+    return metadataCache.get(currentStageKey) ?? null;
+  });
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [metadataRetry, setMetadataRetry] = useState(0);
@@ -353,7 +381,12 @@ function ArtifactPanelStage({
           // Always flag pending refresh — even when !isDrafting, the success
           // run row may not exist yet (awaiting_review races markRunSuccess).
           metadataCache.set(currentStageKey, nextMetadata);
-          pendingAuthoritativeMetadata.current = true;
+          setPendingAuthorRefreshState(
+            pendingAuthoritativeMetadata,
+            pendingAuthorRefreshByStage,
+            currentStageKey,
+            true,
+          );
           if (!isDrafting) {
             authorRefreshAttempts.current = 0;
             metadataCache.delete(currentStageKey);
@@ -368,7 +401,12 @@ function ArtifactPanelStage({
           previousLatestVersion !== undefined && latestArtifact.version > previousLatestVersion;
         const firstArtifactDuringDraft = previousLatestVersion === undefined && isDrafting;
         if (versionAdvanced || firstArtifactDuringDraft) {
-          pendingAuthoritativeMetadata.current = true;
+          setPendingAuthorRefreshState(
+            pendingAuthoritativeMetadata,
+            pendingAuthorRefreshByStage,
+            currentStageKey,
+            true,
+          );
           if (!isDrafting && versionAdvanced) {
             authorRefreshAttempts.current = 0;
             queueMicrotask(() => setMetadataRetry((value) => value + 1));
@@ -393,6 +431,7 @@ function ArtifactPanelStage({
     latestVersionCache,
     loadLatest,
     metadataCache,
+    pendingAuthorRefreshByStage,
     sessionId,
     stageSlug,
   ]);
@@ -583,7 +622,11 @@ function ArtifactPanelStage({
   useEffect(() => {
     if (activeTab !== "versions") return;
     const cached = metadataCache.get(currentStageKey);
-    if (cached) {
+    // Pending author refresh must not trust an optimistic "Agent" cache left by a
+    // prior mount — invalidate and refetch so retries survive stage switches.
+    if (cached && pendingAuthoritativeMetadata.current) {
+      metadataCache.delete(currentStageKey);
+    } else if (cached) {
       const patched = applyPendingRejectionMarker(cached, pendingRejectedVersion.current);
       if (patched !== cached) {
         metadataCache.set(currentStageKey, patched);
@@ -646,7 +689,12 @@ function ArtifactPanelStage({
               setMetadataRetry((value) => value + 1);
             }, 300);
           } else {
-            pendingAuthoritativeMetadata.current = false;
+            setPendingAuthorRefreshState(
+              pendingAuthoritativeMetadata,
+              pendingAuthorRefreshByStage,
+              currentStageKey,
+              false,
+            );
             authorRefreshAttempts.current = 0;
           }
         }
@@ -664,7 +712,15 @@ function ArtifactPanelStage({
     return () => {
       controller.abort();
     };
-  }, [activeTab, currentStageKey, metadataCache, metadataRetry, sessionId, stageSlug]);
+  }, [
+    activeTab,
+    currentStageKey,
+    metadataCache,
+    metadataRetry,
+    pendingAuthorRefreshByStage,
+    sessionId,
+    stageSlug,
+  ]);
 
   // Load non-latest selected version body when Rendered/Raw need it.
   useEffect(() => {

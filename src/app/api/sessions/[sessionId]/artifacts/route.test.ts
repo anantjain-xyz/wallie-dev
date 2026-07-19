@@ -44,7 +44,8 @@ function buildSupabaseMock({
   feedbackRows?: Array<{ target_version: number }>;
   runError?: { message: string } | null;
   runRows?: Array<{
-    created_at: string;
+    created_at?: string;
+    finished_at: string;
     model_name: string;
     model_provider: string;
     status: string;
@@ -203,12 +204,14 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
       runRows: [
         {
           created_at: "2026-06-07T09:50:00.000Z",
+          finished_at: "2026-06-07T10:00:05.000Z",
           model_name: "opus",
           model_provider: "claude-code",
           status: "success",
         },
         {
           created_at: "2026-06-07T10:50:00.000Z",
+          finished_at: "2026-06-07T11:00:05.000Z",
           model_name: "gpt-5",
           model_provider: "codex",
           status: "success",
@@ -260,18 +263,21 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
       runRows: [
         {
           created_at: "2026-06-07T09:50:00.000Z",
+          finished_at: "2026-06-07T10:00:05.000Z",
           model_name: "opus",
           model_provider: "claude-code",
           status: "success",
         },
         {
           created_at: "2026-06-07T10:50:00.000Z",
+          finished_at: "2026-06-07T11:00:05.000Z",
           model_name: "gpt-4.1",
           model_provider: "codex",
           status: "success",
         },
         {
           created_at: "2026-06-08T09:50:00.000Z",
+          finished_at: "2026-06-08T10:00:05.000Z",
           model_name: "gpt-5",
           model_provider: "codex",
           status: "success",
@@ -287,6 +293,52 @@ describe("GET /api/sessions/[sessionId]/artifacts", () => {
         {
           attempt: 1,
           authorLabel: "Codex (gpt-5)",
+          changesRequested: false,
+          createdAt: "2026-06-08T10:00:00.000Z",
+          id: "artifact-1",
+          stageSlug: "build",
+          version: 1,
+        },
+      ],
+    });
+  });
+
+  it("returns Agent while the post-reset producing run is not yet marked success", async () => {
+    const supabase = buildSupabaseMock({
+      artifactRows: [
+        {
+          created_at: "2026-06-08T10:00:00.000Z",
+          id: "artifact-1",
+          stage_slug: "build",
+          version: 1,
+        },
+      ],
+      runRows: [
+        {
+          created_at: "2026-06-07T09:50:00.000Z",
+          finished_at: "2026-06-07T10:00:05.000Z",
+          model_name: "opus",
+          model_provider: "claude-code",
+          status: "success",
+        },
+        {
+          created_at: "2026-06-07T10:50:00.000Z",
+          finished_at: "2026-06-07T11:00:05.000Z",
+          model_name: "gpt-4.1",
+          model_provider: "codex",
+          status: "success",
+        },
+      ],
+    });
+    mocked.createSupabaseServerClient.mockResolvedValue(supabase.client);
+
+    const result = await GET(request("stage=build"), routeContext());
+    expect(result.status).toBe(200);
+    await expect(result.json()).resolves.toEqual({
+      artifacts: [
+        {
+          attempt: 1,
+          authorLabel: "Agent",
           changesRequested: false,
           createdAt: "2026-06-08T10:00:00.000Z",
           id: "artifact-1",
