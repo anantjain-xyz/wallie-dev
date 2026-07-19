@@ -1,20 +1,31 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type DragEvent } from "react";
 
+import { Status } from "@/components/ui/status";
+import { useOptionalLiveRegion } from "@/components/ui/live-region";
 import {
   appendDraftStage,
+  fieldErrorsForStage,
   keepKnownApproverIds,
   moveDraftStage,
   OperatingRulesField,
   PipelineEditorControls,
+  PipelineStageOrderPreview,
   PipelineValidationSummary,
   PipelineVariableHelp,
   pipelineValidationTargetId,
+  RemoveStageDialog,
+  reorderDraftStage,
   removeDraftStage,
+  resolveFocusAfterStageRemoval,
+  serializePipelineDraft,
   StageRowEditor,
+  stageDisplayName,
   stageToDraft,
   updateDraftStage,
+  updateDraftStageName,
+  updateDraftStageSlug,
   validatePipelineDraft,
   type DraftPipelineStage,
   type PipelineDraftValidationResult,
@@ -25,30 +36,58 @@ import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction
 
 type PipelineEditorProps = {
   canManage: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
   pipeline: SessionPipeline | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
 };
 
+function draftsFromPipeline(
+  pipeline: SessionPipeline,
+  workspaceMembers: WorkspaceMemberSummary[],
+): DraftPipelineStage[] {
+  return keepKnownApproverIds(pipeline.stages.map(stageToDraft), workspaceMembers);
+}
+
 export function PipelineEditor({
   canManage,
+  onDirtyChange,
   pipeline,
   workspaceId,
   workspaceMembers,
 }: PipelineEditorProps) {
+  const { announce } = useOptionalLiveRegion();
   const [name, setName] = useState(pipeline?.name ?? "Default");
   const [operatingRules, setOperatingRules] = useState(pipeline?.operatingRulesMd ?? "");
   const [stages, setStages] = useState<DraftPipelineStage[]>(() =>
-    keepKnownApproverIds(pipeline?.stages.map(stageToDraft) ?? [], workspaceMembers),
+    pipeline ? draftsFromPipeline(pipeline, workspaceMembers) : [],
+  );
+  const [baseline, setBaseline] = useState(() =>
+    serializePipelineDraft({
+      name: pipeline?.name ?? "Default",
+      operatingRules: pipeline?.operatingRulesMd ?? "",
+      stages: pipeline ? draftsFromPipeline(pipeline, workspaceMembers) : [],
+    }),
   );
   const [hasAttemptedSave, setHasAttemptedSave] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [removeIndex, setRemoveIndex] = useState<number | null>(null);
   const [isPending, startTransition] = useTransition();
   const saveInFlightRef = useRef(false);
+  const removeFocusRef = useRef<HTMLElement | null>(null);
+
+  const dirty = serializePipelineDraft({ name, operatingRules, stages }) !== baseline;
   const validation: PipelineDraftValidationResult = hasAttemptedSave
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
+  const removeStage = removeIndex === null ? null : stages[removeIndex];
+  const editable = canManage && !isPending;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   if (!pipeline) {
     return (
@@ -59,10 +98,49 @@ export function PipelineEditor({
     );
   }
 
-  async function savePipeline() {
-    const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
-    setStages(stagesToSave);
+  function announceStagePosition(nextStages: DraftPipelineStage[], index: number) {
+    const stage = nextStages[index];
+    if (!stage) return;
+    announce(
+      `${stageDisplayName(stage, index)} moved to position ${index + 1} of ${nextStages.length}.`,
+    );
+  }
 
+  function applyMove(index: number, direction: -1 | 1) {
+    const next = moveDraftStage(stages, index, direction);
+    if (next === stages) return;
+    setStages(next);
+    announceStagePosition(next, index + direction);
+  }
+
+  function handleDrop(targetIndex: number) {
+    if (dragIndex === null) {
+      setDragIndex(null);
+      return;
+    }
+    const next = reorderDraftStage(stages, dragIndex, targetIndex);
+    setDragIndex(null);
+    if (next === stages) return;
+    setStages(next);
+    announceStagePosition(next, targetIndex);
+  }
+
+  function handleAddStage() {
+    const next = appendDraftStage(stages);
+    const added = next[next.length - 1]!;
+    setStages(next);
+    announce(
+      `Added ${stageDisplayName(added, next.length - 1)} at position ${next.length} of ${next.length}.`,
+    );
+  }
+
+  function handleRemoveAt(index: number) {
+    const label = stageDisplayName(stages[index]!, index);
+    setStages(removeDraftStage(stages, index));
+    announce(`Removed ${label}.`);
+  }
+
+  async function savePipeline(stagesToSave: DraftPipelineStage[]) {
     const response = await fetch(`/api/workspaces/${workspaceId}/pipeline`, {
       body: JSON.stringify({ name, operatingRulesMd: operatingRules, stages: stagesToSave }),
       headers: { "Content-Type": "application/json" },
@@ -71,13 +149,35 @@ export function PipelineEditor({
 
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to save pipeline.");
+      setError(body?.error ?? "Failed to save pipeline. Your edits are preserved — try again.");
       finishInteraction("save_settings", "error");
       return;
     }
 
+    const body = (await response.json().catch(() => null)) as {
+      pipeline?: SessionPipeline;
+    } | null;
+    const savedPipeline = body?.pipeline;
+    const nextStages = savedPipeline
+      ? draftsFromPipeline(savedPipeline, workspaceMembers)
+      : stagesToSave.map((stage) => ({ ...stage, slugManual: true }));
+    const nextName = savedPipeline?.name ?? name;
+    const nextRules = savedPipeline?.operatingRulesMd ?? operatingRules;
+
+    setName(nextName);
+    setOperatingRules(nextRules);
+    setStages(nextStages);
+    setBaseline(
+      serializePipelineDraft({
+        name: nextName,
+        operatingRules: nextRules,
+        stages: nextStages,
+      }),
+    );
     setHasAttemptedSave(false);
+    setError(null);
     setSavedAt(new Date());
+    announce("Pipeline saved.");
     finishInteraction("save_settings", "success");
   }
 
@@ -86,10 +186,11 @@ export function PipelineEditor({
 
     setError(null);
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
-    const validation = validatePipelineDraft({ name, stages: stagesToSave });
-    if (!validation.ok) {
+    const nextValidation = validatePipelineDraft({ name, stages: stagesToSave });
+    if (!nextValidation.ok) {
       setHasAttemptedSave(true);
-      const targetId = pipelineValidationTargetId(validation.issues[0]!);
+      setStages(stagesToSave);
+      const targetId = pipelineValidationTargetId(nextValidation.issues[0]!);
       if (targetId) {
         window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
       }
@@ -103,10 +204,14 @@ export function PipelineEditor({
 
     startTransition(async () => {
       try {
-        await savePipeline();
+        await savePipeline(stagesToSave);
       } catch (caught: unknown) {
         finishInteraction("save_settings", "error");
-        setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
+        setError(
+          caught instanceof Error
+            ? `${caught.message} Your edits are preserved — try again.`
+            : "Failed to save pipeline. Your edits are preserved — try again.",
+        );
       } finally {
         saveInFlightRef.current = false;
       }
@@ -119,13 +224,21 @@ export function PipelineEditor({
       {error ? (
         <div
           role="alert"
-          className="rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
         >
-          {error}
+          <p>{error}</p>
+          <button
+            className="ui-button shrink-0"
+            disabled={isPending}
+            onClick={handleSave}
+            type="button"
+          >
+            Retry save
+          </button>
         </div>
       ) : null}
-      {savedAt && !error ? (
-        <p className="text-xs text-muted">
+      {savedAt && !error && !dirty ? (
+        <p className="text-xs text-muted" role="status">
           Saved at {savedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
         </p>
       ) : null}
@@ -141,7 +254,7 @@ export function PipelineEditor({
             id="pipeline-name"
             type="text"
             value={name}
-            disabled={!canManage}
+            disabled={!editable}
             onChange={(event) => setName(event.target.value)}
             className={`ui-input min-w-[240px] ${!validation.ok && validation.field === "pipeline-name" ? "border-danger" : ""}`}
             maxLength={80}
@@ -159,36 +272,46 @@ export function PipelineEditor({
       </div>
 
       <OperatingRulesField
-        canManage={canManage}
+        canManage={editable}
         onChange={setOperatingRules}
         value={operatingRules}
       />
 
+      <PipelineStageOrderPreview stages={stages} />
+
       <ol className="space-y-3">
         {stages.map((stage, index) => (
           <StageRowEditor
-            key={stage.id ?? `new-${index}`}
-            canManage={canManage}
-            errors={
-              validation.ok
-                ? undefined
-                : {
-                    name: validation.issues.find(
-                      (issue) => issue.stageIndex === index && issue.field === "stage-name",
-                    )?.message,
-                    slug: validation.issues.find(
-                      (issue) => issue.stageIndex === index && issue.field === "stage-slug",
-                    )?.message,
-                  }
-            }
+            key={stage.key}
+            canManage={editable}
+            dragIndex={dragIndex}
+            errors={fieldErrorsForStage(validation, index)}
             index={index}
             isFirst={index === 0}
             isLast={index === stages.length - 1}
             onChange={(patch) => setStages((current) => updateDraftStage(current, index, patch))}
-            onMoveDown={() => setStages((current) => moveDraftStage(current, index, 1))}
-            onMoveUp={() => setStages((current) => moveDraftStage(current, index, -1))}
-            onRemove={() => setStages((current) => removeDraftStage(current, index))}
+            onChangeName={(nextName) =>
+              setStages((current) => updateDraftStageName(current, index, nextName))
+            }
+            onChangeSlug={(nextSlug) =>
+              setStages((current) => updateDraftStageSlug(current, index, nextSlug))
+            }
+            onDragEnd={() => setDragIndex(null)}
+            onDragOver={(event: DragEvent<HTMLLIElement>) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDragStart={setDragIndex}
+            onDrop={handleDrop}
+            onMoveDown={() => applyMove(index, 1)}
+            onMoveUp={() => applyMove(index, -1)}
+            onRemove={() => handleRemoveAt(index)}
+            onRemoveRequest={() => {
+              removeFocusRef.current = document.getElementById(`pipeline-stage-${index}-remove`);
+              setRemoveIndex(index);
+            }}
             stage={stage}
+            totalStages={stages.length}
             workspaceMembers={workspaceMembers}
           />
         ))}
@@ -197,9 +320,35 @@ export function PipelineEditor({
       <PipelineEditorControls
         canManage={canManage}
         isPending={isPending}
-        onAddStage={() => setStages((current) => appendDraftStage(current))}
+        onAddStage={handleAddStage}
         onSave={handleSave}
+        saveDisabled={!dirty && !error}
+        saveLabel="Save pipeline"
+      />
+
+      <RemoveStageDialog
+        onConfirm={() => {
+          if (removeIndex === null) return;
+          const index = removeIndex;
+          // Capture a surviving control before the row unmounts (not the removed row).
+          removeFocusRef.current = resolveFocusAfterStageRemoval(stages.length, index);
+          setRemoveIndex(null);
+          handleRemoveAt(index);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setRemoveIndex(null);
+        }}
+        open={removeIndex !== null && removeStage !== undefined}
+        restoreFocusRef={removeFocusRef}
+        stageLabel={
+          removeStage && removeIndex !== null ? stageDisplayName(removeStage, removeIndex) : "stage"
+        }
       />
     </div>
   );
+}
+
+export function PipelineUnsavedBadge({ dirty }: { dirty: boolean }) {
+  if (!dirty) return null;
+  return <Status label="Unsaved changes" value="needs_attention" />;
 }

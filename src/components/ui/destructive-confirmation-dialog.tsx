@@ -62,7 +62,10 @@ export function DestructiveConfirmationDialog({
           restoreFocusRef
             ? (event) => {
                 event.preventDefault();
-                restoreFocusRef.current?.focus();
+                const target = restoreFocusRef.current;
+                if (target?.isConnected) {
+                  target.focus();
+                }
               }
             : undefined
         }
