@@ -195,6 +195,8 @@ export function SessionRowIsland({
         title: `Session #${session.number} unarchived.`,
         tone: "success",
       });
+      // Refresh so server-owned metaTrailing / ordering catch up when the row stays visible.
+      router.refresh();
     } catch (errorValue) {
       setOptimisticArchive(null);
       setRowHidden(false);

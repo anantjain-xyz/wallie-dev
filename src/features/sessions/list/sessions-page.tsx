@@ -59,8 +59,13 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
       ) : (
         <SessionsLedgerVisibilityProvider
           emptyFallback={<FilterEmptyState />}
-          key={initialData.queryState.scope}
-          sessionCount={sessions.length}
+          key={[
+            initialData.queryState.scope,
+            initialData.queryState.stageSlug ?? "",
+            initialData.queryState.query,
+            initialData.queryState.cursor ?? "",
+          ].join("\0")}
+          sessionIds={sessions.map((session) => session.id)}
         >
           <SessionsLedger>
             {sessions.map((session) => (

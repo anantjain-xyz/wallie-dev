@@ -15,13 +15,16 @@ const SessionsLedgerVisibilityContext = createContext<SessionsLedgerVisibilityCo
 export function SessionsLedgerVisibilityProvider({
   children,
   emptyFallback,
-  sessionCount,
+  sessionIds,
 }: {
   children: ReactNode;
   emptyFallback: ReactNode;
-  sessionCount: number;
+  /** Authoritative IDs for the current result set; stale hide entries are ignored. */
+  sessionIds: readonly string[];
 }) {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+
+  const sessionIdSet = useMemo(() => new Set(sessionIds), [sessionIds]);
 
   const hideSession = useCallback((sessionId: string) => {
     setHiddenIds((current) => {
@@ -41,12 +44,20 @@ export function SessionsLedgerVisibilityProvider({
     });
   }, []);
 
+  const hiddenCount = useMemo(() => {
+    let count = 0;
+    for (const id of hiddenIds) {
+      if (sessionIdSet.has(id)) count += 1;
+    }
+    return count;
+  }, [hiddenIds, sessionIdSet]);
+
   const value = useMemo(
-    () => ({ hideSession, hiddenCount: hiddenIds.size, showSession }),
-    [hideSession, hiddenIds.size, showSession],
+    () => ({ hideSession, hiddenCount, showSession }),
+    [hideSession, hiddenCount, showSession],
   );
 
-  if (sessionCount > 0 && hiddenIds.size >= sessionCount) {
+  if (sessionIds.length > 0 && hiddenCount >= sessionIds.length) {
     return (
       <SessionsLedgerVisibilityContext.Provider value={value}>
         {emptyFallback}
