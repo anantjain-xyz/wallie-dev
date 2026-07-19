@@ -37,9 +37,9 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-  route-budgets:
+  regression-gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -59,8 +59,68 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build production route diagnostics
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase
+        run: supabase start
+
+      - name: Write CI env
+        run: |
+          python3 <<'PY'
+          import json, os, subprocess, urllib.request
+          status = json.loads(subprocess.check_output(["supabase", "status", "-o", "json"], text=True))
+          enc = subprocess.check_output(["openssl", "rand", "-hex", "32"], text=True).strip()
+          # Prefer classic JWT anon/service keys for auth compatibility.
+          publishable = status.get("ANON_KEY") or status.get("PUBLISHABLE_KEY")
+          secret = status.get("SERVICE_ROLE_KEY") or status.get("SECRET_KEY")
+          lines = [
+            "NEXT_PUBLIC_APP_URL=http://localhost:3100",
+            f"NEXT_PUBLIC_SUPABASE_URL={status['API_URL']}",
+            f"NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY={publishable}",
+            f"SUPABASE_SECRET_KEY={secret}",
+            f"WALLIE_ENCRYPTION_KEY={enc}",
+            "WALLIE_SANDBOX_IMPL=fake",
+            "CI=1",
+          ]
+          open(".env.local", "w").write("\n".join(lines) + "\n")
+          print("Wrote .env.local for regression gates")
+          PY
+
+      - name: Reset database with seed fixtures
+        run: supabase db reset --yes
+
+      - name: Build production bundle
         run: pnpm build
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run visual, keyboard, accessibility, and overflow regression suite
+        run: pnpm exec playwright test e2e/regression
+        env:
+          CI: "1"
+          PLAYWRIGHT_HOST: localhost
+          PLAYWRIGHT_PORT: "3100"
 
       - name: Enforce route bundle ceilings
         run: pnpm check:route-budgets
+
+      - name: Run production interaction benchmark
+        run: pnpm exec playwright test e2e/interaction-rum.benchmark.spec.ts --repeat-each=2
+        env:
+          CI: "1"
+          PLAYWRIGHT_HOST: localhost
+          PLAYWRIGHT_PORT: "3100"
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-regression-artifacts
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

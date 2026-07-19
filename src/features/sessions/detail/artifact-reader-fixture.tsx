@@ -89,7 +89,8 @@ function ArtifactReaderFixtureInner({
   }, [theme]);
 
   return (
-    <div
+    <main
+      id="main-content"
       className={cn(
         "min-h-screen bg-canvas text-foreground",
         displayMode === "mobile" && "w-[320px]",
@@ -290,6 +291,6 @@ function ArtifactReaderFixtureInner({
           </div>
         </section>
       </div>
-    </div>
+    </main>
   );
 }

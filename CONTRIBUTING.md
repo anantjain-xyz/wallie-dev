@@ -51,6 +51,12 @@ pnpm test path/to/file.test.ts
 pnpm test -t "name of the test"
 ```
 
+### Visual, keyboard, accessibility, and performance gates
+
+Redesign-sensitive surfaces also run Playwright regression gates in CI (`regression-gates`): committed screenshot baselines, axe serious/critical violations, keyboard/overlay focus, overflow, forced-colors/reduced-motion status checks, route bundle budgets, and the production interaction benchmark.
+
+See [docs/regression-gates.md](docs/regression-gates.md) for fixture creation, intentional baseline updates (CI never auto-updates snapshots), accessibility review expectations, and how to add a route or state.
+
 ## Pull request guidelines
 
 - **Keep PRs small and focused.** One logical change per PR is much easier to review.

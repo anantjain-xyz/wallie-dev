@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { isProductionDeploy } from "@/env/deploy";
 import { ArtifactReaderFixture } from "@/features/sessions/detail/artifact-reader-fixture";
 
 export default async function ArtifactReaderFixturePage({
@@ -7,7 +8,7 @@ export default async function ArtifactReaderFixturePage({
 }: {
   searchParams: Promise<{ theme?: string; view?: string; viewport?: string }>;
 }) {
-  if (process.env.NODE_ENV !== "development") notFound();
+  if (isProductionDeploy()) notFound();
 
   const { theme, view, viewport } = await searchParams;
   const initialView =

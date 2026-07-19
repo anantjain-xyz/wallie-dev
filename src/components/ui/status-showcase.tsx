@@ -32,6 +32,7 @@ export function StatusShowcase({
 
   return (
     <main
+      id="main-content"
       className={cn(
         "min-h-screen bg-canvas px-5 py-10 text-foreground sm:px-8",
         displayMode === "mobile" && "w-[390px] sm:px-5",
