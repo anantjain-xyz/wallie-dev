@@ -22,6 +22,7 @@ const mocked = vi.hoisted(() => {
   return {
     channel,
     fetch: vi.fn(),
+    push: vi.fn(),
     refresh: vi.fn(),
     removeChannel: vi.fn(),
     replace: vi.fn(),
@@ -29,7 +30,7 @@ const mocked = vi.hoisted(() => {
 });
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: mocked.refresh, replace: mocked.replace }),
+  useRouter: () => ({ push: mocked.push, refresh: mocked.refresh, replace: mocked.replace }),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -70,6 +71,7 @@ const session: SessionSummary = {
   pullRequestCount: 0,
   pullRequests: [],
   rejectionCount: 0,
+  repositoryFullName: null,
   title: "Optimistic session",
   updatedAt: "2026-07-17T11:00:00.000Z",
   workspaceId: "workspace-1",
@@ -125,7 +127,7 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
     hasMore: false,
     nextCursor: null,
     onboarding: null,
-    queryState: { cursor: null, query: "", scope, stageSlug: null },
+    queryState: { cursor: null, query: "", scope, sort: "updated", stageSlug: null },
     sessions: [summary],
     stageFacets: [{ count: 1, name: "Plan", position: 0, slug: "plan" }],
     totalCount: 1,
@@ -394,6 +396,7 @@ describe("optimistic session interactions", () => {
       key: "ArrowDown",
     });
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
     expect(screen.queryByRole("link", { name: /Open session #1/ })).toBeNull();
     expect(screen.getByText("No sessions match these filters")).toBeTruthy();
     expect(screen.getByText("Archiving session #1…", { exact: true })).toBeTruthy();
@@ -443,6 +446,7 @@ describe("optimistic session interactions", () => {
       key: "ArrowDown",
     });
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
 
     await screen.findByText("Session #1 remains active.");
     expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
@@ -500,6 +504,7 @@ describe("optimistic session interactions", () => {
       key: "ArrowDown",
     });
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
     await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(1));
 
     view.rerender(
@@ -727,6 +732,7 @@ describe("optimistic session interactions", () => {
       key: "ArrowDown",
     });
     fireEvent.click(screen.getByRole("menuitem", { name: "Archive session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Archive session" }));
     await screen.findByRole("button", { name: "Undo" });
 
     const detailData = makeDetailData();
@@ -781,7 +787,7 @@ describe("optimistic session interactions", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
       key: "ArrowDown",
     });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Edit title" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Session #1 title" }), {
       target: { value: "Older saved title" },
     });

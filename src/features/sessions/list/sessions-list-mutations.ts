@@ -2,19 +2,47 @@ import type {
   SessionFilterKey,
   SessionListItem,
   SessionListQueryState,
+  SessionListSortKey,
 } from "@/features/sessions/types";
+
+export const SESSION_LIST_SORT_OPTIONS: {
+  key: SessionListSortKey;
+  label: string;
+}[] = [
+  { key: "updated", label: "Recently updated" },
+  { key: "oldest", label: "Oldest updated" },
+  { key: "number", label: "Session number" },
+];
 
 export function buildSessionsListHref(
   base: string,
-  state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope">,
+  state: Pick<SessionListQueryState, "cursor" | "stageSlug" | "query" | "scope" | "sort">,
 ): string {
   const params = new URLSearchParams();
   if (state.stageSlug) params.set("stage", state.stageSlug);
   if (state.query.trim()) params.set("q", state.query.trim());
   if (state.scope !== "all") params.set("scope", state.scope);
+  if (state.sort !== "updated") params.set("sort", state.sort);
   if (state.cursor) params.set("cursor", state.cursor);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+export function compareSessionsBySort(
+  left: Pick<SessionListItem, "id" | "number" | "updatedAt">,
+  right: Pick<SessionListItem, "id" | "number" | "updatedAt">,
+  sort: SessionListSortKey,
+) {
+  if (sort === "oldest") {
+    const byUpdated = left.updatedAt.localeCompare(right.updatedAt);
+    return byUpdated !== 0 ? byUpdated : left.id.localeCompare(right.id);
+  }
+  if (sort === "number") {
+    const byNumber = right.number - left.number;
+    return byNumber !== 0 ? byNumber : right.id.localeCompare(left.id);
+  }
+  const byUpdated = right.updatedAt.localeCompare(left.updatedAt);
+  return byUpdated !== 0 ? byUpdated : right.id.localeCompare(left.id);
 }
 
 export type ListCommittedMutation =
@@ -32,6 +60,7 @@ export type ListCommittedMutation =
 export function commitListTitle(
   sessions: readonly SessionListItem[],
   result: { id: string; title: string; updatedAt: string },
+  sort: SessionListSortKey = "updated",
 ) {
   return sessions
     .map((session) =>
@@ -39,7 +68,7 @@ export function commitListTitle(
         ? { ...session, title: result.title, updatedAt: result.updatedAt }
         : session,
     )
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    .sort((left, right) => compareSessionsBySort(left, right, sort));
 }
 
 export function commitListArchive(
@@ -51,6 +80,7 @@ export function commitListArchive(
     phaseStatus: SessionListItem["phaseStatus"];
     updatedAt: string;
   },
+  sort: SessionListSortKey = "updated",
 ) {
   return sessions
     .map((session) =>
@@ -68,19 +98,20 @@ export function commitListArchive(
         (scope !== "active" || !session.archivedAt) &&
         (scope !== "archived" || Boolean(session.archivedAt)),
     )
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    .sort((left, right) => compareSessionsBySort(left, right, sort));
 }
 
 export function reconcileListMutations(
   sessions: readonly SessionListItem[],
   scope: SessionFilterKey,
   mutations: readonly ListCommittedMutation[],
+  sort: SessionListSortKey = "updated",
 ) {
   return [...mutations]
     .sort((left, right) => left.result.updatedAt.localeCompare(right.result.updatedAt))
     .reduce<
       SessionListItem[]
-    >((current, mutation) => (mutation.kind === "title" ? commitListTitle(current, mutation.result) : commitListArchive(current, scope, mutation.result)), [...sessions]);
+    >((current, mutation) => (mutation.kind === "title" ? commitListTitle(current, mutation.result, sort) : commitListArchive(current, scope, mutation.result, sort)), [...sessions]);
 }
 
 export type TitleOverride = {

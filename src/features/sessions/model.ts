@@ -61,6 +61,7 @@ export function mapSessionRow(
     pullRequestCount,
     pullRequests,
     rejectionCount: row.rejection_count,
+    repositoryFullName: null,
     title: row.title,
     updatedAt: row.updated_at,
     workspaceId: row.workspace_id,

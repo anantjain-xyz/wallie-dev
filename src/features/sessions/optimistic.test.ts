@@ -57,6 +57,7 @@ const session: SessionDetail = {
   pullRequestCount: 0,
   pullRequests: [],
   rejectionCount: 0,
+  repositoryFullName: null,
   title: "Original",
   updatedAt: "2026-07-17T12:00:00.000Z",
   workspaceId: "workspace-1",

@@ -2,18 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSessionsListHref,
+  compareSessionsBySort,
   resolveOptimisticArchive,
   resolveOptimisticTitle,
   shouldApplyArchiveResult,
 } from "@/features/sessions/list/sessions-list-mutations";
 
 describe("sessions list helpers", () => {
-  it("builds URL-addressable filter hrefs", () => {
+  it("builds URL-addressable filter hrefs including non-default sort", () => {
     expect(
       buildSessionsListHref("/w/acme/sessions", {
         cursor: "c1",
         query: " auth ",
         scope: "active",
+        sort: "updated",
         stageSlug: "build",
       }),
     ).toBe("/w/acme/sessions?stage=build&q=auth&scope=active&cursor=c1");
@@ -23,9 +25,43 @@ describe("sessions list helpers", () => {
         cursor: null,
         query: "",
         scope: "all",
+        sort: "oldest",
+        stageSlug: null,
+      }),
+    ).toBe("/w/acme/sessions?sort=oldest");
+
+    expect(
+      buildSessionsListHref("/w/acme/sessions", {
+        cursor: null,
+        query: "",
+        scope: "all",
+        sort: "updated",
         stageSlug: null,
       }),
     ).toBe("/w/acme/sessions");
+  });
+
+  it("orders sessions by the active sort key", () => {
+    const older = {
+      id: "a",
+      number: 1,
+      updatedAt: "2026-06-07T10:00:00.000Z",
+    };
+    const newer = {
+      id: "b",
+      number: 2,
+      updatedAt: "2026-06-07T12:00:00.000Z",
+    };
+
+    expect(
+      [older, newer].sort((left, right) => compareSessionsBySort(left, right, "updated")),
+    ).toEqual([newer, older]);
+    expect(
+      [older, newer].sort((left, right) => compareSessionsBySort(left, right, "oldest")),
+    ).toEqual([older, newer]);
+    expect(
+      [older, newer].sort((left, right) => compareSessionsBySort(left, right, "number")),
+    ).toEqual([newer, older]);
   });
 
   it("keeps an optimistic title only while keyed to the authoritative snapshot", () => {
