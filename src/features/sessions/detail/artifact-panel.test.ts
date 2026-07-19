@@ -7,6 +7,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import type { SessionArtifactSummary } from "@/features/sessions/types";
 
+const mockedNavigation = vi.hoisted(() => ({
+  pathname: "/w/demo/sessions/1",
+  searchParams: new URLSearchParams(),
+}));
+
+const mockedToast = vi.hoisted(() => ({
+  pushToast: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => mockedNavigation.pathname,
+  useSearchParams: () => mockedNavigation.searchParams,
+}));
+
+vi.mock("@/components/ui/toast", () => ({
+  useOptionalToast: () => ({
+    dismissToast: vi.fn(),
+    pushToast: mockedToast.pushToast,
+  }),
+}));
+
+function expectClientUrl(pathWithQuery: string) {
+  expect(`${window.location.pathname}${window.location.search}`).toBe(pathWithQuery);
+}
+
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const latestArtifact: SessionArtifactSummary = {
   createdAt: "2026-06-07T11:00:00.000Z",
@@ -14,6 +39,27 @@ const latestArtifact: SessionArtifactSummary = {
   stageSlug: "build",
   version: 2,
 };
+
+function metadataRow(
+  overrides: Partial<{
+    attempt: number;
+    authorLabel: string;
+    changesRequested: boolean;
+    createdAt: string;
+    stageSlug: string;
+    version: number;
+  }> = {},
+) {
+  const version = overrides.version ?? 1;
+  return {
+    attempt: overrides.attempt ?? version,
+    authorLabel: overrides.authorLabel ?? "Claude Code",
+    changesRequested: overrides.changesRequested ?? false,
+    createdAt: overrides.createdAt ?? "2026-06-07T10:00:00.000Z",
+    stageSlug: overrides.stageSlug ?? "build",
+    version,
+  };
+}
 
 function response(body: unknown, status = 200) {
   return Promise.resolve(
@@ -43,6 +89,9 @@ function renderPanel(overrides: Partial<Parameters<typeof ArtifactPanel>[0]> = {
 describe("ArtifactPanel", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    mockedNavigation.searchParams = new URLSearchParams();
+    mockedToast.pushToast.mockReset();
+    window.history.replaceState(null, "", mockedNavigation.pathname);
   });
 
   afterEach(() => {
@@ -55,16 +104,45 @@ describe("ArtifactPanel", () => {
 
     expect(screen.getByText("Latest formatted")).toBeTruthy();
     expect(screen.queryByText("# Latest")).toBeNull();
+    expect(
+      screen.getByRole("heading", { level: 3, name: /build artifact · version 2/i }),
+    ).toBeTruthy();
     await waitFor(() => expect(fetch).not.toHaveBeenCalled());
   });
 
-  it("loads metadata once on demand and fetches only uncached selected bodies", async () => {
+  it("loads metadata once on demand and does not mount Markdown trees in Versions", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifacts: [
+          metadataRow({
+            authorLabel: "Claude Code (opus)",
+            createdAt: latestArtifact.createdAt,
+            version: 2,
+          }),
+          metadataRow({ changesRequested: true, version: 1 }),
+        ],
+      }),
+    );
+
+    fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByRole("button", { name: /Version 1/i })).toBeTruthy();
+    expect(screen.getByText("Changes requested")).toBeTruthy();
+    expect(screen.getByText("Claude Code (opus)")).toBeTruthy();
+    expect(screen.queryByText("Latest formatted")).toBeNull();
+    expect(screen.queryByText("# Latest")).toBeNull();
+    expect(document.querySelector(".artifact-content")).toBeNull();
+    expect(document.querySelector("[dangerouslySetInnerHTML]")).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
+  });
+
+  it("selecting a version updates the URL, heading, and Rendered body only", async () => {
     vi.mocked(fetch)
       .mockImplementationOnce(() =>
         response({
           artifacts: [
-            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
-            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
           ],
         }),
       )
@@ -73,7 +151,8 @@ describe("ArtifactPanel", () => {
           artifact: {
             createdAt: "2026-06-07T10:00:00.000Z",
             payload: "# Earlier",
-            sanitizedHtml: '<div class="text-[13px]"><h1>Earlier</h1></div>',
+            sanitizedHtml:
+              '<div class="artifact-content"><h1 class="artifact-heading-1">Earlier</h1></div>',
             stageSlug: "build",
             version: 1,
           },
@@ -81,19 +160,23 @@ describe("ArtifactPanel", () => {
       );
 
     fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
-    await screen.findByRole("button", { name: "v1" });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: "v1" }));
+    expectClientUrl("/w/demo/sessions/1?artifactVersion=1&artifactStage=build");
+    expect(screen.getByRole("tab", { name: "Rendered" }).getAttribute("aria-selected")).toBe(
+      "true",
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Rendered" })),
+    );
     expect(await screen.findByText("Earlier")).toBeTruthy();
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain("version=1");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    fireEvent.click(screen.getByRole("button", { name: "v1" }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByRole("heading", { level: 3, name: /build artifact · version 1$/i }),
+    ).toBeTruthy();
+    expect(
+      document.querySelectorAll(".artifact-content, .artifact-heading-1").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Latest formatted")).toBeNull();
   });
 
   it("supports keyboard tab selection plus failure, retry, and empty states", async () => {
@@ -134,7 +217,9 @@ describe("ArtifactPanel", () => {
         initialFormattedArtifact: null,
         initialFormattedArtifactKey: null,
         isDrafting: false,
-        latestArtifact: null,
+        // The reset signal is authoritative even if an artifact deletion event
+        // has not yet removed the stale summary from parent state.
+        latestArtifact,
         loadLatest: false,
         sessionId: SESSION_ID,
         stageSlug: "land",
@@ -175,22 +260,27 @@ describe("ArtifactPanel", () => {
       .mockImplementationOnce(() =>
         response({
           artifacts: [
-            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
-            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
           ],
         }),
       )
       .mockImplementationOnce(() =>
         response({
-          artifact: {
-            ...latestArtifact,
-            sanitizedHtml: "<h1>Latest</h1>",
-          },
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
         }),
       );
     const view = renderPanel();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    await screen.findByRole("button", { name: "v1" });
+    await screen.findByRole("button", { name: /Version 1/i });
     fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
 
     view.rerender(
@@ -213,10 +303,864 @@ describe("ArtifactPanel", () => {
 
     expect(await screen.findByText(/"newest": true/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
-    expect(await screen.findByRole("button", { name: "v3" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Version 3/i })).toBeTruthy();
+    // Invalidate synthesized "Agent" metadata and refetch authoritative author labels.
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).not.toContain("version=");
-    expect(String(vi.mocked(fetch).mock.calls[1]?.[0])).toContain("version=2");
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+  });
+
+  it("delays authoritative metadata refetch until drafting ends", async () => {
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      );
+
+    const view = renderPanel({ isDrafting: true });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 1/i });
+    fireEvent.click(screen.getByRole("tab", { name: "Rendered" }));
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: true,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByRole("button", { name: /Version 3/i })).toBeTruthy();
+    expect(screen.getByText("Agent")).toBeTruthy();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+  });
+
+  it("marks changes requested when rejectionCount increases", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+    expect(screen.queryByText("Changes requested")).toBeNull();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
+    // No immediate metadata refetch — rejection_count can precede feedback insert.
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves changes-requested when rejection lands while history is still loading", async () => {
+    let resolveHistory: ((value: Response) => void) | undefined;
+    const historyPromise = new Promise<Response>((resolve) => {
+      resolveHistory = resolve;
+    });
+    vi.mocked(fetch).mockImplementationOnce(() => historyPromise);
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    resolveHistory?.(
+      await response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
+  });
+
+  it("retries author metadata after drafting until the run success row appears", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Agent",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            metadataRow({ version: 1 }),
+          ],
+        }),
+      );
+
+    const view = renderPanel({ isDrafting: true });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 1/i });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: true,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+    expect(await screen.findByText("Agent")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Agent")).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(350);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("retries author metadata on the first Versions open after a new artifact", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=build") && !url.includes("version=") && !url.includes("latest=")) {
+        const callCount = vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([request]) =>
+              String(request).includes("stage=build") &&
+              !String(request).includes("version=") &&
+              !String(request).includes("latest="),
+          ).length;
+        if (callCount <= 1) {
+          return response({
+            artifacts: [
+              metadataRow({
+                authorLabel: "Agent",
+                createdAt: "2026-06-07T12:00:00.000Z",
+                version: 3,
+              }),
+              metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            ],
+          });
+        }
+        return response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          ],
+        });
+      }
+      return response({ error: "unexpected" }, 500);
+    });
+
+    // Seed latestVersionCache via an existing artifact without ever opening Versions.
+    const view = renderPanel();
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Agent")).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(350);
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.filter(
+            ([request]) =>
+              String(request).includes("stage=build") &&
+              !String(request).includes("version=") &&
+              !String(request).includes("latest="),
+          ).length,
+      ).toBe(2),
+    );
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("retries author metadata on an awaiting-review cold mount", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(fetch)
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Agent",
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+          ],
+        }),
+      )
+      .mockImplementationOnce(() =>
+        response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+          ],
+        }),
+      );
+
+    fireEvent.click(renderPanel({ isAwaitingReview: true }).getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Agent")).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(350);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it("preserves pending author refresh across stage switches", async () => {
+    let allowAuthoritativeAuthor = false;
+    let buildHistoryCalls = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=build") && !url.includes("version=") && !url.includes("latest=")) {
+        buildHistoryCalls += 1;
+        if (!allowAuthoritativeAuthor) {
+          return response({
+            artifacts: [
+              metadataRow({
+                authorLabel: "Agent",
+                createdAt: "2026-06-07T12:00:00.000Z",
+                version: 3,
+              }),
+              metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+            ],
+          });
+        }
+        return response({
+          artifacts: [
+            metadataRow({
+              authorLabel: "Codex (gpt-5)",
+              createdAt: "2026-06-07T12:00:00.000Z",
+              version: 3,
+            }),
+            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          ],
+        });
+      }
+      if (url.includes("stage=plan") && !url.includes("version=") && !url.includes("latest=")) {
+        return response({
+          artifacts: [metadataRow({ stageSlug: "plan", version: 1 })],
+        });
+      }
+      return response({ error: "unexpected" }, 500);
+    });
+
+    const view = renderPanel();
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Agent")).toBeTruthy();
+    const callsBeforeSwitch = buildHistoryCalls;
+
+    // Switch away while author refresh is still pending — unmounts the keyed stage
+    // panel while the parent metadata cache retains the optimistic "Agent" row.
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Plan formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:plan:1`,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Plan",
+          stageSlug: "plan",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 3, name: /plan artifact/i })).toBeTruthy(),
+    );
+
+    allowAuthoritativeAuthor = true;
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:00:00.000Z",
+          payload: { newest: true },
+          stageSlug: "build",
+          version: 3,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await waitFor(() => expect(buildHistoryCalls).toBeGreaterThan(callsBeforeSwitch));
+    expect(await screen.findByText("Codex (gpt-5)")).toBeTruthy();
+  });
+
+  it("clears the optimistic changes-requested marker when rejectionCount rolls back", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 0,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() => expect(screen.queryByText("Changes requested")).toBeNull());
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores rejectionCount bumps when the prop is omitted (prior-stage panels)", async () => {
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    const view = renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    // Rerender without rejectionCount still must not invent a marker.
+    expect(screen.queryByText("Changes requested")).toBeNull();
+  });
+
+  it("applies changes-requested after returning to a stage rejected while away", async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=plan")) {
+        return response({
+          artifacts: [metadataRow({ stageSlug: "plan", version: 1 })],
+        });
+      }
+      return response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      });
+    });
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+    expect(screen.queryByText("Changes requested")).toBeNull();
+
+    // Leave the current stage — keyed panel unmounts; metadata cache stays.
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Plan formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:plan:1`,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Plan",
+          stageSlug: "plan",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+    await screen.findByRole("heading", { level: 3, name: /plan artifact/i });
+
+    // Reject landed on the current stage while this panel was unmounted.
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        rejectionCount: 1,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByText("Changes requested")).toBeTruthy();
+  });
+
+  it("refetches history when rejectionCount jumps by more than one while away", async () => {
+    const v3: SessionArtifactSummary = {
+      createdAt: "2026-06-07T12:00:00.000Z",
+      payload: "# Latest v3",
+      stageSlug: "build",
+      version: 3,
+    };
+    let buildHistoryCalls = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("stage=plan")) {
+        return response({
+          artifacts: [metadataRow({ stageSlug: "plan", version: 1 })],
+        });
+      }
+      if (url.includes("stage=build") && !url.includes("version=") && !url.includes("latest=")) {
+        buildHistoryCalls += 1;
+        if (buildHistoryCalls === 1) {
+          return response({
+            artifacts: [
+              metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+              metadataRow({ version: 1 }),
+            ],
+          });
+        }
+        return response({
+          artifacts: [
+            metadataRow({
+              changesRequested: true,
+              createdAt: v3.createdAt,
+              version: 3,
+            }),
+            metadataRow({
+              changesRequested: true,
+              createdAt: latestArtifact.createdAt,
+              version: 2,
+            }),
+            metadataRow({ version: 1 }),
+          ],
+        });
+      }
+      return response({ artifacts: [] });
+    });
+
+    const view = renderPanel({ rejectionCount: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 2/i });
+    expect(screen.queryByText("Changes requested")).toBeNull();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Plan formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:plan:1`,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T09:00:00.000Z",
+          payload: "# Plan",
+          stageSlug: "plan",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "plan",
+      }),
+    );
+    await screen.findByRole("heading", { level: 3, name: /plan artifact/i });
+
+    // Two rejections landed while away (v2 rejected → v3 produced → v3 rejected).
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:3`,
+        isDrafting: false,
+        latestArtifact: v3,
+        loadLatest: true,
+        rejectionCount: 2,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    await screen.findByRole("button", { name: /Version 3/i });
+    await waitFor(() => expect(buildHistoryCalls).toBe(2));
+    expect(screen.getAllByText("Changes requested")).toHaveLength(2);
+  });
+
+  it("notifies when a historical version is selected", async () => {
+    const onViewingHistoricalChange = vi.fn();
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("version=1")) {
+        return response({
+          artifact: {
+            createdAt: "2026-06-07T10:00:00.000Z",
+            payload: "# Earlier",
+            sanitizedHtml: "<h1>Earlier</h1>",
+            stageSlug: "build",
+            version: 1,
+          },
+        });
+      }
+      return response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      });
+    });
+
+    fireEvent.click(
+      renderPanel({ onViewingHistoricalChange }).getByRole("tab", { name: "Versions" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
+
+    await waitFor(() => expect(onViewingHistoricalChange).toHaveBeenCalledWith(true));
+  });
+
+  it("keeps artifactStage when selecting Latest on a prior stage", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    fireEvent.click(
+      renderPanel({ persistStageInUrl: true }).getByRole("tab", { name: "Versions" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Version 2.*Latest/i }));
+
+    expectClientUrl("/w/demo/sessions/1?artifactStage=build");
+  });
+
+  it("writes artifactStage when the timeline selects a prior stage", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifacts: [metadataRow({ createdAt: latestArtifact.createdAt, version: 2 })],
+      }),
+    );
+    const view = renderPanel({ persistStageInUrl: false, stageSlug: "land" });
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: createElement("div", null, "Latest formatted"),
+        initialFormattedArtifactKey: `${SESSION_ID}:build:2`,
+        isDrafting: false,
+        latestArtifact,
+        loadLatest: true,
+        persistStageInUrl: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    await waitFor(() => expectClientUrl("/w/demo/sessions/1?artifactStage=build"));
+  });
+
+  it("clears artifactVersion and artifactStage from the URL when the selected stage changes", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/w/demo/sessions/1?artifactVersion=1&artifactStage=build",
+    );
+    mockedNavigation.searchParams = new URLSearchParams("artifactVersion=1&artifactStage=build");
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifact: {
+          createdAt: "2026-06-07T10:00:00.000Z",
+          payload: "# Earlier",
+          sanitizedHtml: "<h1>Earlier</h1>",
+          stageSlug: "build",
+          version: 1,
+        },
+      }),
+    );
+    const view = renderPanel();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "This stage has not started yet.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: null,
+        loadLatest: false,
+        sessionId: SESSION_ID,
+        stageSlug: "land",
+      }),
+    );
+
+    await waitFor(() => expectClientUrl("/w/demo/sessions/1"));
+    expect(screen.getByRole("heading", { level: 3, name: /^land artifact$/i })).toBeTruthy();
+  });
+
+  it("keeps latest body loading independent from a selected-version fetch", async () => {
+    let resolveLatest: ((value: Response) => void) | undefined;
+    const latestPromise = new Promise<Response>((resolve) => {
+      resolveLatest = resolve;
+    });
+
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("latest=true")) return latestPromise;
+      if (/[?&]version=1(?:&|$)/.test(url)) {
+        return response({
+          artifact: {
+            createdAt: "2026-06-07T10:00:00.000Z",
+            payload: "# Earlier",
+            sanitizedHtml: '<div class="artifact-content"><h1>Earlier</h1></div>',
+            stageSlug: "plan",
+            version: 1,
+          },
+        });
+      }
+      return response({
+        artifacts: [metadataRow({ version: 2 }), metadataRow({ version: 1 })],
+      });
+    });
+
+    renderPanel({
+      initialFormattedArtifact: null,
+      initialFormattedArtifactKey: null,
+      latestArtifact: null,
+      stageSlug: "plan",
+    });
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("latest=true")),
+      ).toBe(true),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
+    expect(await screen.findByText("Earlier")).toBeTruthy();
+
+    resolveLatest?.(
+      new Response(
+        JSON.stringify({
+          artifact: {
+            createdAt: "2026-06-07T11:00:00.000Z",
+            payload: "# Plan latest",
+            sanitizedHtml: '<div class="artifact-content"><h1>Plan latest</h1></div>',
+            stageSlug: "plan",
+            version: 2,
+          },
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    expect(await screen.findByRole("button", { name: /Version 2.*Latest/i })).toBeTruthy();
   });
 
   it("keeps a loaded prior-stage artifact cached when initial props omit it", async () => {
@@ -270,6 +1214,76 @@ describe("ArtifactPanel", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   });
 
+  it("evicts every stage body cache when artifact versions reset", async () => {
+    let versionOneRequests = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("version=1")) {
+        versionOneRequests += 1;
+        const replacement = versionOneRequests > 1;
+        return response({
+          artifact: {
+            createdAt: replacement ? "2026-06-07T12:30:00.000Z" : "2026-06-07T10:00:00.000Z",
+            payload: replacement ? "# Replacement version one" : "# Old version one",
+            sanitizedHtml: replacement
+              ? "<h1>Replacement version one</h1>"
+              : "<h1>Old version one</h1>",
+            stageSlug: "build",
+            version: 1,
+          },
+        });
+      }
+      return response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      });
+    });
+
+    const view = renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Version 1/i }));
+    expect(await screen.findByText("Old version one")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isDrafting: false,
+        latestArtifact: null,
+        loadLatest: false,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+    expect(await screen.findByText("No artifact recorded for this stage.")).toBeTruthy();
+
+    view.rerender(
+      createElement(ArtifactPanel, {
+        emptyText: "No artifact recorded for this stage.",
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+        isAwaitingReview: true,
+        isDrafting: false,
+        latestArtifact: {
+          createdAt: "2026-06-07T12:30:00.000Z",
+          payload: "# Replacement version one",
+          stageSlug: "build",
+          version: 1,
+        },
+        loadLatest: true,
+        sessionId: SESSION_ID,
+        stageSlug: "build",
+      }),
+    );
+
+    expect(await screen.findByText("Replacement version one")).toBeTruthy();
+    expect(screen.queryByText("Old version one")).toBeNull();
+    expect(versionOneRequests).toBe(2);
+  });
+
   it("keeps raw Markdown available when formatted rendering fails", async () => {
     vi.mocked(fetch).mockImplementationOnce(() =>
       response({ error: "Formatting unavailable" }, 500),
@@ -281,35 +1295,43 @@ describe("ArtifactPanel", () => {
     expect(screen.getByText("# Latest")).toBeTruthy();
   });
 
-  it("lets Versions inspect raw Markdown for a historical version", async () => {
-    vi.mocked(fetch)
-      .mockImplementationOnce(() =>
-        response({
-          artifacts: [
-            { createdAt: latestArtifact.createdAt, stageSlug: "build", version: 2 },
-            { createdAt: "2026-06-07T10:00:00.000Z", stageSlug: "build", version: 1 },
-          ],
-        }),
-      )
-      .mockImplementationOnce(() =>
-        response({
-          artifact: {
-            createdAt: "2026-06-07T10:00:00.000Z",
-            payload: "# Earlier raw",
-            sanitizedHtml: '<div class="text-[13px]"><h1>Earlier</h1></div>',
-            stageSlug: "build",
-            version: 1,
-          },
-        }),
-      );
+  it("copies Markdown through the shared toast feedback system", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
 
-    fireEvent.click(renderPanel().getByRole("tab", { name: "Versions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "v1" }));
-    expect(await screen.findByText("Earlier")).toBeTruthy();
-    expect(screen.queryByText("# Earlier raw")).toBeNull();
+    renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "raw" }));
-    expect(screen.getByText("# Earlier raw")).toBeTruthy();
-    expect(screen.queryByText("Earlier")).toBeNull();
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("# Latest"));
+    expect(mockedToast.pushToast).toHaveBeenCalledWith({
+      priority: "polite",
+      title: "Markdown copied.",
+      tone: "success",
+    });
+  });
+
+  it("reports copy failure through the shared toast feedback system", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockRejectedValue(new Error("denied")),
+      },
+    });
+
+    renderPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
+
+    await waitFor(() =>
+      expect(mockedToast.pushToast).toHaveBeenCalledWith({
+        priority: "assertive",
+        title: "Could not copy Markdown.",
+        tone: "danger",
+      }),
+    );
   });
 });

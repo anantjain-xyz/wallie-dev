@@ -24,9 +24,10 @@ Use the shared roles in `src/app/globals.css` before reaching for a text-size ut
 least 12px. Ordinary labels stay sans-serif. Mono is reserved for identifiers, branches, aligned
 timestamps and numbers, code, and logs.
 
-Artifact markdown uses the `artifact-*` roles. Reading text is 15px/24px with a 75ch maximum
-measure; headings use distinct 28px, 22px, 18px, and 16px levels. Inline code may wrap at long
-tokens, while fenced blocks and tables scroll horizontally inside the available mobile width.
+Artifact markdown uses the `artifact-*` roles. Reading text is 15px/24px with a 72ch maximum
+measure; headings use distinct 26px, 21px, 18px, and 16px levels. Inline code may wrap at long
+tokens, while fenced blocks and tables scroll horizontally inside labelled regions on narrow
+screens.
 
 ## Utility policy
 

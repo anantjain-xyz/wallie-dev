@@ -118,6 +118,18 @@ describe("SessionReviewBar", () => {
     expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
   });
 
+  it("shows an explicit read-only reason when viewing a historical artifact", () => {
+    renderBar({
+      mode: {
+        kind: "historical_version",
+        reason: "You’re viewing an older version. Return to Latest to approve or request changes.",
+      },
+    });
+    expect(screen.getByText(/older version/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & advance" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
+  });
+
   it("shows stop controls while running", () => {
     const { onStopRun } = renderBar({ mode: { kind: "running" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop run" }));

@@ -318,10 +318,10 @@
 
   .artifact-content {
     width: 100%;
-    max-width: 75ch;
+    max-width: 72ch;
     color: var(--foreground);
-    font-size: 0.9375rem;
-    line-height: 1.5rem;
+    font-size: 0.9375rem; /* 15px */
+    line-height: 1.5rem; /* 24px */
     overflow-wrap: break-word;
   }
 
@@ -336,30 +336,35 @@
 
   .artifact-heading-1 {
     margin-block: 2rem 0.75rem;
-    font-size: 1.75rem;
+    font-size: 1.625rem; /* 26px */
     letter-spacing: -0.025em;
-    line-height: 2.25rem;
+    line-height: 2rem;
   }
 
   .artifact-heading-2 {
     margin-block: 1.75rem 0.625rem;
-    font-size: 1.375rem;
+    font-size: 1.3125rem; /* 21px */
     letter-spacing: -0.018em;
-    line-height: 1.875rem;
+    line-height: 1.75rem;
   }
 
   .artifact-heading-3 {
     margin-block: 1.5rem 0.5rem;
-    font-size: 1.125rem;
+    font-size: 1.125rem; /* 18px */
     letter-spacing: -0.012em;
     line-height: 1.625rem;
   }
 
   .artifact-heading-4 {
     margin-block: 1.25rem 0.5rem;
-    font-size: 1rem;
+    font-size: 1rem; /* 16px */
     letter-spacing: -0.008em;
     line-height: 1.5rem;
+  }
+
+  .artifact-table-scroll {
+    max-width: 100%;
+    overscroll-behavior-inline: contain;
   }
 
   .artifact-heading-1:first-child,

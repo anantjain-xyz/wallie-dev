@@ -30,7 +30,9 @@ const mocked = vi.hoisted(() => {
 });
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/w/acme/sessions/7",
   useRouter: () => ({ push: mocked.push, refresh: mocked.refresh, replace: mocked.replace }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -41,6 +43,8 @@ vi.mock("@/lib/supabase/browser", () => ({
 }));
 
 vi.mock("@/features/sessions/detail/artifact-panel", () => ({
+  ARTIFACT_STAGE_PARAM: "artifactStage",
+  ARTIFACT_VERSION_PARAM: "artifactVersion",
   ArtifactPanel: ({ isDrafting, loadLatest }: { isDrafting: boolean; loadLatest: boolean }) =>
     createElement(
       "div",

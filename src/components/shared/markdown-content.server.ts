@@ -88,7 +88,12 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
   if (node.tagName === "table" && parent?.children && index >= 0) {
     parent.children[index] = {
       children: [node],
-      properties: { className: ["my-3", "overflow-x-auto"] },
+      properties: {
+        ariaLabel: "Table",
+        className: ["artifact-table-scroll", "my-3", "overflow-x-auto"],
+        role: "region",
+        tabIndex: 0,
+      },
       tagName: "div",
       type: "element",
     };

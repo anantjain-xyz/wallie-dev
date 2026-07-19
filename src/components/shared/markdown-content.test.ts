@@ -43,6 +43,9 @@ describe("MarkdownContent", () => {
     const html = render("| A | B |\n| - | - |\n| x | y |\n\n- [x] shipped\n- [ ] pending");
     expect(html).toContain("<table");
     expect(html).toContain("<th");
+    expect(html).toContain('aria-label="Table"');
+    expect(html).toContain('role="region"');
+    expect(html).toContain("artifact-table-scroll");
     expect(html).toContain('type="checkbox"');
     expect(html).toContain("shipped");
   });

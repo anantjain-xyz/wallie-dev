@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
@@ -23,7 +23,7 @@ import {
   unarchiveSessionFromClient,
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
-import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
+import { ARTIFACT_STAGE_PARAM, ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
 import type {
   SessionReviewData,
   SessionReviewRepository,
@@ -144,15 +144,20 @@ export function SessionDetailPageClient({
 }: SessionDetailPageClientProps) {
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { pushToast } = useOptionalToast();
   const [supabase] = useState<SupabaseClient<Database>>(() => createSupabaseBrowserClient());
   const [session, setSession] = useState(initialData.session);
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
   const creatorDisplayName = initialData.creatorDisplayName;
-  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
-    initialData.session.currentStageSlug,
-  );
+  const [selectedStageSlug, setSelectedStageSlug] = useState<string>(() => {
+    const fromUrl = searchParams.get(ARTIFACT_STAGE_PARAM);
+    if (fromUrl && initialData.session.pipeline.stages.some((stage) => stage.slug === fromUrl)) {
+      return fromUrl;
+    }
+    return initialData.session.currentStageSlug;
+  });
   const [canApprove, setCanApprove] = useState(canReview);
   const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
   const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
@@ -160,6 +165,7 @@ export function SessionDetailPageClient({
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [viewingHistoricalArtifact, setViewingHistoricalArtifact] = useState(false);
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
   const capabilitiesEffectSkipRef = useRef(true);
@@ -206,11 +212,21 @@ export function SessionDetailPageClient({
   });
   // Optimistic approve/reject flips phaseStatus before the network settles.
   // Keep the reviewable pending surface so Stop/dialog cannot race the action.
-  const stickyReviewMode =
+  // Historical version selections disable approve/reject — those actions always
+  // target session.currentArtifactVersion, not the on-screen older body.
+  const pendingKeepsReviewable =
     (phaseActionPending === "approve" || phaseActionPending === "reject") &&
-    (reviewMode.kind === "running" || reviewMode.kind === "canceled")
-      ? ({ canApprove, kind: "reviewable" } as const)
-      : reviewMode;
+    (reviewMode.kind === "running" || reviewMode.kind === "canceled");
+  const stickyReviewMode =
+    viewingHistoricalArtifact && (reviewMode.kind === "reviewable" || pendingKeepsReviewable)
+      ? ({
+          kind: "historical_version",
+          reason:
+            "You’re viewing an older version. Return to Latest to approve or request changes.",
+        } as const)
+      : pendingKeepsReviewable
+        ? ({ canApprove, kind: "reviewable" } as const)
+        : reviewMode;
 
   useEffect(() => {
     setSession(initialData.session);
@@ -459,6 +475,7 @@ export function SessionDetailPageClient({
     feedbackText?: string,
   ): Promise<boolean> {
     if (phaseActionPending !== null) return false;
+    if (viewingHistoricalArtifact) return false;
 
     if (action === "reject") {
       if (!feedbackText?.trim()) {
@@ -875,9 +892,13 @@ export function SessionDetailPageClient({
               initialFormattedArtifact={initialFormattedArtifact}
               initialFormattedArtifactKey={initialFormattedArtifactKey}
               initialNow={renderNow}
+              isAwaitingReview={selectedStageIsCurrent && session.phaseStatus === "awaiting_review"}
               isDrafting={isDraftingSelectedStage}
               latestArtifact={latestArtifact}
               loadLatest={shouldLoadLatestArtifact}
+              onViewingHistoricalChange={setViewingHistoricalArtifact}
+              persistStageInUrl={!selectedStageIsCurrent}
+              rejectionCount={selectedStageIsCurrent ? (session.rejectionCount ?? 0) : undefined}
               sessionId={session.id}
               stageSlug={selectedStageSlug}
             />

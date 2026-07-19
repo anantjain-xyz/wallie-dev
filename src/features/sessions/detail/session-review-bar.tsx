@@ -53,7 +53,8 @@ export function SessionReviewBar({
     mode.kind === "completed" ||
     mode.kind === "canceled" ||
     mode.kind === "unauthorized" ||
-    mode.kind === "failed"
+    mode.kind === "failed" ||
+    mode.kind === "historical_version"
   ) {
     return (
       <div
