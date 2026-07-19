@@ -883,6 +883,7 @@ export function SessionDetailPageClient({
               isDrafting={isDraftingSelectedStage}
               latestArtifact={latestArtifact}
               loadLatest={shouldLoadLatestArtifact}
+              persistStageInUrl={!selectedStageIsCurrent}
               rejectionCount={session.rejectionCount ?? 0}
               sessionId={session.id}
               stageSlug={selectedStageSlug}

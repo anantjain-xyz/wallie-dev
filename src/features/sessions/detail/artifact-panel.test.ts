@@ -382,27 +382,14 @@ describe("ArtifactPanel", () => {
   });
 
   it("marks changes requested when rejectionCount increases", async () => {
-    vi.mocked(fetch)
-      .mockImplementationOnce(() =>
-        response({
-          artifacts: [
-            metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
-            metadataRow({ version: 1 }),
-          ],
-        }),
-      )
-      .mockImplementationOnce(() =>
-        response({
-          artifacts: [
-            metadataRow({
-              changesRequested: true,
-              createdAt: latestArtifact.createdAt,
-              version: 2,
-            }),
-            metadataRow({ version: 1 }),
-          ],
-        }),
-      );
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
 
     const view = renderPanel({ rejectionCount: 0 });
     fireEvent.click(screen.getByRole("tab", { name: "Versions" }));
@@ -424,7 +411,29 @@ describe("ArtifactPanel", () => {
     );
 
     expect(await screen.findByText("Changes requested")).toBeTruthy();
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    // No immediate metadata refetch — rejection_count can precede feedback insert.
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps artifactStage when selecting Latest on a prior stage", async () => {
+    vi.mocked(fetch).mockImplementation(() =>
+      response({
+        artifacts: [
+          metadataRow({ createdAt: latestArtifact.createdAt, version: 2 }),
+          metadataRow({ version: 1 }),
+        ],
+      }),
+    );
+
+    fireEvent.click(
+      renderPanel({ persistStageInUrl: true }).getByRole("tab", { name: "Versions" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Version 2.*Latest/i }));
+
+    expect(mockedNavigation.replace).toHaveBeenCalledWith(
+      "/w/demo/sessions/1?artifactStage=build",
+      { scroll: false },
+    );
   });
 
   it("clears artifactVersion and artifactStage from the URL when the selected stage changes", async () => {

@@ -21,6 +21,11 @@ type ArtifactPanelProps = {
   isDrafting: boolean;
   latestArtifact: SessionArtifactSummary | null;
   loadLatest: boolean;
+  /**
+   * When true, keep `artifactStage` in the URL even for the latest version so a
+   * prior-stage selection survives refresh/share. Current-stage views omit it.
+   */
+  persistStageInUrl?: boolean;
   /** Bumps when a reject lands so Versions can show “Changes requested”. */
   rejectionCount?: number;
   sessionId: string;
@@ -151,6 +156,7 @@ function ArtifactPanelStage({
   loadLatest,
   latestVersionCache,
   metadataCache,
+  persistStageInUrl = false,
   rejectionCount = 0,
   sessionId,
   stageSlug,
@@ -217,7 +223,13 @@ function ArtifactPanelStage({
     const params = new URLSearchParams(searchParams.toString());
     if (version === null || (latestVersion !== null && version === latestVersion)) {
       params.delete(ARTIFACT_VERSION_PARAM);
-      params.delete(ARTIFACT_STAGE_PARAM);
+      // Prior-stage “Latest” still needs artifactStage so share/refresh stays on
+      // that stage; the session’s current stage omits both params (default view).
+      if (persistStageInUrl) {
+        params.set(ARTIFACT_STAGE_PARAM, stageSlug);
+      } else {
+        params.delete(ARTIFACT_STAGE_PARAM);
+      }
     } else {
       params.set(ARTIFACT_VERSION_PARAM, String(version));
       params.set(ARTIFACT_STAGE_PARAM, stageSlug);
@@ -303,8 +315,10 @@ function ArtifactPanelStage({
     queueMicrotask(() => setMetadataRetry((value) => value + 1));
   }, [currentStageKey, isDrafting, metadataCache]);
 
-  // Reject does not create a new artifact version; invalidate cached history so the
-  // “Changes requested” marker appears without waiting for the next generation.
+  // Reject does not create a new artifact version. Patch the marker locally and
+  // write it into the cache — do not refetch yet. `rejection_count` can land
+  // (optimistic UI or server CAS) before `session_artifact_feedback`, so an
+  // immediate fetch can overwrite the marker with `changesRequested: false`.
   useEffect(() => {
     if (rejectionCount <= trackedRejectionCount.current) {
       trackedRejectionCount.current = rejectionCount;
@@ -313,15 +327,15 @@ function ArtifactPanelStage({
     trackedRejectionCount.current = rejectionCount;
     const rejectedVersion =
       latestArtifact?.version ?? latestVersionCache.get(currentStageKey) ?? null;
-    metadataCache.delete(currentStageKey);
     queueMicrotask(() => {
       setMetadata((rows) => {
         if (!rows || rejectedVersion === null) return rows;
-        return rows.map((row) =>
+        const next = rows.map((row) =>
           row.version === rejectedVersion ? { ...row, changesRequested: true } : row,
         );
+        metadataCache.set(currentStageKey, next);
+        return next;
       });
-      setMetadataRetry((value) => value + 1);
     });
   }, [currentStageKey, latestArtifact, latestVersionCache, metadataCache, rejectionCount]);
 
