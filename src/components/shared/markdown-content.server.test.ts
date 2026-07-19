@@ -17,6 +17,9 @@ describe("renderMarkdownToHtml", () => {
     expect(html).toContain('class="artifact-inline-code"');
     expect(html).toContain("artifact-pre");
     expect(html).toContain("artifact-code-block");
+    expect(html).toContain('aria-label="Code block"');
+    expect(html).toContain('role="region"');
+    expect(html).toContain('tabindex="0"');
   });
 
   it("wraps tables in a labelled scroll region", async () => {

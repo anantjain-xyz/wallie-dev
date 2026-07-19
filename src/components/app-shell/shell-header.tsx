@@ -351,7 +351,7 @@ export function ShellHeader({
             data-shell-header=""
           >
             {/* Mobile / tablet header (<1024px): 56px row + menu sheet entry. */}
-            <div className="flex h-14 min-w-0 items-center gap-2 px-3 lg:hidden">
+            <div className="flex h-14 min-w-0 items-center gap-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] lg:hidden">
               <button
                 ref={menuButtonRef}
                 type="button"
@@ -377,7 +377,7 @@ export function ShellHeader({
             </div>
 
             {/* Desktop command header (≥1024px): 48px page identity + global actions. */}
-            <div className="hidden h-12 min-w-0 items-center justify-between gap-3 px-5 lg:flex">
+            <div className="hidden h-12 min-w-0 items-center justify-between gap-3 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] lg:flex">
               <p className="min-w-0 truncate text-[15px] font-semibold text-foreground">
                 {pageTitle}
               </p>

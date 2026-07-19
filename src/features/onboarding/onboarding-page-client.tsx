@@ -312,7 +312,7 @@ export function setupHealthItems(
   ];
 }
 
-function StepRail({
+function StepNavigation({
   canSelect,
   items,
   onSelect,
@@ -322,83 +322,31 @@ function StepRail({
   onSelect: (step: WorkspaceOnboardingStep) => void;
 }) {
   return (
-    <ol className="space-y-1">
-      {items.map((step) => (
-        <li key={step.id}>
-          <button
-            type="button"
-            aria-current={step.displayState === "active" ? "step" : undefined}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-[6px] px-3 py-1.5 text-left text-[13px] font-medium transition-colors",
-              railStateClasses[step.displayState],
-              (!canSelect || !step.isNavigable) && "cursor-not-allowed",
-            )}
-            disabled={!canSelect || !step.isNavigable}
-            onClick={() => onSelect(step.id)}
-          >
-            <OnboardingStepStatus state={step.displayState} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{step.title}</span>
-            </span>
-          </button>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function MobileStepControl({
-  canSelect,
-  items,
-  onSelect,
-}: {
-  canSelect: boolean;
-  items: ReturnType<typeof getOnboardingStepRailItems>;
-  onSelect: (step: WorkspaceOnboardingStep) => void;
-}) {
-  const buttonRefs = useRef(new Map<WorkspaceOnboardingStep, HTMLButtonElement>());
-  const activeStepId = items.find((step) => step.displayState === "active")?.id ?? null;
-
-  useEffect(() => {
-    if (!activeStepId) {
-      return;
-    }
-
-    buttonRefs.current.get(activeStepId)?.scrollIntoView({
-      block: "nearest",
-      inline: "center",
-    });
-  }, [activeStepId]);
-
-  return (
-    <div className="border-y border-border bg-sheet px-4 py-2 lg:hidden">
-      <div className="flex snap-x gap-2 overflow-x-auto scroll-px-4 pb-1" aria-label="Setup steps">
+    <nav
+      aria-label="Setup steps"
+      className="h-fit min-w-0 rounded-[6px] border border-border bg-sheet p-2 lg:sticky lg:top-8 lg:border-0 lg:bg-transparent lg:p-0"
+    >
+      <ol className="grid grid-cols-2 gap-2 lg:flex lg:flex-col lg:gap-1">
         {items.map((step) => (
-          <button
-            ref={(node) => {
-              if (node) {
-                buttonRefs.current.set(step.id, node);
-              } else {
-                buttonRefs.current.delete(step.id);
-              }
-            }}
-            key={step.id}
-            type="button"
-            aria-current={step.displayState === "active" ? "step" : undefined}
-            className={cn(
-              "inline-flex h-9 min-w-[112px] snap-start items-center justify-center gap-1.5 rounded-[6px] border border-transparent px-2 text-xs font-medium",
-              railStateClasses[step.displayState],
-              (!canSelect || !step.isNavigable) && "cursor-not-allowed",
-            )}
-            disabled={!canSelect || !step.isNavigable}
-            onClick={() => onSelect(step.id)}
-          >
-            <OnboardingStepStatus state={step.displayState} />
-            <span className="truncate">{step.shortTitle}</span>
-          </button>
+          <li className="min-w-0" key={step.id}>
+            <button
+              type="button"
+              aria-current={step.displayState === "active" ? "step" : undefined}
+              className={cn(
+                "flex w-full min-w-0 items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-xs font-medium transition-colors lg:px-3 lg:text-[13px]",
+                railStateClasses[step.displayState],
+                (!canSelect || !step.isNavigable) && "cursor-not-allowed",
+              )}
+              disabled={!canSelect || !step.isNavigable}
+              onClick={() => onSelect(step.id)}
+            >
+              <OnboardingStepStatus state={step.displayState} />
+              <span className="min-w-0 flex-1 truncate">{step.title}</span>
+            </button>
+          </li>
         ))}
-      </div>
-    </div>
+      </ol>
+    </nav>
   );
 }
 
@@ -954,17 +902,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         </div>
       </header>
 
-      <MobileStepControl canSelect={!isSaving} items={railItems} onSelect={selectStep} />
-
       <main
         id="main-content"
-        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-28 sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
+        className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-8 lg:grid-cols-[180px_minmax(0,1fr)_260px] lg:gap-12"
       >
-        <aside className="hidden lg:block">
-          <div className="sticky top-8">
-            <StepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
-          </div>
-        </aside>
+        <StepNavigation canSelect={!isSaving} items={railItems} onSelect={selectStep} />
 
         <section className="min-w-0">
           <div className="settings-section-header mb-6">
@@ -1009,7 +951,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         <SetupHealthSummary health={data.setupHealth} initialNow={renderNow} />
       </main>
 
-      <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur sm:px-6">
+      <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
         <div className="mx-auto flex max-w-[1180px] justify-end">
           <div className="flex flex-wrap items-center gap-2">
             <button

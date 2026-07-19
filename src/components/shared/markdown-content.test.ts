@@ -29,6 +29,9 @@ describe("MarkdownContent", () => {
     expect(html).toContain("artifact-inline-code");
     expect(html).toContain("artifact-pre");
     expect(html).toContain("artifact-code-block");
+    expect(html).toContain('aria-label="Code block"');
+    expect(html).toContain('role="region"');
+    expect(html).toContain('tabindex="0"');
   });
 
   it("uses materially distinct semantic classes for artifact heading levels", () => {

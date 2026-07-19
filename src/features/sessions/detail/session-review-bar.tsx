@@ -59,7 +59,7 @@ export function SessionReviewBar({
     return (
       <div
         className={cn(
-          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur",
+          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
         role="status"
@@ -73,7 +73,7 @@ export function SessionReviewBar({
     return (
       <div
         className={cn(
-          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur",
+          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
       >
@@ -114,7 +114,7 @@ export function SessionReviewBar({
     <>
       <div
         className={cn(
-          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 px-4 py-3 backdrop-blur",
+          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
           "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         )}
       >

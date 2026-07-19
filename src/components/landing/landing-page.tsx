@@ -186,8 +186,8 @@ export function LandingPage() {
 
 function LandingHeader() {
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-sheet/95 backdrop-blur supports-[backdrop-filter]:bg-sheet/85">
-      <div className="mx-auto flex min-h-16 w-full max-w-[1180px] items-center justify-between gap-4 px-5 sm:px-8 lg:px-10">
+    <header className="sticky top-0 z-50 border-b border-border bg-sheet/95 pt-[env(safe-area-inset-top)] backdrop-blur supports-[backdrop-filter]:bg-sheet/85">
+      <div className="mx-auto flex min-h-16 w-full max-w-[1180px] items-center justify-between gap-4 pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))] lg:pl-[max(2.5rem,env(safe-area-inset-left))] lg:pr-[max(2.5rem,env(safe-area-inset-right))]">
         <Link
           href="/"
           aria-label="Wallie home"
@@ -251,7 +251,7 @@ function StorySection({
 function LandingFooter() {
   return (
     <footer className="border-t border-border bg-sheet">
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-5 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-8 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
         <p className="text-[13px] text-muted">Wallie is open source and MIT licensed.</p>
         <nav
           aria-label="Footer"
@@ -261,7 +261,7 @@ function LandingFooter() {
             href={docsUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
+            className="inline-flex min-h-11 items-center hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
           >
             Docs
           </a>
@@ -269,7 +269,7 @@ function LandingFooter() {
             href={licenseUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
+            className="inline-flex min-h-11 items-center hover:text-foreground focus-visible:outline-none focus-visible:text-accent"
           >
             MIT License
           </a>

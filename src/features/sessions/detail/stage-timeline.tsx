@@ -118,14 +118,11 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
 
   return (
     <nav aria-label="Pipeline stages" className="border-b border-border pb-3">
-      <ol
-        className="flex snap-x items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-visible"
-        ref={railRef}
-      >
+      <ol className="flex flex-wrap items-center gap-1.5" ref={railRef}>
         {timeline.map((entry, index) => {
           const isSelected = entry.stage.slug === selectedStageSlug;
           return (
-            <li key={entry.stage.id} className="flex shrink-0 snap-start items-center gap-1.5">
+            <li key={entry.stage.id} className="flex min-w-0 items-center gap-1.5">
               <button
                 ref={(node) => {
                   if (node) {
