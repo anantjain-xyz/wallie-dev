@@ -133,6 +133,8 @@ export function SessionRowIsland({
                     title: `Archive undone for session #${session.number}.`,
                     tone: "success",
                   });
+                  // Refresh so server-owned metaTrailing / ordering catch up after undo.
+                  router.refresh();
                 } catch (errorValue) {
                   pushToast({
                     description:
@@ -198,11 +200,18 @@ export function SessionRowIsland({
       // Refresh so server-owned metaTrailing / ordering catch up when the row stays visible.
       router.refresh();
     } catch (errorValue) {
+      const message =
+        errorValue instanceof Error ? errorValue.message : "Failed to unarchive session.";
       setOptimisticArchive(null);
       setRowHidden(false);
-      setArchiveError(
-        errorValue instanceof Error ? errorValue.message : "Failed to unarchive session.",
-      );
+      // Toast survives even if this island was unmounted while the last archived row was hidden.
+      pushToast({
+        description: message,
+        priority: "assertive",
+        title: `Could not unarchive session #${session.number}.`,
+        tone: "danger",
+      });
+      setArchiveError(message);
     } finally {
       setArchivePending(null);
     }

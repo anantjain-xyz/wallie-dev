@@ -403,6 +403,28 @@ describe("optimistic session interactions", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
     await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy());
+    await waitFor(() => expect(mocked.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("toasts unarchive failures after the last archived row was already hidden", async () => {
+    mocked.fetch.mockRejectedValueOnce(new Error("Network down"));
+    const archived = {
+      ...session,
+      archivedAt: "2026-07-17T12:00:00.000Z",
+      updatedAt: "2026-07-17T12:00:00.000Z",
+    };
+    render(listView(makeListData(archived, "archived")));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions for session #1" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Unarchive session" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Could not unarchive session #1.", { exact: true })).toBeTruthy(),
+    );
+    expect(screen.getByText("Network down", { exact: true })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Open session #1/ })).toBeTruthy();
   });
 
   it("restores the optimistic row when the archive response is already active", async () => {
