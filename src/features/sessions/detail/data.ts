@@ -17,6 +17,7 @@ import {
   type ServerTimingCollector,
   withServerTiming,
 } from "@/lib/server-timing";
+import { loadSessionReviewCapabilities } from "@/features/sessions/detail/review-capabilities";
 
 /**
  * Seeded session #18 was 10,603 bytes at the detail RPC before member and
@@ -73,8 +74,18 @@ export type SessionActivityContext = {
   workspaceId: string;
 };
 
+export type SessionReviewRepository = {
+  defaultBranch: string | null;
+  fullName: string;
+  htmlUrl: string;
+};
+
 export type SessionDetailPageData = {
   activityContext: SessionActivityContext;
+  canReview: boolean;
+  failedStageSlug: string | null;
+  hasFailedRun: boolean;
+  repository: SessionReviewRepository | null;
   review: SessionReviewData;
 };
 
@@ -157,6 +168,16 @@ async function loadSessionDetailPageDataWithTiming(
   if (!payload.session || !payload.activity) notFound();
 
   const review = serializeSessionReviewData(payload);
+  const repository = serializeSessionReviewRepository(payload.activity.repository);
+  const capabilities = await timing.segment("review.authorization", () =>
+    loadSessionReviewCapabilities({
+      memberUserId: user.id,
+      sessionId: payload.session.id,
+      stageId: payload.session.currentStageId,
+      supabase,
+      workspaceId: payload.activity.workspaceId,
+    }),
+  );
 
   await timing.segment("review-contract", () => review, {
     payloadBytes: approximatePayloadSizeBytes(review),
@@ -170,7 +191,22 @@ async function loadSessionDetailPageDataWithTiming(
       sessionId: payload.activity.sessionId,
       workspaceId: payload.activity.workspaceId,
     },
+    canReview: capabilities.canApprove,
+    failedStageSlug: capabilities.failedStageSlug,
+    hasFailedRun: capabilities.hasFailedRun,
+    repository,
     review,
+  };
+}
+
+export function serializeSessionReviewRepository(
+  repository: WallieSessionRepository | null,
+): SessionReviewRepository | null {
+  if (!repository) return null;
+  return {
+    defaultBranch: repository.defaultBranch,
+    fullName: repository.fullName,
+    htmlUrl: repository.htmlUrl,
   };
 }
 

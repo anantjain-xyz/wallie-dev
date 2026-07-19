@@ -40,10 +40,14 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
           />
         </Suspense>
       }
+      canReview={data.canReview}
+      failedStageSlug={data.failedStageSlug}
+      hasFailedRun={data.hasFailedRun}
       initialData={data.review}
       initialNow={initialNow}
       initialFormattedArtifact={initialFormattedArtifact}
       initialFormattedArtifactKey={initialFormattedArtifactKey}
+      repository={data.repository}
     />
   );
 }

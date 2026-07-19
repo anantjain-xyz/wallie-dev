@@ -11,10 +11,9 @@ import { CheckIcon } from "@/components/shared/icons/check-icon";
 import { PencilIcon } from "@/components/shared/icons/pencil-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
-import { TimeDisplay } from "@/components/shared/time-display";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
+import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -24,15 +23,17 @@ import {
   unarchiveSessionFromClient,
   updateSessionTitleFromClient,
 } from "@/features/sessions/client";
-import { SessionConnections } from "@/features/sessions/components/session-connections";
 import { ArtifactPanel } from "@/features/sessions/detail/artifact-panel";
-import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
 import type {
   SessionReviewData,
-  SessionReviewPipeline,
+  SessionReviewRepository,
   SessionReviewSession,
-  SessionReviewStage,
 } from "@/features/sessions/detail/data";
+import { resolveReviewMode } from "@/features/sessions/detail/review-mode";
+import { SessionActivityArchivedAtProvider } from "@/features/sessions/detail/session-activity-client";
+import { SessionInspector } from "@/features/sessions/detail/session-inspector";
+import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar";
+import { buildStageTimeline, StageTimeline } from "@/features/sessions/detail/stage-timeline";
 import type {
   SessionMutationStage,
   SessionPhaseMutationResult,
@@ -53,7 +54,7 @@ import {
   runOptimisticMutation,
   type SessionMutationPatch,
 } from "@/features/sessions/optimistic";
-import type { SessionArtifactSummary, SessionPhaseStatus } from "@/features/sessions/types";
+import type { SessionArtifactSummary } from "@/features/sessions/types";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { workspaceSessionsPath } from "@/lib/routes";
@@ -62,10 +63,14 @@ import { cn } from "@/lib/utils";
 
 type SessionDetailPageClientProps = {
   activity: ReactNode;
+  canReview?: boolean;
+  failedStageSlug?: string | null;
+  hasFailedRun?: boolean;
   initialData: SessionReviewData;
   initialFormattedArtifact: ReactNode | null;
   initialFormattedArtifactKey: string | null;
   initialNow?: string;
+  repository?: SessionReviewRepository | null;
 };
 
 type ArchiveUndoVersion = {
@@ -79,64 +84,13 @@ function isCurrentArchiveVersion(
   return session.archivedAt === version.archivedAt;
 }
 
-function CreatorAvatar({ displayName }: { displayName: string }) {
-  const initial = displayName.trim().charAt(0).toUpperCase() || "?";
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-control-hover type-annotation font-semibold text-foreground"
-    >
-      {initial}
-    </span>
-  );
-}
-
-type StageRailEntry = {
-  stage: SessionReviewStage;
-  status: "completed" | "current" | "upcoming";
-  phaseStatus: SessionPhaseStatus | null;
-  completedAt: string | null;
-};
-
-function stageIndex(pipeline: SessionReviewPipeline, stageSlug: string): number {
+function stageIndex(pipeline: SessionReviewSession["pipeline"], stageSlug: string): number {
   return pipeline.stages.findIndex((stage) => stage.slug === stageSlug);
 }
 
-function isTerminalStage(pipeline: SessionReviewPipeline, stageSlug: string): boolean {
+function isTerminalStage(pipeline: SessionReviewSession["pipeline"], stageSlug: string): boolean {
   const terminalStage = pipeline.stages[pipeline.stages.length - 1];
   return terminalStage?.slug === stageSlug;
-}
-
-function buildStageRail(session: SessionReviewSession): StageRailEntry[] {
-  const completionIndex = new Map(
-    session.phaseCompletions.map((c) => [c.stageSlug, c.completedAt]),
-  );
-  const currentIdx = stageIndex(session.pipeline, session.currentStageSlug);
-  return session.pipeline.stages.map((stage, idx) => {
-    const completedAt = completionIndex.get(stage.slug) ?? null;
-    if (idx < currentIdx || completedAt) {
-      return {
-        completedAt,
-        phaseStatus: null,
-        stage,
-        status: "completed" as const,
-      };
-    }
-    if (idx === currentIdx) {
-      return {
-        completedAt: null,
-        phaseStatus: session.phaseStatus,
-        stage,
-        status: "current" as const,
-      };
-    }
-    return {
-      completedAt: null,
-      phaseStatus: null,
-      stage,
-      status: "upcoming" as const,
-    };
-  });
 }
 
 function mergeSessionReviewStage(
@@ -175,12 +129,18 @@ export function reconcilePhaseMutationResult(
   });
 }
 
+export { centerStageTimelineSelection as centerStageRailSelection } from "@/features/sessions/detail/stage-timeline";
+
 export function SessionDetailPageClient({
   activity,
+  canReview = true,
+  failedStageSlug: initialFailedStageSlug = null,
+  hasFailedRun: initialHasFailedRun = false,
   initialData,
   initialFormattedArtifact,
   initialFormattedArtifactKey,
   initialNow,
+  repository = null,
 }: SessionDetailPageClientProps) {
   const renderNow = initialNow ?? "1970-01-01T00:00:00.000Z";
   const router = useRouter();
@@ -193,20 +153,21 @@ export function SessionDetailPageClient({
   const [selectedStageSlug, setSelectedStageSlug] = useState<string>(
     initialData.session.currentStageSlug,
   );
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [feedbackDraft, setFeedbackDraft] = useState("");
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [canApprove, setCanApprove] = useState(canReview);
+  const [hasFailedRun, setHasFailedRun] = useState(initialHasFailedRun);
+  const [failedStageSlug, setFailedStageSlug] = useState<string | null>(initialFailedStageSlug);
   const [phaseActionPending, setPhaseActionPending] = useState<"approve" | "reject" | null>(null);
   const [stopPending, setStopPending] = useState(false);
   const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const archiveUndoVersionRef = useRef<ArchiveUndoVersion | null>(null);
   const pullRequestUpdatedAtRef = useRef(new Map<string, string>());
+  const capabilitiesEffectSkipRef = useRef(true);
 
-  const stageRail = useMemo(() => buildStageRail(session), [session]);
-  const hasConnectionLinks =
-    !!session.linearIssueUrl ||
-    session.pullRequests.some((pullRequest) => pullRequest.pullRequestUrl);
+  const stageTimeline = useMemo(
+    () => buildStageTimeline(session, { failedStageSlug }),
+    [failedStageSlug, session],
+  );
 
   const selectedStage = session.pipeline.stages.find((s) => s.slug === selectedStageSlug) ?? null;
 
@@ -236,15 +197,26 @@ export function SessionDetailPageClient({
     (session.phaseStatus === "agent_generating" || stopPending) &&
     !session.archivedAt;
 
-  const canActOnCurrent =
-    selectedStageIsCurrent &&
-    (session.phaseStatus === "awaiting_review" || phaseActionPending !== null) &&
-    !session.archivedAt;
-  const phaseActionBusy = phaseActionPending !== null;
-  const canStopRun = isDraftingSelectedStage && !phaseActionBusy;
+  const reviewMode = resolveReviewMode({
+    archivedAt: session.archivedAt,
+    canApprove,
+    hasFailedRun,
+    phaseStatus: session.phaseStatus,
+    selectedStageIsCurrent,
+  });
+  // Optimistic approve/reject flips phaseStatus before the network settles.
+  // Keep the reviewable pending surface so Stop/dialog cannot race the action.
+  const stickyReviewMode =
+    (phaseActionPending === "approve" || phaseActionPending === "reject") &&
+    (reviewMode.kind === "running" || reviewMode.kind === "canceled")
+      ? ({ canApprove, kind: "reviewable" } as const)
+      : reviewMode;
 
   useEffect(() => {
     setSession(initialData.session);
+    setCanApprove(canReview);
+    setHasFailedRun(initialHasFailedRun);
+    setFailedStageSlug(initialFailedStageSlug);
     setSelectedStageSlug((currentSlug) => {
       const stageStillExists = initialData.session.pipeline.stages.some(
         (stage) => stage.slug === currentSlug,
@@ -252,7 +224,69 @@ export function SessionDetailPageClient({
 
       return stageStillExists ? currentSlug : initialData.session.currentStageSlug;
     });
-  }, [initialData.session]);
+  }, [canReview, initialData.session, initialFailedStageSlug, initialHasFailedRun]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    // Skip the mount pass — RSC already supplied canApprove / hasFailedRun.
+    // Recompute when the current stage or phase status changes (Realtime / local).
+    if (capabilitiesEffectSkipRef.current) {
+      capabilitiesEffectSkipRef.current = false;
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    // Wait out in-flight phase actions so we don't race the mutation request.
+    if (phaseActionPending !== null) {
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    const phaseStatusAtFetch = session.phaseStatus;
+
+    void fetch(`/api/sessions/${session.id}/review-capabilities`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json().catch(() => null)) as {
+          canApprove?: boolean;
+          failedStageSlug?: string | null;
+          hasFailedRun?: boolean;
+        } | null;
+        if (!response.ok || !body || cancelled) return;
+        if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
+        // Generating / awaiting_review clear failure UI immediately (sibling effect).
+        // Ignore a stale error run so refetch-on-phaseStatus cannot resurrect it.
+        if (phaseStatusAtFetch === "agent_generating" || phaseStatusAtFetch === "awaiting_review") {
+          setHasFailedRun(false);
+          setFailedStageSlug(null);
+          return;
+        }
+        if (typeof body.hasFailedRun === "boolean") setHasFailedRun(body.hasFailedRun);
+        if ("failedStageSlug" in body) setFailedStageSlug(body.failedStageSlug ?? null);
+      })
+      .catch(() => {
+        // Keep the last known capabilities; review actions still authorize server-side.
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [phaseActionPending, session.currentStageId, session.id, session.phaseStatus]);
+
+  useEffect(() => {
+    if (session.phaseStatus === "agent_generating" || session.phaseStatus === "awaiting_review") {
+      setHasFailedRun(false);
+      setFailedStageSlug(null);
+    }
+  }, [session.phaseStatus]);
 
   const handleSessionRealtimeUpdate = useEffectEvent((row: Tables<"sessions">) => {
     const stageIsKnown = session.pipeline.stages.some((stage) => stage.id === row.current_stage_id);
@@ -266,9 +300,13 @@ export function SessionDetailPageClient({
           );
         })
         .catch((error) => {
-          setActionError(
-            error instanceof Error ? error.message : "Could not reconcile the updated stage.",
-          );
+          pushToast({
+            description:
+              error instanceof Error ? error.message : "Could not reconcile the updated stage.",
+            priority: "assertive",
+            title: "Could not sync stage.",
+            tone: "danger",
+          });
         });
       return;
     }
@@ -416,15 +454,18 @@ export function SessionDetailPageClient({
     };
   }, [initialData.workspaceSlug, router, session.id, supabase]);
 
-  async function handlePhaseAction(action: "approve" | "reject") {
+  async function handlePhaseAction(
+    action: "approve" | "reject",
+    feedbackText?: string,
+  ): Promise<boolean> {
+    if (phaseActionPending !== null) return false;
+
     if (action === "reject") {
-      if (!feedbackDraft.trim()) {
-        setActionError("Feedback is required when rejecting.");
-        return;
+      if (!feedbackText?.trim()) {
+        return false;
       }
     }
 
-    setActionError(null);
     setPhaseActionPending(action);
     startInteraction(action, "/w/[workspaceSlug]/sessions/[sessionNumber]");
 
@@ -481,7 +522,7 @@ export function SessionDetailPageClient({
           const response = await fetch(`/api/sessions/${session.id}/phase-action`, {
             body: JSON.stringify({
               action,
-              feedbackText: action === "reject" ? feedbackDraft.trim() : undefined,
+              feedbackText: action === "reject" ? feedbackText?.trim() : undefined,
               version: session.currentArtifactVersion ?? 1,
             }),
             headers: { "Content-Type": "application/json" },
@@ -515,14 +556,13 @@ export function SessionDetailPageClient({
         },
       });
 
-      setFeedbackDraft("");
-      setFeedbackOpen(false);
       finishInteraction(action, "success");
       pushToast({
         priority: "polite",
         title: action === "approve" ? "Review approved." : "Changes queued.",
         tone: "success",
       });
+      return true;
     } catch (error) {
       finishInteraction(action, "error");
       pushToast({
@@ -531,6 +571,7 @@ export function SessionDetailPageClient({
         title: action === "approve" ? "Approval failed." : "Could not queue changes.",
         tone: "danger",
       });
+      return false;
     } finally {
       setPhaseActionPending(null);
     }
@@ -549,7 +590,6 @@ export function SessionDetailPageClient({
 
   async function handleStopRun() {
     if (phaseActionPending !== null || stopPending) return;
-    setActionError(null);
     setStopPending(true);
     const optimisticPatch: SessionMutationPatch = { phaseStatus: "rejected" };
     const previousPatch: SessionMutationPatch = {
@@ -760,8 +800,12 @@ export function SessionDetailPageClient({
     </div>
   );
 
+  const approveLabel = isTerminalStage(session.pipeline, session.currentStageSlug)
+    ? "Approve & archive"
+    : "Approve & advance";
+
   return (
-    <PageContainer>
+    <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
         eyebrow={
@@ -790,54 +834,24 @@ export function SessionDetailPageClient({
         actions={headerActions}
       />
 
-      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted">
-        {creatorDisplayName ? (
-          <>
-            <span className="inline-flex items-center gap-1.5">
-              <CreatorAvatar displayName={creatorDisplayName} />
-              <span className="text-foreground">{creatorDisplayName}</span>
-            </span>
-            <span aria-hidden="true">·</span>
-          </>
-        ) : null}
-        <span>
-          Created{" "}
-          <TimeDisplay absoluteStyle="short" initialNow={renderNow} value={session.createdAt} />
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>
-          Updated{" "}
-          <TimeDisplay initialNow={renderNow} value={session.updatedAt} variant="relative" />
-        </span>
-        {hasConnectionLinks ? (
-          <>
-            <span aria-hidden="true">·</span>
-            <SessionConnections
-              linearIssueId={session.linearIssueId}
-              linearIssueUrl={session.linearIssueUrl}
-              pullRequests={session.pullRequests}
-            />
-          </>
-        ) : null}
-      </div>
-
-      <div className="ui-sheet mb-6 px-5 py-4">
-        <StageRail
-          stageRail={stageRail}
-          selectedStageSlug={selectedStageSlug}
+      <div className="mb-4">
+        <StageTimeline
           onSelect={setSelectedStageSlug}
+          selectedStageSlug={selectedStageSlug}
+          timeline={stageTimeline}
         />
       </div>
 
-      <div className="flex flex-col gap-6">
-        <section className="ui-sheet">
+      {/* Review workbench: 70/30 on lg+, stacked below 1024px with inspector after artifact. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(18rem,3fr)] lg:gap-0 lg:gap-x-0">
+        <section className="ui-sheet flex min-h-0 flex-col lg:rounded-r-none lg:border-r-0">
           <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h2 className="text-[13px] font-semibold text-foreground">
                 {selectedStage?.name ?? selectedStageSlug} artifact
               </h2>
               <p className="mt-0.5 type-annotation text-muted">
-                {latestArtifact && canActOnCurrent
+                {latestArtifact && stickyReviewMode.kind === "reviewable"
                   ? "Review this output before approving."
                   : (selectedStage?.description ?? "")}
               </p>
@@ -847,7 +861,11 @@ export function SessionDetailPageClient({
             ) : null}
           </div>
 
-          <div aria-busy={isDraftingSelectedStage} aria-live="polite" className="p-4">
+          <div
+            aria-busy={isDraftingSelectedStage}
+            aria-live="polite"
+            className="min-h-0 flex-1 p-4"
+          >
             <ArtifactPanel
               emptyText={
                 selectedStagePosition > currentStagePosition
@@ -864,134 +882,34 @@ export function SessionDetailPageClient({
               stageSlug={selectedStageSlug}
             />
           </div>
-
-          {canStopRun ? (
-            <div className="border-t border-border bg-control-muted p-4">
-              {actionError ? (
-                <div
-                  role="alert"
-                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger"
-                >
-                  {actionError}
-                </div>
-              ) : null}
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                <button
-                  type="button"
-                  className="ui-button-danger gap-1.5"
-                  disabled={stopPending}
-                  onClick={() => void handleStopRun()}
-                >
-                  <ActionButtonLabel
-                    idle="Stop run"
-                    pending={stopPending}
-                    pendingLabel="Stopping…"
-                  />
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {canActOnCurrent ? (
-            <div className="border-t border-border bg-control-muted p-4">
-              {actionError ? (
-                <div
-                  role="alert"
-                  className="mb-3 rounded-[4px] border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger"
-                >
-                  {actionError}
-                </div>
-              ) : null}
-
-              {feedbackOpen ? (
-                <div className="space-y-3">
-                  <label
-                    className="block text-xs font-semibold text-foreground"
-                    htmlFor="session-feedback"
-                  >
-                    Feedback for Wallie
-                  </label>
-                  <textarea
-                    id="session-feedback"
-                    value={feedbackDraft}
-                    onChange={(event) => setFeedbackDraft(event.target.value)}
-                    className="ui-textarea min-h-24"
-                    placeholder="What should change? Wallie will regenerate this stage."
-                  />
-                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-                    <button
-                      type="button"
-                      className="ui-button"
-                      onClick={() => {
-                        setFeedbackOpen(false);
-                        setFeedbackDraft("");
-                        setActionError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={phaseActionBusy}
-                      className="ui-button-primary gap-1.5"
-                      onClick={() => handlePhaseAction("reject")}
-                    >
-                      <ActionButtonLabel
-                        idle="Queue rerun"
-                        pending={phaseActionPending === "reject"}
-                        pendingLabel="Queueing…"
-                      />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                  <button
-                    type="button"
-                    className="ui-button"
-                    disabled={phaseActionBusy}
-                    onClick={() => setFeedbackOpen(true)}
-                  >
-                    Request changes and rerun
-                  </button>
-                  <button
-                    type="button"
-                    className="ui-button-primary gap-1.5"
-                    disabled={phaseActionBusy}
-                    onClick={() => handlePhaseAction("approve")}
-                  >
-                    <ActionButtonLabel
-                      idle={
-                        isTerminalStage(session.pipeline, session.currentStageSlug)
-                          ? "Approve & archive"
-                          : "Approve & advance"
-                      }
-                      pending={phaseActionPending === "approve"}
-                      pendingLabel="Approving…"
-                    />
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : null}
         </section>
 
-        <section className="ui-sheet p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Prompt</h2>
-          <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
-            {session.promptMd || "No prompt recorded."}
-          </pre>
-        </section>
-
-        <section className="ui-sheet p-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Run activity</h2>
-          <div className="mt-3">
-            <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
-              {activity}
-            </SessionActivityArchivedAtProvider>
-          </div>
-        </section>
+        <aside className="ui-sheet p-4 lg:rounded-l-none">
+          <SessionActivityArchivedAtProvider archivedAt={session.archivedAt}>
+            <SessionInspector
+              activity={activity}
+              creatorDisplayName={creatorDisplayName}
+              initialNow={renderNow}
+              repository={repository}
+              session={session}
+            />
+          </SessionActivityArchivedAtProvider>
+        </aside>
       </div>
+
+      <SessionReviewBar
+        approveLabel={approveLabel}
+        mode={stickyReviewMode}
+        onApprove={() => {
+          void handlePhaseAction("approve");
+        }}
+        onReject={(feedback) => handlePhaseAction("reject", feedback)}
+        onStopRun={() => {
+          void handleStopRun();
+        }}
+        phaseActionPending={phaseActionPending}
+        stopPending={stopPending}
+      />
     </PageContainer>
   );
 }
@@ -1017,6 +935,10 @@ function EditableSessionTitle({
   useEffect(() => {
     if (!isEditing) return;
     editInputRef.current?.focus();
+  }, [isEditing]);
+
+  useEffect(() => {
+    if (!isEditing) return;
     editInputRef.current?.select();
   }, [isEditing]);
 
@@ -1165,90 +1087,4 @@ function EditableSessionTitle({
       </Tooltip>
     </div>
   );
-}
-
-function StageRail({
-  onSelect,
-  stageRail,
-  selectedStageSlug,
-}: {
-  onSelect: (stageSlug: string) => void;
-  stageRail: StageRailEntry[];
-  selectedStageSlug: string;
-}) {
-  const railRef = useRef<HTMLOListElement>(null);
-  const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
-
-  useEffect(() => {
-    const rail = railRef.current;
-    const selectedButton = buttonRefs.current.get(selectedStageSlug);
-    if (rail && selectedButton) centerStageRailSelection(rail, selectedButton);
-  }, [selectedStageSlug]);
-
-  return (
-    <ol
-      className="flex snap-x items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0"
-      ref={railRef}
-    >
-      {stageRail.map((entry, index) => {
-        const isSelected = entry.stage.slug === selectedStageSlug;
-        return (
-          <li key={entry.stage.id} className="flex shrink-0 snap-start items-center gap-2">
-            <button
-              ref={(node) => {
-                if (node) {
-                  buttonRefs.current.set(entry.stage.slug, node);
-                } else {
-                  buttonRefs.current.delete(entry.stage.slug);
-                }
-              }}
-              type="button"
-              onClick={() => onSelect(entry.stage.slug)}
-              className={cn(
-                "group flex items-center gap-2 rounded-[6px] border px-3 py-1.5 text-xs font-medium transition-colors",
-                isSelected
-                  ? "border-accent/40 bg-accent-soft text-accent"
-                  : "border-border bg-sheet text-foreground hover:bg-control-muted",
-              )}
-              aria-current={isSelected ? "step" : undefined}
-            >
-              <StageDot entry={entry} />
-              <span>{entry.stage.name}</span>
-            </button>
-            {index < stageRail.length - 1 ? (
-              <span aria-hidden="true" className="hidden h-px w-4 bg-border sm:block" />
-            ) : null}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-export function centerStageRailSelection(
-  rail: HTMLOListElement,
-  selectedButton: HTMLButtonElement,
-) {
-  if (rail.scrollWidth <= rail.clientWidth) return;
-
-  rail.scrollTo({
-    behavior: "auto",
-    left: Math.max(
-      0,
-      selectedButton.offsetLeft - (rail.clientWidth - selectedButton.offsetWidth) / 2,
-    ),
-  });
-}
-
-function StageDot({ entry }: { entry: StageRailEntry }) {
-  let value: StatusValue;
-  if (entry.status === "completed") {
-    value = "complete";
-  } else if (entry.status === "upcoming") {
-    value = "upcoming";
-  } else {
-    value = sessionPhaseStatusValue(entry.phaseStatus ?? "agent_generating");
-  }
-
-  return <Status compact value={value} />;
 }
