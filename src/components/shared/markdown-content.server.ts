@@ -69,6 +69,7 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
 
   if (node.tagName === "pre") {
     node.properties.ariaLabel = "Code block";
+    node.properties.role = "group";
     node.properties.tabIndex = 0;
   }
 
