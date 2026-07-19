@@ -188,6 +188,11 @@ describe("pipeline filter helpers", () => {
         card(3, PLAN_STAGE_ID, { phaseStatus: "agent_generating" }),
       ]),
     ).toBe("2 awaiting review · 1 agent generating");
+    expect(
+      formatLaneStateSummary([card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" })], {
+        isPartial: true,
+      }),
+    ).toBe("Loaded: 1 awaiting review");
   });
 });
 
@@ -262,6 +267,93 @@ describe("PipelinePageClient", () => {
     expect(content?.className).toContain("z-20");
     expect(overlay.className).toContain("z-10");
     expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");
+  });
+
+  it("exposes Linear and pull-request destinations as interactive references", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, {
+            linearIssueId: "OP-353",
+            linearIssueUrl: "https://linear.app/issue/OP-353",
+            pullRequests: [
+              {
+                id: "pr-1",
+                pullRequestNumber: null,
+                pullRequestUrl: "https://github.com/wallie-dev/wallie/pull/400",
+              },
+            ],
+            title: "Linked session",
+          }),
+        ])}
+      />,
+    );
+
+    const linearLink = screen.getByRole("link", { name: "OP-353" });
+    expect(linearLink.getAttribute("href")).toBe("https://linear.app/issue/OP-353");
+    expect(linearLink.getAttribute("target")).toBe("_blank");
+
+    const prLink = screen.getByRole("link", { name: "PR" });
+    expect(prLink.getAttribute("href")).toBe("https://github.com/wallie-dev/wallie/pull/400");
+    expect(prLink.closest(".pointer-events-auto")).toBeTruthy();
+  });
+
+  it("labels partial lane status summaries when more sessions exist than loaded", () => {
+    installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
+          card(2, PLAN_STAGE_ID, { phaseStatus: "agent_generating" }),
+        ])}
+      />,
+    );
+
+    const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
+    // Plan lane seeds totalCount >= 2 and keeps a cursor, so summaries are partial.
+    expect(
+      within(planLane).getByText("Loaded: 1 awaiting review · 1 agent generating"),
+    ).toBeTruthy();
+  });
+
+  it("falls back focus to the card overlay when the Review CTA disappears", async () => {
+    const supabase = installSupabaseMock();
+    render(
+      <PipelinePageClient
+        initialData={initialData([
+          card(1, PLAN_STAGE_ID, {
+            phaseStatus: "awaiting_review",
+            title: "Needs review",
+          }),
+        ])}
+      />,
+    );
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+
+    const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
+    reviewLink.focus();
+    expect(document.activeElement).toBe(reviewLink);
+
+    act(() => {
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: sessionRow(
+          card(1, BUILD_STAGE_ID, {
+            phaseStatus: "agent_generating",
+            title: "Needs review",
+            updatedAt: "2026-07-18T06:00:00.000Z",
+          }),
+        ),
+      });
+    });
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("link", { name: "Open session Needs review" }),
+      ),
+    );
+    expect(screen.queryByRole("link", { name: "Review session Needs review" })).toBeNull();
   });
 
   it("describes filter misses against loaded pages when more results exist", async () => {

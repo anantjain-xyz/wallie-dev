@@ -12,6 +12,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import { SearchIcon } from "@/components/shared/icons/search-icon";
@@ -136,9 +137,16 @@ export function summarizeLaneStatuses(
   });
 }
 
-export function formatLaneStateSummary(cards: readonly PipelineDashboardCard[]) {
+export function formatLaneStateSummary(
+  cards: readonly PipelineDashboardCard[],
+  options?: { isPartial?: boolean },
+) {
   const parts = summarizeLaneStatuses(cards).map(({ count, label }) => `${count} ${label}`);
-  return parts.length > 0 ? parts.join(" · ") : "No active sessions";
+  if (parts.length === 0) {
+    return options?.isPartial ? "No matching loaded sessions" : "No active sessions";
+  }
+  const summary = parts.join(" · ");
+  return options?.isPartial ? `Loaded: ${summary}` : summary;
 }
 
 export function PipelinePageClient({
@@ -214,22 +222,26 @@ function PipelinePageContent({
     const cardElement = document.querySelector<HTMLElement>(
       `[data-session-id="${pending.cardId}"]`,
     );
-    const focusTarget =
-      cardElement?.querySelectorAll<HTMLElement>(CARD_FOCUSABLE_SELECTOR)[pending.focusableIndex];
-    if (!focusTarget) {
-      if (!board.cardsById[pending.cardId]) {
-        const mobileStageTab = document.querySelector<HTMLElement>(
-          `[data-pipeline-stage-tab="${pending.targetLaneKey}"]`,
-        );
-        if (mobileStageTab?.offsetParent) {
-          mobileStageTab.focus({ preventScroll: true });
-        }
-        pendingCardFocus.current = null;
-      }
+    const focusables = cardElement
+      ? Array.from(cardElement.querySelectorAll<HTMLElement>(CARD_FOCUSABLE_SELECTOR))
+      : [];
+    // Prefer the recorded control; if it vanished (e.g. Review CTA after approve),
+    // fall back to the first remaining focusable on the card.
+    const focusTarget = focusables[pending.focusableIndex] ?? focusables[0];
+    if (focusTarget) {
+      focusTarget.focus({ preventScroll: true });
+      pendingCardFocus.current = null;
       return;
     }
 
-    focusTarget.focus({ preventScroll: true });
+    if (!board.cardsById[pending.cardId]) {
+      const mobileStageTab = document.querySelector<HTMLElement>(
+        `[data-pipeline-stage-tab="${pending.targetLaneKey}"]`,
+      );
+      if (mobileStageTab?.offsetParent) {
+        mobileStageTab.focus({ preventScroll: true });
+      }
+    }
     pendingCardFocus.current = null;
   }, [board]);
 
@@ -300,10 +312,10 @@ function PipelinePageContent({
             (lane) => lane.pipeline.id === next.pipelineId && lane.id === next.currentStageId,
           );
           const targetLaneKey = `${next.pipelineId}:${next.currentStageId}`;
+          const focus = captureCardFocus(next.id, targetLaneKey);
+          if (focus) pendingCardFocus.current = focus;
 
           if (!hasTargetLane) {
-            const focus = captureCardFocus(next.id, targetLaneKey);
-            if (focus) pendingCardFocus.current = focus;
             invalidatedCardIds.current.add(next.id);
             if (!laneRefreshPending.current) {
               laneRefreshPending.current = true;
@@ -317,8 +329,6 @@ function PipelinePageContent({
             (existing.pipelineId !== next.pipelineId ||
               existing.currentStageId !== next.currentStageId);
           if (moved) {
-            const focus = captureCardFocus(next.id, targetLaneKey);
-            if (focus) pendingCardFocus.current = focus;
             startTransition(() => {
               if (focus) setActiveLaneKey(focus.targetLaneKey);
               dispatch({ card: next, isInsert: payload.eventType === "INSERT", type: "upsert" });
@@ -599,7 +609,11 @@ const PipelineLane = memo(
   }: PipelineLaneProps) {
     const key = pipelineLaneKey(lane);
     const headingId = `pipeline-lane-${key}`;
-    const stateSummary = formatLaneStateSummary(visibleCards);
+    const isPartialSummary =
+      filtersActive || lane.cardIds.length < lane.totalCount || Boolean(lane.cursor);
+    const stateSummary = formatLaneStateSummary(visibleCards, {
+      isPartial: isPartialSummary,
+    });
     const emptyCopy = lane.description.trim()
       ? lane.description.trim()
       : `Sessions enter ${lane.name} as they advance through the pipeline.`;
@@ -750,34 +764,82 @@ const PipelineLanePagination = memo(function PipelineLanePagination({
   );
 });
 
-function cardReferenceLine({
+function pullRequestReferenceLabel(
+  pullRequest: PipelineDashboardPullRequest,
+  index: number,
+  total: number,
+) {
+  if (pullRequest.pullRequestNumber) return `PR #${pullRequest.pullRequestNumber}`;
+  return total === 1 ? "PR" : `PR ${index + 1}`;
+}
+
+function CardReferenceLine({
   linearIssueId,
+  linearIssueUrl,
   number,
   pullRequests,
   rejectionCount,
 }: {
   linearIssueId: string | null;
+  linearIssueUrl: string | null;
   number: number;
   pullRequests: PipelineDashboardPullRequest[];
   rejectionCount: number;
 }) {
-  const parts = [`#${number}`];
-  if (linearIssueId) parts.push(linearIssueId);
-  for (const pullRequest of pullRequests) {
-    if (pullRequest.pullRequestNumber) {
-      parts.push(`PR #${pullRequest.pullRequestNumber}`);
-    }
+  const linkedPullRequests = pullRequests.filter((pullRequest) => pullRequest.pullRequestUrl);
+  const parts: ReactNode[] = [`#${number}`];
+
+  if (linearIssueUrl) {
+    parts.push(
+      <a
+        key="linear"
+        className="underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        href={linearIssueUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {linearIssueId ?? "Linear"}
+      </a>,
+    );
+  } else if (linearIssueId) {
+    parts.push(linearIssueId);
   }
+
+  linkedPullRequests.forEach((pullRequest, index) => {
+    parts.push(
+      <a
+        key={pullRequest.id}
+        className="underline decoration-border underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+        href={pullRequest.pullRequestUrl!}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {pullRequestReferenceLabel(pullRequest, index, linkedPullRequests.length)}
+      </a>,
+    );
+  });
+
   if (rejectionCount > 0) {
     parts.push(`${rejectionCount} rejection${rejectionCount === 1 ? "" : "s"}`);
   }
-  return parts.join(" · ");
+
+  return (
+    <p className="pointer-events-auto type-annotation leading-4 text-muted">
+      {parts.map((part, index) => (
+        <span key={index}>
+          {index > 0 ? " · " : null}
+          {part}
+        </span>
+      ))}
+    </p>
+  );
 }
 
 export const PipelineCard = memo(function PipelineCard({
   id,
   initialNow,
   linearIssueId,
+  linearIssueUrl,
   number,
   phaseStatus,
   pullRequestsJson,
@@ -804,12 +866,6 @@ export const PipelineCard = memo(function PipelineCard({
   );
   const sessionHref = workspaceSessionDetailPath(workspaceSlug, number);
   const awaitingReview = phaseStatus === "awaiting_review";
-  const referenceLine = cardReferenceLine({
-    linearIssueId,
-    number,
-    pullRequests,
-    rejectionCount,
-  });
 
   return (
     <article
@@ -833,7 +889,13 @@ export const PipelineCard = memo(function PipelineCard({
 
         <Status compact value={sessionPhaseStatusValue(phaseStatus)} />
 
-        <p className="type-annotation leading-4 text-muted">{referenceLine}</p>
+        <CardReferenceLine
+          linearIssueId={linearIssueId}
+          linearIssueUrl={linearIssueUrl}
+          number={number}
+          pullRequests={pullRequests}
+          rejectionCount={rejectionCount}
+        />
 
         <p className="type-annotation leading-4 text-muted">
           Updated <TimeDisplay initialNow={initialNow} value={updatedAt} variant="relative" />
