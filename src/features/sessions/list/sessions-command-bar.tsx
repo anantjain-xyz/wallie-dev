@@ -7,9 +7,17 @@ import { SearchIcon } from "@/components/shared/icons/search-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { CommandBar } from "@/components/ui/page-shell";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
+import { SelectField } from "@/components/ui/select";
 import type { SessionStageFacet } from "@/features/sessions/list/data";
-import { buildSessionsListHref } from "@/features/sessions/list/sessions-list-mutations";
-import { type SessionFilterKey, type SessionListQueryState } from "@/features/sessions/types";
+import {
+  buildSessionsListHref,
+  SESSION_LIST_SORT_OPTIONS,
+} from "@/features/sessions/list/sessions-list-mutations";
+import {
+  type SessionFilterKey,
+  type SessionListQueryState,
+  type SessionListSortKey,
+} from "@/features/sessions/types";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -19,12 +27,32 @@ export type SessionsCommandBarProps = {
   workspaceSlug: string;
 };
 
-const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
+const STATUS_CHIPS: { key: SessionFilterKey; label: string }[] = [
   { key: "all", label: "All" },
   { key: "active", label: "Active" },
   { key: "has-pr", label: "Has PR" },
   { key: "archived", label: "Archived" },
 ];
+
+const DEFAULT_QUERY_STATE: Pick<
+  SessionListQueryState,
+  "cursor" | "query" | "scope" | "sort" | "stageSlug"
+> = {
+  cursor: null,
+  query: "",
+  scope: "all",
+  sort: "updated",
+  stageSlug: null,
+};
+
+function hasActiveFilters(queryState: SessionListQueryState) {
+  return (
+    queryState.query.trim().length > 0 ||
+    queryState.scope !== "all" ||
+    queryState.stageSlug !== null ||
+    queryState.sort !== "updated"
+  );
+}
 
 export function SessionsCommandBar({
   queryState,
@@ -39,6 +67,7 @@ export function SessionsCommandBar({
   const [filterPendingTarget, setFilterPendingTarget] = useState<string | null>(null);
 
   const basePath = workspaceSessionsPath(workspaceSlug);
+  const clearEnabled = hasActiveFilters(queryState);
 
   useEffect(() => {
     if (!shouldRestoreSearchFocusRef.current) return;
@@ -51,13 +80,15 @@ export function SessionsCommandBar({
       cursor: next.cursor !== undefined ? next.cursor : null,
       query: next.query !== undefined ? next.query : queryState.query,
       scope: next.scope !== undefined ? next.scope : queryState.scope,
+      sort: next.sort !== undefined ? next.sort : queryState.sort,
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : queryState.stageSlug,
     };
     const href = buildSessionsListHref(basePath, merged);
     setFilterPendingTarget(pendingTarget);
     startNavigation(href);
     startTransition(() => {
-      router.replace(href);
+      // push (not replace) so share/refresh/back/forward keep filter history.
+      router.push(href);
     });
   }
 
@@ -67,14 +98,16 @@ export function SessionsCommandBar({
     updateQueryState({ query: value }, "search");
   }
 
-  function handleSearchClear() {
+  function handleClear() {
     if (searchInputRef.current) searchInputRef.current.value = "";
-    if (queryState.query) {
+    const willRemountSearch = Boolean(queryState.query);
+    if (willRemountSearch) {
       shouldRestoreSearchFocusRef.current = true;
-    } else {
-      searchInputRef.current?.focus();
     }
-    updateQueryState({ query: "" }, "clear");
+    updateQueryState({ ...DEFAULT_QUERY_STATE }, "clear");
+    if (!willRemountSearch) {
+      queueMicrotask(() => searchInputRef.current?.focus());
+    }
   }
 
   const stageGroups = useMemo(() => {
@@ -93,7 +126,7 @@ export function SessionsCommandBar({
         className="w-full flex-none space-y-1.5 sm:max-w-xl sm:flex-1 sm:min-w-[300px]"
       >
         <label className="text-[13px] font-medium text-foreground" htmlFor="sessions-search">
-          Search sessions
+          Search
         </label>
         <div className="flex flex-wrap gap-2">
           <div className="relative min-w-[220px] flex-1">
@@ -119,25 +152,13 @@ export function SessionsCommandBar({
               pendingLabel="Searching…"
             />
           </button>
-          <button
-            className="ui-button"
-            disabled={isFilterPending && filterPendingTarget === "clear"}
-            onClick={handleSearchClear}
-            type="button"
-          >
-            <ActionButtonLabel
-              idle="Clear"
-              pending={isFilterPending && filterPendingTarget === "clear"}
-              pendingLabel="Clearing…"
-            />
-          </button>
         </div>
       </form>
 
       <fieldset className="space-y-1.5">
-        <legend className="text-[13px] font-medium text-foreground">Session scope</legend>
+        <legend className="text-[13px] font-medium text-foreground">Status</legend>
         <div className="flex flex-wrap items-center gap-1.5">
-          {SCOPE_CHIPS.map((chip) => {
+          {STATUS_CHIPS.map((chip) => {
             const isSelected = queryState.scope === chip.key;
             return (
               <button
@@ -160,7 +181,7 @@ export function SessionsCommandBar({
       </fieldset>
 
       <fieldset className="space-y-1.5">
-        <legend className="text-[13px] font-medium text-foreground">Pipeline stage</legend>
+        <legend className="text-[13px] font-medium text-foreground">Stage</legend>
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             aria-pressed={queryState.stageSlug === null}
@@ -202,6 +223,36 @@ export function SessionsCommandBar({
           })}
         </div>
       </fieldset>
+
+      <SelectField
+        className="w-full min-w-[11rem] sm:w-auto sm:min-w-[14rem]"
+        disabled={isFilterPending && filterPendingTarget === "sort"}
+        label="Sort"
+        onValueChange={(value) => updateQueryState({ sort: value as SessionListSortKey }, "sort")}
+        options={SESSION_LIST_SORT_OPTIONS.map((option) => ({
+          label: option.label,
+          value: option.key,
+        }))}
+        value={queryState.sort}
+      />
+
+      <div className="space-y-1.5">
+        <span className="text-[13px] font-medium text-foreground">Clear</span>
+        <div>
+          <button
+            className="ui-button"
+            disabled={!clearEnabled || (isFilterPending && filterPendingTarget === "clear")}
+            onClick={handleClear}
+            type="button"
+          >
+            <ActionButtonLabel
+              idle="Clear filters"
+              pending={isFilterPending && filterPendingTarget === "clear"}
+              pendingLabel="Clearing…"
+            />
+          </button>
+        </div>
+      </div>
     </CommandBar>
   );
 }

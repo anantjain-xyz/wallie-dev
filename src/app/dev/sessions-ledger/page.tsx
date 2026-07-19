@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 
 import { isProductionDeploy } from "@/env/deploy";
 import { SessionLedgerRow } from "@/features/sessions/list/session-ledger-row";
+import { SessionsCommandBar } from "@/features/sessions/list/sessions-command-bar";
 import { SessionsLedger } from "@/features/sessions/list/session-row-actions";
+import { SessionsZeroState } from "@/features/sessions/components/sessions-zero-state";
 import type { SessionListItem } from "@/features/sessions/types";
 
 const ROW_COUNT = 50;
@@ -10,19 +12,20 @@ const INITIAL_NOW = "2026-07-18T12:00:00.000Z";
 
 function makeSession(index: number): SessionListItem {
   const padded = String(index).padStart(3, "0");
+  const awaiting = index % 3 === 0;
   return {
     archivedAt: null,
     createdAt: "2026-07-18T10:00:00.000Z",
     currentArtifactVersion: 1,
     currentStageId: "stage-plan",
-    currentStageName: "Plan",
-    currentStagePosition: 0,
-    currentStageSlug: "plan",
+    currentStageName: index % 2 === 0 ? "Plan" : "Build",
+    currentStagePosition: index % 2 === 0 ? 0 : 1,
+    currentStageSlug: index % 2 === 0 ? "plan" : "build",
     id: `aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee${padded}`,
     linearIssueId: index % 7 === 0 ? `OP-${index}` : null,
     linearIssueUrl: index % 7 === 0 ? `https://linear.app/issue/OP-${index}` : null,
     number: index,
-    phaseStatus: "awaiting_review",
+    phaseStatus: awaiting ? "awaiting_review" : "agent_generating",
     pipelineId: "pipeline-1",
     pullRequestCount: index % 5 === 0 ? 1 : 0,
     pullRequests:
@@ -42,6 +45,7 @@ function makeSession(index: number): SessionListItem {
           ]
         : [],
     rejectionCount: 0,
+    repositoryFullName: index % 4 === 0 ? "acme/wallie" : index % 5 === 0 ? "example/repo" : null,
     title: `Seeded ledger session ${index}`,
     updatedAt: "2026-07-18T11:30:00.000Z",
     workspaceId: "workspace-fixture",
@@ -49,7 +53,8 @@ function makeSession(index: number): SessionListItem {
 }
 
 /**
- * Non-production fixture: 50 real ledger rows for hydration / responsive checks.
+ * Non-production fixture: command bar + 50 real ledger rows for hydration /
+ * responsive / screenshot checks of the Sessions operational ledger.
  */
 export default function SessionsLedgerFixturePage() {
   if (isProductionDeploy()) notFound();
@@ -62,12 +67,27 @@ export default function SessionsLedgerFixturePage() {
       className="mx-auto max-w-[1080px] px-4 py-8 sm:px-8"
       data-sessions-ledger-fixture="50"
     >
-      <h1 className="type-page-title">Sessions ledger fixture</h1>
+      <h1 className="type-page-title">Sessions</h1>
       <p className="mt-2 type-body text-muted">
-        Fifty seeded rows using the production SessionLedgerRow / island split.
+        Fixture: labelled Search / Status / Stage / Sort / Clear command bar and column ledger.
       </p>
 
       <div className="mt-8">
+        <SessionsCommandBar
+          queryState={{
+            cursor: null,
+            query: "",
+            scope: "active",
+            sort: "updated",
+            stageSlug: null,
+          }}
+          stageFacets={[
+            { count: 25, name: "Plan", position: 0, slug: "plan" },
+            { count: 25, name: "Build", position: 1, slug: "build" },
+          ]}
+          workspaceSlug="fixture"
+        />
+
         <SessionsLedger>
           {sessions.map((session) => (
             <SessionLedgerRow
@@ -80,6 +100,23 @@ export default function SessionsLedgerFixturePage() {
           ))}
         </SessionsLedger>
       </div>
+
+      <section className="mt-12 space-y-4" data-sessions-ledger-fixture="empty">
+        <h2 className="text-sm font-semibold text-foreground">Empty states</h2>
+        <SessionsZeroState
+          newSessionHref="/w/fixture/sessions?create=1"
+          onboarding={null}
+          workspaceSlug="fixture"
+        />
+        <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
+          <p className="text-[14px] font-semibold text-foreground">
+            No sessions match these filters
+          </p>
+          <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
+            Adjust Status, Stage, Sort, or Search to see more sessions.
+          </p>
+        </div>
+      </section>
     </main>
   );
 }

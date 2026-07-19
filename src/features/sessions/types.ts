@@ -82,6 +82,8 @@ export type SessionSummary = {
   pullRequestCount: number;
   pullRequests: SessionPullRequest[];
   rejectionCount: number;
+  /** Resolved from the session's pinned GitHub repository when present. */
+  repositoryFullName: string | null;
   title: string;
   updatedAt: string;
   workspaceId: string;
@@ -98,10 +100,14 @@ export type SessionDetail = SessionSummary & {
 
 export type SessionFilterKey = "all" | "active" | "archived" | "has-pr";
 
+/** URL-backed Sessions ledger sort. Default (`updated`) is omitted from the query string. */
+export type SessionListSortKey = "updated" | "oldest" | "number";
+
 export type SessionListQueryState = {
   cursor: string | null;
   query: string;
   scope: SessionFilterKey;
+  sort: SessionListSortKey;
   stageSlug: string | null;
 };
 
