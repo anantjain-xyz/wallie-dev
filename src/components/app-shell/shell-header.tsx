@@ -399,40 +399,35 @@ export function ShellHeader({
         </div>
       </div>
 
-      <Dialog
-        open={navOpen}
-        onOpenChange={(open) => {
-          setNavOpen(open);
-          if (!open && !focusMainAfterNavCloseRef.current) {
-            // Default Radix restore targets the menu button.
-          }
-        }}
-      >
-        {navOpen ? (
-          <DialogSideContent
-            id="workspace-nav-sheet"
-            title="Workspace"
-            description={workspace.name}
-            onCloseAutoFocus={(event) => {
-              if (focusMainAfterNavCloseRef.current) {
-                event.preventDefault();
-                focusMainAfterNavCloseRef.current = false;
-                document.getElementById("main-content")?.focus();
-              }
-            }}
-          >
-            <div className="mb-4 flex min-w-0 items-center gap-2 px-1">
-              <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
-              <div className="min-w-0">
-                <p className="truncate text-[13px] font-semibold text-foreground">Wallie</p>
-                <p className="truncate text-[13px] text-muted">{workspace.name}</p>
-              </div>
+      <Dialog open={navOpen} onOpenChange={setNavOpen}>
+        <DialogSideContent
+          id="workspace-nav-sheet"
+          title="Workspace"
+          description={workspace.name}
+          onCloseAutoFocus={(event) => {
+            if (focusMainAfterNavCloseRef.current) {
+              event.preventDefault();
+              focusMainAfterNavCloseRef.current = false;
+              document.getElementById("main-content")?.focus();
+              return;
+            }
+
+            // Ensure restore lands on the visible menu trigger after Escape/dismiss.
+            event.preventDefault();
+            menuButtonRef.current?.focus();
+          }}
+        >
+          <div className="mb-4 flex min-w-0 items-center gap-2 px-1">
+            <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold text-foreground">Wallie</p>
+              <p className="truncate text-[13px] text-muted">{workspace.name}</p>
             </div>
-            <nav aria-label="Workspace navigation">
-              <div className="flex flex-col gap-1">{renderNavLinks({ fromSheet: true })}</div>
-            </nav>
-          </DialogSideContent>
-        ) : null}
+          </div>
+          <nav aria-label="Workspace navigation">
+            <div className="flex flex-col gap-1">{renderNavLinks({ fromSheet: true })}</div>
+          </nav>
+        </DialogSideContent>
       </Dialog>
 
       {createOpen ? (
