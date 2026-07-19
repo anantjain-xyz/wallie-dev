@@ -1129,9 +1129,9 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html).toContain(">Re-analyze</button>");
-    expect(html).toContain(">Saving…</button>");
-    expect(html).not.toContain(">Analyzing…</button>");
+    expect(html).toContain(">Re-analyze</span>");
+    expect(html).toContain("<span>Saving…</span>");
+    expect(html).not.toContain("<span>Analyzing…</span>");
   });
 
   it("allows fallback progression when the pipeline editor cannot render", () => {
@@ -1143,7 +1143,7 @@ describe("OnboardingPageClient", () => {
 
     const button = primaryFooterButton(html);
     expect(html).toContain("Workspace has no default pipeline.");
-    expect(button).toContain(">Continue</button>");
+    expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1158,7 +1158,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Save pipeline");
     expect(html).not.toContain("Use current pipeline");
     expect(button).toContain("disabled");
-    expect(button).toContain(">Save pipeline to continue</button>");
+    expect(button).toContain(">Save pipeline to continue</span>");
   });
 
   it("allows fallback progression when Linear routing cannot load pipeline stages", () => {
@@ -1183,7 +1183,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(button).toContain(">Continue</button>");
+    expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1208,7 +1208,7 @@ describe("OnboardingPageClient", () => {
     );
 
     const button = primaryFooterButton(html);
-    expect(button).toContain(">Continue</button>");
+    expect(button).toContain(">Continue</span>");
     expect(button).not.toContain("disabled");
   });
 
@@ -1288,7 +1288,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain('type="password"');
     expect(html).not.toContain('<textarea aria-label="Value for NEXT_PUBLIC_APP_URL"');
     expect(html).not.toContain("ui-textarea min-h-20");
-    expect(html.match(/>Save config<\/button>/g) ?? []).toHaveLength(2);
+    expect(html.match(/>Save config<\/span>/g) ?? []).toHaveLength(2);
     expect(html).not.toContain('aria-label="Save NEXT_PUBLIC_APP_URL"');
     expect(html).toContain("Add variable");
     expect(html).not.toContain('aria-label="New variable name"');
@@ -1506,7 +1506,7 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain('data-step-link="runtime"');
     expect(html).toContain("Save a repository profile before running a sandbox capability check.");
     expect(button).toContain("disabled");
-    expect(button).toContain(">Complete setup</button>");
+    expect(button).toContain(">Complete setup</span>");
   });
 
   it("routes the Vercel Sandbox blocker back into the Connect Agent step", () => {
@@ -1629,7 +1629,7 @@ describe("OnboardingPageClient", () => {
     const button = primaryFooterButton(html);
     expect(html).toContain("Latest selected-repository sandbox capability check succeeded.");
     expect(button).not.toContain("disabled");
-    expect(button).toContain(">Complete setup</button>");
+    expect(button).toContain(">Complete setup</span>");
   });
 
   it("renders sandbox polling and retry states", () => {

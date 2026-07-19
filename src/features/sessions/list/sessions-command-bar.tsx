@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { SearchIcon } from "@/components/shared/icons/search-icon";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { CommandBar } from "@/components/ui/page-shell";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import { buildSessionsListHref } from "@/features/sessions/list/sessions-list-mutations";
 import { type SessionFilterKey, type SessionListQueryState } from "@/features/sessions/types";
-import { SearchIcon } from "@/components/shared/icons/search-icon";
 import { workspaceSessionsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
@@ -24,9 +26,11 @@ const SCOPE_CHIPS: { key: SessionFilterKey; label: string }[] = [
 
 export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
   const router = useRouter();
-  const [, startTransition] = useTransition();
+  const { startNavigation } = useOptionalRouteProgress();
+  const [isFilterPending, startTransition] = useTransition();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const shouldRestoreSearchFocusRef = useRef(false);
+  const [filterPendingTarget, setFilterPendingTarget] = useState<string | null>(null);
 
   const workspaceSlug = initialData.workspace.slug;
   const basePath = workspaceSessionsPath(workspaceSlug);
@@ -37,22 +41,25 @@ export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
     searchInputRef.current?.focus();
   }, [initialData.queryState.query]);
 
-  function updateQueryState(next: Partial<SessionListQueryState>) {
+  function updateQueryState(next: Partial<SessionListQueryState>, pendingTarget: string) {
     const merged: SessionListQueryState = {
       cursor: next.cursor !== undefined ? next.cursor : null,
       query: next.query !== undefined ? next.query : initialData.queryState.query,
       scope: next.scope !== undefined ? next.scope : initialData.queryState.scope,
       stageSlug: next.stageSlug !== undefined ? next.stageSlug : initialData.queryState.stageSlug,
     };
+    const href = buildSessionsListHref(basePath, merged);
+    setFilterPendingTarget(pendingTarget);
+    startNavigation(href);
     startTransition(() => {
-      router.replace(buildSessionsListHref(basePath, merged));
+      router.replace(href);
     });
   }
 
   function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = searchInputRef.current?.value ?? "";
-    updateQueryState({ query: value });
+    updateQueryState({ query: value }, "search");
   }
 
   function handleSearchClear() {
@@ -62,15 +69,9 @@ export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
     } else {
       searchInputRef.current?.focus();
     }
-    updateQueryState({ query: "" });
+    updateQueryState({ query: "" }, "clear");
   }
 
-  // Build the stage filter chips from whatever stages appear in the loaded
-  // sessions. This keeps the chip set in sync with workspaces that have
-  // edited their pipeline; we don't need to know the workspace's pipeline
-  // shape at this layer. Chips are ordered by the stage's pipeline `position`
-  // so they line up with the board columns, with name as a stable tiebreak
-  // for the (cross-pipeline) case where two stages share a position.
   const stageGroups = useMemo(() => {
     const order = [...initialData.stageFacets].sort(
       (a, b) => a.position - b.position || a.name.localeCompare(b.name),
@@ -102,11 +103,28 @@ export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
               className="ui-input pl-8"
             />
           </div>
-          <button className="ui-button-primary" type="submit">
-            Search
+          <button
+            className="ui-button-primary"
+            disabled={isFilterPending && filterPendingTarget === "search"}
+            type="submit"
+          >
+            <ActionButtonLabel
+              idle="Search"
+              pending={isFilterPending && filterPendingTarget === "search"}
+              pendingLabel="Searching…"
+            />
           </button>
-          <button className="ui-button" onClick={handleSearchClear} type="button">
-            Clear
+          <button
+            className="ui-button"
+            disabled={isFilterPending && filterPendingTarget === "clear"}
+            onClick={handleSearchClear}
+            type="button"
+          >
+            <ActionButtonLabel
+              idle="Clear"
+              pending={isFilterPending && filterPendingTarget === "clear"}
+              pendingLabel="Clearing…"
+            />
           </button>
         </div>
       </form>
@@ -122,9 +140,14 @@ export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
                 key={chip.key}
                 type="button"
                 className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
-                onClick={() => updateQueryState({ scope: chip.key })}
+                disabled={isFilterPending && filterPendingTarget === `scope:${chip.key}`}
+                onClick={() => updateQueryState({ scope: chip.key }, `scope:${chip.key}`)}
               >
-                {chip.label}
+                <ActionButtonLabel
+                  idle={chip.label}
+                  pending={isFilterPending && filterPendingTarget === `scope:${chip.key}`}
+                  pendingLabel={`Loading ${chip.label}…`}
+                />
               </button>
             );
           })}
@@ -141,9 +164,14 @@ export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
               "ui-filter-chip",
               initialData.queryState.stageSlug === null && "ui-filter-chip-active",
             )}
-            onClick={() => updateQueryState({ stageSlug: null })}
+            disabled={isFilterPending && filterPendingTarget === "stage:all"}
+            onClick={() => updateQueryState({ stageSlug: null }, "stage:all")}
           >
-            All stages
+            <ActionButtonLabel
+              idle="All stages"
+              pending={isFilterPending && filterPendingTarget === "stage:all"}
+              pendingLabel="Loading stages…"
+            />
           </button>
           {stageGroups.order.map((stage) => {
             const isSelected = initialData.queryState.stageSlug === stage.slug;
@@ -155,9 +183,14 @@ export function SessionsCommandBar({ initialData }: SessionsCommandBarProps) {
                 key={stage.slug}
                 type="button"
                 className={cn("ui-filter-chip", isSelected && "ui-filter-chip-active")}
-                onClick={() => updateQueryState({ stageSlug: stage.slug })}
+                disabled={isFilterPending && filterPendingTarget === `stage:${stage.slug}`}
+                onClick={() => updateQueryState({ stageSlug: stage.slug }, `stage:${stage.slug}`)}
               >
-                {stage.name}
+                <ActionButtonLabel
+                  idle={stage.name}
+                  pending={isFilterPending && filterPendingTarget === `stage:${stage.slug}`}
+                  pendingLabel={`Loading ${stage.name}…`}
+                />
                 <span className="ml-1 type-annotation text-muted">{count}</span>
               </button>
             );

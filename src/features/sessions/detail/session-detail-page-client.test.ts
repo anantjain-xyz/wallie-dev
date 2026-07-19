@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  centerStageRailSelection,
   reconcilePhaseMutationResult,
   SessionDetailPageClient,
 } from "@/features/sessions/detail/session-detail-page-client";
@@ -63,6 +64,23 @@ function makeSessionDetailData(): SessionReviewData {
 }
 
 describe("SessionDetailPageClient", () => {
+  it("centers the selected stage with horizontal rail scrolling only", () => {
+    const scrollTo = vi.fn();
+    const rail = {
+      clientWidth: 320,
+      scrollTo,
+      scrollWidth: 900,
+    } as unknown as HTMLOListElement;
+    const selectedButton = {
+      offsetLeft: 480,
+      offsetWidth: 120,
+    } as HTMLButtonElement;
+
+    centerStageRailSelection(rail, selectedButton);
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", left: 380 });
+  });
+
   it("merges an authoritative stage snapshot that was absent from the initial pipeline", () => {
     const data = makeSessionDetailData();
 

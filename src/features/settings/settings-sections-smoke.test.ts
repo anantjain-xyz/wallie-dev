@@ -384,7 +384,8 @@ describe("Settings integration sections", () => {
     expect(html).toContain("Connect");
     expect(html).toContain("Vercel Sandbox");
     expect(html).toContain('href="/w/acme/settings#vercel"');
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>Sign in with ChatGPT<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled/);
+    expect(html).toContain("Sign in with ChatGPT");
   });
 
   it.each([

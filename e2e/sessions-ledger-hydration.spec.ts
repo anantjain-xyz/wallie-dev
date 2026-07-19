@@ -20,9 +20,11 @@ test.describe("sessions ledger 50-row fixture", () => {
 
     // Single DOM tree — no duplicate mobile-only row list.
     await expect(page.locator("ul.ui-sheet")).toHaveCount(1);
-    await expect(
-      page.getByRole("button", { name: "Actions for session #1", exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Actions for session #1", exact: true })).toBeVisible();
+
+    // Open overflow and archive via shared toast flow (no confirm dialog).
+    await page.getByRole("button", { name: "Actions for session #1", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Archive session" })).toBeVisible();
   });
 
   test("mobile: same semantic rows with responsive layout", async ({ page }) => {

@@ -1,9 +1,9 @@
 "use client";
 
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
-import { useOverlayContainer } from "@/components/ui/portal-root";
+import { ModalOverlayContainerProvider, useOverlayContainer } from "@/components/ui/portal-root";
 import { cn } from "@/lib/utils";
 
 export const AlertDialog = AlertDialogPrimitive.Root;
@@ -30,6 +30,7 @@ export function AlertDialogContent({
   ...props
 }: AlertDialogContentProps) {
   const container = useOverlayContainer();
+  const [modalContainer, setModalContainer] = useState<HTMLDivElement | null>(null);
 
   if (!container) return null;
 
@@ -43,16 +44,19 @@ export function AlertDialogContent({
           if (!dismissible) event.preventDefault();
         }}
         {...props}
+        ref={setModalContainer}
       >
-        <header className="space-y-1.5">
-          <AlertDialogPrimitive.Title className="text-base font-semibold text-foreground">
-            {title}
-          </AlertDialogPrimitive.Title>
-          <AlertDialogPrimitive.Description className="text-sm leading-6 text-muted">
-            {description}
-          </AlertDialogPrimitive.Description>
-        </header>
-        <div className="mt-5">{children}</div>
+        <ModalOverlayContainerProvider container={modalContainer}>
+          <header className="space-y-1.5">
+            <AlertDialogPrimitive.Title className="text-base font-semibold text-foreground">
+              {title}
+            </AlertDialogPrimitive.Title>
+            <AlertDialogPrimitive.Description className="text-sm leading-6 text-muted">
+              {description}
+            </AlertDialogPrimitive.Description>
+          </header>
+          <div className="mt-5">{children}</div>
+        </ModalOverlayContainerProvider>
       </AlertDialogPrimitive.Content>
     </AlertDialogPrimitive.Portal>
   );

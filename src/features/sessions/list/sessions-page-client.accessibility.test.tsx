@@ -152,8 +152,12 @@ describe("SessionsPageClient accessibility", () => {
     );
   });
 
-  it("opens row actions on the first item and restores focus after nested archive dialog", async () => {
+  it("runs the optimistic archive action from the keyboard and announces pending state", async () => {
     const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
     render(
       <OverlayProvider>
         <main>
@@ -168,11 +172,8 @@ describe("SessionsPageClient accessibility", () => {
     expect(screen.getByRole("menuitem", { name: "Edit title" })).toHaveFocus();
 
     await user.keyboard("{End}{Enter}");
-    expect(await screen.findByRole("alertdialog", { name: "Archive session #339?" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
-
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole("menu", { name: "Actions for session #339" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Open session #339/ })).toBeNull();
+    expect(screen.getByText("Archiving session #339…", { exact: true })).toBeVisible();
   });
 });

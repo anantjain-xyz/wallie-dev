@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import { CheckIcon } from "@/components/shared/icons/check-icon";
+import { PencilIcon } from "@/components/shared/icons/pencil-icon";
+import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { ActionMenu } from "@/components/ui/action-menu";
-import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
-import { useToast } from "@/components/ui/toast";
+import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
   archiveSessionFromClient,
@@ -22,10 +24,8 @@ import {
   resolveOptimisticTitle,
   type TitleOverride,
 } from "@/features/sessions/list/sessions-list-mutations";
+import { useSessionsLedgerVisibility } from "@/features/sessions/list/sessions-ledger-visibility";
 import type { SessionFilterKey, SessionListItem } from "@/features/sessions/types";
-import { CheckIcon } from "@/components/shared/icons/check-icon";
-import { PencilIcon } from "@/components/shared/icons/pencil-icon";
-import { XIcon } from "@/components/shared/icons/x-icon";
 import { cn } from "@/lib/utils";
 
 type SessionRowIslandProps = {
@@ -45,20 +45,21 @@ export function SessionRowIsland({
   session,
   stageName,
 }: SessionRowIslandProps) {
-  const { pushToast } = useToast();
+  const { dismissToast, pushToast } = useOptionalToast();
+  const visibility = useSessionsLedgerVisibility();
+  const archiveInFlightRef = useRef(false);
   const [titleOverride, setTitleOverride] = useState<TitleOverride | null>(null);
   const [draftTitle, setDraftTitle] = useState(session.title);
   const [optimisticArchive, setOptimisticArchive] = useState<{
     archivedAt: string | null;
     phaseStatus: SessionListItem["phaseStatus"];
   } | null>(null);
+  const [locallyHidden, setLocallyHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [archivePending, setArchivePending] = useState<"archive" | "unarchive" | null>(null);
-  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const [archivePending, setArchivePending] = useState<"unarchive" | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  const actionMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const editInputRef = useRef<HTMLInputElement | null>(null);
   const latestSessionRef = useRef(session);
   latestSessionRef.current = session;
@@ -67,51 +68,137 @@ export function SessionRowIsland({
   const archivedAt = optimisticArchive ? optimisticArchive.archivedAt : session.archivedAt;
   const phaseStatus = optimisticArchive ? optimisticArchive.phaseStatus : session.phaseStatus;
   const isArchived = Boolean(archivedAt);
-  const archiveActionLabel = archivePending
-    ? archivePending === "archive"
-      ? "Archive"
-      : "Unarchive"
-    : isArchived
-      ? "Unarchive"
-      : "Archive";
 
-  async function toggleArchive() {
-    if (archivePending) return;
-    const action = isArchived ? "unarchive" : "archive";
-    setArchivePending(action);
+  function setRowHidden(hidden: boolean) {
+    setLocallyHidden(hidden);
+    if (!visibility) return;
+    if (hidden) visibility.hideSession(session.id);
+    else visibility.showSession(session.id);
+  }
+
+  function requestArchive() {
+    if (archiveInFlightRef.current || locallyHidden) return;
+
+    archiveInFlightRef.current = true;
+    setRowHidden(true);
     setArchiveError(null);
-    setOptimisticArchive({
-      archivedAt: isArchived ? null : new Date().toISOString(),
-      phaseStatus: !isArchived && phaseStatus === "agent_generating" ? "rejected" : phaseStatus,
+    const archivePromise = archiveSessionFromClient({ sessionId: session.id });
+
+    const pendingToastId = pushToast({
+      duration: Number.POSITIVE_INFINITY,
+      priority: "polite",
+      title: `Archiving session #${session.number}…`,
     });
 
+    void archivePromise
+      .then((result) => {
+        archiveInFlightRef.current = false;
+        dismissToast(pendingToastId);
+        if (!result.archivedAt) {
+          setRowHidden(false);
+          pushToast({
+            priority: "polite",
+            title: `Session #${session.number} remains active.`,
+          });
+          return;
+        }
+
+        const archivedAtResult = result.archivedAt;
+        setOptimisticArchive({
+          archivedAt: archivedAtResult,
+          phaseStatus: result.phaseStatus,
+        });
+        pushToast({
+          action: {
+            altText: `Undo archive for session #${session.number}`,
+            label: "Undo",
+            onClick: () => {
+              void (async () => {
+                try {
+                  const undoResult = await unarchiveSessionFromClient({
+                    expectedArchivedAt: archivedAtResult,
+                    sessionId: session.id,
+                  });
+                  if (undoResult.archivedAt !== null) return;
+                  setOptimisticArchive({
+                    archivedAt: null,
+                    phaseStatus: undoResult.phaseStatus,
+                  });
+                  setRowHidden(false);
+                  archiveInFlightRef.current = false;
+                  pushToast({
+                    priority: "polite",
+                    title: `Archive undone for session #${session.number}.`,
+                    tone: "success",
+                  });
+                } catch (errorValue) {
+                  pushToast({
+                    description:
+                      errorValue instanceof Error
+                        ? errorValue.message
+                        : "The session remains archived.",
+                    priority: "assertive",
+                    title: `Could not undo archive for session #${session.number}.`,
+                    tone: "danger",
+                  });
+                }
+              })();
+            },
+          },
+          duration: 7000,
+          priority: "polite",
+          title: `Session #${session.number} archived.`,
+          tone: "success",
+        });
+      })
+      .catch((errorValue) => {
+        archiveInFlightRef.current = false;
+        setRowHidden(false);
+        dismissToast(pendingToastId);
+        pushToast({
+          description:
+            errorValue instanceof Error ? errorValue.message : "The session was restored.",
+          priority: "assertive",
+          title: `Could not archive session #${session.number}.`,
+          tone: "danger",
+        });
+      });
+  }
+
+  async function unarchive() {
+    if (archivePending) return;
+    setArchivePending("unarchive");
+    setArchiveError(null);
+    setOptimisticArchive({
+      archivedAt: null,
+      phaseStatus,
+    });
+    if (scope === "archived") {
+      setRowHidden(true);
+    }
+
     try {
-      const result = isArchived
-        ? await unarchiveSessionFromClient({ sessionId: session.id })
-        : await archiveSessionFromClient({ sessionId: session.id });
-      setArchiveConfirming(false);
+      const result = await unarchiveSessionFromClient({ sessionId: session.id });
       setOptimisticArchive({
         archivedAt: result.archivedAt,
         phaseStatus: result.phaseStatus,
       });
+      if (scope === "archived" && result.archivedAt === null) {
+        // stay hidden from archived scope
+      } else {
+        setRowHidden(false);
+      }
       pushToast({
-        title: result.archivedAt ? "Session archived" : "Session unarchived",
-        description: `#${session.number} · ${displayTitle}`,
+        priority: "polite",
+        title: `Session #${session.number} unarchived.`,
         tone: "success",
       });
     } catch (errorValue) {
-      const message =
-        errorValue instanceof Error
-          ? errorValue.message
-          : `Failed to ${archiveActionLabel.toLowerCase()} session.`;
-      setArchiveError(message);
       setOptimisticArchive(null);
-      pushToast({
-        title: `Could not ${archiveActionLabel.toLowerCase()} session`,
-        description: message,
-        tone: "danger",
-        priority: "assertive",
-      });
+      setRowHidden(false);
+      setArchiveError(
+        errorValue instanceof Error ? errorValue.message : "Failed to unarchive session.",
+      );
     } finally {
       setArchivePending(null);
     }
@@ -184,6 +271,7 @@ export function SessionRowIsland({
           authoritativeUpdatedAt: latestSession.updatedAt,
           title: result.title,
         });
+        pushToast({ priority: "polite", title: "Session title updated.", tone: "success" });
       } else {
         setTitleOverride(null);
       }
@@ -203,7 +291,9 @@ export function SessionRowIsland({
   }
 
   const hiddenFromCurrentScope =
-    (scope === "active" && Boolean(archivedAt)) || (scope === "archived" && !archivedAt);
+    (scope !== "archived" && locallyHidden) ||
+    (scope === "active" && Boolean(archivedAt)) ||
+    (scope === "archived" && !archivedAt);
 
   if (hiddenFromCurrentScope) {
     return null;
@@ -213,7 +303,7 @@ export function SessionRowIsland({
     <li
       className={cn(
         "session-list-row group flex flex-col gap-3 px-4 py-4 transition-colors hover:bg-control-hover sm:px-5 md:flex-row md:items-center",
-        (isEditing || archiveConfirming || archivePending !== null || error || archiveError) &&
+        (isEditing || archivePending !== null || error || archiveError) &&
           "content-visibility-interacting",
       )}
     >
@@ -283,7 +373,6 @@ export function SessionRowIsland({
               className="h-7 w-7 shrink-0"
               disabled={isSaving || archivePending !== null}
               label={`Actions for session #${session.number}`}
-              ref={actionMenuTriggerRef}
             >
               <DropdownMenuItem onSelect={startEditing}>
                 <PencilIcon className="h-3.5 w-3.5" />
@@ -292,11 +381,12 @@ export function SessionRowIsland({
               <DropdownMenuItem
                 className="text-danger"
                 onSelect={() => {
-                  setArchiveConfirming(true);
                   setArchiveError(null);
+                  if (isArchived) void unarchive();
+                  else requestArchive();
                 }}
               >
-                {archiveActionLabel} session
+                {isArchived ? "Unarchive" : "Archive"} session
               </DropdownMenuItem>
             </ActionMenu>
           </div>
@@ -326,26 +416,6 @@ export function SessionRowIsland({
       </div>
 
       <div className="shrink-0">{connections}</div>
-
-      <DestructiveConfirmationDialog
-        actionLabel={`${archiveActionLabel} session`}
-        description={`${archiveActionLabel} session #${session.number}, “${displayTitle}”? ${
-          archiveActionLabel === "Unarchive"
-            ? "It will return to active session views."
-            : "It will leave active session views but remain available in the archived filter."
-        }`}
-        errorMessage={archiveError}
-        onConfirm={() => void toggleArchive()}
-        onOpenChange={(open) => {
-          setArchiveConfirming(open);
-          if (!open) setArchiveError(null);
-        }}
-        open={archiveConfirming}
-        pending={archivePending !== null}
-        pendingLabel={`${archiveActionLabel === "Archive" ? "Archiving" : "Unarchiving"}…`}
-        restoreFocusRef={actionMenuTriggerRef}
-        title={`${archiveActionLabel} session #${session.number}?`}
-      />
     </li>
   );
 }

@@ -78,15 +78,13 @@ export async function archiveSession(
  */
 export async function unarchiveSession(
   admin: AdminClient,
-  input: { sessionId: string },
+  input: { expectedArchivedAt?: string; sessionId: string },
 ): Promise<SessionArchiveState> {
-  const { error } = await admin
-    .from("sessions")
-    .update({ archived_at: null })
-    .eq("id", input.sessionId)
-    .not("archived_at", "is", null)
-    .select("id")
-    .maybeSingle();
+  let update = admin.from("sessions").update({ archived_at: null }).eq("id", input.sessionId);
+  update = input.expectedArchivedAt
+    ? update.eq("archived_at", input.expectedArchivedAt)
+    : update.not("archived_at", "is", null);
+  const { error } = await update.select("id").maybeSingle();
 
   if (error) {
     throw error;

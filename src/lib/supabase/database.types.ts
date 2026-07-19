@@ -1800,6 +1800,27 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      create_session_with_first_job: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          selected_pipeline_id?: string
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
       create_workspace: {
         Args: {
           actor_avatar_url?: string
@@ -1825,6 +1846,16 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      get_pipeline_dashboard_page: {
+        Args: {
+          cursor_seen_ids?: string[]
+          page_limit?: number
+          target_pipeline_id?: string
+          target_stage_id?: string
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
       get_session_detail_page: {
         Args: { target_session_number: number; target_workspace_slug: string }
         Returns: Json
@@ -1849,6 +1880,14 @@ export type Database = {
           total_output_tokens: number
           total_runs: number
         }[]
+      }
+      load_workspace_onboarding_sandbox_checks: {
+        Args: { target_workspace_id: string }
+        Returns: Json
+      }
+      load_workspace_onboarding_secret_previews: {
+        Args: { target_workspace_id: string }
+        Returns: Json
       }
       mark_codex_auth_reconnect_required: {
         Args: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
 import {
   appendDraftStage,
@@ -45,6 +45,7 @@ export function PipelineEditor({
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [isPending, startTransition] = useTransition();
+  const saveInFlightRef = useRef(false);
   const validation: PipelineDraftValidationResult = hasAttemptedSave
     ? validatePipelineDraft({ name, stages })
     : { ok: true };
@@ -81,6 +82,8 @@ export function PipelineEditor({
   }
 
   function handleSave() {
+    if (saveInFlightRef.current) return;
+
     setError(null);
     const stagesToSave = keepKnownApproverIds(stages, workspaceMembers);
     const validation = validatePipelineDraft({ name, stages: stagesToSave });
@@ -95,13 +98,18 @@ export function PipelineEditor({
 
     setHasAttemptedSave(false);
     setStages(stagesToSave);
+    saveInFlightRef.current = true;
     startInteraction("save_settings", "/w/[workspaceSlug]/settings");
 
     startTransition(async () => {
-      await savePipeline().catch((caught: unknown) => {
+      try {
+        await savePipeline();
+      } catch (caught: unknown) {
         finishInteraction("save_settings", "error");
         setError(caught instanceof Error ? caught.message : "Failed to save pipeline.");
-      });
+      } finally {
+        saveInFlightRef.current = false;
+      }
     });
   }
 

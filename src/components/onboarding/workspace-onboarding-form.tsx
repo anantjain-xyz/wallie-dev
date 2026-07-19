@@ -2,8 +2,10 @@
 
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRef, useState } from "react";
 
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
+import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { onboardingWorkspacePath } from "@/lib/routes";
 import { slugifyWorkspaceName } from "@/lib/workspaces";
 
@@ -18,10 +20,12 @@ type CreateWorkspaceResponse = {
 
 export function WorkspaceOnboardingForm() {
   const router = useRouter();
+  const { startNavigation } = useOptionalRouteProgress();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
+  const inFlightRef = useRef(false);
 
   async function submitWorkspace(submittedName: string, submittedSlug: string) {
     setErrorMessage(null);
@@ -38,7 +42,9 @@ export function WorkspaceOnboardingForm() {
     });
 
     if (response.status === 401) {
-      router.replace(`/login?next=${encodeURIComponent(onboardingWorkspacePath())}`);
+      const destination = `/login?next=${encodeURIComponent(onboardingWorkspacePath())}`;
+      startNavigation(destination);
+      router.replace(destination);
       return;
     }
 
@@ -53,25 +59,37 @@ export function WorkspaceOnboardingForm() {
           ? payload.error
           : "Wallie could not create that workspace.",
       );
+      inFlightRef.current = false;
+      setIsPending(false);
       return;
     }
 
     if (payload && "redirectTo" in payload) {
+      startNavigation(payload.redirectTo);
       router.replace(payload.redirectTo);
       return;
     }
 
     setErrorMessage("Wallie could not create that workspace.");
+    inFlightRef.current = false;
+    setIsPending(false);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (inFlightRef.current) return;
 
     const submittedName = name;
     const submittedSlug = slug;
 
-    startTransition(() => {
-      void submitWorkspace(submittedName, submittedSlug);
+    inFlightRef.current = true;
+    setIsPending(true);
+    void submitWorkspace(submittedName, submittedSlug).catch((error) => {
+      inFlightRef.current = false;
+      setIsPending(false);
+      setErrorMessage(
+        error instanceof Error ? error.message : "Wallie could not create that workspace.",
+      );
     });
   }
 
@@ -129,7 +147,7 @@ export function WorkspaceOnboardingForm() {
           disabled={isPending}
           className="ui-button-primary disabled:cursor-wait"
         >
-          {isPending ? "Creating…" : "Create workspace"}
+          <ActionButtonLabel idle="Create workspace" pending={isPending} pendingLabel="Creating…" />
         </button>
       </div>
     </form>

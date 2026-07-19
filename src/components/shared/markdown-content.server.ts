@@ -114,5 +114,5 @@ export async function renderMarkdownToHtml(markdown: string): Promise<string> {
     .use(rehypeStringify)
     .process(markdown);
 
-  return `<div class="artifact-content max-h-[480px] overflow-auto">${String(rendered)}</div>`;
+  return `<div class="artifact-content">${String(rendered)}</div>`;
 }

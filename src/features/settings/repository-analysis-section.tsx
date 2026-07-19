@@ -151,9 +151,22 @@ export function RepositoryAnalysisSection({
   const [profileDirty, setProfileDirty] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileAction, setProfileAction] = useState<ProfileAction>(null);
+  const profileActionRef = useRef<ProfileAction>(null);
   const activeRepositoryRef = useRef(selectedRepository?.id ?? null);
   const selectedRepositoryId = selectedRepository?.id ?? null;
   const profileBusy = profileAction !== null;
+
+  function beginProfileAction(action: Exclude<ProfileAction, null>) {
+    if (profileActionRef.current) return false;
+    profileActionRef.current = action;
+    setProfileAction(action);
+    return true;
+  }
+
+  function finishProfileAction() {
+    profileActionRef.current = null;
+    setProfileAction(null);
+  }
 
   function updateProfileDraft(nextProfile: RepositoryProfileState, dirty = false) {
     setProfileDraft(nextProfile);
@@ -162,10 +175,9 @@ export function RepositoryAnalysisSection({
 
   async function selectRepository(repositoryId: string): Promise<boolean> {
     const repository = data.github.repositories.find((candidate) => candidate.id === repositoryId);
-    if (!repository || profileBusy) return false;
+    if (!repository || !beginProfileAction("selecting")) return false;
 
     setProfileError(null);
-    setProfileAction("selecting");
     activeRepositoryRef.current = repository.id;
 
     const patch = buildOnboardingRepositorySelectionPatch(
@@ -209,7 +221,7 @@ export function RepositoryAnalysisSection({
       return false;
     } finally {
       if (activeRepositoryRef.current === repository.id) {
-        setProfileAction(null);
+        finishProfileAction();
       }
     }
   }
@@ -217,12 +229,11 @@ export function RepositoryAnalysisSection({
   async function inferRepositoryProfile(
     repository: SettingsPageData["github"]["repositories"][number],
   ) {
-    if (profileBusy) return;
+    if (!beginProfileAction("analyzing")) return;
     activeRepositoryRef.current = repository.id;
     setProfileDraft(null);
     setProfileDirty(false);
     setProfileError(null);
-    setProfileAction("analyzing");
 
     try {
       const response = await fetch(
@@ -243,7 +254,7 @@ export function RepositoryAnalysisSection({
       setProfileError(error instanceof Error ? error.message : "Failed to infer repository setup.");
     } finally {
       if (activeRepositoryRef.current === repository.id) {
-        setProfileAction(null);
+        finishProfileAction();
       }
     }
   }
@@ -258,9 +269,8 @@ export function RepositoryAnalysisSection({
   }
 
   async function saveRepositoryProfile() {
-    if (!profileDraft || !selectedRepository || profileBusy) return;
+    if (!profileDraft || !selectedRepository || !beginProfileAction("saving")) return;
 
-    setProfileAction("saving");
     setProfileError(null);
 
     try {
@@ -306,7 +316,7 @@ export function RepositoryAnalysisSection({
         error instanceof Error ? error.message : "Failed to save repository profile.",
       );
     } finally {
-      setProfileAction(null);
+      finishProfileAction();
     }
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type {
   AgentConfigEntry,
@@ -14,6 +14,7 @@ import {
   AGENT_PROVIDER_EMPTY_OPTION,
   AGENT_PROVIDER_SELECT_OPTIONS,
 } from "@/components/shared/agent-provider-options";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { SelectField, type SelectOption } from "@/components/ui/select";
 import type { AgentConfigMap } from "@/features/settings/data";
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
@@ -160,6 +161,7 @@ export function AgentConfigSection({
     max_retries: agentConfigValueToDraft("max_retries", initialAgentConfig.max_retries),
   }));
   const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [serverFieldErrors, setServerFieldErrors] = useState<AgentConfigFieldErrors>({});
 
   const selectedAgentProvider: AgentProvider =
@@ -252,7 +254,8 @@ export function AgentConfigSection({
   }
 
   async function handleSaveAll() {
-    if (saveableFields.length === 0) return;
+    if (saveInFlightRef.current || saveableFields.length === 0) return;
+    saveInFlightRef.current = true;
     setIsSaving(true);
     setServerFieldErrors({});
 
@@ -307,6 +310,7 @@ export function AgentConfigSection({
         text: error instanceof Error ? error.message : "Agent config save failed.",
       });
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }
@@ -372,7 +376,7 @@ export function AgentConfigSection({
               onClick={() => void handleSaveAll()}
               type="button"
             >
-              {isSaving ? "Saving…" : "Save changes"}
+              <ActionButtonLabel idle="Save changes" pending={isSaving} pendingLabel="Saving…" />
             </button>
           </div>
 

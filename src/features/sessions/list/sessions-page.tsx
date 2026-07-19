@@ -7,6 +7,7 @@ import type { SessionListPageData } from "@/features/sessions/list/data";
 import { SessionsCommandBar } from "@/features/sessions/list/sessions-command-bar";
 import { SessionLedgerRow } from "@/features/sessions/list/session-ledger-row";
 import { SessionsLedger } from "@/features/sessions/list/session-row-actions";
+import { SessionsLedgerVisibilityProvider } from "@/features/sessions/list/sessions-ledger-visibility";
 import { buildSessionsListHref } from "@/features/sessions/list/sessions-list-mutations";
 import { workspaceSessionsPath } from "@/lib/routes";
 
@@ -16,6 +17,17 @@ type SessionsPageProps = {
 };
 
 const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
+
+function FilterEmptyState() {
+  return (
+    <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
+      <p className="text-[14px] font-semibold text-foreground">No sessions match these filters</p>
+      <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
+        Adjust the stage, scope, or search to see more sessions.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Server Component Sessions ledger. Command bar and per-row action islands are
@@ -42,27 +54,26 @@ export function SessionsPage({ initialData, initialNow }: SessionsPageProps) {
             newSessionHref={workspaceSessionsPath(workspaceSlug, { create: 1 })}
           />
         ) : (
-          <div className="ui-sheet flex flex-col items-center border-dashed px-6 py-16 text-center">
-            <p className="text-[14px] font-semibold text-foreground">
-              No sessions match these filters
-            </p>
-            <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
-              Adjust the stage, scope, or search to see more sessions.
-            </p>
-          </div>
+          <FilterEmptyState />
         )
       ) : (
-        <SessionsLedger>
-          {sessions.map((session) => (
-            <SessionLedgerRow
-              key={session.id}
-              initialNow={renderNow}
-              scope={initialData.queryState.scope}
-              session={session}
-              workspaceSlug={workspaceSlug}
-            />
-          ))}
-        </SessionsLedger>
+        <SessionsLedgerVisibilityProvider
+          emptyFallback={<FilterEmptyState />}
+          key={initialData.queryState.scope}
+          sessionCount={sessions.length}
+        >
+          <SessionsLedger>
+            {sessions.map((session) => (
+              <SessionLedgerRow
+                key={session.id}
+                initialNow={renderNow}
+                scope={initialData.queryState.scope}
+                session={session}
+                workspaceSlug={workspaceSlug}
+              />
+            ))}
+          </SessionsLedger>
+        </SessionsLedgerVisibilityProvider>
       )}
 
       {initialData.hasMore && initialData.nextCursor ? (

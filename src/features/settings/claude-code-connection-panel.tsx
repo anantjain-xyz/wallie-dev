@@ -3,9 +3,11 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { Spinner } from "@/components/shared/spinner";
+import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Status } from "@/components/ui/status";
+import { useOptionalToast } from "@/components/ui/toast";
 import { isProviderStatusStale } from "@/features/settings/provider-status-cache";
 
 export interface ClaudeCodeConnectionStatus {
@@ -30,10 +32,11 @@ export function ClaudeCodeConnectionPanel({
     () => initialStatus ?? null,
   );
   const [credential, setCredential] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
-  const [disconnectPending, setDisconnectPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"disconnect" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const actionInFlightRef = useRef(false);
+  const { pushToast } = useOptionalToast();
+  const isBusy = pendingAction !== null;
 
   // Held in a ref so the panel is robust to callers that pass a fresh callback
   // on every render — otherwise the refresh effect would refire in a loop.
@@ -67,9 +70,10 @@ export function ClaudeCodeConnectionPanel({
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsBusy(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("save");
     setError(null);
-    setNotice(null);
     try {
       const response = await fetch("/api/claude-code/connection", {
         method: "POST",
@@ -85,19 +89,22 @@ export function ClaudeCodeConnectionPanel({
       setStatus(data);
       if (data) onStatusChangeRef.current?.(data);
       setCredential("");
-      setNotice("Anthropic API key saved.");
+      pushToast({ priority: "polite", title: "Anthropic API key saved.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Anthropic API key.");
+      const message = err instanceof Error ? err.message : "Failed to save Anthropic API key.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
   const handleDisconnect = async () => {
-    setIsBusy(true);
-    setDisconnectPending(true);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setPendingAction("disconnect");
     setError(null);
-    setNotice(null);
     try {
       const response = await fetch("/api/claude-code/connection", { method: "DELETE" });
       if (!response.ok && response.status !== 204) {
@@ -105,12 +112,14 @@ export function ClaudeCodeConnectionPanel({
       }
       setCredential("");
       await refresh();
-      setNotice("Anthropic API key removed.");
+      pushToast({ priority: "polite", title: "Anthropic API key removed.", tone: "success" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disconnect Claude Code.");
+      const message = err instanceof Error ? err.message : "Failed to disconnect Claude Code.";
+      setError(message);
+      pushToast({ priority: "assertive", title: message, tone: "danger" });
     } finally {
-      setDisconnectPending(false);
-      setIsBusy(false);
+      actionInFlightRef.current = false;
+      setPendingAction(null);
     }
   };
 
@@ -118,7 +127,6 @@ export function ClaudeCodeConnectionPanel({
 
   return (
     <div className="space-y-4">
-      {notice ? <p className="text-[13px] leading-5 text-success">{notice}</p> : null}
       {error ? <p className="text-[13px] leading-5 text-danger">{error}</p> : null}
 
       {status === null ? (
@@ -134,7 +142,7 @@ export function ClaudeCodeConnectionPanel({
               {status.updatedAt ? `Updated ${formatDate(status.updatedAt)}` : "Saved"}
             </p>
           </div>
-          {disconnectPending ? (
+          {pendingAction === "disconnect" ? (
             <span
               aria-live="polite"
               className="inline-flex items-center gap-1.5 text-xs text-muted"
@@ -175,7 +183,11 @@ export function ClaudeCodeConnectionPanel({
 
         <div className="flex justify-end">
           <button className="ui-button-primary" disabled={saveDisabled} type="submit">
-            {isBusy ? "Saving…" : status?.connected ? "Update API key" : "Save API key"}
+            <ActionButtonLabel
+              idle={status?.connected ? "Update API key" : "Save API key"}
+              pending={pendingAction === "save"}
+              pendingLabel="Saving…"
+            />
           </button>
         </div>
       </form>
