@@ -1,5 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          order: () => ({
+            order: async () => ({ data: [], error: null }),
+          }),
+        }),
+      }),
+    }),
+  }),
+}));
+
 import { loadWallieRunPage, WALLIE_RUN_PAGE_SIZE } from "@/features/wallie/server";
 
 function uuid(index: number) {

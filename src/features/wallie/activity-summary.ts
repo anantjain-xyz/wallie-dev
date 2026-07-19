@@ -10,8 +10,15 @@ export function isRunActivityStalled(input: {
   lastActivityAt: string | null;
   nowMs: number;
   stallTimeoutMs: number;
+  status: WallieRun["status"];
 }): boolean {
   if (!input.isActive || input.stallTimeoutMs <= 0) {
+    return false;
+  }
+
+  // Match the worker stall sweep: unclaimed queued runs wait on concurrency and
+  // are not treated as stalled for "No recent activity" recovery.
+  if (input.status === "queued") {
     return false;
   }
 

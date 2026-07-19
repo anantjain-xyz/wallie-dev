@@ -21,21 +21,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 
 export const WALLIE_RUN_PAGE_SIZE = 20;
 
-function attemptCountFromJoin(job: AgentRunRow["agent_jobs"]): number | undefined {
-  if (!job) return undefined;
-  if (Array.isArray(job)) {
-    const first = job[0];
-    return typeof first?.attempt_count === "number" ? first.attempt_count : undefined;
-  }
-  return typeof job.attempt_count === "number" ? job.attempt_count : undefined;
-}
-
-function toBuildableRunRow(row: AgentRunRow) {
+function toBuildableRunRow(row: AgentRunRow, attemptCount: number) {
   return {
-    attemptCount: attemptCountFromJoin(row.agent_jobs),
+    attemptCount,
     created_at: row.created_at,
     finished_at: row.finished_at,
     id: row.id,
@@ -53,6 +45,36 @@ function toBuildableRunRow(row: AgentRunRow) {
     triggered_by_member_id: row.triggered_by_member_id,
     updated_at: row.updated_at,
   };
+}
+
+/**
+ * Snapshot a stable per-run attempt ordinal from chronological stage history.
+ * Do not read mutable `agent_jobs.attempt_count` — that value advances on later
+ * claims and would relabel historical runs.
+ */
+async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string) {
+  const { data, error } = await admin
+    .from("agent_runs")
+    .select("id, created_at, stage_slug")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  const ordinals = new Map<string, number>();
+  const perStage = new Map<string, number>();
+
+  for (const row of data ?? []) {
+    const stageKey = row.stage_slug ?? "__session__";
+    const next = (perStage.get(stageKey) ?? 0) + 1;
+    perStage.set(stageKey, next);
+    ordinals.set(row.id, next);
+  }
+
+  return ordinals;
 }
 
 export async function loadWallieRunPage(input: {
@@ -75,7 +97,10 @@ export async function loadWallieRunPage(input: {
     );
   }
 
-  const { data, error } = await query;
+  const [{ data, error }, attemptOrdinals] = await Promise.all([
+    query,
+    loadAttemptOrdinalsByRunId(createSupabaseAdminClient(), input.sessionId),
+  ]);
 
   if (error) {
     throw error;
@@ -90,7 +115,7 @@ export async function loadWallieRunPage(input: {
     missingSecretKeys: [],
     repository: null,
     requiresVercelSandbox: false,
-    runs: pageRows.map(toBuildableRunRow),
+    runs: pageRows.map((row) => toBuildableRunRow(row, attemptOrdinals.get(row.id) ?? 1)),
     vercelSandboxConnection: missingVercelSandboxConnection,
   }).runs;
   const lastRun = pageRows.at(-1);
@@ -236,8 +261,10 @@ async function loadWallieStallTimeoutMs(
   return data.value_json;
 }
 
+// Authenticated users can SELECT agent_runs. Do not join agent_jobs — that
+// table is service-role only and would fail the entire activity load under RLS.
 const runSelect =
-  "id, created_at, finished_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at, agent_jobs(attempt_count)";
+  "id, created_at, finished_at, last_activity_at, model_name, model_provider, run_type, sandbox_id, sandbox_provider, stage_id, stage_slug, stage_name, started_at, status, triggered_by_member_id, updated_at";
 const memberSelect = "id, full_name, username, avatar_url, role, kind, user_id, is_active";
 
 type AgentRunRow = Pick<
@@ -258,9 +285,7 @@ type AgentRunRow = Pick<
   | "status"
   | "triggered_by_member_id"
   | "updated_at"
-> & {
-  agent_jobs: { attempt_count: number } | { attempt_count: number }[] | null;
-};
+>;
 
 const missingVercelSandboxConnection: WallieVercelSandboxConnectionStatus = {
   connected: false,

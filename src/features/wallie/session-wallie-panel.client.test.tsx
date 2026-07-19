@@ -224,7 +224,9 @@ describe("SessionWalliePanel run history lifecycle", () => {
     expect(fake.activeChannels.size).toBe(2);
 
     fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
-    await waitFor(() => expect(fake.activeChannels.size).toBe(2));
+    // Expanding an older run keeps a second message channel for the summary run
+    // so current-activity copy stays live without forcing disclosure back open.
+    await waitFor(() => expect(fake.activeChannels.size).toBe(3));
     expect(
       view.container.querySelector('[data-run-id="run-1"] button')?.getAttribute("aria-expanded"),
     ).toBe("false");
@@ -234,7 +236,7 @@ describe("SessionWalliePanel run history lifecycle", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Load older runs" }));
     await waitFor(() => expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(40));
-    expect(fake.activeChannels.size).toBeLessThanOrEqual(2);
+    expect(fake.activeChannels.size).toBeLessThanOrEqual(3);
   });
 
   it("reconciles every subscribe/reconnect without duplicating run ids", async () => {

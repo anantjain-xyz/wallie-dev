@@ -51,6 +51,7 @@ describe("activity-summary helpers", () => {
         lastActivityAt: "2026-07-18T12:00:00.000Z",
         nowMs,
         stallTimeoutMs: 900_000,
+        status: "running",
       }),
     ).toBe(true);
     expect(
@@ -60,6 +61,17 @@ describe("activity-summary helpers", () => {
         lastActivityAt: "2026-07-18T12:10:00.000Z",
         nowMs,
         stallTimeoutMs: 900_000,
+        status: "running",
+      }),
+    ).toBe(false);
+    expect(
+      isRunActivityStalled({
+        createdAt: "2026-07-18T12:00:00.000Z",
+        isActive: true,
+        lastActivityAt: "2026-07-18T12:00:00.000Z",
+        nowMs,
+        stallTimeoutMs: 900_000,
+        status: "queued",
       }),
     ).toBe(false);
   });

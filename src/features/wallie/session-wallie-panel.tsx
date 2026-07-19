@@ -39,6 +39,7 @@ import type { Database, Tables } from "@/lib/supabase/database.types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { buildWallieBlockingReasons } from "@/features/wallie/utils";
 import { workspaceSettingsPath } from "@/lib/routes";
+import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { cn } from "@/lib/utils";
 
 type FlashMessage = {
@@ -429,11 +430,23 @@ export function SessionWalliePanel({
     };
   }, [realtimeReady, session.id, supabase]);
 
+  const summaryRun = useMemo(() => {
+    return runs.find((run) => run.isActive) ?? runs[0] ?? null;
+  }, [runs]);
+
   useEffect(() => {
     if (expandedRunId && !loadedMessageRunIds.has(expandedRunId)) {
       void loadRunMessages(expandedRunId);
     }
   }, [expandedRunId, loadRunMessages, loadedMessageRunIds]);
+
+  // Keep the always-visible summary fed even when disclosure stays on an older run
+  // (e.g. a new active run arrives while the user still has a prior run expanded).
+  useEffect(() => {
+    if (summaryRun && !loadedMessageRunIds.has(summaryRun.id)) {
+      void loadRunMessages(summaryRun.id);
+    }
+  }, [loadRunMessages, loadedMessageRunIds, summaryRun]);
 
   useEffect(() => {
     if (!realtimeReady || !expandedRunId) return;
@@ -468,6 +481,40 @@ export function SessionWalliePanel({
     };
   }, [expandedRunId, loadRunMessages, realtimeReady, supabase]);
 
+  useEffect(() => {
+    if (!realtimeReady || !summaryRun) return;
+    if (summaryRun.id === expandedRunId) return;
+
+    const runId = summaryRun.id;
+    const messageChannel = supabase
+      .channel(`wallie-summary-messages:${runId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `agent_run_id=eq.${runId}`,
+          schema: "public",
+          table: "agent_run_messages",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            return;
+          }
+
+          handleRunMessageRealtimeUpdate(payload.new as Tables<"agent_run_messages">);
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void loadRunMessages(runId);
+        }
+      });
+
+    return () => {
+      void supabase.removeChannel(messageChannel);
+    };
+  }, [expandedRunId, loadRunMessages, realtimeReady, summaryRun, supabase]);
+
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
     missingSecretKeys: initialData.missingSecretKeys,
@@ -481,8 +528,6 @@ export function SessionWalliePanel({
   // for archived sessions; mirror that here so the Retry button is disabled
   // rather than failing on click.
   const isArchived = Boolean(session.archivedAt);
-  const activeRun = runs.find((run) => run.isActive) ?? null;
-  const summaryRun = activeRun ?? runs[0] ?? null;
   const summaryStalled = summaryRun
     ? isRunActivityStalled({
         createdAt: summaryRun.createdAt,
@@ -490,6 +535,7 @@ export function SessionWalliePanel({
         lastActivityAt: summaryRun.lastActivityAt,
         nowMs,
         stallTimeoutMs: initialData.stallTimeoutMs,
+        status: summaryRun.status,
       })
     : false;
   const summaryOperation = summaryRun
@@ -721,7 +767,11 @@ export function SessionWalliePanel({
             <WallieRunCard
               key={run.id}
               actionPending={pendingActionId === run.id}
-              branchName={initialData.repository?.defaultBranch ?? null}
+              branchName={
+                run.stageSlug
+                  ? buildStageBranchName(session.id, run.stageSlug)
+                  : (initialData.repository?.defaultBranch ?? null)
+              }
               cancelLocked={pendingActionId !== null}
               connectionState={connectionState}
               isExpanded={expandedRunId === run.id}
@@ -942,6 +992,7 @@ const WallieRunCard = memo(function WallieRunCard({
     lastActivityAt: run.lastActivityAt,
     nowMs,
     stallTimeoutMs,
+    status: run.status,
   });
 
   return (
