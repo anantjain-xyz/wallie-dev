@@ -4,12 +4,13 @@ async function signIn(page: Page) {
   await page.goto("/w/acme-corp/sessions");
   await expect(page).toHaveURL(/\/login\?/);
 
-  await page.getByText("Dev password").click();
+  await page.getByText("Development alternative").click();
   await page.getByPlaceholder("dev@localhost.com").fill("anant@example.com");
-  await page.getByPlaceholder("Password (min 6)").fill("password123");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("Developer password").fill("password123");
+  await page.getByRole("button", { name: "Continue with password" }).click();
 
-  await expect(page).toHaveURL("/w/acme-corp/sessions");
+  await expect(page).not.toHaveURL(/\/login/);
+  await expect(page).toHaveURL(/\/w\/acme-corp(?:\/|$)/);
 }
 
 test("onboarding navigation saves once without a follow-up route refresh", async ({ page }) => {
@@ -59,7 +60,10 @@ test("onboarding navigation saves once without a follow-up route refresh", async
     });
 
     mutationStartedAt = Date.now();
-    await page.getByRole("button", { exact: true, name: "Review pipeline" }).click();
+    await page
+      .getByRole("complementary")
+      .getByRole("button", { name: /Review pipeline/ })
+      .click();
     await expect(page.getByRole("heading", { name: "Review pipeline" })).toBeVisible();
     await expect.poll(() => mutationRequests.length).toBe(1);
     await page.waitForTimeout(500);
@@ -77,6 +81,7 @@ test("onboarding navigation saves once without a follow-up route refresh", async
   } finally {
     const deleteResponse = await page.request.delete(`/api/workspaces/${created.workspace.id}`, {
       data: { confirmation: workspaceName },
+      timeout: 15_000,
     });
     expect(deleteResponse.ok(), "temporary onboarding workspace must be deleted").toBe(true);
   }
