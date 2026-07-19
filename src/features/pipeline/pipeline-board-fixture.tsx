@@ -159,7 +159,7 @@ export function PipelineBoardFixture({
           ))}
         </div>
       </div>
-      <PipelinePageClient initialData={data} initialNow={FIXED_NOW} />
+      <PipelinePageClient enableRealtime={false} initialData={data} initialNow={FIXED_NOW} />
     </main>
   );
 }

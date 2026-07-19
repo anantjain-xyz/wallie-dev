@@ -47,6 +47,8 @@ import type { Tables } from "@/lib/supabase/database.types";
 import { cn } from "@/lib/utils";
 
 type PipelinePageClientProps = {
+  /** When false, skip Supabase realtime (fixtures / offline proof captures). */
+  enableRealtime?: boolean;
   initialData: PipelineDashboardData;
   initialNow?: string;
 };
@@ -138,15 +140,27 @@ export function formatLaneStateSummary(cards: readonly PipelineDashboardCard[]) 
   return parts.length > 0 ? parts.join(" · ") : "No active sessions";
 }
 
-export function PipelinePageClient({ initialData, initialNow }: PipelinePageClientProps) {
+export function PipelinePageClient({
+  enableRealtime = true,
+  initialData,
+  initialNow,
+}: PipelinePageClientProps) {
   return (
     <SessionDetailLinkPrefetchBoundary>
-      <PipelinePageContent initialData={initialData} initialNow={initialNow} />
+      <PipelinePageContent
+        enableRealtime={enableRealtime}
+        initialData={initialData}
+        initialNow={initialNow}
+      />
     </SessionDetailLinkPrefetchBoundary>
   );
 }
 
-function PipelinePageContent({ initialData, initialNow }: PipelinePageClientProps) {
+function PipelinePageContent({
+  enableRealtime = true,
+  initialData,
+  initialNow,
+}: PipelinePageClientProps) {
   const renderNow = initialNow ?? ISOLATED_RENDER_NOW;
   const [board, dispatch] = useReducer(
     pipelineBoardReducer,
@@ -167,7 +181,10 @@ function PipelinePageContent({ initialData, initialNow }: PipelinePageClientProp
   const loadingLaneKeyRef = useRef<string | null>(null);
   const pendingCardFocus = useRef<PendingCardFocus | null>(null);
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const supabase = useMemo(
+    () => (enableRealtime ? createSupabaseBrowserClient() : null),
+    [enableRealtime],
+  );
   boardRef.current = board;
 
   useEffect(() => {
@@ -216,8 +233,10 @@ function PipelinePageContent({ initialData, initialNow }: PipelinePageClientProp
   }, [board]);
 
   useEffect(() => {
+    if (!supabase) return;
+
     async function refreshSessionPullRequests(sessionId: string) {
-      const { data, error } = await supabase
+      const { data, error } = await supabase!
         .from("session_pull_requests")
         .select("id, pull_request_number, pull_request_url")
         .eq("workspace_id", initialData.workspace.id)
