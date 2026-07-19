@@ -213,7 +213,9 @@ describe("PipelineEditor accessibility", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove Build from position 3 of 3" }));
     expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Remove Build?");
-    expect(screen.getByText(/Only future sessions use the updated pipeline/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Sessions currently on this stage will block the save/),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Remove Build" }));
     expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(2);
     expect(screen.getByDisplayValue("Intake")).toBeInTheDocument();

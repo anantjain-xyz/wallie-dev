@@ -68,6 +68,8 @@ export type PipelineDraftValidationResult =
     };
 
 export const STAGE_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** Matches `stageInputSchema.slug.max(64)` on the pipeline API. */
+export const STAGE_SLUG_MAX_LENGTH = 64;
 
 export const PIPELINE_VARIABLE_HELP = [
   "{{session.title}}",
@@ -84,7 +86,15 @@ export function slugifyStageName(value: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-{2,}/g, "-")
     .replace(/^-+|-+$/g, "");
-  return slug || "stage";
+  return truncateSlugBase(slug || "stage", STAGE_SLUG_MAX_LENGTH);
+}
+
+/** Trim a slug candidate to `maxLen` without leaving a trailing hyphen. */
+export function truncateSlugBase(base: string, maxLen: number): string {
+  if (maxLen < 1) return "s";
+  if (base.length <= maxLen) return base;
+  const truncated = base.slice(0, maxLen).replace(/-+$/, "");
+  return truncated || "stage".slice(0, maxLen);
 }
 
 export function stageToDraft(stage: PipelineStage): DraftPipelineStage {
@@ -114,10 +124,15 @@ export function keepKnownApproverIds(
 
 export function nextUniqueSlug(base: string, stages: DraftPipelineStage[]): string {
   const existing = new Set(stages.map((stage) => stage.slug));
-  if (!existing.has(base)) return base;
+  const primary = truncateSlugBase(base, STAGE_SLUG_MAX_LENGTH);
+  if (!existing.has(primary)) return primary;
   let index = 2;
-  while (existing.has(`${base}-${index}`)) index++;
-  return `${base}-${index}`;
+  while (true) {
+    const suffix = `-${index}`;
+    const candidate = `${truncateSlugBase(base, STAGE_SLUG_MAX_LENGTH - suffix.length)}${suffix}`;
+    if (!existing.has(candidate)) return candidate;
+    index++;
+  }
 }
 
 export function createDraftStage(stages: DraftPipelineStage[] = []): DraftPipelineStage {
@@ -302,11 +317,14 @@ export function validatePipelineDraft({
       });
     }
 
-    if (!STAGE_SLUG_PATTERN.test(stage.slug)) {
+    if (!STAGE_SLUG_PATTERN.test(stage.slug) || stage.slug.length > STAGE_SLUG_MAX_LENGTH) {
       issues.push({
         code: "invalid-stage-slug",
         field: "stage-slug",
-        message: `${label} slug must use lowercase letters, numbers, and single hyphens.`,
+        message:
+          stage.slug.length > STAGE_SLUG_MAX_LENGTH
+            ? `${label} slug must be at most ${STAGE_SLUG_MAX_LENGTH} characters.`
+            : `${label} slug must use lowercase letters, numbers, and single hyphens.`,
         stageIndex: index,
       });
     }
@@ -687,14 +705,14 @@ export function StageRowEditor({
                   className="font-mono text-xs"
                   description={
                     slugReadOnly
-                      ? "Locked after save so historical artifacts keep a stable identity."
+                      ? "Locked after save so historical artifacts keep a stable identity. Focus to copy for prompt references."
                       : "Follows Name until you edit it. Use lowercase letters, numbers, and single hyphens."
                   }
-                  disabled={!canManage || slugReadOnly}
+                  disabled={!canManage}
                   error={errors.slug}
                   id={`${fieldPrefix}-slug`}
                   label="Slug"
-                  maxLength={64}
+                  maxLength={STAGE_SLUG_MAX_LENGTH}
                   onChange={onChangeSlug}
                   placeholder="plan"
                   readOnly={slugReadOnly}
@@ -876,8 +894,9 @@ export function RemoveStageDialog({
       actionLabel={`Remove ${stageLabel}`}
       description={
         <>
-          Remove <strong>{stageLabel}</strong> from this pipeline? Only future sessions use the
-          updated pipeline. Historical sessions and their artifacts stay unchanged.
+          Remove <strong>{stageLabel}</strong> from this pipeline? Existing artifacts stay
+          unchanged. Sessions currently on this stage will block the save; other in-progress
+          sessions may skip it when they advance.
         </>
       }
       onConfirm={onConfirm}

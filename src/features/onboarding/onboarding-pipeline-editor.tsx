@@ -144,7 +144,13 @@ export function OnboardingPipelineEditor({
       }
 
       const body = (await response.json()) as { pipeline: SessionPipeline };
-      await onCompleted("pipeline:save", body.pipeline);
+      // Normalize drafts from the saved response before advancing onboarding so a
+      // failed step persist still keeps server stage IDs (slug lock + rewrite safety).
+      const saved = body.pipeline;
+      setName(saved.name);
+      setOperatingRules(saved.operatingRulesMd ?? "");
+      setStages(keepKnownApproverIds(saved.stages.map(stageToDraft), workspaceMembers));
+      await onCompleted("pipeline:save", saved);
     } catch (caught) {
       setError(
         caught instanceof Error

@@ -74,15 +74,15 @@ export function PipelineEditorDevPreview() {
           <p className="text-xs font-medium uppercase tracking-wide text-muted">Dev preview</p>
           <h1 className="type-page-title">Pipeline editor</h1>
           <p className="type-body max-w-2xl text-muted">
-            Fixture workspace for accessibility and UX proof captures. Historical sessions stay
-            pinned to their pipeline; only future sessions use edits saved here.
+            Fixture workspace for accessibility and UX proof captures. Existing artifacts stay
+            unchanged; in-progress sessions may follow the updated stage order when they advance.
           </p>
         </header>
 
         <Section
           anchorId="pipeline"
           statusBadge={<PipelineUnsavedBadge dirty={pipelineDirty} />}
-          tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Only future sessions use pipeline edits — historical sessions and artifacts stay unchanged."
+          tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Existing artifacts stay unchanged; in-progress sessions may follow the updated stage order when they advance."
           title="Pipeline"
         >
           <PipelineEditor

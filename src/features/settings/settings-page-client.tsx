@@ -496,7 +496,7 @@ function SettingsCompletePage({
               <Section
                 anchorId="pipeline"
                 statusBadge={<PipelineUnsavedBadge dirty={pipelineDirty} />}
-                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Only future sessions use pipeline edits — historical sessions and artifacts stay unchanged."
+                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Existing artifacts stay unchanged; in-progress sessions may follow the updated stage order when they advance."
                 title="Pipeline"
               >
                 <PipelineEditor

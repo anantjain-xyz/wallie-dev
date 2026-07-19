@@ -7,9 +7,12 @@ import {
   focusElementIdAfterStageRemoval,
   keepKnownApproverIds,
   moveDraftStage,
+  nextUniqueSlug,
   reorderDraftStage,
   removeDraftStage,
   slugifyStageName,
+  STAGE_SLUG_MAX_LENGTH,
+  STAGE_SLUG_PATTERN,
   StageRowEditor,
   updateDraftStage,
   updateDraftStageName,
@@ -281,5 +284,39 @@ describe("pipeline editor primitives", () => {
     expect(html).toContain("Remove Product from position 1 of 2");
     expect(html).toContain("Drag to reorder Product");
     expect(html).toContain("Locked after save");
+    // Saved slugs stay focusable (readOnly) so keyboard users can copy them.
+    expect(html).toMatch(/id="pipeline-stage-0-slug"[^>]*readOnly/);
+    expect(html).not.toMatch(/id="pipeline-stage-0-slug"[^>]*disabled/);
+  });
+
+  it("bounds auto-generated slugs to the API max length and validates oversize slugs", () => {
+    const longName = `Review ${"Gate ".repeat(20)}Final`;
+    const slug = slugifyStageName(longName);
+    expect(slug.length).toBeLessThanOrEqual(STAGE_SLUG_MAX_LENGTH);
+    expect(STAGE_SLUG_PATTERN.test(slug)).toBe(true);
+
+    const withCollision = [
+      stage({
+        id: null,
+        key: "draft-long",
+        name: longName,
+        slug,
+        slugManual: false,
+      }),
+    ];
+    const unique = nextUniqueSlug(slug, withCollision);
+    expect(unique.length).toBeLessThanOrEqual(STAGE_SLUG_MAX_LENGTH);
+    expect(unique).not.toBe(slug);
+
+    expect(
+      validatePipelineDraft({
+        name: "Default",
+        stages: [stage({ slug: `${"a".repeat(STAGE_SLUG_MAX_LENGTH)}x` })],
+      }),
+    ).toMatchObject({
+      code: "invalid-stage-slug",
+      ok: false,
+      stageIndex: 0,
+    });
   });
 });
