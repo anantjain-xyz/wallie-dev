@@ -76,10 +76,11 @@ export function normalizeWallieRuns(runs: readonly WallieRun[]) {
 /**
  * Stable per-run attempt ordinal within a stage for live inserts that lack a
  * server-computed count (realtime INSERT, action responses before reconcile).
+ * Group by immutable stageId so slug renames do not reset the sequence.
  */
 export function nextAttemptOrdinal(
-  runs: readonly Pick<WallieRun, "attemptCount" | "id" | "stageSlug">[],
-  input: { id: string; stageSlug: string | null },
+  runs: readonly Pick<WallieRun, "attemptCount" | "id" | "stageId">[],
+  input: { id: string; stageId: string | null },
 ) {
   const existing = runs.find((run) => run.id === input.id);
   if (existing) {
@@ -88,7 +89,7 @@ export function nextAttemptOrdinal(
 
   let maxOrdinal = 0;
   for (const run of runs) {
-    if ((run.stageSlug ?? null) !== (input.stageSlug ?? null)) {
+    if ((run.stageId ?? null) !== (input.stageId ?? null)) {
       continue;
     }
     maxOrdinal = Math.max(maxOrdinal, run.attemptCount);

@@ -60,7 +60,7 @@ export async function loadAttemptOrdinalForRun(sessionId: string, runId: string)
 async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string) {
   const { data, error } = await admin
     .from("agent_runs")
-    .select("id, created_at, stage_slug")
+    .select("id, created_at, stage_id")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
@@ -73,7 +73,9 @@ async function loadAttemptOrdinalsByRunId(admin: AdminClient, sessionId: string)
   const perStage = new Map<string, number>();
 
   for (const row of data ?? []) {
-    const stageKey = row.stage_slug ?? "__session__";
+    // Key by immutable stage_id so slug renames (rewrite_default_pipeline) do
+    // not reset attempt ordinals mid-history.
+    const stageKey = row.stage_id ?? "__session__";
     const next = (perStage.get(stageKey) ?? 0) + 1;
     perStage.set(stageKey, next);
     ordinals.set(row.id, next);

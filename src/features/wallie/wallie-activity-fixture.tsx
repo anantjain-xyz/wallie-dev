@@ -341,14 +341,16 @@ function createFixtureSupabase(options: {
     from: () => ({
       select: () => ({
         eq: (_column: string, runId: string) => ({
-          order: async () => {
-            if (options.delayMessagesMs !== null) {
-              await new Promise((resolve) => {
-                window.setTimeout(resolve, options.delayMessagesMs!);
-              });
-            }
-            return { data: options.messagesByRunId[runId] ?? [], error: null };
-          },
+          order: () => ({
+            limit: async () => {
+              if (options.delayMessagesMs !== null) {
+                await new Promise((resolve) => {
+                  window.setTimeout(resolve, options.delayMessagesMs!);
+                });
+              }
+              return { data: options.messagesByRunId[runId] ?? [], error: null };
+            },
+          }),
         }),
       }),
     }),

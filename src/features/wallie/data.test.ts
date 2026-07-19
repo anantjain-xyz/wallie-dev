@@ -103,15 +103,32 @@ describe("Wallie run history data", () => {
   it("derives the next attempt ordinal for a newly inserted stage retry", () => {
     const first = run("run-1", "2026-07-18T12:00:00.000Z", {
       attemptCount: 1,
+      stageId: "stage-build",
       stageSlug: "build",
     });
     const second = run("run-2", "2026-07-18T12:05:00.000Z", {
       attemptCount: 2,
+      stageId: "stage-build",
       stageSlug: "build",
     });
 
-    expect(nextAttemptOrdinal([first, second], { id: "run-3", stageSlug: "build" })).toBe(3);
-    expect(nextAttemptOrdinal([first, second], { id: "run-1", stageSlug: "build" })).toBe(1);
-    expect(nextAttemptOrdinal([first], { id: "run-plan", stageSlug: "plan" })).toBe(1);
+    expect(nextAttemptOrdinal([first, second], { id: "run-3", stageId: "stage-build" })).toBe(3);
+    expect(nextAttemptOrdinal([first, second], { id: "run-1", stageId: "stage-build" })).toBe(1);
+    expect(nextAttemptOrdinal([first], { id: "run-plan", stageId: "stage-plan" })).toBe(1);
+  });
+
+  it("keeps attempt ordinals continuous when a stage slug is renamed", () => {
+    const beforeRename = run("run-1", "2026-07-18T12:00:00.000Z", {
+      attemptCount: 2,
+      stageId: "stage-build",
+      stageSlug: "build",
+    });
+
+    expect(
+      nextAttemptOrdinal([beforeRename], {
+        id: "run-after-rename",
+        stageId: "stage-build",
+      }),
+    ).toBe(3);
   });
 });

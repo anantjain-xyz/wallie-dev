@@ -150,6 +150,15 @@ function fakeSupabase(messages: Record<string, Array<Record<string, string>>> = 
   };
 }
 
+async function subscribeChannels(
+  fake: ReturnType<typeof fakeSupabase>,
+  predicate: (name: string) => boolean = () => true,
+) {
+  for (const channel of fake.channels.filter((entry) => predicate(entry.name))) {
+    await act(async () => channel.statusCallback?.("SUBSCRIBED"));
+  }
+}
+
 let idleCallback: (() => void) | null;
 
 beforeEach(() => {
@@ -627,15 +636,15 @@ describe("SessionWalliePanel activity states", () => {
     expect(screen.getByText("Connecting…")).not.toBeNull();
 
     await act(async () => idleCallback?.());
-    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
-    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    await subscribeChannels(fake);
     expect(screen.getByText("Live")).not.toBeNull();
 
+    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
     await act(async () => sessionChannel?.statusCallback?.("CHANNEL_ERROR"));
     expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
 
-    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    await subscribeChannels(fake, (name) => name.startsWith("wallie-runs:"));
     expect(screen.getAllByText("Live updates restored").length).toBeGreaterThan(0);
     expect(view.container.querySelectorAll('[data-run-id="run-1"]')).toHaveLength(1);
   });
@@ -753,8 +762,7 @@ describe("SessionWalliePanel activity states", () => {
     );
 
     await act(async () => idleCallback?.());
-    const sessionChannel = fake.channels.find((channel) => channel.name.startsWith("wallie-runs:"));
-    await act(async () => sessionChannel?.statusCallback?.("SUBSCRIBED"));
+    await subscribeChannels(fake);
     expect(screen.getByText("Live")).not.toBeNull();
 
     const messageChannel = fake.channels.find((channel) =>
@@ -765,9 +773,58 @@ describe("SessionWalliePanel activity states", () => {
     expect(screen.getAllByText("Cloning repository").length).toBeGreaterThan(0);
   });
 
+  it("stays disconnected until every required message channel recovers", async () => {
+    const active = run(1, {
+      finishedAt: null,
+      isActive: true,
+      isTerminal: false,
+      stageName: "Active",
+      status: "running",
+    });
+    const older = run(2, {
+      stageName: "Older",
+      status: "success",
+    });
+    const fake = fakeSupabase();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ nextCursor: null, runs: [active, older] }), {
+            status: 200,
+          }),
+      ),
+    );
+    const view = panel(
+      data([active, older], false, { loadedMessageRunIds: [active.id] }),
+      fake.supabase,
+    );
+
+    fireEvent.click(view.container.querySelector('[data-run-id="run-2"] button[aria-expanded]')!);
+    await act(async () => idleCallback?.());
+    await subscribeChannels(fake);
+    expect(screen.getByText("Live")).not.toBeNull();
+
+    const expandedMessageChannel = fake.channels.find((channel) =>
+      channel.name.startsWith("wallie-run-messages:run-2"),
+    );
+    await act(async () => expandedMessageChannel?.statusCallback?.("CHANNEL_ERROR"));
+    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+
+    await subscribeChannels(
+      fake,
+      (name) => name.startsWith("wallie-runs:") || name.startsWith("wallie-summary-messages:"),
+    );
+    expect(screen.getAllByText("Disconnected — history preserved").length).toBeGreaterThan(0);
+
+    await subscribeChannels(fake, (name) => name.startsWith("wallie-run-messages:run-2"));
+    expect(screen.getAllByText("Live updates restored").length).toBeGreaterThan(0);
+  });
+
   it("assigns the next stage attempt ordinal when a retry run is inserted live", async () => {
     const first = run(1, {
       attemptCount: 1,
+      stageId: "stage-build",
       stageName: "Build",
       stageSlug: "build",
       status: "error",
@@ -798,9 +855,9 @@ describe("SessionWalliePanel activity states", () => {
           run_type: "code",
           sandbox_id: null,
           sandbox_provider: null,
-          stage_id: null,
+          stage_id: "stage-build",
           stage_name: "Build",
-          stage_slug: "build",
+          stage_slug: "implement",
           started_at: "2026-07-18T13:30:00.000Z",
           status: "queued",
           triggered_by_member_id: null,

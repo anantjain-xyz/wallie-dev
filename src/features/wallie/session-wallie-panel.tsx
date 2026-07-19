@@ -212,7 +212,12 @@ export function SessionWalliePanel({
   const sessionIdRef = useRef(session.id);
   const reconcileGenerationRef = useRef(0);
   const hadDisconnectRef = useRef(false);
-  const runsChannelLiveRef = useRef(false);
+  // Track each required realtime channel independently; recovery only when all are live.
+  const channelHealthRef = useRef({
+    expandedMessages: null as boolean | null,
+    runs: false,
+    summaryMessages: null as boolean | null,
+  });
   sessionIdRef.current = session.id;
   const memberIndex = useMemo(() => {
     const nextIndex = new Map<string, WorkspaceMember>();
@@ -243,7 +248,11 @@ export function SessionWalliePanel({
     setConnectionState("connecting");
     setConnectionAnnouncement(null);
     hadDisconnectRef.current = false;
-    runsChannelLiveRef.current = false;
+    channelHealthRef.current = {
+      expandedMessages: null,
+      runs: false,
+      summaryMessages: null,
+    };
   }, [initialData.loadedMessageRunIds, initialData.nextRunCursor, initialData.runs, session.id]);
 
   useEffect(() => {
@@ -311,11 +320,7 @@ export function SessionWalliePanel({
     setConnectionAnnouncement(connectionStateCopy("disconnected"));
   });
 
-  const markConnectionLive = useEffectEvent((options?: { reconcile?: boolean }) => {
-    if (options?.reconcile) {
-      void reconcileLatestRuns();
-    }
-
+  const markConnectionLive = useEffectEvent(() => {
     if (hadDisconnectRef.current) {
       setConnectionState("recovered");
       setConnectionAnnouncement(connectionStateCopy("recovered"));
@@ -329,6 +334,39 @@ export function SessionWalliePanel({
     setConnectionState("live");
   });
 
+  const allRequiredChannelsLive = useEffectEvent(() => {
+    const health = channelHealthRef.current;
+    if (!health.runs) return false;
+    if (health.expandedMessages === false) return false;
+    if (health.summaryMessages === false) return false;
+    return true;
+  });
+
+  const reportChannelStatus = useEffectEvent(
+    (key: "expandedMessages" | "runs" | "summaryMessages", status: string) => {
+      const mapped = mapRealtimeStatus(status);
+      if (!mapped) return;
+
+      if (mapped === "disconnected") {
+        channelHealthRef.current[key] = false;
+        markConnectionDisconnected();
+        return;
+      }
+
+      if (mapped === "live") {
+        channelHealthRef.current[key] = true;
+        // Runs subscribe always reconciles history; connection copy waits until
+        // every required channel (including message streams) is live.
+        if (key === "runs") {
+          void reconcileLatestRuns();
+        }
+        if (allRequiredChannelsLive()) {
+          markConnectionLive();
+        }
+      }
+    },
+  );
+
   const handleRunRealtimeUpdate = useEffectEvent((row: Tables<"agent_runs">) => {
     setRuns((currentRuns) => {
       const previousRun = currentRuns.find((run) => run.id === row.id);
@@ -338,7 +376,7 @@ export function SessionWalliePanel({
         mapAgentRunRow(row, memberIndex, previousRun?.messages ?? [], {
           attemptCount:
             previousRun?.attemptCount ??
-            nextAttemptOrdinal(currentRuns, { id: row.id, stageSlug: row.stage_slug }),
+            nextAttemptOrdinal(currentRuns, { id: row.id, stageId: row.stage_id }),
         }),
       );
     });
@@ -436,23 +474,11 @@ export function SessionWalliePanel({
         },
       )
       .subscribe((status) => {
-        const mapped = mapRealtimeStatus(status);
-        if (!mapped) return;
-
-        if (mapped === "disconnected") {
-          runsChannelLiveRef.current = false;
-          markConnectionDisconnected();
-          return;
-        }
-
-        if (mapped === "live") {
-          runsChannelLiveRef.current = true;
-          markConnectionLive({ reconcile: true });
-        }
+        reportChannelStatus("runs", status);
       });
 
     return () => {
-      runsChannelLiveRef.current = false;
+      channelHealthRef.current.runs = false;
       void supabase.removeChannel(runChannel);
     };
   }, [realtimeReady, session.id, supabase]);
@@ -476,9 +502,13 @@ export function SessionWalliePanel({
   }, [loadRunMessages, loadedMessageRunIds, summaryRun]);
 
   useEffect(() => {
-    if (!realtimeReady || !expandedRunId) return;
+    if (!realtimeReady || !expandedRunId) {
+      channelHealthRef.current.expandedMessages = null;
+      return;
+    }
 
     const runId = expandedRunId;
+    channelHealthRef.current.expandedMessages = false;
     const messageChannel = supabase
       .channel(`wallie-run-messages:${runId}`)
       .on(
@@ -498,30 +528,26 @@ export function SessionWalliePanel({
         },
       )
       .subscribe((status) => {
-        const mapped = mapRealtimeStatus(status);
-        if (mapped === "disconnected") {
-          markConnectionDisconnected();
-          return;
-        }
-
         if (status === "SUBSCRIBED") {
           void loadRunMessages(runId);
-          if (runsChannelLiveRef.current) {
-            markConnectionLive();
-          }
         }
+        reportChannelStatus("expandedMessages", status);
       });
 
     return () => {
+      channelHealthRef.current.expandedMessages = null;
       void supabase.removeChannel(messageChannel);
     };
   }, [expandedRunId, loadRunMessages, realtimeReady, supabase]);
 
   useEffect(() => {
-    if (!realtimeReady || !summaryRun) return;
-    if (summaryRun.id === expandedRunId) return;
+    if (!realtimeReady || !summaryRun || summaryRun.id === expandedRunId) {
+      channelHealthRef.current.summaryMessages = null;
+      return;
+    }
 
     const runId = summaryRun.id;
+    channelHealthRef.current.summaryMessages = false;
     const messageChannel = supabase
       .channel(`wallie-summary-messages:${runId}`)
       .on(
@@ -541,21 +567,14 @@ export function SessionWalliePanel({
         },
       )
       .subscribe((status) => {
-        const mapped = mapRealtimeStatus(status);
-        if (mapped === "disconnected") {
-          markConnectionDisconnected();
-          return;
-        }
-
         if (status === "SUBSCRIBED") {
           void loadRunMessages(runId);
-          if (runsChannelLiveRef.current) {
-            markConnectionLive();
-          }
         }
+        reportChannelStatus("summaryMessages", status);
       });
 
     return () => {
+      channelHealthRef.current.summaryMessages = null;
       void supabase.removeChannel(messageChannel);
     };
   }, [expandedRunId, loadRunMessages, realtimeReady, summaryRun, supabase]);
@@ -605,7 +624,7 @@ export function SessionWalliePanel({
             ...run,
             attemptCount: Math.max(
               run.attemptCount,
-              nextAttemptOrdinal(currentRuns, { id: run.id, stageSlug: run.stageSlug }),
+              nextAttemptOrdinal(currentRuns, { id: run.id, stageId: run.stageId }),
             ),
           }),
         );
