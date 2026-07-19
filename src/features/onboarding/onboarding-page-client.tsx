@@ -309,7 +309,7 @@ function SetupHealthSummary({
   initialNow: string;
 }) {
   return (
-    <aside className="h-fit min-w-0 lg:sticky lg:top-8">
+    <aside aria-label="Setup health" className="h-fit min-w-0 lg:sticky lg:top-8">
       <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Health</h2>
       <div className="mt-4 space-y-3">
         {setupHealthItems(health, initialNow).map((item) => (
@@ -929,7 +929,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
         id="main-content"
         className="mx-auto grid w-full max-w-[1180px] flex-1 grid-cols-1 gap-10 px-4 pb-28 sm:px-8 lg:grid-cols-[200px_minmax(0,1fr)_260px] lg:gap-12"
       >
-        <aside className="hidden lg:block">
+        <aside aria-label="Setup steps" className="hidden lg:block">
           <div className="sticky top-8">
             <OnboardingStepRail canSelect={!isSaving} items={railItems} onSelect={selectStep} />
           </div>
