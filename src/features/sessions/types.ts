@@ -105,7 +105,7 @@ export type SessionDetail = SessionSummary & {
   pullRequests: SessionPullRequest[];
 };
 
-export type SessionFilterKey = "all" | "active" | "archived" | "has-pr";
+export type SessionFilterKey = "all" | "active" | "archived";
 
 /** URL-backed Sessions ledger sort. Default (`updated`) is omitted from the query string. */
 export type SessionListSortKey = "updated" | "oldest" | "number";

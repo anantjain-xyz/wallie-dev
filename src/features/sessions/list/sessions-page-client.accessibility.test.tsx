@@ -97,23 +97,24 @@ describe("SessionsPageClient accessibility", () => {
       </OverlayProvider>,
     );
 
-    expect(screen.getByRole("group", { name: "Status" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Stage" })).toBeInTheDocument();
-    expect(screen.getByText("Sort")).toBeInTheDocument();
-    expect(screen.getByText("Clear")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Status filter" })).toBeInTheDocument();
+    const stageCombo = screen.getByRole("combobox", { name: "Filter by stage" });
+    expect(stageCombo).toBeInTheDocument();
+    expect(stageCombo).toHaveTextContent("Build");
+    expect(screen.getByRole("combobox", { name: "Sort sessions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Build, 1 session", pressed: true }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All", pressed: false })).toBeInTheDocument();
 
-    const search = screen.getByRole("searchbox", { name: "Search" });
+    const search = screen.getByRole("searchbox", {
+      name: "Search prompts, titles, or Linear IDs",
+    });
     await user.type(search, "OP-339{Enter}");
     expect(mocked.push).toHaveBeenLastCalledWith(
       "/w/acme/sessions?stage=build&q=OP-339&scope=active",
     );
 
-    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions");
     expect(search).toHaveValue("");
     expect(search).toHaveFocus();
@@ -138,7 +139,7 @@ describe("SessionsPageClient accessibility", () => {
       </OverlayProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions");
 
     rerender(
@@ -154,7 +155,11 @@ describe("SessionsPageClient accessibility", () => {
       </OverlayProvider>,
     );
 
-    await waitFor(() => expect(screen.getByRole("searchbox", { name: "Search" })).toHaveFocus());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
+      ).toHaveFocus(),
+    );
   });
 
   it("confirms archive via AlertDialog from the keyboard and announces pending state", async () => {

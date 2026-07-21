@@ -8,14 +8,14 @@ describe("parseSessionListQueryState", () => {
       parseSessionListQueryState({
         cursor: "cursor-token",
         q: "  auth flow  ",
-        scope: "has-pr",
+        scope: "archived",
         sort: "oldest",
         stage: "build",
       }),
     ).toEqual({
       cursor: "cursor-token",
       query: "  auth flow  ",
-      scope: "has-pr",
+      scope: "archived",
       sort: "oldest",
       stageSlug: "build",
     });

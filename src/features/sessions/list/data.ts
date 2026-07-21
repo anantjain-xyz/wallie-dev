@@ -55,7 +55,7 @@ function readSingle(searchParams: SearchParamInput, key: string): string | null 
 }
 
 function parseScope(raw: string | null): SessionFilterKey {
-  if (raw === "archived" || raw === "active" || raw === "has-pr") {
+  if (raw === "archived" || raw === "active") {
     return raw;
   }
   return "all";
