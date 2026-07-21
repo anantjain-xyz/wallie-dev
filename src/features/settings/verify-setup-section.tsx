@@ -26,7 +26,7 @@ const stepAnchor: Record<WorkspaceOnboardingStep, string> = {
 };
 
 function checklistItemHref(item: ReturnType<typeof buildVerifyChecklist>[number]) {
-  return item.id === "vercel-sandbox" ? "#vercel" : `#${stepAnchor[item.step]}`;
+  return item.id === "vercel-sandbox" ? "#sandbox" : `#${stepAnchor[item.step]}`;
 }
 
 export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySetupSectionProps) {
@@ -39,6 +39,10 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   const preferredRepositoryId =
     data.setupHealth.primaryRepositoryProfile.repositoryId ??
     data.setupHealth.selectedRepository.repositoryId;
+  const activeSandbox = data.setupHealth.sandboxConnection;
+  const sandboxConnected =
+    activeSandbox?.connected ?? data.setupHealth.vercelSandboxConnection.connected;
+  const sandboxProviderLabel = activeSandbox?.providerLabel ?? "Vercel Sandbox";
 
   return (
     <Section
@@ -96,8 +100,9 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             }
             preferredRepositoryId={preferredRepositoryId}
             repositories={data.github.repositories}
+            sandboxConnected={sandboxConnected}
+            sandboxProviderLabel={sandboxProviderLabel}
             setFlashMessage={setFlashMessage}
-            vercelSandboxConnected={data.setupHealth.vercelSandboxConnection.connected}
             workspaceId={data.workspace.id}
           />
         </div>

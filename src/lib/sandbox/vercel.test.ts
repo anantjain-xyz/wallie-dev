@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
+import { createSessionSandbox } from "./index";
 import {
   createVercelSessionSandbox,
   listRunningVercelSandboxes,
@@ -32,6 +33,11 @@ const credentials: VercelSandboxCredentials = {
   teamId: "team_123",
   token: "vca_secret",
 };
+const vercelConnection = {
+  credentials,
+  provider: "vercel" as const,
+  revision: "revision-1",
+};
 
 function command(exitCode = 0) {
   return {
@@ -58,10 +64,10 @@ function input(overrides: Partial<CreateSessionSandboxInput> = {}): CreateSessio
     agentProvider: "codex",
     baseBranch: "main",
     branch: "wallie/test",
+    connection: vercelConnection,
     installationToken: "ghs_token",
     repoFullName: "acme/app",
     sessionId: "session-1",
-    vercelCredentials: credentials,
     ...overrides,
   };
 }
@@ -84,13 +90,13 @@ beforeEach(() => {
 describe("createVercelSessionSandbox", () => {
   it("requires explicit workspace credentials", async () => {
     await expect(
-      createVercelSessionSandbox(input({ vercelCredentials: undefined })),
-    ).rejects.toThrow("Workspace Vercel Sandbox credentials are required.");
+      createSessionSandbox(input({ connection: undefined, implementation: "vercel" })),
+    ).rejects.toThrow("Workspace vercel Sandbox connection is required.");
     expect(mocked.sandboxCreate).not.toHaveBeenCalled();
   });
 
   it("passes workspace credentials to Vercel Sandbox create", async () => {
-    await createVercelSessionSandbox(input());
+    await createVercelSessionSandbox(input(), vercelConnection);
 
     expect(mocked.sandboxCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -104,7 +110,7 @@ describe("createVercelSessionSandbox", () => {
   it("notifies callers as soon as the provider sandbox is created", async () => {
     const onSandboxCreated = vi.fn();
 
-    await createVercelSessionSandbox(input({ onSandboxCreated }));
+    await createVercelSessionSandbox(input({ onSandboxCreated }), vercelConnection);
 
     expect(onSandboxCreated).toHaveBeenCalledWith({
       provider: "vercel",
@@ -126,6 +132,7 @@ describe("createVercelSessionSandbox", () => {
         repoFullName: "acme/app",
         sessionId: "session-1",
       }),
+      vercelConnection,
     );
 
     expect(runCommand).toHaveBeenCalledWith(

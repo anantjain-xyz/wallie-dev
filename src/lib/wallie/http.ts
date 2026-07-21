@@ -49,6 +49,7 @@ export function buildAgentRunActionErrorResponse(error: unknown) {
       code: error.code,
       error: error.message,
       missingSecretKeys: error.missingSecretKeys,
+      provider: error.provider,
     } satisfies AgentRunActionErrorResponse,
     status: error.statusCode,
   };

@@ -441,7 +441,7 @@ describe("buildVerifyChecklist", () => {
     const sandboxItem = checklist.find((item) => item.id === "sandbox");
 
     expect(sandboxItem).toMatchObject({
-      detail: "Run a sandbox capability check for the connected Vercel project.",
+      detail: "Run a sandbox capability check for the connected Vercel Sandbox account.",
       passed: false,
       statusLabel: "Stale",
       statusTone: "warning",

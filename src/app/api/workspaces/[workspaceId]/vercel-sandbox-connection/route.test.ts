@@ -379,7 +379,7 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(admin.releasedMutationLockWorkspaceIds).toEqual([workspaceId]);
   });
 
-  it("cleans previous Vercel project sandboxes before saving a changed Vercel project", async () => {
+  it("cleans previous Vercel project sandboxes before rotating a connection", async () => {
     mockAccess();
     const oldCredentials = {
       projectId: "prj_old",
@@ -432,7 +432,7 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     );
   });
 
-  it("keeps the old connection when changed-project cleanup fails before save", async () => {
+  it("keeps the old connection when rotation cleanup fails before save", async () => {
     mockAccess();
     const oldCredentials = {
       projectId: "prj_old",

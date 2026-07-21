@@ -28,22 +28,31 @@ vi.mock("@/features/settings/github-install-section", () => ({
   },
 }));
 
-vi.mock("@/features/settings/vercel-sandbox-connection-section", () => ({
-  VercelSandboxConnectionSection: ({
-    connection,
-    onConnectionChange,
+vi.mock("@/features/settings/sandbox-provider-section", () => ({
+  SandboxProviderSection: ({
+    vercelConnection,
+    onSettingsChange,
   }: {
-    connection: { projectId: string } | null;
-    onConnectionChange: (connection: { projectId: string }) => void;
+    vercelConnection: { projectId: string } | null;
+    onSettingsChange: (settings: unknown) => void;
   }) => {
     renders.vercel += 1;
     return (
-      <button onClick={() => onConnectionChange({ projectId: "updated" })} type="button">
-        Vercel {connection?.projectId ?? "missing"}
+      <button
+        onClick={() => onSettingsChange({ connections: { vercel: { projectId: "updated" } } })}
+        type="button"
+      >
+        Vercel {vercelConnection?.projectId ?? "missing"}
       </button>
     );
   },
-  vercelConnectionHealth: vi.fn(),
+  applySandboxSettingsToData: (
+    current: SettingsPageData,
+    settings: { connections: { vercel: SettingsPageData["vercelSandboxConnection"] } },
+  ) => ({
+    ...current,
+    vercelSandboxConnection: settings.connections.vercel,
+  }),
 }));
 
 import {

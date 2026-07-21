@@ -12,8 +12,9 @@ function renderSection(check: SandboxCapabilityCheckState) {
       canManage: true,
       initialCheck: check,
       repositories: [],
+      sandboxConnected: true,
+      sandboxProviderLabel: "E2B",
       setFlashMessage: () => {},
-      vercelSandboxConnected: true,
       workspaceId: "00000000-0000-4000-8000-000000000001",
     }),
   );

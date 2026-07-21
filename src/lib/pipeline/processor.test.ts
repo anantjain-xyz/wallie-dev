@@ -8,6 +8,7 @@ import { CodexAuthLeaseBusyError } from "@/lib/codex/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
+  assertCurrentSandboxCapabilityCheck: vi.fn().mockResolvedValue(undefined),
   createSupabaseAdminClient: vi.fn(),
   createAgentRunner: vi.fn(),
   createSessionSandbox: vi.fn().mockResolvedValue({
@@ -31,7 +32,7 @@ const mocked = vi.hoisted(() => ({
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
   loadWorkspaceAgentConfig: vi.fn(),
-  loadRequiredVercelSandboxConnection: vi.fn(),
+  loadRequiredWorkspaceSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   renderStagePrompt: vi.fn(() => "rendered prompt"),
@@ -78,8 +79,12 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
+}));
+
+vi.mock("@/lib/sandbox-capabilities/readiness", () => ({
+  assertCurrentSandboxCapabilityCheck: mocked.assertCurrentSandboxCapabilityCheck,
 }));
 
 vi.mock("@/lib/codex/tokens", () => ({
@@ -637,9 +642,13 @@ describe("processPipelineJob (generic stage runner)", () => {
       };
     });
     mocked.loadStageById.mockResolvedValue(productStage);
-    mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-      credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
-      preview: { workspaceId: "ws-1" },
+    mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+      provider: "vercel",
     });
     mocked.createAgentRunner.mockReturnValue(
       makeRunner([
@@ -662,7 +671,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
-        vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        connection: {
+          credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+          provider: "vercel",
+          revision: "revision-1",
+        },
       }),
     );
     expect(insertedArtifacts).toHaveLength(1);
@@ -724,7 +737,11 @@ describe("processPipelineJob (generic stage runner)", () => {
     // updateRunSandbox matched zero rows (run already canceled), so the
     // freshly-created sandbox must be stopped instead of left running detached.
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
-      vercelCredentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+      connection: {
+        credentials: { projectId: "prj_123", teamId: "team_123", token: "vca_secret" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     });
   });
 
@@ -1167,7 +1184,7 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("aborts before sandbox creation when Vercel Sandbox is not connected", async () => {
     const error = new Error("Connect a Vercel Sandbox account before starting Wallie runs.");
     error.name = "VercelSandboxConnectionMissingError";
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(error);
+    mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(error);
     const session = baseSession();
     const { admin, insertedArtifacts, insertedMessages, rpc, updatedJobs, updatedSessions } =
       buildAdminMock({
@@ -1196,6 +1213,24 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
   });
 
+  it("aborts before sandbox creation when the selected provider capability check is stale", async () => {
+    const error = new Error("Run a successful E2B capability check before starting Wallie.");
+    error.name = "SandboxCapabilityCheckStaleError";
+    mocked.assertCurrentSandboxCapabilityCheck.mockRejectedValueOnce(error);
+    const session = baseSession();
+    const { admin, insertedArtifacts, updatedJobs } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("error");
+    expect(insertedArtifacts).toHaveLength(0);
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(updatedJobs.at(-1)).toMatchObject({
+      last_error: "Run a successful E2B capability check before starting Wallie.",
+      status: "error",
+    });
+  });
+
   it("does not require a Vercel connection when fake sandbox execution is selected", async () => {
     mocked.resolveSandboxImplementation.mockReturnValueOnce("fake");
     mocked.createSessionSandbox.mockImplementationOnce(async (input) => {
@@ -1215,14 +1250,16 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(result.result).toBe("success");
-    expect(mocked.loadRequiredVercelSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.loadRequiredWorkspaceSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
         implementation: "fake",
-        vercelCredentials: undefined,
+        connection: undefined,
       }),
     );
     expect(updatedRuns).toContainEqual({
+      sandbox_connection_revision: null,
       sandbox_id: "fake-sandbox-1",
       sandbox_provider: "fake",
       sandbox_vercel_project_id: null,
@@ -1415,6 +1452,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedRuns[1]).toEqual({
+      sandbox_connection_revision: "revision-1",
       sandbox_id: "sandbox-1",
       sandbox_provider: "vercel",
       sandbox_vercel_project_id: "prj_123",

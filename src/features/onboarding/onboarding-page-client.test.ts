@@ -1364,11 +1364,11 @@ describe("OnboardingPageClient", () => {
       }),
     );
 
-    expect(html).toContain('id="onboarding-vercel"');
-    expect(html).toContain("Save Vercel connection");
-    expect(html).toContain('placeholder="vca_…"');
-    expect(html).toContain('placeholder="team_…"');
-    expect(html).toContain('placeholder="prj_…"');
+    expect(html).toContain('id="sandbox"');
+    expect(html).toContain("Sandbox provider");
+    expect(html).toContain("Connect Vercel Sandbox");
+    expect(html).toContain("Connect E2B");
+    expect(html).toContain("Connect Daytona");
     // Default data has a connection, so an inline Disconnect control is offered.
     expect(html).toContain("Disconnect");
     // The Vercel connection is made in the wizard, not by detouring into Settings.
@@ -1412,7 +1412,7 @@ describe("OnboardingPageClient", () => {
       }),
     );
     expect(primaryFooterButton(blockedHtml)).toContain("disabled");
-    expect(blockedHtml).toContain("Connect a Vercel project before running Wallie sessions.");
+    expect(blockedHtml).toContain("Vercel-managed microVMs connected to a team and project.");
 
     const readyHtml = renderToStaticMarkup(
       createElement(OnboardingPageClient, {

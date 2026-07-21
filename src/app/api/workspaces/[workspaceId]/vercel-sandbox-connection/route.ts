@@ -123,13 +123,6 @@ function isActiveCapabilityCheck(row: CapabilityCheckSandboxRow, now = Date.now(
   return now - checkedAt <= STALE_SANDBOX_CAPABILITY_CHECK_MS;
 }
 
-function vercelProjectChanged(
-  existing: NonNullable<Awaited<ReturnType<typeof loadVercelSandboxConnection>>>["credentials"],
-  next: NonNullable<Awaited<ReturnType<typeof loadVercelSandboxConnection>>>["credentials"],
-) {
-  return existing.teamId !== next.teamId || existing.projectId !== next.projectId;
-}
-
 function connectionMutationConflictResponse(error: unknown) {
   if (
     error instanceof VercelSandboxConnectionActiveWorkError ||
@@ -206,7 +199,7 @@ export async function PUT(request: Request, context: RouteContext) {
       admin,
       access.context.workspace.id,
     );
-    if (existingConnection && vercelProjectChanged(existingConnection.credentials, parsed.data)) {
+    if (existingConnection) {
       await stopWorkspaceProjectSandboxes({
         admin,
         credentials: existingConnection.credentials,

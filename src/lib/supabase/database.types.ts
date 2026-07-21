@@ -155,6 +155,7 @@ export type Database = {
           model_provider: string
           output_tokens: number | null
           run_type: string
+          sandbox_connection_revision: string | null
           sandbox_id: string | null
           sandbox_provider: string | null
           sandbox_vercel_project_id: string | null
@@ -181,6 +182,7 @@ export type Database = {
           model_provider: string
           output_tokens?: number | null
           run_type: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -207,6 +209,7 @@ export type Database = {
           model_provider?: string
           output_tokens?: number | null
           run_type?: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -693,12 +696,15 @@ export type Database = {
       }
       sandbox_capability_checks: {
         Row: {
+          agent_model: string | null
+          agent_provider: string | null
           capabilities: Json
           checked_at: string
           created_at: string
           error_text: string | null
           github_repository_id: string | null
           id: string
+          sandbox_connection_revision: string | null
           sandbox_id: string | null
           sandbox_provider: string | null
           sandbox_vercel_project_id: string | null
@@ -708,12 +714,15 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          agent_model?: string | null
+          agent_provider?: string | null
           capabilities?: Json
           checked_at?: string
           created_at?: string
           error_text?: string | null
           github_repository_id?: string | null
           id?: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -723,12 +732,15 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          agent_model?: string | null
+          agent_provider?: string | null
           capabilities?: Json
           checked_at?: string
           created_at?: string
           error_text?: string | null
           github_repository_id?: string | null
           id?: string
+          sandbox_connection_revision?: string | null
           sandbox_id?: string | null
           sandbox_provider?: string | null
           sandbox_vercel_project_id?: string | null
@@ -1226,6 +1238,120 @@ export type Database = {
           },
         ]
       }
+      workspace_daytona_sandbox_connections: {
+        Row: {
+          api_key_preview: string | null
+          api_url: string
+          connection_revision: string
+          created_at: string
+          created_by_member_id: string | null
+          encrypted_api_key: string
+          last_validated_at: string | null
+          last_validation_error: string | null
+          status: string
+          target: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          api_key_preview?: string | null
+          api_url?: string
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          target?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          api_key_preview?: string | null
+          api_url?: string
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key?: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          target?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_daytona_sandbox_connections_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_daytona_sandbox_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_e2b_sandbox_connections: {
+        Row: {
+          api_key_preview: string | null
+          connection_revision: string
+          created_at: string
+          created_by_member_id: string | null
+          encrypted_api_key: string
+          last_validated_at: string | null
+          last_validation_error: string | null
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          api_key_preview?: string | null
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          api_key_preview?: string | null
+          connection_revision?: string
+          created_at?: string
+          created_by_member_id?: string | null
+          encrypted_api_key?: string
+          last_validated_at?: string | null
+          last_validation_error?: string | null
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_e2b_sandbox_connections_created_by_member_id_fkey"
+            columns: ["created_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_e2b_sandbox_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_invitations: {
         Row: {
           accepted_at: string | null
@@ -1522,6 +1648,80 @@ export type Database = {
           },
         ]
       }
+      workspace_sandbox_connection_mutations: {
+        Row: {
+          created_at: string
+          expires_at: string
+          lock_id: string
+          provider: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          lock_id?: string
+          provider: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          lock_id?: string
+          provider?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_sandbox_connection_mutations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_sandbox_settings: {
+        Row: {
+          active_provider: string
+          created_at: string
+          revision: number
+          updated_at: string
+          updated_by_member_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          active_provider?: string
+          created_at?: string
+          revision?: number
+          updated_at?: string
+          updated_by_member_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          active_provider?: string
+          created_at?: string
+          revision?: number
+          updated_at?: string
+          updated_by_member_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_sandbox_settings_updated_by_member_id_fkey"
+            columns: ["updated_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_sandbox_settings_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_secrets: {
         Row: {
           created_at: string
@@ -1601,6 +1801,7 @@ export type Database = {
       }
       workspace_vercel_sandbox_connections: {
         Row: {
+          connection_revision: string
           created_at: string
           created_by_member_id: string | null
           encrypted_token: string
@@ -1615,6 +1816,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          connection_revision?: string
           created_at?: string
           created_by_member_id?: string | null
           encrypted_token: string
@@ -1629,6 +1831,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          connection_revision?: string
           created_at?: string
           created_by_member_id?: string | null
           encrypted_token?: string
@@ -1737,6 +1940,10 @@ export type Database = {
           pipeline_id: string
           workspace_id: string
         }[]
+      }
+      begin_sandbox_connection_mutation: {
+        Args: { target_provider: string; target_workspace_id: string }
+        Returns: string
       }
       begin_vercel_sandbox_connection_mutation: {
         Args: { target_workspace_id: string }
@@ -2012,18 +2219,30 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      set_active_sandbox_provider: {
+        Args: {
+          actor_member_id: string
+          expected_revision: number
+          target_provider: string
+          target_workspace_id: string
+        }
+        Returns: string
+      }
       start_sandbox_capability_check: {
         Args: {
           target_github_repository_id: string
           target_workspace_id: string
         }
         Returns: {
+          agent_model: string | null
+          agent_provider: string | null
           capabilities: Json
           checked_at: string
           created_at: string
           error_text: string | null
           github_repository_id: string | null
           id: string
+          sandbox_connection_revision: string | null
           sandbox_id: string | null
           sandbox_provider: string | null
           sandbox_vercel_project_id: string | null

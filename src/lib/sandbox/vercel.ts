@@ -1,36 +1,21 @@
 import { Sandbox } from "@vercel/sandbox";
 
-import { WALLIE_GITHUB_BOT_COMMIT_AUTHOR } from "./commit-author";
+import { redactSecrets } from "./command";
+import { prepareSessionSandbox } from "./setup";
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
+  SandboxConnection,
   SandboxExecHandle,
   SandboxExecOptions,
   SandboxHandle,
   SandboxLogEntry,
-  VercelSandboxCredentials,
+  SandboxProviderDriver,
 } from "./types";
 
 const REPO_PATH = "/vercel/sandbox";
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
-const PLAYWRIGHT_SYSTEM_PACKAGES = [
-  "alsa-lib",
-  "atk",
-  "at-spi2-atk",
-  "cairo",
-  "cups-libs",
-  "gtk3",
-  "libdrm",
-  "libXcomposite",
-  "libXdamage",
-  "libXfixes",
-  "libXrandr",
-  "libxkbcommon",
-  "mesa-libgbm",
-  "nspr",
-  "nss",
-  "pango",
-].join(" ");
+type VercelConnection = Extract<SandboxConnection, { provider: "vercel" }>;
 
 /**
  * Vercel Sandbox-backed implementation of `SandboxHandle`.
@@ -109,16 +94,14 @@ class VercelSandboxHandle implements SandboxHandle {
  */
 export async function createVercelSessionSandbox(
   input: CreateSessionSandboxInput,
+  connection: VercelConnection,
 ): Promise<SandboxHandle> {
   const mode = input.mode ?? { kind: "fresh-branch" as const };
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const revision = mode.kind === "checkout-pr" ? mode.prBranch : input.baseBranch;
 
-  const credentials = input.vercelCredentials;
-  if (!credentials) {
-    throw new Error("Workspace Vercel Sandbox credentials are required.");
-  }
+  const credentials = connection.credentials;
 
   const sandbox = await Sandbox.create({
     projectId: credentials.projectId,
@@ -146,80 +129,18 @@ export async function createVercelSessionSandbox(
 
   try {
     await input.onSandboxCreated?.({ provider: "vercel", sandboxId: handle.id });
-    await runSetup(handle, input, mode.kind);
+    await prepareSessionSandbox({
+      handle,
+      provider: "vercel",
+      repoAlreadyCloned: true,
+      request: input,
+    });
   } catch (err) {
     await handle.stop();
     throw err;
   }
 
   return handle;
-}
-
-async function runSetup(
-  handle: SandboxHandle,
-  input: CreateSessionSandboxInput,
-  modeKind: "fresh-branch" | "checkout-pr",
-): Promise<void> {
-  // Expanded after a `git -C <repo>` prefix, so don't prepend another `git`.
-  const checkoutArgs =
-    modeKind === "fresh-branch"
-      ? `checkout -B ${shellQuote(input.branch)}`
-      : `checkout ${shellQuote(input.branch)}`;
-
-  const installCmd = resolveAgentCliInstall(input.agentProvider);
-  const browserBootstrapCmd = resolveBrowserBootstrap();
-
-  // Single shell invocation: configure git identity + credential helper + CLI install.
-  // Credentials: the clone URL already embeds `x-access-token:$GH_TOKEN`, so
-  // `git push` on the same remote reuses them — but git writes a redacted URL
-  // in .git/config. Store the token in a credential helper as a belt-and-suspenders.
-  const script = [
-    `set -euo pipefail`,
-    `git -C ${shellQuote(REPO_PATH)} config user.email ${shellQuote(WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email)}`,
-    `git -C ${shellQuote(REPO_PATH)} config user.name ${shellQuote(WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name)}`,
-    `git -C ${shellQuote(REPO_PATH)} ${checkoutArgs}`,
-    `printf "https://x-access-token:%s@github.com\\n" "$GH_TOKEN" > $HOME/.git-credentials`,
-    `chmod 600 $HOME/.git-credentials`,
-    `git config --global credential.helper store`,
-    installCmd,
-    browserBootstrapCmd,
-  ].join(" && ");
-
-  const proc = await handle.exec("bash", ["-lc", script], { signal: input.signal });
-  const stderr: string[] = [];
-  for await (const log of proc.logs()) {
-    if (log.stream === "stderr") stderr.push(log.data);
-  }
-  const code = await proc.exitCode;
-  if (code !== 0) {
-    throw new Error(
-      `Sandbox setup failed (exit ${code}): ${stderr.join("").slice(0, 500) || "(no stderr)"}`,
-    );
-  }
-}
-
-function resolveBrowserBootstrap(): string {
-  if (process.env.WALLIE_SANDBOX_BOOTSTRAP_PLAYWRIGHT === "0") {
-    return "true";
-  }
-
-  // Best-effort: code-only stages should not fail if browser bootstrap is
-  // unavailable, but screenshot-capable sandboxes should have Playwright and
-  // Chromium ready whenever the base image allows it.
-  return `if ! (
-    sudo dnf install -y ${PLAYWRIGHT_SYSTEM_PACKAGES} &&
-    npm install -g playwright@^1.56.0 &&
-    playwright install chromium
-  ); then true; fi`;
-}
-
-function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvider"]): string {
-  switch (provider) {
-    case "codex":
-      return "npm install -g @openai/codex";
-    case "claude-code":
-      return "npm install -g @anthropic-ai/claude-code";
-  }
 }
 
 /**
@@ -232,16 +153,10 @@ function resolveAgentCliInstall(provider: CreateSessionSandboxInput["agentProvid
  */
 export async function stopVercelSandboxById(
   sandboxId: string,
-  credentials?: VercelSandboxCredentials,
+  connection: VercelConnection | VercelConnection["credentials"],
   options: { throwOnError?: boolean } = {},
 ): Promise<void> {
-  if (!credentials) {
-    if (options.throwOnError) {
-      throw new Error("Cannot stop sandbox without Vercel credentials.");
-    }
-    console.error("[sandbox] cannot stop sandbox without Vercel credentials", { sandboxId });
-    return;
-  }
+  const credentials = "credentials" in connection ? connection.credentials : connection;
 
   try {
     const sandbox = await Sandbox.get({
@@ -252,11 +167,14 @@ export async function stopVercelSandboxById(
     });
     await sandbox.stop();
   } catch (error) {
+    const message = redactSecrets(error instanceof Error ? error.message : String(error), [
+      credentials.token,
+    ]);
     if (options.throwOnError) {
-      throw error;
+      throw new Error(message);
     }
     console.error("[sandbox] failed to stop sandbox", {
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
       sandboxId,
     });
   }
@@ -268,18 +186,10 @@ export async function stopVercelSandboxById(
  * — terminal states do not need cleanup.
  */
 export async function listRunningVercelSandboxes(
-  credentials?: VercelSandboxCredentials,
+  connection: VercelConnection | VercelConnection["credentials"],
   options: { throwOnError?: boolean } = {},
 ): Promise<RunningSandboxSummary[]> {
-  if (!credentials) {
-    if (options.throwOnError) {
-      throw new Error("Cannot list sandboxes without Vercel credentials.");
-    }
-    // Without a workspace connection we cannot list. Caller treats this as
-    // "nothing to reap" rather than an error so dev/test environments without
-    // Vercel creds do not hard-fail.
-    return [];
-  }
+  const credentials = "credentials" in connection ? connection.credentials : connection;
 
   try {
     const activeSandboxes: RunningSandboxSummary[] = [];
@@ -310,16 +220,44 @@ export async function listRunningVercelSandboxes(
 
     return activeSandboxes;
   } catch (error) {
+    const message = redactSecrets(error instanceof Error ? error.message : String(error), [
+      credentials.token,
+    ]);
     if (options.throwOnError) {
-      throw error;
+      throw new Error(message);
     }
     console.error("[sandbox] failed to list sandboxes", {
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     });
     return [];
   }
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
+export async function validateVercelConnectionDriver(connection: VercelConnection) {
+  try {
+    await Sandbox.list({
+      limit: 1,
+      projectId: connection.credentials.projectId,
+      teamId: connection.credentials.teamId,
+      token: connection.credentials.token,
+    });
+    return { ok: true as const };
+  } catch (error) {
+    return {
+      error: redactSecrets(
+        error instanceof Error ? error.message : "Vercel rejected the connection.",
+        [connection.credentials.token],
+      ),
+      ok: false as const,
+    };
+  }
 }
+
+export const vercelSandboxDriver: SandboxProviderDriver<VercelConnection> = {
+  create: createVercelSessionSandbox,
+  listRunning: (connection, options) =>
+    listRunningVercelSandboxes(connection, { throwOnError: true, ...options }),
+  stopById: (sandboxId, connection) =>
+    stopVercelSandboxById(sandboxId, connection, { throwOnError: true }),
+  validate: validateVercelConnectionDriver,
+};

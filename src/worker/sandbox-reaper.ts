@@ -3,7 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
-import { loadConnectedVercelSandboxConnections } from "@/lib/vercel-sandbox/server";
+import { loadAllConnectedSandboxConnections } from "@/lib/sandbox-connections/server";
+import type { SandboxConnection } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
 type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "agent_job_id" | "sandbox_id" | "status">;
@@ -29,14 +30,14 @@ export interface SandboxReapResult {
 const DEFAULT_REAP_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Find Vercel sandboxes that are still active in the provider but whose
+ * Find Wallie-labelled sandboxes that are still active in a provider but whose
  * owning `agent_runs` row has finished and stop them.
  *
  * The processor's `finally` block handles the happy path; the reaper exists
  * to recover from `process.exit()` mid-stage, when that `finally` never
  * runs. The stall sweep also tries to stop the sandbox when it errors out a
- * stuck run. With BYO Vercel projects, unknown provider sandboxes may belong
- * to other consumers, so the reaper only stops IDs Wallie previously recorded.
+ * stuck run. Unknown provider sandboxes may belong to other consumers, so the
+ * reaper only stops IDs Wallie previously recorded for this connection revision.
  */
 export async function reapOrphanSandboxes(
   admin: AdminClient,
@@ -48,7 +49,7 @@ export async function reapOrphanSandboxes(
     reapedSandboxIds: [],
   };
 
-  const connections = await loadConnectedVercelSandboxConnections(admin);
+  const connections = await loadAllConnectedSandboxConnections(admin);
 
   if (connections.length === 0) {
     return result;
@@ -58,7 +59,8 @@ export async function reapOrphanSandboxes(
 
   for (const connection of connections) {
     const providerSandboxes = await listRunningSandboxes({
-      vercelCredentials: connection.credentials,
+      connection: connection.connection,
+      workspaceId: connection.workspaceId,
     });
     result.activeProviderCount += providerSandboxes.length;
 
@@ -70,33 +72,32 @@ export async function reapOrphanSandboxes(
       continue;
     }
 
-    // Cross-reference: which of these sandbox IDs are known to Wallie in this
-    // Vercel project, and which still have active runs/checks/jobs? Unknown
-    // IDs may belong to other consumers in the customer's project, so leave
-    // them alone.
+    // Cross-reference: which IDs are known to Wallie for this exact provider
+    // connection, and which still have active runs/checks/jobs?
     const candidateIds = candidates.map((s) => s.id);
-    const projectState = await loadKnownProjectSandboxState({
+    const connectionState = await loadKnownConnectionSandboxState({
       admin,
       candidateIds,
-      projectId: connection.credentials.projectId,
-      teamId: connection.credentials.teamId,
+      connection: connection.connection,
+      workspaceId: connection.workspaceId,
     });
 
-    if (!projectState) {
+    if (!connectionState) {
       continue;
     }
 
     const orphans = candidates.filter(
-      (s) => projectState.known.has(s.id) && !projectState.active.has(s.id),
+      (s) => connectionState.known.has(s.id) && !connectionState.active.has(s.id),
     );
 
     for (const orphan of orphans) {
-      await stopSandboxById(orphan.id, { vercelCredentials: connection.credentials });
+      await stopSandboxById(orphan.id, { connection: connection.connection });
       result.reapedSandboxIds.push(orphan.id);
       console.log("[sandbox-reaper] stopped orphan sandbox", {
         ageMs: Date.now() - orphan.createdAt,
         sandboxId: orphan.id,
-        workspaceId: connection.preview.workspaceId,
+        provider: connection.connection.provider,
+        workspaceId: connection.workspaceId,
       });
     }
   }
@@ -104,26 +105,26 @@ export async function reapOrphanSandboxes(
   return result;
 }
 
-async function loadKnownProjectSandboxState(input: {
+async function loadKnownConnectionSandboxState(input: {
   admin: AdminClient;
   candidateIds: string[];
-  projectId: string;
-  teamId: string;
+  connection: SandboxConnection;
+  workspaceId: string;
 }): Promise<{ active: Set<string>; known: Set<string> } | null> {
   const [runResult, checkResult] = await Promise.all([
     input.admin
       .from("agent_runs")
       .select("sandbox_id, status, agent_job_id")
-      .eq("sandbox_provider", "vercel")
-      .eq("sandbox_vercel_team_id", input.teamId)
-      .eq("sandbox_vercel_project_id", input.projectId)
+      .eq("workspace_id", input.workspaceId)
+      .eq("sandbox_provider", input.connection.provider)
+      .eq("sandbox_connection_revision", input.connection.revision)
       .in("sandbox_id", input.candidateIds),
     input.admin
       .from("sandbox_capability_checks")
       .select("sandbox_id, status, checked_at")
-      .eq("sandbox_provider", "vercel")
-      .eq("sandbox_vercel_team_id", input.teamId)
-      .eq("sandbox_vercel_project_id", input.projectId)
+      .eq("workspace_id", input.workspaceId)
+      .eq("sandbox_provider", input.connection.provider)
+      .eq("sandbox_connection_revision", input.connection.revision)
       .in("sandbox_id", input.candidateIds),
   ]);
 

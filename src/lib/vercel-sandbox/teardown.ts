@@ -5,8 +5,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cancelWorkspaceWork } from "@/lib/pipeline/cancel";
 import { stopSandboxById } from "@/lib/sandbox";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
+import { loadWorkspaceSandboxConnection, providerLabel } from "@/lib/sandbox-connections/server";
+import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import type { Database } from "@/lib/supabase/database.types";
-import { loadVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -25,7 +26,7 @@ export interface WorkspaceSandboxTeardownResult {
  *
  * Deleting a workspace relies on the FK cascade, which drops `agent_jobs`,
  * `agent_runs`, `sandbox_capability_checks`, AND
- * `workspace_vercel_sandbox_connections` in one shot. Once those rows are gone
+ * the workspace's provider connections in one shot. Once those rows are gone
  * the reaper has no record of the sandbox and no credentials to reach the
  * provider, so a sandbox still running when the processor's `finally` teardown
  * never fires is orphaned with nothing to clean it up. Call this BEFORE the
@@ -46,8 +47,7 @@ export interface WorkspaceSandboxTeardownResult {
  *      this snapshot is the safety net for one whose process died first.
  *
  * Best-effort: a provider or query failure is logged, never thrown, so a cleanup
- * hiccup can't turn a successful workspace delete into an error. Vercel
- * sandboxes auto-expire, so a missed stop is a slow leak, not a permanent one.
+ * hiccup can't turn a successful workspace delete into an error.
  */
 export async function stopWorkspaceProviderSandboxes(
   admin: AdminClient,
@@ -63,44 +63,39 @@ export async function stopWorkspaceProviderSandboxes(
     stoppedSandboxIds: [...canceled.stoppedSandboxIds],
   };
 
-  // Credentials live in workspace_vercel_sandbox_connections and the cascade
-  // will drop them with the workspace, so read them before the delete. Use the
-  // unguarded loader (not loadRequired*) — a connection flagged `error` may
-  // still hold a usable token, and there's nothing to lose by trying to stop.
-  let connection: Awaited<ReturnType<typeof loadVercelSandboxConnection>>;
-  try {
-    connection = await loadVercelSandboxConnection(admin, workspaceId);
-  } catch (error) {
-    console.error("[workspace-teardown] failed to load Vercel connection", {
-      error: error instanceof Error ? error.message : String(error),
-      workspaceId,
-    });
-    return result;
-  }
-
-  if (!connection) {
-    return result;
-  }
-
-  const checkSandboxIds = await loadActiveCapabilityCheckSandboxIds(admin, workspaceId, {
-    projectId: connection.credentials.projectId,
-    teamId: connection.credentials.teamId,
-  });
-
-  // A canceled run and a running capability check could in principle reference
-  // the same sandbox id; don't ask the provider to stop it twice.
   const alreadyStopped = new Set(result.stoppedSandboxIds);
-  for (const sandboxId of checkSandboxIds) {
-    if (alreadyStopped.has(sandboxId)) {
+  for (const provider of ["vercel", "e2b", "daytona"] as const) {
+    // Use the unguarded loader — a connection flagged `error` may still hold
+    // usable credentials, and there is nothing to lose by attempting cleanup.
+    let record: Awaited<ReturnType<typeof loadWorkspaceSandboxConnection>>;
+    try {
+      record = await loadWorkspaceSandboxConnection(admin, workspaceId, provider);
+    } catch (error) {
+      console.error("[workspace-teardown] failed to load sandbox connection", {
+        error: error instanceof Error ? error.message : String(error),
+        provider,
+        workspaceId,
+      });
       continue;
     }
-    await stopSandboxById(sandboxId, { vercelCredentials: connection.credentials });
-    alreadyStopped.add(sandboxId);
-    result.stoppedSandboxIds.push(sandboxId);
-    console.log("[workspace-teardown] stopped sandbox before workspace delete", {
-      sandboxId,
+    if (!record) continue;
+
+    const checkSandboxIds = await loadActiveCapabilityCheckSandboxIds(
+      admin,
       workspaceId,
-    });
+      record.connection,
+    );
+    for (const sandboxId of checkSandboxIds) {
+      if (alreadyStopped.has(sandboxId)) continue;
+      await stopSandboxById(sandboxId, { connection: record.connection });
+      alreadyStopped.add(sandboxId);
+      result.stoppedSandboxIds.push(sandboxId);
+      console.log("[workspace-teardown] stopped sandbox before workspace delete", {
+        provider: providerLabel(provider),
+        sandboxId,
+        workspaceId,
+      });
+    }
   }
 
   return result;
@@ -109,12 +104,9 @@ export async function stopWorkspaceProviderSandboxes(
 async function loadActiveCapabilityCheckSandboxIds(
   admin: AdminClient,
   workspaceId: string,
-  scope: { projectId: string; teamId: string },
+  connection: SandboxConnection,
 ): Promise<string[]> {
-  // Only sandboxes created under the current connection's team/project can be
-  // stopped with these credentials. Checks left over from a previous connection
-  // reference a different team/project and aren't reachable here — the reaper
-  // covers those while their (now-stale) connection still exists.
+  // Only sandboxes created by this connection revision are reachable here.
   const staleCutoff = new Date(Date.now() - STALE_SANDBOX_CAPABILITY_CHECK_MS).toISOString();
 
   // Match every recent check that still holds a sandbox id, NOT only `running`
@@ -132,9 +124,8 @@ async function loadActiveCapabilityCheckSandboxIds(
     .from("sandbox_capability_checks")
     .select("sandbox_id")
     .eq("workspace_id", workspaceId)
-    .eq("sandbox_provider", "vercel")
-    .eq("sandbox_vercel_team_id", scope.teamId)
-    .eq("sandbox_vercel_project_id", scope.projectId)
+    .eq("sandbox_provider", connection.provider as SandboxProvider)
+    .eq("sandbox_connection_revision", connection.revision)
     .gte("checked_at", staleCutoff)
     .not("sandbox_id", "is", null);
 

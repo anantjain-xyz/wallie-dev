@@ -122,8 +122,8 @@ async function IntegrationDetails({
         <a className="ui-button" href="#repository">
           Repositories
         </a>
-        <a className="ui-button" href="#vercel">
-          Vercel
+        <a className="ui-button" href="#sandbox">
+          Sandbox
         </a>
         <a className="ui-button" href="#linear">
           Linear

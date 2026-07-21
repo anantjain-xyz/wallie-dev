@@ -14,8 +14,12 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxConnection: (admin: unknown, workspaceId: string, provider: string) =>
+    provider === "vercel"
+      ? mocked.loadVercelSandboxConnection(admin, workspaceId)
+      : Promise.resolve(null),
+  providerLabel: (provider: string) => provider,
 }));
 
 import { stopWorkspaceProviderSandboxes } from "./teardown";
@@ -58,7 +62,10 @@ function buildAdminMock(tables: {
 }
 
 function connection() {
-  return { credentials: CREDENTIALS, preview: {} };
+  return {
+    connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+    preview: {},
+  };
 }
 
 function cancelResult(
@@ -112,7 +119,7 @@ describe("stopWorkspaceProviderSandboxes", () => {
     // capability-check sandbox is stopped here.
     expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_check_1", {
-      vercelCredentials: CREDENTIALS,
+      connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
     });
   });
 

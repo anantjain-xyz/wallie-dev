@@ -2,8 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { stopSandboxById } from "@/lib/sandbox";
-import type { VercelSandboxCredentials } from "@/lib/sandbox/types";
-import { loadVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
+import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
+import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -18,6 +18,7 @@ export const ACTIVE_AGENT_RUN_STATUSES = ["queued", "started", "running"] as con
 export type RunSandboxRef = {
   id: string;
   sandbox_id: string | null;
+  sandbox_connection_revision?: string | null;
   sandbox_provider: string | null;
   sandbox_vercel_project_id: string | null;
   sandbox_vercel_team_id: string | null;
@@ -25,57 +26,68 @@ export type RunSandboxRef = {
 };
 
 /**
- * Stop the sandbox backing a run, resolving Vercel credentials when the run was
- * launched on the Vercel provider. Best-effort: `stopSandboxById` swallows its
+ * Stop the sandbox backing a run, resolving the exact provider connection that
+ * launched it. Best-effort: `stopSandboxById` swallows its
  * own errors so a stale or already-stopped sandbox cannot break the caller's
  * batch. A no-op when the run never acquired a sandbox.
  *
- * Pass a shared `cache` when stopping many runs so each workspace's Vercel
+ * Pass a shared `cache` when stopping many runs so each workspace's provider
  * connection is only loaded once.
  */
 export async function stopRunSandbox(
   admin: AdminClient,
   run: RunSandboxRef,
-  cache: Map<string, VercelSandboxCredentials | null> = new Map(),
+  cache: Map<string, SandboxConnection | null> = new Map(),
 ): Promise<void> {
   if (!run.sandbox_id) {
     return;
   }
 
-  const credentials = await resolveRunVercelCredentials(admin, run, cache);
-  if (credentials) {
-    await stopSandboxById(run.sandbox_id, { vercelCredentials: credentials });
-  } else {
+  if (run.sandbox_provider === "fake") {
     await stopSandboxById(run.sandbox_id);
+    return;
   }
+
+  const connection = await resolveRunSandboxConnection(admin, run, cache);
+  if (!connection) return;
+  await stopSandboxById(run.sandbox_id, { connection });
 }
 
-async function resolveRunVercelCredentials(
+async function resolveRunSandboxConnection(
   admin: AdminClient,
   run: RunSandboxRef,
-  cache: Map<string, VercelSandboxCredentials | null>,
-): Promise<VercelSandboxCredentials | null> {
-  if (run.sandbox_provider !== "vercel") {
+  cache: Map<string, SandboxConnection | null>,
+): Promise<SandboxConnection | null> {
+  if (!isSandboxProvider(run.sandbox_provider)) {
     return null;
   }
 
-  const cacheKey = `${run.workspace_id}:${run.sandbox_vercel_team_id ?? ""}:${
-    run.sandbox_vercel_project_id ?? ""
-  }`;
+  const cacheKey = `${run.workspace_id}:${run.sandbox_provider}:${run.sandbox_connection_revision ?? "legacy"}`;
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey) ?? null;
   }
 
-  const connection = await loadVercelSandboxConnection(admin, run.workspace_id);
-  const credentials =
-    connection &&
-    connection.credentials.teamId === run.sandbox_vercel_team_id &&
-    connection.credentials.projectId === run.sandbox_vercel_project_id
-      ? connection.credentials
-      : null;
+  const record = await loadWorkspaceSandboxConnection(
+    admin,
+    run.workspace_id,
+    run.sandbox_provider,
+  );
+  const revisionMatches =
+    record &&
+    (run.sandbox_connection_revision != null
+      ? String(record.connection.revision) === String(run.sandbox_connection_revision)
+      : run.sandbox_provider === "vercel" &&
+        record.connection.provider === "vercel" &&
+        record.connection.credentials.teamId === run.sandbox_vercel_team_id &&
+        record.connection.credentials.projectId === run.sandbox_vercel_project_id);
+  const connection = revisionMatches ? record.connection : null;
 
-  cache.set(cacheKey, credentials);
-  return credentials;
+  cache.set(cacheKey, connection);
+  return connection;
+}
+
+function isSandboxProvider(value: string | null): value is SandboxProvider {
+  return value === "vercel" || value === "e2b" || value === "daytona";
 }
 
 export type CancelSessionWorkResult = {
@@ -140,7 +152,7 @@ export async function cancelSessionWork(
     .eq("session_id", input.sessionId)
     .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
     );
 
   if (runsError) {
@@ -149,11 +161,11 @@ export async function cancelSessionWork(
   result.canceledRunIds = (canceledRuns ?? []).map((run) => run.id);
 
   // Stop sandboxes and record a cancel message on each run we flipped.
-  const credentialsCache = new Map<string, VercelSandboxCredentials | null>();
+  const connectionCache = new Map<string, SandboxConnection | null>();
   for (const run of canceledRuns ?? []) {
     if (run.sandbox_id) {
       try {
-        await stopRunSandbox(admin, run, credentialsCache);
+        await stopRunSandbox(admin, run, connectionCache);
         result.stoppedSandboxIds.push(run.sandbox_id);
       } catch (error) {
         console.error("[cancel] failed to stop sandbox for canceled run", {
@@ -224,9 +236,9 @@ export type CancelWorkspaceWorkResult = {
  *
  * Best-effort, unlike {@link cancelSessionWork}: a query or provider failure is
  * logged, never thrown, so a cleanup hiccup can't fail a delete the owner
- * explicitly confirmed. Vercel sandboxes auto-expire, so a missed stop is a slow
- * leak, not a permanent one. Unlike the session path it does not write a cancel
- * message per run — those rows are about to be cascade-deleted with the run.
+ * explicitly confirmed. Provider TTLs bound a missed cleanup. Unlike the
+ * session path it does not write a cancel message per run — those rows are
+ * about to be cascade-deleted with the run.
  */
 export async function cancelWorkspaceWork(
   admin: AdminClient,
@@ -272,7 +284,7 @@ export async function cancelWorkspaceWork(
     .eq("workspace_id", input.workspaceId)
     .in("status", ACTIVE_AGENT_RUN_STATUSES)
     .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id",
+      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
     );
 
   if (runsError) {
@@ -284,13 +296,13 @@ export async function cancelWorkspaceWork(
   }
   result.canceledRunIds = (canceledRuns ?? []).map((run) => run.id);
 
-  const credentialsCache = new Map<string, VercelSandboxCredentials | null>();
+  const connectionCache = new Map<string, SandboxConnection | null>();
   for (const run of canceledRuns ?? []) {
     if (!run.sandbox_id) {
       continue;
     }
     try {
-      await stopRunSandbox(admin, run, credentialsCache);
+      await stopRunSandbox(admin, run, connectionCache);
       result.stoppedSandboxIds.push(run.sandbox_id);
     } catch (error) {
       console.error("[cancel] failed to stop sandbox for canceled workspace run", {

@@ -40,8 +40,9 @@ import {
   workspaceOnboardingStepSchema,
 } from "@/lib/onboarding/contracts";
 import { type WorkspaceAccessContext, requireWorkspaceAccessById } from "@/lib/workspaces/access";
-import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
+import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
+import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 import type { AuthenticatedWorkspaceContext } from "@/features/workspaces/authenticated-context";
 
 const onboardingSelect =
@@ -66,6 +67,7 @@ export type WorkspaceOnboardingData = {
   onboarding: WorkspaceOnboardingState;
   pipeline: SessionPipeline | null;
   setupHealth: OnboardingSetupHealth;
+  sandboxSettings?: SandboxSettingsResponse;
   vercelSandboxConnection: VercelSandboxConnectionPreview | null;
   workspace: {
     id: string;
@@ -104,11 +106,14 @@ type OnboardingMutationResult =
 type SandboxCapabilityCheckRow = Pick<
   Tables<"sandbox_capability_checks">,
   | "capabilities"
+  | "agent_model"
+  | "agent_provider"
   | "checked_at"
   | "error_text"
   | "github_repository_id"
   | "id"
   | "sandbox_provider"
+  | "sandbox_connection_revision"
   | "sandbox_vercel_project_id"
   | "sandbox_vercel_team_id"
   | "status"
@@ -190,6 +195,8 @@ function mapSandboxCapabilityCheck(
 ): SandboxCapabilityCheckState | null {
   if (!row) return null;
   return {
+    agentModel: row.agent_model,
+    agentProvider: row.agent_provider,
     capabilities:
       typeof row.capabilities === "object" && row.capabilities !== null
         ? (row.capabilities as SandboxCapabilityCheckState["capabilities"])
@@ -199,8 +206,12 @@ function mapSandboxCapabilityCheck(
     githubRepositoryId:
       typeof row.github_repository_id === "string" ? row.github_repository_id : null,
     id: typeof row.id === "string" ? row.id : null,
+    sandboxConnectionRevision: row.sandbox_connection_revision,
     sandboxProvider:
-      row.sandbox_provider === "vercel" || row.sandbox_provider === "fake"
+      row.sandbox_provider === "vercel" ||
+      row.sandbox_provider === "e2b" ||
+      row.sandbox_provider === "daytona" ||
+      row.sandbox_provider === "fake"
         ? row.sandbox_provider
         : null,
     sandboxVercelProjectId: row.sandbox_vercel_project_id,
@@ -387,6 +398,7 @@ type OnboardingSnapshot = {
   onboardingRow: Tables<"workspace_onboarding">;
   pipelineRow: PipelineRow | null;
   sandboxRows: SandboxCapabilityCheckRow[];
+  sandboxSettings: SandboxSettingsResponse;
   secretRows: SecretPreviewRow[];
   stageRows: PipelineStageRow[];
   vercelSandboxConnection: VercelSandboxConnectionPreview | null;
@@ -445,7 +457,7 @@ function createOnboardingSnapshot(
       agentConfigResult,
       providerResults,
       sandboxResult,
-      vercelSandboxConnection,
+      sandboxSettings,
       memberResult,
     ] = await Promise.all([
       options?.onboardingRow
@@ -500,8 +512,8 @@ function createOnboardingSnapshot(
       timing.segment("snapshot.sandbox", () =>
         loadOnboardingSnapshotRows(admin, "load_workspace_onboarding_sandbox_checks", workspaceId),
       ),
-      timing.segment("snapshot.vercel", () =>
-        loadVercelSandboxConnectionPreview(admin, workspaceId),
+      timing.segment("snapshot.sandbox-settings", () =>
+        loadWorkspaceSandboxOverview(admin, workspaceId),
       ),
       timing.segment("snapshot.members", () =>
         context.supabase
@@ -546,8 +558,9 @@ function createOnboardingSnapshot(
         "load_workspace_onboarding_sandbox_checks",
       ),
       secretRows: secretSnapshotRows(secretResult.data),
+      sandboxSettings,
       stageRows: (stageResult.data ?? []) as PipelineStageRow[],
-      vercelSandboxConnection,
+      vercelSandboxConnection: sandboxSettings.connections.vercel,
       workspaceMemberRows: (memberResult.data ?? []) as WorkspaceMemberRow[],
     };
   });
@@ -604,6 +617,30 @@ function deriveLinearRouting(row: LinearRoutingRow | null): LinearRoutingConfig 
   });
 }
 
+function deriveActiveSandboxConnectionHealth(
+  settings: SandboxSettingsResponse,
+): OnboardingSetupHealth["sandboxConnection"] {
+  const provider = settings.activeProvider;
+  const connection = settings.connections[provider];
+  const vercel = provider === "vercel" ? settings.connections.vercel : null;
+  const displayName =
+    provider === "vercel"
+      ? (vercel?.projectName ?? vercel?.projectId ?? null)
+      : provider === "e2b"
+        ? (settings.connections.e2b?.apiKeyPreview ?? null)
+        : (settings.connections.daytona?.target ?? settings.connections.daytona?.apiUrl ?? null);
+  return {
+    connected: connection?.status === "connected",
+    connectionRevision: connection ? String(connection.connectionRevision) : null,
+    displayName,
+    lastValidationError: connection?.lastValidationError ?? null,
+    provider,
+    providerLabel: providerLabel(provider),
+    status: connection?.status ?? "missing",
+    updatedAt: connection?.updatedAt ?? null,
+  };
+}
+
 function deriveSetupHealth(
   snapshot: OnboardingSnapshot,
   selectedGithubRepositoryId: string | null,
@@ -652,6 +689,7 @@ function deriveSetupHealth(
       updatedAt: snapshot.github.installation?.updatedAt ?? null,
     },
     latestSandboxCapabilityCheck: mapSandboxCapabilityCheck(latestSandboxRow),
+    sandboxConnection: deriveActiveSandboxConnectionHealth(snapshot.sandboxSettings),
     vercelSandboxConnection: snapshot.vercelSandboxConnection
       ? {
           connected: snapshot.vercelSandboxConnection.status === "connected",
@@ -720,6 +758,7 @@ function mapWorkspaceOnboardingData(
     onboarding,
     pipeline: derivePipeline(snapshot),
     setupHealth: deriveSetupHealth(snapshot, onboarding.selectedGithubRepositoryId, canManage),
+    sandboxSettings: snapshot.sandboxSettings,
     vercelSandboxConnection: snapshot.vercelSandboxConnection,
     workspace: {
       id: context.workspace.id,

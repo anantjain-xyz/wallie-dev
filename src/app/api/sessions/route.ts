@@ -9,6 +9,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import {
   assertSessionFirstRunReady,
+  assertSessionSandboxCapabilityReady,
   createSessionWithFirstJob,
   loadSessionFirstRunPrerequisites,
 } from "@/lib/wallie/service";
@@ -262,6 +263,13 @@ export async function POST(request: Request) {
     agentConfig = assertSessionFirstRunReady({
       ...firstRunPrereqsResult.data,
       repository: repositoryForPreflight,
+    });
+    await assertSessionSandboxCapabilityReady({
+      admin,
+      agentConfig,
+      repository: repositoryForPreflight,
+      sandboxConnection: firstRunPrereqsResult.data.vercelSandboxConnection,
+      workspaceId: normalized.workspaceId,
     });
   } catch (error) {
     try {

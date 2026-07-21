@@ -48,6 +48,7 @@
     "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts"
   },
   "dependencies": {
+    "@daytona/sdk": "0.200.0",
     "@octokit/app": "^16.1.2",
     "@octokit/webhooks-methods": "^6.0.0",
     "@radix-ui/react-alert-dialog": "^1.1.19",
@@ -62,6 +63,7 @@
     "@vercel/sandbox": "^1.10.0",
     "@vercel/speed-insights": "^2.0.0",
     "clsx": "^2.1.1",
+    "e2b": "2.35.0",
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",

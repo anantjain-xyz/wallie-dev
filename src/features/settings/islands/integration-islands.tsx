@@ -8,7 +8,10 @@ import { GitHubInstallSection } from "@/features/settings/github-install-section
 import { LinearConfigurationSection } from "@/features/settings/linear-configuration-section";
 import { RepositoryAnalysisSection } from "@/features/settings/repository-analysis-section";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
-import { VercelSandboxConnectionSection } from "@/features/settings/vercel-sandbox-connection-section";
+import {
+  applySandboxSettingsToData,
+  SandboxProviderSection,
+} from "@/features/settings/sandbox-provider-section";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { updateGithubInSettingsData } from "@/features/settings/settings-data-updates";
@@ -121,20 +124,21 @@ export function RepositoryIntegrationIsland({ initialData }: { initialData: Sett
 }
 
 export function VercelIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [connection, setConnection] = useState(initialData.vercelSandboxConnection);
+  const [data, setData] = useState(initialData);
   const { feedback, setMessage } = useIslandFeedback();
   return (
     <>
       {feedback}
-      <VercelSandboxConnectionSection
-        canManage={initialData.canManage}
-        connection={connection}
-        onConnectionChange={(nextConnection) => {
-          setConnection(nextConnection);
-          dispatchSettingsEvent(SETTINGS_VERCEL_CHANGED, nextConnection);
+      <SandboxProviderSection
+        canManage={data.canManage}
+        onSettingsChange={(settings) => {
+          setData((current) => applySandboxSettingsToData(current, settings));
+          dispatchSettingsEvent(SETTINGS_VERCEL_CHANGED, settings.connections.vercel);
         }}
         setFlashMessage={setMessage}
-        workspaceId={initialData.workspace.id}
+        settings={data.sandboxSettings}
+        vercelConnection={data.vercelSandboxConnection}
+        workspaceId={data.workspace.id}
       />
     </>
   );

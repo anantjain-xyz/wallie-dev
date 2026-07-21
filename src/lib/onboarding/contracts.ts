@@ -143,6 +143,17 @@ export type OnboardingSetupHealth = {
     updatedAt: string | null;
   };
   latestSandboxCapabilityCheck: SandboxCapabilityCheckState | null;
+  sandboxConnection?: {
+    connected: boolean;
+    connectionRevision: string | null;
+    displayName: string | null;
+    lastValidationError: string | null;
+    provider: "vercel" | "e2b" | "daytona";
+    providerLabel: string;
+    status: "connected" | "error" | "missing";
+    updatedAt: string | null;
+  };
+  /** @deprecated Provider-neutral consumers should use sandboxConnection. */
   vercelSandboxConnection: {
     connected: boolean;
     lastValidationError: string | null;

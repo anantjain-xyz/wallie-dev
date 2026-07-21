@@ -13,7 +13,7 @@ Wallie has two long-lived processes plus managed backing services:
 | **Web app**                              | Next.js App Router (UI + API route handlers)                                          | Any Next.js host. Vercel is the smoothest path. Stateless.                                                  |
 | **Worker**                               | `pnpm worker` — a long-running daemon that drains the job queue and runs agent stages | A host that supports **always-on processes** (Railway, Fly, Render, a VM, etc.). **Not** Vercel serverless. |
 | **Database / Auth / Realtime / Storage** | Supabase                                                                              | Supabase Cloud (or your own Supabase).                                                                      |
-| **Sandboxes**                            | Ephemeral VMs that run the agent per stage                                            | Vercel Sandbox.                                                                                             |
+| **Sandboxes**                            | Ephemeral VMs that run the agent per stage                                            | Vercel Sandbox, E2B, or Daytona Cloud/approved self-hosted Daytona.                                         |
 | **Integrations**                         | GitHub App, Linear, model provider (Codex / Claude Code)                              | External; configured per-workspace in the app UI.                                                           |
 
 > **Why the worker can't be serverless:** it heartbeats, polls `agent_jobs`, claims work via an atomic compare-and-swap, runs stages that can take minutes, and reaps orphaned sandboxes. It must run continuously. Deploy the web app and the worker as **two separate services from the same repo**, sharing the same environment variables.
@@ -24,7 +24,7 @@ Wallie has two long-lived processes plus managed backing services:
 - A host for the web app (e.g. [Vercel](https://vercel.com)).
 - A host for the worker (e.g. [Railway](https://railway.com) — a `railway.json` is already included).
 - A GitHub account/org where you can create a **GitHub App**.
-- A [Vercel](https://vercel.com) account for Sandbox execution.
+- A Vercel, E2B, or Daytona account for Sandbox execution.
 - Agent provider access (Codex and/or Claude Code) — entered per-workspace later, not at deploy time.
 - A domain (recommended) for a stable origin.
 
@@ -61,14 +61,16 @@ Use the output as `WALLIE_ENCRYPTION_KEY`. **Rotating this later requires re-enc
 1. Import the repository into Vercel.
 2. Set the environment variables (mirror `.env.example`):
 
-   | Variable                                                             | Value                                                     |
-   | -------------------------------------------------------------------- | --------------------------------------------------------- |
-   | `NEXT_PUBLIC_APP_URL`                                                | Your production origin, e.g. `https://wallie.example.com` |
-   | `NEXT_PUBLIC_SUPABASE_URL`                                           | From step 1                                               |
-   | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`                               | From step 1                                               |
-   | `SUPABASE_SECRET_KEY`                                                | From step 1                                               |
-   | `WALLIE_ENCRYPTION_KEY`                                              | From step 2                                               |
-   | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_WEBHOOK_SECRET` | From step 5                                               |
+   | Variable                                                             | Value                                                      |
+   | -------------------------------------------------------------------- | ---------------------------------------------------------- |
+   | `NEXT_PUBLIC_APP_URL`                                                | Your production origin, e.g. `https://wallie.example.com`  |
+   | `NEXT_PUBLIC_SUPABASE_URL`                                           | From step 1                                                |
+   | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`                               | From step 1                                                |
+   | `SUPABASE_SECRET_KEY`                                                | From step 1                                                |
+   | `WALLIE_ENCRYPTION_KEY`                                              | From step 2                                                |
+   | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_WEBHOOK_SECRET` | From step 5                                                |
+   | `WALLIE_ENABLED_SANDBOX_PROVIDERS`                                   | Start with `vercel`; add `e2b`, then `daytona` to roll out |
+   | `WALLIE_DAYTONA_API_URL_ALLOWLIST`                                   | Optional exact HTTPS self-hosted Daytona API URLs          |
 
 3. Deploy, then point your domain at the deployment so `NEXT_PUBLIC_APP_URL` matches the real origin.
 
@@ -87,7 +89,7 @@ The worker runs `pnpm worker` continuously and needs the **same environment vari
    - `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`
 4. Deploy. The worker registers a heartbeat and starts draining `agent_jobs`.
 
-> **Session sandboxes need the per-workspace connection, not these env vars.** When the worker runs a session it loads the workspace's saved Vercel Sandbox connection (`workspace_vercel_sandbox_connections`) and fails fast with `vercel_sandbox_connection_missing` if it isn't set. The `VERCEL_*` env vars above only cover operator/helper sandboxes. Each workspace must connect its Vercel account in **Settings** (see [step 6](#6-per-workspace-setup-in-the-app-not-env-vars)) before sessions can run.
+> **Session sandboxes need a per-workspace connection, not provider API keys in env.** At job start the worker loads the workspace's selected Vercel, E2B, or Daytona connection and fails closed if it is missing, invalid, or has a stale capability check. `VERCEL_*` only covers legacy operator/helper sandboxes. Each workspace connects and tests its provider in **Settings** before sessions can run.
 
 **Any other always-on host (Fly, Render, a VM, Docker):** run the same repo with `pnpm install && pnpm worker` and the same environment. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `agent_generating` and never progress.
 
@@ -116,7 +118,7 @@ These are entered through the app's **Settings** UI and stored encrypted in your
 - **Agent provider & model** — Codex or Claude Code, plus the provider credential (ChatGPT sign-in / Codex token / OpenAI key, or an Anthropic API key).
 - **Linear API key** — for pulling issue context.
 - **GitHub installation** — install the App onto the repos a workspace should see.
-- **Vercel Sandbox connection** — the workspace's Sandbox account.
+- **Sandbox provider** — connect Vercel, E2B, and/or Daytona, choose one active provider, then run its repository capability check. Connections are retained when switching.
 
 See [README → Configure agent provider](../README.md#configure-agent-provider) and the integration sections for details.
 
@@ -124,9 +126,10 @@ See [README → Configure agent provider](../README.md#configure-agent-provider)
 
 1. Open your origin and sign up via Supabase Auth.
 2. Complete onboarding (create a workspace).
-3. In **Settings → Integrations**, connect an agent provider, your Linear key, install the GitHub App, and pick a repo.
-4. Create a session.
-5. Confirm the **worker logs** show it claiming the job, and that an artifact appears in the session detail view for review.
+3. In **Settings**, connect an agent provider, your Linear key, install the GitHub App, pick a repo, and connect the selected sandbox provider.
+4. Run the sandbox capability check for that repository and confirm Git, Node 22, the agent CLI, Playwright, Chromium, and screenshot smoke all pass.
+5. Create a session.
+6. Confirm the **worker logs** show it claiming the job, and that an artifact appears in the session detail view for review.
 
 If a session stays at `agent_generating`: the worker isn't running, agent credentials are missing/invalid, or the worker can't reach your web origin or Supabase. Check the worker logs first.
 

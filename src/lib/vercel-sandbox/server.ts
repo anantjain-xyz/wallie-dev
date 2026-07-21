@@ -8,6 +8,7 @@ import {
   type VercelSandboxConnectionStatus,
   type VercelSandboxCredentials,
 } from "@/lib/vercel-sandbox/contracts";
+import { redactSecrets } from "@/lib/sandbox/command";
 import { buildSecretPreview, decryptSecretValue, encryptSecretValue } from "@/lib/secrets/crypto";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 
@@ -15,7 +16,7 @@ type AdminClient = SupabaseClient<Database>;
 type ConnectionRow = Tables<"workspace_vercel_sandbox_connections">;
 
 const previewSelect =
-  "workspace_id, token_preview, team_id, project_id, project_name, status, last_validated_at, last_validation_error, updated_at";
+  "workspace_id, token_preview, team_id, project_id, project_name, status, connection_revision, last_validated_at, last_validation_error, updated_at";
 const secretSelect = `${previewSelect}, encrypted_token`;
 
 export class VercelSandboxConnectionMissingError extends Error {
@@ -81,6 +82,7 @@ export async function acquireVercelSandboxConnectionMutationLock(
 export function mapVercelSandboxConnectionPreview(
   row: Pick<
     ConnectionRow,
+    | "connection_revision"
     | "last_validated_at"
     | "last_validation_error"
     | "project_id"
@@ -95,6 +97,7 @@ export function mapVercelSandboxConnectionPreview(
   const status: VercelSandboxConnectionStatus = row.status === "connected" ? "connected" : "error";
 
   return {
+    connectionRevision: row.connection_revision,
     lastValidatedAt: row.last_validated_at,
     lastValidationError: row.last_validation_error,
     projectId: row.project_id,
@@ -174,7 +177,12 @@ export async function validateVercelSandboxCredentials(
     }
 > {
   const project = await fetchVercelProject(credentials);
-  if (!project.ok) return project;
+  if (!project.ok) {
+    return {
+      ...project,
+      error: redactSecrets(project.error, [credentials.token]),
+    };
+  }
 
   try {
     await Sandbox.list({
@@ -185,10 +193,12 @@ export async function validateVercelSandboxCredentials(
     });
   } catch (error) {
     return {
-      error:
+      error: redactSecrets(
         error instanceof Error
           ? error.message
           : "Vercel Sandbox validation failed for that project.",
+        [credentials.token],
+      ),
       ok: false,
     };
   }

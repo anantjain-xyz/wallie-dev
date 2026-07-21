@@ -5,7 +5,7 @@ import {
   CODEX_SANDBOX_MODE,
   codexExecArgs,
 } from "@/lib/agent-runner/codex";
-import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxHandle, SandboxProvider } from "@/lib/sandbox/types";
 import type {
   SandboxCapabilityName,
   SandboxCapabilityReport,
@@ -120,6 +120,7 @@ export async function probeSandboxCapabilities(input: {
   agentProvider: AgentProvider;
   bootstrapPlaywright?: boolean;
   sandbox: SandboxHandle;
+  sandboxProvider?: SandboxProvider;
 }): Promise<SandboxCapabilityReport> {
   const report: Partial<SandboxCapabilityReport> = {};
   const sandbox = input.sandbox;
@@ -142,7 +143,10 @@ export async function probeSandboxCapabilities(input: {
     "agent CLI not found",
   );
   if (input.agentProvider === "codex") {
-    report.codexExternalSandbox = codexExternalSandboxResult(sandbox.repoPath);
+    report.codexExternalSandbox = codexExternalSandboxResult(
+      sandbox.repoPath,
+      input.sandboxProvider,
+    );
   }
 
   const playwrightCheck = await run(
@@ -193,10 +197,25 @@ export async function probeSandboxCapabilities(input: {
 }
 
 export function capabilityReportSucceeded(report: Partial<SandboxCapabilityReport>): boolean {
-  return Object.values(report).every((entry) => entry?.ok === true);
+  const required: SandboxCapabilityName[] = [
+    "git",
+    "node",
+    "packageManager",
+    "agentCli",
+    "playwrightPackage",
+    "chromium",
+    "screenshotSmoke",
+  ];
+  return (
+    required.every((name) => report[name]?.ok === true) &&
+    Object.values(report).every((entry) => entry?.ok === true)
+  );
 }
 
-function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityResult {
+function codexExternalSandboxResult(
+  sandboxRepoPath: string,
+  provider?: SandboxProvider,
+): SandboxCapabilityResult {
   const args = codexExecArgs("gpt-5.5", sandboxRepoPath);
   const usesExternalSandbox = args.includes(CODEX_EXTERNAL_SANDBOX_FLAG);
   const disablesInnerSandbox = args.some(
@@ -207,7 +226,7 @@ function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityR
   );
   if (usesExternalSandbox && disablesInnerSandbox && usesSandboxRepo) {
     return {
-      detail: "Codex command uses Vercel Sandbox as the execution boundary.",
+      detail: `Codex command uses ${providerDisplayName(provider ?? "vercel")} as the execution boundary.`,
       ok: true,
     };
   }
@@ -216,6 +235,12 @@ function codexExternalSandboxResult(sandboxRepoPath: string): SandboxCapabilityR
     detail: `Codex command is missing external sandbox configuration: ${CODEX_EXTERNAL_SANDBOX_FLAG}, --sandbox ${CODEX_SANDBOX_MODE}, or --cd ${sandboxRepoPath}.`,
     ok: false,
   };
+}
+
+function providerDisplayName(provider: SandboxProvider) {
+  if (provider === "e2b") return "E2B";
+  if (provider === "daytona") return "Daytona";
+  return "Vercel Sandbox";
 }
 
 function shellQuote(s: string): string {

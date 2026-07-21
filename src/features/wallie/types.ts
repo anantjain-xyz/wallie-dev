@@ -10,6 +10,10 @@ export type WallieBlockingCode =
   | "missing_secret"
   | "repository_archived"
   | "repository_unavailable"
+  | "sandbox_connection_invalid"
+  | "sandbox_connection_missing"
+  | "sandbox_capability_check_stale"
+  /** @deprecated Kept while older clients migrate to provider-neutral codes. */
   | "vercel_sandbox_connection_invalid"
   | "vercel_sandbox_connection_missing";
 
@@ -25,11 +29,16 @@ export type WallieActionErrorCode =
 export type WallieBlockingReason = {
   code: WallieBlockingCode;
   message: string;
+  provider?: "vercel" | "e2b" | "daytona";
 };
 
 export type WallieVercelSandboxConnectionStatus = {
   connected: boolean;
+  connectionRevision?: string | null;
+  displayName?: string | null;
   lastValidationError: string | null;
+  provider?: "vercel" | "e2b" | "daytona";
+  providerLabel?: string;
   projectId: string | null;
   projectName: string | null;
   status: "connected" | "error" | "missing";

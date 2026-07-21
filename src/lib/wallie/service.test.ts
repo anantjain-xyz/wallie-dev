@@ -10,9 +10,11 @@ import {
   processQueuedAgentJobs,
 } from "@/lib/wallie/service";
 import { processPipelineJob } from "@/lib/pipeline/processor";
+import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
 
 const mocks = vi.hoisted(() => ({
-  loadVercelSandboxConnectionPreview: vi.fn(),
+  assertCurrentSandboxCapabilityCheck: vi.fn(),
+  loadWorkspaceSandboxOverview: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
 }));
 
@@ -20,28 +22,52 @@ vi.mock("@/lib/pipeline/processor", () => ({
   processPipelineJob: vi.fn(),
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnectionPreview: mocks.loadVercelSandboxConnectionPreview,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxOverview: mocks.loadWorkspaceSandboxOverview,
+  providerLabel: () => "Vercel Sandbox",
 }));
 
 vi.mock("@/lib/sandbox", () => ({
   resolveSandboxImplementation: mocks.resolveSandboxImplementation,
 }));
 
+vi.mock("@/lib/sandbox-capabilities/readiness", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/sandbox-capabilities/readiness")>(
+    "@/lib/sandbox-capabilities/readiness",
+  );
+  return {
+    ...actual,
+    assertCurrentSandboxCapabilityCheck: mocks.assertCurrentSandboxCapabilityCheck,
+  };
+});
+
 beforeEach(() => {
-  mocks.loadVercelSandboxConnectionPreview.mockReset();
+  mocks.assertCurrentSandboxCapabilityCheck.mockReset();
+  mocks.assertCurrentSandboxCapabilityCheck.mockResolvedValue(undefined);
+  mocks.loadWorkspaceSandboxOverview.mockReset();
   mocks.resolveSandboxImplementation.mockReset();
   mocks.resolveSandboxImplementation.mockReturnValue("vercel");
-  mocks.loadVercelSandboxConnectionPreview.mockResolvedValue({
-    lastValidatedAt: baseTimestamp,
-    lastValidationError: null,
-    projectId: "prj_123",
-    projectName: "wallie-sandboxes",
-    status: "connected",
-    teamId: "team_123",
-    tokenPreview: "verc...1234",
+  mocks.loadWorkspaceSandboxOverview.mockResolvedValue({
+    activeProvider: "vercel",
+    connections: {
+      daytona: null,
+      e2b: null,
+      vercel: {
+        connectionRevision: "revision-1",
+        lastValidatedAt: baseTimestamp,
+        lastValidationError: null,
+        projectId: "prj_123",
+        projectName: "wallie-sandboxes",
+        status: "connected",
+        teamId: "team_123",
+        tokenPreview: "verc...1234",
+        updatedAt: baseTimestamp,
+        workspaceId: "ws-1",
+      },
+    },
+    enabledProviders: ["vercel", "e2b", "daytona"],
+    revision: 1,
     updatedAt: baseTimestamp,
-    workspaceId: "ws-1",
   });
 });
 
@@ -279,6 +305,7 @@ function buildAgentRunRow(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     run_type: "project",
     sandbox_id: null,
     sandbox_provider: null,
+    sandbox_connection_revision: null,
     sandbox_vercel_project_id: null,
     sandbox_vercel_team_id: null,
     session_id: "sess-1",
@@ -695,6 +722,54 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect(insertedRunRows[0]!.run_type).toBe("code");
   });
 
+  it("returns the affected provider when its capability check is stale", async () => {
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "e2b",
+      connections: {
+        daytona: null,
+        e2b: {
+          apiKeyPreview: "e2b_...1234",
+          connectionRevision: "revision-e2b",
+          lastValidatedAt: baseTimestamp,
+          lastValidationError: null,
+          status: "connected",
+          updatedAt: baseTimestamp,
+          workspaceId: "ws-1",
+        },
+        vercel: null,
+      },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 2,
+      updatedAt: baseTimestamp,
+    });
+    mocks.assertCurrentSandboxCapabilityCheck.mockRejectedValueOnce(
+      new SandboxCapabilityCheckStaleError("e2b"),
+    );
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await expect(
+      enqueueWallieRun({
+        admin,
+        sessionId: "sess-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        triggerType: "manual_run",
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "sandbox_capability_check_stale",
+      provider: "e2b",
+      statusCode: 422,
+    });
+    expect(insertedRunRows).toHaveLength(0);
+  });
+
   it("blocks code mode when the configured repository id does not resolve", async () => {
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
@@ -722,7 +797,13 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
   });
 
   it("blocks queued runs when the workspace Vercel Sandbox connection is missing", async () => {
-    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      connections: { daytona: null, e2b: null, vercel: null },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 1,
+      updatedAt: baseTimestamp,
+    });
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
@@ -739,7 +820,7 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
-      code: "vercel_sandbox_connection_missing",
+      code: "sandbox_connection_missing",
       statusCode: 422,
     });
 
@@ -748,7 +829,13 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
 
   it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
     mocks.resolveSandboxImplementation.mockReturnValueOnce("fake");
-    mocks.loadVercelSandboxConnectionPreview.mockResolvedValueOnce(null);
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      connections: { daytona: null, e2b: null, vercel: null },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 1,
+      updatedAt: baseTimestamp,
+    });
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],

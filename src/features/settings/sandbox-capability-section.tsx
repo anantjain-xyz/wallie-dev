@@ -21,8 +21,9 @@ type SandboxCapabilitySectionProps = {
   onCheckChange?: (check: NonNullable<SettingsPageData["latestSandboxCapabilityCheck"]>) => void;
   preferredRepositoryId?: string | null;
   repositories: SettingsPageData["github"]["repositories"];
+  sandboxConnected: boolean;
+  sandboxProviderLabel: string;
   setFlashMessage: (message: FlashMessage) => void;
-  vercelSandboxConnected: boolean;
   workspaceId: string;
 };
 
@@ -79,8 +80,9 @@ export function SandboxCapabilitySection({
   onCheckChange,
   preferredRepositoryId,
   repositories,
+  sandboxConnected,
+  sandboxProviderLabel,
   setFlashMessage,
-  vercelSandboxConnected,
   workspaceId,
 }: SandboxCapabilitySectionProps) {
   const selectableRepositories = repositories.filter((repository) => !repository.isArchived);
@@ -209,7 +211,7 @@ export function SandboxCapabilitySection({
           className="ui-button-primary"
           disabled={
             !canManage ||
-            !vercelSandboxConnected ||
+            !sandboxConnected ||
             repositoryOptions.length === 0 ||
             runCheck.isBusy ||
             isPolling
@@ -224,9 +226,9 @@ export function SandboxCapabilitySection({
           />
         </button>
       </div>
-      {!vercelSandboxConnected ? (
+      {!sandboxConnected ? (
         <p className="text-xs leading-5 text-warning">
-          Connect Vercel Sandbox before running a capability check.
+          Connect {sandboxProviderLabel} before running a capability check.
         </p>
       ) : null}
 

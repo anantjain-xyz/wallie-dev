@@ -28,6 +28,7 @@ import {
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
+import { SandboxProviderSection } from "@/features/settings/sandbox-provider-section";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import {
   type AgentConfigKey,
@@ -52,6 +53,7 @@ import type {
   VercelSandboxConnectionPreview,
   VercelSandboxConnectionResponse,
 } from "@/lib/vercel-sandbox/contracts";
+import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 
 import type { OnboardingStepProps } from "./types";
 
@@ -315,6 +317,64 @@ export function updateVercelSandboxConnectionInData(
             status: connection.status,
             teamId: connection.teamId,
             updatedAt: connection.updatedAt,
+          }
+        : {
+            connected: false,
+            lastValidationError: null,
+            projectId: null,
+            projectName: null,
+            status: "missing",
+            teamId: null,
+            updatedAt: null,
+          },
+    },
+  };
+}
+
+function updateSandboxSettingsInData(
+  currentData: WorkspaceOnboardingData,
+  settings: SandboxSettingsResponse,
+): WorkspaceOnboardingData {
+  const active = settings.connections[settings.activeProvider];
+  const vercel = settings.connections.vercel;
+  const providerLabel =
+    settings.activeProvider === "vercel"
+      ? "Vercel Sandbox"
+      : settings.activeProvider === "e2b"
+        ? "E2B"
+        : "Daytona";
+  return {
+    ...currentData,
+    sandboxSettings: settings,
+    vercelSandboxConnection: vercel,
+    setupHealth: {
+      ...currentData.setupHealth,
+      sandboxConnection: {
+        connected: active?.status === "connected",
+        connectionRevision: active ? String(active.connectionRevision) : null,
+        displayName:
+          settings.activeProvider === "vercel"
+            ? (vercel?.projectName ?? vercel?.projectId ?? null)
+            : settings.activeProvider === "e2b"
+              ? (settings.connections.e2b?.apiKeyPreview ?? null)
+              : (settings.connections.daytona?.target ??
+                settings.connections.daytona?.apiUrl ??
+                null),
+        lastValidationError: active?.lastValidationError ?? null,
+        provider: settings.activeProvider,
+        providerLabel,
+        status: active?.status ?? "missing",
+        updatedAt: active?.updatedAt ?? null,
+      },
+      vercelSandboxConnection: vercel
+        ? {
+            connected: vercel.status === "connected",
+            lastValidationError: vercel.lastValidationError,
+            projectId: vercel.projectId,
+            projectName: vercel.projectName,
+            status: vercel.status,
+            teamId: vercel.teamId,
+            updatedAt: vercel.updatedAt,
           }
         : {
             connected: false,
@@ -648,11 +708,6 @@ export default function RuntimeStep({
   const handleClaudeCodeStatusChange = useCallback(
     (status: ClaudeCodeConnectionStatus) =>
       onDataChange((current) => updateClaudeCodeConnectionInData(current, status)),
-    [onDataChange],
-  );
-  const handleVercelConnectionChange = useCallback(
-    (connection: VercelSandboxConnectionPreview | null) =>
-      onDataChange((current) => updateVercelSandboxConnectionInData(current, connection)),
     [onDataChange],
   );
   const fields = AGENT_CONFIG_FIELDS;
@@ -1089,7 +1144,7 @@ export default function RuntimeStep({
             onCodexStatusChange={handleCodexStatusChange}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
-            vercelConnectionHref="#onboarding-vercel"
+            vercelConnectionHref="#sandbox"
             vercelSandboxConnection={data.vercelSandboxConnection}
             variant="embedded"
             workspaceId={data.workspace.id}
@@ -1097,11 +1152,17 @@ export default function RuntimeStep({
         </div>
       </div>
 
-      <OnboardingVercelSandboxPanel
-        canManage={data.canManage}
-        connection={data.vercelSandboxConnection}
-        disabled={isSaving}
-        onConnectionChange={handleVercelConnectionChange}
+      <SandboxProviderSection
+        canManage={data.canManage && !isSaving}
+        onSettingsChange={(settings) =>
+          onDataChange((current) => updateSandboxSettingsInData(current, settings))
+        }
+        setFlashMessage={(message) => {
+          setRuntimeError(message.kind === "error" ? message.text : null);
+          setRuntimeMessage(message.kind === "error" ? null : message.text);
+        }}
+        settings={data.sandboxSettings}
+        vercelConnection={data.vercelSandboxConnection}
         workspaceId={data.workspace.id}
       />
 
