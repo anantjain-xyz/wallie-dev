@@ -12,12 +12,12 @@ import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { resolveAuthenticatedSettingsPath } from "@/lib/auth";
 import { loginPath } from "@/lib/routes";
-import type { VercelSandboxCredentials } from "@/lib/vercel-sandbox/contracts";
 import {
-  loadRequiredVercelSandboxConnection,
-  VercelSandboxConnectionInvalidError,
-  VercelSandboxConnectionMissingError,
-} from "@/lib/vercel-sandbox/server";
+  loadRequiredWorkspaceSandboxConnection,
+  SandboxConnectionInvalidError,
+  SandboxConnectionMissingError,
+} from "@/lib/sandbox-connections/server";
+import type { SandboxConnection } from "@/lib/sandbox/types";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 export const runtime = "nodejs";
@@ -43,12 +43,12 @@ export async function GET(request: NextRequest) {
     return respondError(supabase, request, acceptsJson, "state_missing", 400);
   }
 
-  const vercelCredentials = await loadRequestVercelCredentials(request);
-  if ("response" in vercelCredentials) {
-    return vercelCredentials.response;
+  const sandboxConnection = await loadRequestSandboxConnection(request);
+  if ("response" in sandboxConnection) {
+    return sandboxConnection.response;
   }
-  const authSandboxInput = vercelCredentials.credentials
-    ? { vercelCredentials: vercelCredentials.credentials }
+  const authSandboxInput = sandboxConnection.connection
+    ? { connection: sandboxConnection.connection }
     : {};
 
   const snapshot = await getCodexDeviceAuthFlowSnapshot({
@@ -132,12 +132,12 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Missing flowId." }, { status: 400 });
   }
 
-  const vercelCredentials = await loadRequestVercelCredentials(request);
-  if ("response" in vercelCredentials) {
-    return vercelCredentials.response;
+  const sandboxConnection = await loadRequestSandboxConnection(request);
+  if ("response" in sandboxConnection) {
+    return sandboxConnection.response;
   }
-  const authSandboxInput = vercelCredentials.credentials
-    ? { vercelCredentials: vercelCredentials.credentials }
+  const authSandboxInput = sandboxConnection.connection
+    ? { connection: sandboxConnection.connection }
     : {};
 
   const canceled = await cancelCodexDeviceAuthFlow({
@@ -152,9 +152,9 @@ function wantsJson(request: NextRequest): boolean {
   return request.headers.get("accept")?.includes("application/json") ?? false;
 }
 
-async function loadRequestVercelCredentials(request: NextRequest): Promise<
+async function loadRequestSandboxConnection(request: NextRequest): Promise<
   | {
-      credentials?: VercelSandboxCredentials;
+      connection?: SandboxConnection;
     }
   | {
       response: NextResponse;
@@ -173,15 +173,15 @@ async function loadRequestVercelCredentials(request: NextRequest): Promise<
   }
 
   try {
-    const connection = await loadRequiredVercelSandboxConnection(
+    const connection = await loadRequiredWorkspaceSandboxConnection(
       createSupabaseAdminClient(),
       access.context.workspace.id,
     );
-    return { credentials: connection.credentials };
+    return { connection: connection.connection };
   } catch (error) {
     if (
-      error instanceof VercelSandboxConnectionMissingError ||
-      error instanceof VercelSandboxConnectionInvalidError
+      error instanceof SandboxConnectionMissingError ||
+      error instanceof SandboxConnectionInvalidError
     ) {
       return {
         response: NextResponse.json({ error: error.message }, { status: 400 }),

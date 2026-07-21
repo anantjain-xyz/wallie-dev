@@ -10,6 +10,7 @@ import {
   getEnabledSandboxProviders,
   loadWorkspaceSandboxConnection,
   loadWorkspaceSandboxOverview,
+  loadWorkspaceSandboxSettings,
   SandboxConnectionActiveWorkError,
   SandboxConnectionMutationInProgressError,
   saveDaytonaSandboxConnection,
@@ -18,6 +19,7 @@ import {
   validateDaytonaSandboxCredentials,
   validateE2BSandboxCredentials,
 } from "@/lib/sandbox-connections/server";
+import { stopVercelWorkspaceOwnedSandboxes } from "@/lib/sandbox-connections/cleanup";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { upsertVercelSandboxConnectionSchema } from "@/lib/vercel-sandbox/contracts";
 import {
@@ -115,12 +117,21 @@ export async function PUT(request: Request, context: RouteContext) {
     if (!parsed.success) return invalid(parsed.error.issues[0]?.message);
     const validation = await validateVercelSandboxCredentials(parsed.data);
     if (!validation.ok) return invalid(validation.error);
-    if (existing)
-      await stopWorkspaceOwnedSandboxes({
-        admin,
-        connection: existing.connection,
-        workspaceId: access.context.workspace.id,
-      });
+    if (existing) {
+      if (existing.connection.provider === "vercel") {
+        await stopVercelWorkspaceOwnedSandboxes({
+          admin,
+          connection: existing.connection,
+          workspaceId: access.context.workspace.id,
+        });
+      } else {
+        await stopWorkspaceOwnedSandboxes({
+          admin,
+          connection: existing.connection,
+          workspaceId: access.context.workspace.id,
+        });
+      }
+    }
     const connection = await saveVercelSandboxConnection({
       admin,
       credentials: parsed.data,
@@ -155,17 +166,35 @@ export async function DELETE(_request: Request, context: RouteContext) {
       access.context.workspace.id,
       params.provider,
     );
+    const settings = await loadWorkspaceSandboxSettings(admin, access.context.workspace.id);
+    if (settings.activeProvider === params.provider) {
+      return NextResponse.json(
+        {
+          error: `Switch to another sandbox provider before disconnecting ${providerLabel(params.provider)}.`,
+        },
+        { status: 409 },
+      );
+    }
     const existing = await loadWorkspaceSandboxConnection(
       admin,
       access.context.workspace.id,
       params.provider,
     );
-    if (existing)
-      await stopWorkspaceOwnedSandboxes({
-        admin,
-        connection: existing.connection,
-        workspaceId: access.context.workspace.id,
-      });
+    if (existing) {
+      if (existing.connection.provider === "vercel") {
+        await stopVercelWorkspaceOwnedSandboxes({
+          admin,
+          connection: existing.connection,
+          workspaceId: access.context.workspace.id,
+        });
+      } else {
+        await stopWorkspaceOwnedSandboxes({
+          admin,
+          connection: existing.connection,
+          workspaceId: access.context.workspace.id,
+        });
+      }
+    }
     const table =
       params.provider === "vercel"
         ? "workspace_vercel_sandbox_connections"
@@ -188,6 +217,12 @@ export async function DELETE(_request: Request, context: RouteContext) {
   } finally {
     if (release) await release();
   }
+}
+
+function providerLabel(provider: "daytona" | "e2b" | "vercel") {
+  if (provider === "e2b") return "E2B";
+  if (provider === "daytona") return "Daytona";
+  return "Vercel Sandbox";
 }
 
 function invalid(message?: string) {

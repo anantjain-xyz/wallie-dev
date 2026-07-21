@@ -44,7 +44,12 @@ interface CodexConnectionPanelProps {
   initialStatus?: CodexConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: CodexConnectionStatus) => void;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
+  sandboxConnectionReady?: boolean;
+  /** @deprecated Use sandboxConnectionHref. */
   vercelConnectionHref?: string;
+  /** @deprecated Use sandboxConnectionReady. */
   vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
   workspaceId?: string;
 }
@@ -88,6 +93,8 @@ export function ChatGptSubscriptionControls({
   onCancel,
   onStart,
   pendingAction = null,
+  sandboxConnectionHref,
+  sandboxConnectionLabel = "Vercel Sandbox",
   vercelConnectionHref = "#vercel",
 }: {
   blocked: boolean;
@@ -96,6 +103,8 @@ export function ChatGptSubscriptionControls({
   onCancel: () => void;
   onStart: () => void;
   pendingAction?: "cancel" | "disconnect" | "save" | "start" | null;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
   vercelConnectionHref?: string;
 }) {
   return (
@@ -103,8 +112,11 @@ export function ChatGptSubscriptionControls({
       {blocked ? (
         <p className="text-xs leading-5 text-warning">
           Connect{" "}
-          <a className="underline underline-offset-2" href={vercelConnectionHref}>
-            Vercel Sandbox
+          <a
+            className="underline underline-offset-2"
+            href={sandboxConnectionHref ?? vercelConnectionHref}
+          >
+            {sandboxConnectionLabel}
           </a>{" "}
           before using a ChatGPT subscription.
         </p>
@@ -171,6 +183,9 @@ export function CodexConnectionPanel({
   initialStatus,
   onStatusChange,
   returnTo,
+  sandboxConnectionHref,
+  sandboxConnectionLabel,
+  sandboxConnectionReady,
   vercelConnectionHref = "#vercel",
   vercelSandboxConnection,
   workspaceId,
@@ -434,7 +449,7 @@ export function CodexConnectionPanel({
     : null;
   const saveDisabled = isBusy || credential.trim().length === 0;
   const chatGptBlocked =
-    !workspaceId || !vercelSandboxConnection || vercelSandboxConnection.status !== "connected";
+    !workspaceId || !(sandboxConnectionReady ?? vercelSandboxConnection?.status === "connected");
 
   const connectionValue: StatusValue | null = status
     ? status.reconnectRequired
@@ -523,6 +538,8 @@ export function CodexConnectionPanel({
               onCancel={handleCancelChatGptSignIn}
               onStart={handleStartChatGptSignIn}
               pendingAction={pendingAction}
+              sandboxConnectionHref={sandboxConnectionHref}
+              sandboxConnectionLabel={sandboxConnectionLabel}
               vercelConnectionHref={vercelConnectionHref}
             />
           ) : (

@@ -81,6 +81,13 @@ alter table public.sandbox_capability_checks
       )
     );
 
+alter table public.codex_device_auth_flows
+  add column workspace_id uuid references public.workspaces(id) on delete cascade,
+  add column sandbox_provider text,
+  add column sandbox_connection_revision uuid,
+  add constraint codex_device_auth_flows_sandbox_provider_check
+    check (sandbox_provider is null or sandbox_provider in ('vercel', 'e2b', 'daytona'));
+
 insert into public.workspace_sandbox_settings (workspace_id, active_provider)
 select id, 'vercel'
 from public.workspaces
@@ -104,6 +111,44 @@ where check_row.workspace_id = connection.workspace_id
   and check_row.sandbox_vercel_project_id = connection.project_id
   and check_row.sandbox_connection_revision is null;
 
+with current_agent_config as (
+  select
+    workspace.id as workspace_id,
+    coalesce(
+      (
+        select config.value_json #>> '{}'
+        from public.workspace_agent_config as config
+        where config.workspace_id = workspace.id and config.key = 'agent_provider'
+      ),
+      'codex'
+    ) as agent_provider,
+    (
+      select config.value_json #>> '{}'
+      from public.workspace_agent_config as config
+      where config.workspace_id = workspace.id and config.key = 'agent_model'
+    ) as agent_model
+  from public.workspaces as workspace
+), resolved_agent_config as (
+  select
+    workspace_id,
+    agent_provider,
+    coalesce(
+      agent_model,
+      case
+        when agent_provider = 'claude-code' then 'claude-opus-4-7[1m]'
+        else 'gpt-5.5'
+      end
+    ) as agent_model
+  from current_agent_config
+)
+update public.sandbox_capability_checks as check_row
+set
+  agent_provider = config.agent_provider,
+  agent_model = config.agent_model
+from resolved_agent_config as config
+where check_row.workspace_id = config.workspace_id
+  and (check_row.agent_provider is null or check_row.agent_model is null);
+
 create index agent_runs_active_sandbox_connection_idx
   on public.agent_runs (workspace_id, sandbox_provider, sandbox_connection_revision, sandbox_id)
   where sandbox_id is not null and status in ('queued', 'started', 'running');
@@ -116,6 +161,10 @@ create index sandbox_capability_checks_connection_idx
     sandbox_id
   )
   where sandbox_id is not null;
+
+create index codex_device_auth_flows_workspace_active_idx
+  on public.codex_device_auth_flows (workspace_id, sandbox_provider, expires_at)
+  where workspace_id is not null and status in ('starting', 'prompted');
 
 create table public.workspace_sandbox_connection_mutations (
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -285,6 +334,12 @@ begin
       where workspace_id = target_workspace_id
         and status in ('queued', 'started', 'running')
     )
+  ) or exists (
+    select 1 from public.codex_device_auth_flows
+    where workspace_id = target_workspace_id
+      and sandbox_provider = target_provider
+      and status in ('starting', 'prompted')
+      and expires_at > now()
   ) then
     return 'active';
   end if;
@@ -335,6 +390,12 @@ begin
     where workspace_id = target_workspace_id
       and status = 'running'
       and checked_at > now() - interval '1 hour'
+  ) or exists (
+    select 1 from public.codex_device_auth_flows
+    where workspace_id = target_workspace_id
+      and sandbox_provider = 'vercel'
+      and status in ('starting', 'prompted')
+      and expires_at > now()
   ) then return 'active'; end if;
 
   insert into public.workspace_vercel_sandbox_connection_mutations (
@@ -385,6 +446,11 @@ begin
     where workspace_id = target_workspace_id
       and status = 'running'
       and checked_at > now() - interval '1 hour'
+  ) or exists (
+    select 1 from public.codex_device_auth_flows
+    where workspace_id = target_workspace_id
+      and status in ('starting', 'prompted')
+      and expires_at > now()
   ) then return 'active'; end if;
 
   if target_provider = 'vercel' then

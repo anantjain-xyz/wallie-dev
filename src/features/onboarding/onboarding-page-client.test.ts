@@ -447,6 +447,8 @@ describe("reduceOnboardingMutationData", () => {
         },
         setupHealth: {
           latestSandboxCapabilityCheck: {
+            agentModel: "gpt-5.5",
+            agentProvider: "codex",
             capabilities: {},
             checkedAt: "2026-05-16T18:01:00.000Z",
             errorText: null,
@@ -498,6 +500,8 @@ describe("OnboardingPageClient", () => {
         initialData: onboardingData({
           setupHealth: {
             latestSandboxCapabilityCheck: {
+              agentModel: "gpt-5.5",
+              agentProvider: "codex",
               capabilities: {},
               checkedAt: "2026-05-16T18:00:00.000Z",
               errorText: "sandbox failed",
@@ -507,6 +511,12 @@ describe("OnboardingPageClient", () => {
               sandboxVercelProjectId: "prj_123",
               sandboxVercelTeamId: "team_123",
               status: "error",
+            },
+            primaryRepositoryProfile: {
+              configured: true,
+              fullName: "acme/repo-a",
+              repositoryId: "repo-a",
+              status: "ready",
             },
           },
         }),
@@ -527,6 +537,8 @@ describe("OnboardingPageClient", () => {
           initialData: onboardingData({
             setupHealth: {
               latestSandboxCapabilityCheck: {
+                agentModel: "gpt-5.5",
+                agentProvider: "codex",
                 capabilities: {},
                 checkedAt: "2026-05-16T18:00:00.000Z",
                 errorText: null,
@@ -536,6 +548,12 @@ describe("OnboardingPageClient", () => {
                 sandboxVercelProjectId: "prj_123",
                 sandboxVercelTeamId: "team_123",
                 status: "success",
+              },
+              primaryRepositoryProfile: {
+                configured: true,
+                fullName: "acme/repo-a",
+                repositoryId: "repo-a",
+                status: "ready",
               },
             },
           }),
@@ -578,6 +596,8 @@ describe("OnboardingPageClient", () => {
     const savedProfile = profile("repo-a");
 
     const latestSandboxCapabilityCheck = {
+      agentModel: "gpt-5.5",
+      agentProvider: "codex",
       capabilities: {},
       checkedAt: "2026-05-16T18:30:00.000Z",
       errorText: null,
@@ -1369,8 +1389,8 @@ describe("OnboardingPageClient", () => {
     expect(html).toContain("Connect Vercel Sandbox");
     expect(html).toContain("Connect E2B");
     expect(html).toContain("Connect Daytona");
-    // Default data has a connection, so an inline Disconnect control is offered.
-    expect(html).toContain("Disconnect");
+    // Active providers cannot be disconnected until the workspace switches providers.
+    expect(html).not.toContain("Disconnect");
     // The Vercel connection is made in the wizard, not by detouring into Settings.
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
   });
@@ -1658,6 +1678,8 @@ describe("OnboardingPageClient", () => {
               status: "ready",
             },
             latestSandboxCapabilityCheck: {
+              agentModel: "gpt-5.5",
+              agentProvider: "codex",
               capabilities: {},
               checkedAt: "2026-05-16T18:00:00.000Z",
               errorText: null,
@@ -1703,6 +1725,8 @@ describe("OnboardingPageClient", () => {
               status: "ready",
             },
             latestSandboxCapabilityCheck: {
+              agentModel: "gpt-5.5",
+              agentProvider: "codex",
               capabilities: {},
               checkedAt: "2026-05-16T18:00:00.000Z",
               errorText: null,
@@ -1740,6 +1764,8 @@ describe("OnboardingPageClient", () => {
               status: "ready",
             },
             latestSandboxCapabilityCheck: {
+              agentModel: "gpt-5.5",
+              agentProvider: "codex",
               capabilities: {},
               checkedAt: "2026-05-16T18:00:00.000Z",
               errorText: "sandbox failed",

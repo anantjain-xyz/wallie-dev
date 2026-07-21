@@ -29,6 +29,7 @@ import { buildRepositorySetupHealth } from "@/features/onboarding/repository-hea
 import {
   buildRuntimeReadiness,
   buildVerifyChecklist,
+  capabilityCheckMatchesCurrentSetup,
   verifyBlockersFromChecklist,
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
@@ -228,18 +229,21 @@ export function setupHealthItems(
           tone: "warning" as const,
           value: "Missing",
         };
+  const capabilityCheckMatches = capabilityCheckMatchesCurrentSetup(health);
   const sandbox = health.latestSandboxCapabilityCheck
     ? !sandboxConnection.connected
       ? { tone: "warning" as const, value: "Blocked" }
-      : health.latestSandboxCapabilityCheck.status === "success"
+      : health.latestSandboxCapabilityCheck.status === "success" && capabilityCheckMatches
         ? { tone: "success" as const, value: "Ready" }
-        : health.latestSandboxCapabilityCheck.status === "running"
+        : health.latestSandboxCapabilityCheck.status === "running" && capabilityCheckMatches
           ? { tone: "accent" as const, value: "Running" }
-          : { tone: "danger" as const, value: "Error" }
+          : health.latestSandboxCapabilityCheck.status === "error" && capabilityCheckMatches
+            ? { tone: "danger" as const, value: "Error" }
+            : { tone: "warning" as const, value: "Stale" }
     : { tone: "neutral" as const, value: "No check" };
   const sandboxDetail = !sandboxConnection.connected ? (
     `Connect ${sandboxConnection.providerLabel} first`
-  ) : health.latestSandboxCapabilityCheck ? (
+  ) : health.latestSandboxCapabilityCheck && capabilityCheckMatches ? (
     <>
       Checked{" "}
       <TimeDisplay
@@ -248,6 +252,8 @@ export function setupHealthItems(
         variant="relative"
       />
     </>
+  ) : health.latestSandboxCapabilityCheck ? (
+    "Run a capability check for the current sandbox, repository, and agent"
   ) : (
     "Run a capability check"
   );

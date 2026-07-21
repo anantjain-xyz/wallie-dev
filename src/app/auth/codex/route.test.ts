@@ -5,28 +5,28 @@ const mocked = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
-  loadRequiredVercelSandboxConnection: vi.fn(),
+  loadRequiredWorkspaceSandboxConnection: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedSettingsPath: vi.fn(),
   startCodexDeviceAuthFlow: vi.fn(),
-  VercelSandboxConnectionInvalidError: class VercelSandboxConnectionInvalidError extends Error {
-    constructor(message: string) {
+  SandboxConnectionInvalidError: class SandboxConnectionInvalidError extends Error {
+    constructor(_provider: string, message: string) {
       super(message);
-      this.name = "VercelSandboxConnectionInvalidError";
+      this.name = "SandboxConnectionInvalidError";
     }
   },
-  VercelSandboxConnectionMissingError: class VercelSandboxConnectionMissingError extends Error {
-    constructor() {
-      super("Connect a Vercel Sandbox account before starting Wallie runs.");
-      this.name = "VercelSandboxConnectionMissingError";
+  SandboxConnectionMissingError: class SandboxConnectionMissingError extends Error {
+    constructor(provider: string) {
+      super(`Connect ${provider === "e2b" ? "E2B" : provider} before starting Wallie runs.`);
+      this.name = "SandboxConnectionMissingError";
     }
   },
 }));
 
-const vercelCredentials = {
-  projectId: "prj_123",
-  teamId: "team_123",
-  token: "vca_secret",
+const sandboxConnection = {
+  credentials: { apiKey: "e2b_secret" },
+  provider: "e2b" as const,
+  revision: "revision-2",
 };
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -57,10 +57,10 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
-  VercelSandboxConnectionInvalidError: mocked.VercelSandboxConnectionInvalidError,
-  VercelSandboxConnectionMissingError: mocked.VercelSandboxConnectionMissingError,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
+  SandboxConnectionInvalidError: mocked.SandboxConnectionInvalidError,
+  SandboxConnectionMissingError: mocked.SandboxConnectionMissingError,
 }));
 
 import { GET } from "@/app/auth/codex/route";
@@ -71,13 +71,9 @@ describe("GET /auth/codex", () => {
     mocked.createSupabaseAdminClient.mockReturnValue({});
     mocked.createSupabaseServerClient.mockResolvedValue({});
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
-    mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-      credentials: vercelCredentials,
-      preview: {
-        projectId: "prj_123",
-        status: "connected",
-        teamId: "team_123",
-      },
+    mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+      connection: sandboxConnection,
+      provider: "e2b",
     });
     mocked.requireWorkspaceAccessById.mockResolvedValue({
       context: {
@@ -129,19 +125,20 @@ describe("GET /auth/codex", () => {
       userCode: "ABCD-EFGH",
     });
     expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith("workspace-123");
-    expect(mocked.loadRequiredVercelSandboxConnection).toHaveBeenCalledWith(
+    expect(mocked.loadRequiredWorkspaceSandboxConnection).toHaveBeenCalledWith(
       expect.anything(),
       "workspace-123",
     );
     expect(mocked.startCodexDeviceAuthFlow).toHaveBeenCalledWith({
+      connection: sandboxConnection,
       userId: "user-123",
-      vercelCredentials,
+      workspaceId: "workspace-123",
     });
   });
 
-  it("blocks device-code flow when the workspace Vercel connection is missing", async () => {
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
-      new mocked.VercelSandboxConnectionMissingError(),
+  it("blocks device-code flow when the active sandbox connection is missing", async () => {
+    mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(
+      new mocked.SandboxConnectionMissingError("e2b"),
     );
 
     const response = await GET(
@@ -152,15 +149,16 @@ describe("GET /auth/codex", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: "Connect a Vercel Sandbox account before starting Wallie runs.",
+      error: "Connect E2B before starting Wallie runs.",
     });
     expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
 
-  it("blocks device-code flow when the workspace Vercel connection is invalid", async () => {
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
-      new mocked.VercelSandboxConnectionInvalidError(
-        "Saved Vercel Sandbox connection is not valid. Reconnect it in workspace settings.",
+  it("blocks device-code flow when the active sandbox connection is invalid", async () => {
+    mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(
+      new mocked.SandboxConnectionInvalidError(
+        "e2b",
+        "Saved E2B connection is not valid. Reconnect it in workspace settings.",
       ),
     );
 
@@ -172,7 +170,7 @@ describe("GET /auth/codex", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: "Saved Vercel Sandbox connection is not valid. Reconnect it in workspace settings.",
+      error: "Saved E2B connection is not valid. Reconnect it in workspace settings.",
     });
     expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
@@ -192,7 +190,7 @@ describe("GET /auth/codex", () => {
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Workspace not found." });
-    expect(mocked.loadRequiredVercelSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.loadRequiredWorkspaceSandboxConnection).not.toHaveBeenCalled();
     expect(mocked.startCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
 

@@ -198,7 +198,7 @@ export function SandboxProviderSection({
                         Use this provider
                       </button>
                     ) : null}
-                    {connection && canManage ? (
+                    {connection && canManage && !active ? (
                       <button
                         className="ui-button-danger"
                         disabled={pending !== null}

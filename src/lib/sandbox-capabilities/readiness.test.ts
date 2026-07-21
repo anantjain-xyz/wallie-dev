@@ -69,6 +69,19 @@ describe("assertCurrentSandboxCapabilityCheck", () => {
     ).rejects.toMatchObject({ provider: "e2b" });
   });
 
+  it("rejects legacy checks without agent metadata instead of matching every agent", async () => {
+    await expect(
+      assertReady({
+        agent_model: null,
+        agent_provider: null,
+        capabilities: completeCapabilities,
+        sandbox_connection_revision: "revision-1",
+        sandbox_provider: "e2b",
+        status: "success",
+      }),
+    ).rejects.toBeInstanceOf(SandboxCapabilityCheckStaleError);
+  });
+
   it("rejects successful rows that do not contain the complete runtime probe", async () => {
     await expect(
       assertReady({

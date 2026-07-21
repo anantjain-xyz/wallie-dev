@@ -465,6 +465,14 @@ function SettingsCompletePage({
                 onCodexStatusChange={(status) =>
                   setData((currentData) => updateCodexConnectionInData(currentData, status))
                 }
+                sandboxConnectionHref="#sandbox"
+                sandboxConnectionLabel={
+                  pageData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+                }
+                sandboxConnectionReady={
+                  pageData.setupHealth.sandboxConnection?.connected ??
+                  pageData.setupHealth.vercelSandboxConnection.connected
+                }
                 setFlashMessage={setFlashMessage}
                 tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
                 title="Agent"

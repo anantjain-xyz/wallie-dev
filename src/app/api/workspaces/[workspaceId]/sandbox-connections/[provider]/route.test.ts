@@ -1,0 +1,104 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocked = vi.hoisted(() => ({
+  acquireSandboxConnectionMutationLock: vi.fn(),
+  createSupabaseAdminClient: vi.fn(),
+  loadWorkspaceSandboxConnection: vi.fn(),
+  loadWorkspaceSandboxSettings: vi.fn(),
+  requireWorkspaceAccessById: vi.fn(),
+  stopVercelWorkspaceOwnedSandboxes: vi.fn(),
+}));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: mocked.createSupabaseAdminClient,
+}));
+
+vi.mock("@/lib/workspaces/access", () => ({
+  requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/sandbox-connections/cleanup", () => ({
+  stopVercelWorkspaceOwnedSandboxes: mocked.stopVercelWorkspaceOwnedSandboxes,
+}));
+
+vi.mock("@/lib/sandbox-connections/server", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/sandbox-connections/server")>(
+    "@/lib/sandbox-connections/server",
+  );
+  return {
+    ...actual,
+    acquireSandboxConnectionMutationLock: mocked.acquireSandboxConnectionMutationLock,
+    loadWorkspaceSandboxConnection: mocked.loadWorkspaceSandboxConnection,
+    loadWorkspaceSandboxSettings: mocked.loadWorkspaceSandboxSettings,
+  };
+});
+
+import { DELETE } from "./route";
+
+const workspaceId = "11111111-1111-4111-8111-111111111111";
+const connection = {
+  credentials: { projectId: "project-1", teamId: "team-1", token: "secret" },
+  provider: "vercel" as const,
+  revision: "revision-1",
+};
+
+function context(provider: string) {
+  return { params: Promise.resolve({ provider, workspaceId }) };
+}
+
+describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const eq = vi.fn().mockResolvedValue({ error: null });
+    const deleteRow = vi.fn(() => ({ eq }));
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: vi.fn(() => ({ delete: deleteRow })),
+    });
+    mocked.acquireSandboxConnectionMutationLock.mockResolvedValue(vi.fn());
+    mocked.requireWorkspaceAccessById.mockResolvedValue({
+      context: {
+        currentMember: { id: "member-1", role: "owner" },
+        workspace: { id: workspaceId },
+      },
+      ok: true,
+    });
+    mocked.loadWorkspaceSandboxConnection.mockResolvedValue({ connection });
+    mocked.loadWorkspaceSandboxSettings.mockResolvedValue({
+      activeProvider: "e2b",
+      revision: 2,
+      updatedAt: null,
+    });
+  });
+
+  it("rejects deleting the active provider before loading or deleting its connection", async () => {
+    mocked.loadWorkspaceSandboxSettings.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      revision: 2,
+      updatedAt: null,
+    });
+
+    const response = await DELETE(new Request("http://localhost"), context("vercel"));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Switch to another sandbox provider before disconnecting Vercel Sandbox.",
+    });
+    expect(mocked.loadWorkspaceSandboxConnection).not.toHaveBeenCalled();
+    expect(mocked.createSupabaseAdminClient.mock.results[0]?.value.from).not.toHaveBeenCalled();
+  });
+
+  it("uses the conservative Vercel cleanup path before deleting an inactive connection", async () => {
+    const admin = mocked.createSupabaseAdminClient();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
+
+    const response = await DELETE(new Request("http://localhost"), context("vercel"));
+
+    expect(response.status).toBe(200);
+    expect(mocked.stopVercelWorkspaceOwnedSandboxes).toHaveBeenCalledWith({
+      admin,
+      connection,
+      workspaceId,
+    });
+    expect(admin.from).toHaveBeenCalledWith("workspace_vercel_sandbox_connections");
+  });
+});

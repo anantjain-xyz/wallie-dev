@@ -1144,6 +1144,14 @@ export default function RuntimeStep({
             onCodexStatusChange={handleCodexStatusChange}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
+            sandboxConnectionHref="#sandbox"
+            sandboxConnectionLabel={
+              data.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+            }
+            sandboxConnectionReady={
+              data.setupHealth.sandboxConnection?.connected ??
+              data.setupHealth.vercelSandboxConnection.connected
+            }
             vercelConnectionHref="#sandbox"
             vercelSandboxConnection={data.vercelSandboxConnection}
             variant="embedded"

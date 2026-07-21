@@ -278,12 +278,15 @@ export type Database = {
           id: string
           instructions: string | null
           output_tail: string | null
+          sandbox_connection_revision: string | null
           sandbox_id: string
+          sandbox_provider: string | null
           status: string
           updated_at: string
           user_code: string | null
           user_id: string
           verification_uri: string | null
+          workspace_id: string | null
         }
         Insert: {
           account_email?: string | null
@@ -299,12 +302,15 @@ export type Database = {
           id?: string
           instructions?: string | null
           output_tail?: string | null
+          sandbox_connection_revision?: string | null
           sandbox_id: string
+          sandbox_provider?: string | null
           status?: string
           updated_at?: string
           user_code?: string | null
           user_id: string
           verification_uri?: string | null
+          workspace_id?: string | null
         }
         Update: {
           account_email?: string | null
@@ -320,14 +326,25 @@ export type Database = {
           id?: string
           instructions?: string | null
           output_tail?: string | null
+          sandbox_connection_revision?: string | null
           sandbox_id?: string
+          sandbox_provider?: string | null
           status?: string
           updated_at?: string
           user_code?: string | null
           user_id?: string
           verification_uri?: string | null
+          workspace_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "codex_device_auth_flows_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       github_installations: {
         Row: {

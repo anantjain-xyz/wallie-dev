@@ -254,6 +254,14 @@ export function RuntimeIntegrationIsland({
           reconnectRequired: initialData.setupHealth.codexConnection.reconnectRequired,
           updatedAt: initialData.setupHealth.codexConnection.updatedAt,
         }}
+        sandboxConnectionHref="#sandbox"
+        sandboxConnectionLabel={
+          initialData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+        }
+        sandboxConnectionReady={
+          initialData.setupHealth.sandboxConnection?.connected ??
+          initialData.setupHealth.vercelSandboxConnection.connected
+        }
         setFlashMessage={setMessage}
         tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
         title="Agent"

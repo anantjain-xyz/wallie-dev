@@ -41,10 +41,8 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
 
   if (error) throw error;
 
-  const legacyAgentMatch = data?.agent_provider == null && data?.agent_model == null;
   const agentMatch =
-    legacyAgentMatch ||
-    (data?.agent_provider === input.agent.provider && data?.agent_model === input.agent.model);
+    data?.agent_provider === input.agent.provider && data?.agent_model === input.agent.model;
   const capabilities =
     typeof data?.capabilities === "object" && data.capabilities !== null
       ? (data.capabilities as Partial<SandboxCapabilityReport>)

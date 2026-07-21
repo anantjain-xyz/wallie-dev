@@ -26,8 +26,10 @@ export type RunSandboxRef = {
 };
 
 /**
- * Stop the sandbox backing a run, resolving the exact provider connection that
- * launched it. Best-effort: `stopSandboxById` swallows its
+ * Stop the sandbox backing a run using the workspace's current connection for
+ * the recorded provider. Credential rotation is serialized with active work,
+ * but cancellation must still attempt cleanup if a revision changed instead of
+ * silently leaking the sandbox. Best-effort: `stopSandboxById` swallows its
  * own errors so a stale or already-stopped sandbox cannot break the caller's
  * batch. A no-op when the run never acquired a sandbox.
  *
@@ -62,7 +64,7 @@ async function resolveRunSandboxConnection(
     return null;
   }
 
-  const cacheKey = `${run.workspace_id}:${run.sandbox_provider}:${run.sandbox_connection_revision ?? "legacy"}`;
+  const cacheKey = `${run.workspace_id}:${run.sandbox_provider}`;
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey) ?? null;
   }
@@ -72,15 +74,7 @@ async function resolveRunSandboxConnection(
     run.workspace_id,
     run.sandbox_provider,
   );
-  const revisionMatches =
-    record &&
-    (run.sandbox_connection_revision != null
-      ? String(record.connection.revision) === String(run.sandbox_connection_revision)
-      : run.sandbox_provider === "vercel" &&
-        record.connection.provider === "vercel" &&
-        record.connection.credentials.teamId === run.sandbox_vercel_team_id &&
-        record.connection.credentials.projectId === run.sandbox_vercel_project_id);
-  const connection = revisionMatches ? record.connection : null;
+  const connection = record?.connection ?? null;
 
   cache.set(cacheKey, connection);
   return connection;

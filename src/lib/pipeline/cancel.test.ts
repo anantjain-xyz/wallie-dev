@@ -332,7 +332,7 @@ describe("stopRunSandbox", () => {
     });
   });
 
-  it("fails closed when the current connection does not match the run", async () => {
+  it("attempts cleanup with the current credentials after a connection rotation", async () => {
     connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue({
       connection: {
         credentials: { projectId: "other", teamId: "other", token: "tok" },
@@ -343,7 +343,13 @@ describe("stopRunSandbox", () => {
 
     await stopRunSandbox({} as never, vercelRun());
 
-    expect(sandboxMocks.stopSandboxById).not.toHaveBeenCalled();
+    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1", {
+      connection: {
+        credentials: { projectId: "other", teamId: "other", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+    });
   });
 
   it("is a no-op when the run has no sandbox", async () => {

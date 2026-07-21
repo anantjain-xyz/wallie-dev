@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260721000000_add_e2b_daytona_sandbox_providers.sql"),
+  join(process.cwd(), "supabase/migrations/20260721000001_add_e2b_daytona_sandbox_providers.sql"),
   "utf8",
 );
 

@@ -49,6 +49,9 @@ type AgentConfigSectionProps = {
   onAgentConfigSaved?: (entries: AgentConfigEntry[]) => void;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
+  sandboxConnectionReady?: boolean;
   setFlashMessage: (message: FlashMessage) => void;
   tagline?: ReactNode;
   title?: string;
@@ -140,6 +143,9 @@ export function AgentConfigSection({
   onAgentConfigSaved,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  sandboxConnectionHref,
+  sandboxConnectionLabel,
+  sandboxConnectionReady,
   setFlashMessage,
   tagline = "Configure how Wallie runs coding agents in this workspace. These settings apply to all sessions that trigger agent execution.",
   title = "Coding agent",
@@ -343,6 +349,9 @@ export function AgentConfigSection({
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             provider={selectedAgentProvider}
+            sandboxConnectionHref={sandboxConnectionHref}
+            sandboxConnectionLabel={sandboxConnectionLabel}
+            sandboxConnectionReady={sandboxConnectionReady}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
           />
@@ -394,6 +403,9 @@ export function AgentConfigSection({
             onClaudeCodeStatusChange={onClaudeCodeStatusChange}
             onCodexStatusChange={onCodexStatusChange}
             provider={selectedAgentProvider}
+            sandboxConnectionHref={sandboxConnectionHref}
+            sandboxConnectionLabel={sandboxConnectionLabel}
+            sandboxConnectionReady={sandboxConnectionReady}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}
           />

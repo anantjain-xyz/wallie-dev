@@ -52,6 +52,8 @@ function health(overrides: Partial<OnboardingSetupHealth> = {}): OnboardingSetup
       updatedAt: "2026-05-16T18:00:00.000Z",
     },
     latestSandboxCapabilityCheck: {
+      agentModel: "gpt-5.5",
+      agentProvider: "codex",
       capabilities: {},
       checkedAt: "2026-05-16T18:00:00.000Z",
       errorText: null,
@@ -259,6 +261,8 @@ describe("buildVerifyChecklist", () => {
     expect(
       sandboxItem({
         latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
           errorText: "sandbox failed",
@@ -399,6 +403,8 @@ describe("buildVerifyChecklist", () => {
       agentConfig: health().agentConfig.values,
       health: health({
         latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
           errorText: null,
@@ -425,6 +431,8 @@ describe("buildVerifyChecklist", () => {
       agentConfig: health().agentConfig.values,
       health: health({
         latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
           errorText: null,
@@ -442,6 +450,31 @@ describe("buildVerifyChecklist", () => {
 
     expect(sandboxItem).toMatchObject({
       detail: "Run a sandbox capability check for the connected Vercel Sandbox account.",
+      passed: false,
+      statusLabel: "Stale",
+      statusTone: "warning",
+    });
+  });
+
+  it("marks a successful check from the previous provider as stale", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        sandboxConnection: {
+          connected: true,
+          connectionRevision: "e2b-revision-1",
+          displayName: "E2B",
+          lastValidationError: null,
+          provider: "e2b",
+          providerLabel: "E2B",
+          status: "connected",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+        },
+      }),
+      onboarding: onboarding(),
+    });
+
+    expect(checklist.find((item) => item.id === "sandbox")).toMatchObject({
       passed: false,
       statusLabel: "Stale",
       statusTone: "warning",

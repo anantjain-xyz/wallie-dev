@@ -206,6 +206,33 @@ function capabilityCheckMatchesSandboxConnection(
   );
 }
 
+export function capabilityCheckMatchesCurrentSetup(health: OnboardingSetupHealth): boolean {
+  const latestCheck = health.latestSandboxCapabilityCheck;
+  if (!latestCheck) return false;
+  const runtime = buildRuntimeReadiness({
+    agentConfig: health.agentConfig.values,
+    claudeCodeConnection: health.claudeCodeConnection,
+    codexConnection: health.codexConnection,
+    primaryRepositoryId: health.primaryRepositoryProfile.repositoryId,
+    repositorySetup: health.repositorySetup,
+  });
+  const primaryRepositoryId = health.primaryRepositoryProfile.repositoryId;
+  const repositoryMatches =
+    Boolean(primaryRepositoryId) && latestCheck.githubRepositoryId === primaryRepositoryId;
+  const pendingWithoutAgentMetadata =
+    latestCheck.status === "running" &&
+    latestCheck.agentProvider == null &&
+    latestCheck.agentModel == null;
+  const agentMatches =
+    pendingWithoutAgentMetadata ||
+    (latestCheck.agentProvider === runtime.provider && latestCheck.agentModel === runtime.model);
+  const connectionMatches = health.sandboxConnection
+    ? capabilityCheckMatchesSandboxConnection(latestCheck, health.sandboxConnection)
+    : capabilityCheckMatchesLegacyVercelConnection(latestCheck, health.vercelSandboxConnection);
+
+  return repositoryMatches && agentMatches && connectionMatches;
+}
+
 function capabilityCheckMatchesLegacyVercelConnection(
   check: NonNullable<OnboardingSetupHealth["latestSandboxCapabilityCheck"]>,
   connection: OnboardingSetupHealth["vercelSandboxConnection"],
@@ -262,7 +289,9 @@ export function buildVerifyChecklist(input: {
     Boolean(primaryRepositoryId) && latestCheck?.githubRepositoryId === primaryRepositoryId;
   const latestCheckMatchesAgent =
     latestCheck !== null &&
-    (latestCheck.agentProvider == null ||
+    ((latestCheck.status === "running" &&
+      latestCheck.agentProvider == null &&
+      latestCheck.agentModel == null) ||
       (latestCheck.agentProvider === runtimeReadiness.provider &&
         latestCheck.agentModel === runtimeReadiness.model));
   const latestCheckMatchesSandboxConnection =
