@@ -58,7 +58,7 @@ describe("/ page", () => {
     expect(html).toContain("The Future of Software Factories is Multiplayer");
     expect(html).toContain("Sign in to Wallie");
     expect(html).toContain("See the product walkthrough");
-    expect(html).toContain("Review the artifact, then approve or return it.");
+    expect(html).toContain("Review the output, then approve or return it.");
     expect(mocked.createSupabaseServerClient).not.toHaveBeenCalled();
     expect(mocked.redirect).not.toHaveBeenCalled();
   });

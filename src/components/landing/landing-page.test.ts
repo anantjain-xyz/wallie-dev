@@ -20,9 +20,9 @@ describe("LandingPage", () => {
     expect(html).toContain("The Future of Software Factories is Multiplayer");
     expect(html).toContain("Bring the Linear issue into focus.");
     expect(html).toContain("See exactly which stage owns the work.");
-    expect(html).toContain("Review the artifact, then approve or return it.");
+    expect(html).toContain("Review the output, then approve or return it.");
     expect(html).toContain("Boundaries your team can see.");
-    expect(html).toContain("Directo your team");
+    expect(html).toContain("Direct your team");
   });
 
   it("uses the required CTA destinations and a focusable walkthrough target", () => {
