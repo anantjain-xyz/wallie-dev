@@ -22,7 +22,7 @@ describe("LandingPage accessibility", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(screen.queryAllByRole("textbox")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "Turn Linear issues into reviewed, staged work.",
+      "The Future of Software Factories is Multiplayer",
     );
   });
 

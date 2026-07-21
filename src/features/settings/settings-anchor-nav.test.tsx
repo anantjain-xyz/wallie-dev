@@ -62,9 +62,9 @@ describe("SettingsAnchorNav", () => {
   it("sticks below the safe-area-aware shell header", () => {
     render(<SettingsAnchorNav groups={groups} />);
 
-    expect(screen.getByRole("navigation", { name: "Settings sections" })).toHaveClass(
-      "top-[var(--shell-scroll-padding)]",
-    );
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(nav.className).toContain("sticky");
+    expect(nav.className).toContain("top-[calc(var(--shell-scroll-padding)+16px)]");
   });
 
   it("observes Settings sections inserted after the navigation mounts", async () => {

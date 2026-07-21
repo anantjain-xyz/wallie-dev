@@ -131,10 +131,10 @@ export function SettingsAnchorNav({
   }
 
   return (
-    <div className="hidden lg:block">
+    <div className="hidden self-start lg:block">
       <nav
         aria-label="Settings sections"
-        className="sticky top-[var(--shell-scroll-padding)] flex flex-col gap-5"
+        className="sticky top-[calc(var(--shell-scroll-padding)+16px)] flex max-h-[calc(100dvh-var(--shell-scroll-padding)-16px)] flex-col gap-5 overflow-y-auto"
       >
         {groups.map((group) => (
           <div key={group.label}>

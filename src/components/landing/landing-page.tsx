@@ -1,9 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
 
 import {
   ArtifactDecisionMockup,
   IssueInputMockup,
+  PipelineBoardMockup,
   PipelineProgressMockup,
 } from "@/components/landing/product-mockups";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
@@ -29,18 +29,15 @@ export function LandingPage() {
       >
         <div className="mx-auto grid w-full max-w-[1080px] gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-16">
           <div>
-            <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accent">
-              From issue to approved artifact
-            </p>
             <h1
               id="landing-title"
-              className="mt-5 max-w-[760px] text-[42px] font-semibold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px] lg:text-[72px]"
+              className="max-w-[760px] text-[42px] font-semibold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px] lg:text-[72px]"
             >
-              Turn Linear issues into reviewed, staged work.
+              The Future of Software Factories is Multiplayer
             </h1>
             <p className="mt-6 max-w-[620px] text-[17px] leading-8 text-muted sm:text-[18px]">
-              Wallie carries one issue through your workspace pipeline, preserving a reviewable
-              artifact at every human gate.
+              Wallie lets you define your team&apos;s workflow, add approval gates between stages,
+              and run coding agents to process each stage in isolated sandboxed environments.
             </p>
             <div className="mt-8 flex flex-col gap-3 min-[420px]:flex-row">
               <Link href="/login" className={primaryCtaClassName}>
@@ -52,29 +49,7 @@ export function LandingPage() {
             </div>
           </div>
 
-          <div
-            className="rounded-[10px] border border-border bg-canvas p-4 shadow-[var(--shadow-elevated)] sm:p-5"
-            aria-label="Wallie workflow summary"
-          >
-            <ol className="grid gap-3">
-              {[
-                ["01", "Linear issue", "OP-349 ready"],
-                ["02", "Pipeline", "Plan → Build → Land"],
-                ["03", "Artifact review", "Awaiting approval"],
-              ].map(([index, label, value]) => (
-                <li
-                  key={index}
-                  className="grid grid-cols-[34px_minmax(0,1fr)] gap-3 rounded-[6px] border border-border bg-sheet p-4"
-                >
-                  <span className="font-mono text-xs font-semibold text-accent">{index}</span>
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-semibold text-foreground">{label}</p>
-                    <p className="mt-1 truncate font-mono text-xs text-muted">{value}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </div>
+          <PipelineBoardMockup />
         </div>
       </section>
 
@@ -113,8 +88,8 @@ export function LandingPage() {
       >
         <StorySection
           eyebrow="03 · Make the decision"
-          title="Review the artifact, then approve or return it."
-          body="Every stage produces a versioned markdown artifact. A reviewer decides whether the session advances or reruns with feedback."
+          title="Review the output, then approve or return it."
+          body="Every stage produces a versioned markdown artifact or a pull request. A reviewer decides whether the session advances or reruns with feedback."
         >
           <ArtifactDecisionMockup />
         </StorySection>
@@ -138,7 +113,7 @@ export function LandingPage() {
             {[
               [
                 "Human approval gates",
-                "A reviewer approves or rejects the artifact before the next stage begins.",
+                "A reviewer approves or rejects the output before the next stage begins.",
               ],
               [
                 "Workspace isolation",
@@ -167,7 +142,7 @@ export function LandingPage() {
             Keep the next handoff reviewable
           </p>
           <h2 id="final-cta-title" className="type-display mt-4 sm:text-[42px] sm:leading-[1.1]">
-            Start with the issue your team already has.
+            Direct your team&apos;s attention to where it has the most leverage
           </h2>
           <p className="mt-4 max-w-[560px] text-[15px] leading-7 text-muted">
             Sign in, choose a workspace, and create the session that carries it through your
@@ -191,17 +166,9 @@ function LandingHeader() {
         <Link
           href="/"
           aria-label="Wallie home"
-          className="flex min-h-11 items-center gap-2.5 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          className="flex min-h-11 items-center rounded-[6px] px-1 text-[22px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
-          <Image
-            src="/wallie-logo-minimal.png"
-            alt=""
-            width={36}
-            height={36}
-            className="h-9 w-9 rounded-[6px] object-contain dark:invert"
-            priority
-          />
-          <span className="text-[15px] font-semibold text-foreground">Wallie</span>
+          Wallie
         </Link>
         <Link href="/login" className={primaryCtaClassName}>
           Sign in

@@ -11,6 +11,65 @@ function ProductCrop({ children, label }: { children: ReactNode; label: string }
   );
 }
 
+type BoardLane = {
+  cards: string[];
+  name: string;
+};
+
+export function PipelineBoardMockup() {
+  const lanes: BoardLane[] = [
+    {
+      name: "Plan",
+      cards: ["Frame auth callback edge cases", "Spec workspace invite flow", "Map Linear webhook retries"],
+    },
+    {
+      name: "Build",
+      cards: ["Wire session create from Linear"],
+    },
+    {
+      name: "Review",
+      cards: ["Tighten RLS on artifacts", "Ship settings secrets UI"],
+    },
+    {
+      name: "Land",
+      cards: [
+        "Update Linear and Agent labels",
+        "Document self-hosting path",
+        "Fix pipeline board empty states",
+        "Cut landing page mobile noise",
+      ],
+    },
+  ];
+
+  return (
+    <figure className="overflow-hidden rounded-[10px] border border-border bg-sheet p-3 shadow-[var(--shadow-elevated)] sm:p-4">
+      <figcaption className="sr-only">Pipeline board preview</figcaption>
+      <div aria-hidden="true" className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-0">
+        {lanes.map((lane) => (
+          <div
+            key={lane.name}
+            className="min-w-0 border-border/70 sm:border-l sm:px-2.5 sm:first:border-l-0 sm:first:pl-0 sm:last:pr-0 md:px-3"
+          >
+            <p className="mb-2 truncate text-[13px] font-semibold text-foreground">{lane.name}</p>
+            <div className="flex flex-col gap-1.5">
+              {lane.cards.map((title) => (
+                <div
+                  key={title}
+                  className="rounded-[6px] border border-border/80 bg-canvas px-2 py-2"
+                >
+                  <p className="line-clamp-2 text-xs font-medium leading-4 text-foreground">
+                    {title}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </figure>
+  );
+}
+
 export function IssueInputMockup() {
   return (
     <ProductCrop label="New session · Source">
@@ -43,7 +102,8 @@ export function IssueInputMockup() {
 export function PipelineProgressMockup() {
   const stages = [
     { detail: "Approved", name: "Plan", tone: "success" },
-    { detail: "Artifact v2 ready", name: "Build", tone: "accent" },
+    { detail: "Approved", name: "Build", tone: "success" },
+    { detail: "Artifact ready", name: "Review", tone: "accent" },
     { detail: "Waiting", name: "Land", tone: "muted" },
   ] as const;
 
@@ -65,7 +125,7 @@ export function PipelineProgressMockup() {
             <li
               key={stage.name}
               className={`grid grid-cols-[30px_minmax(0,1fr)] gap-3 rounded-[6px] border p-3.5 ${
-                index === 1 ? "border-accent bg-accent-soft" : "border-border bg-sheet"
+                stage.tone === "accent" ? "border-accent bg-accent-soft" : "border-border bg-sheet"
               }`}
             >
               <span
