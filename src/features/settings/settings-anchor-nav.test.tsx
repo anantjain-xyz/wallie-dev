@@ -63,8 +63,12 @@ describe("SettingsAnchorNav", () => {
     render(<SettingsAnchorNav groups={groups} />);
 
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
-    expect(nav.className).toContain("sticky");
-    expect(nav.className).toContain("top-[calc(var(--shell-scroll-padding)+16px)]");
+    // The sticky container is the wrapper (parent of nav) to avoid nested sticky losing its containing block
+    const wrapper = nav.parentElement as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.className).toContain("sticky");
+    expect(wrapper.className).toContain("top-[calc(var(--shell-scroll-padding)+16px)]");
+    expect(wrapper.className).toContain("self-start");
   });
 
   it("observes Settings sections inserted after the navigation mounts", async () => {
