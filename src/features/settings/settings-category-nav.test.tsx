@@ -78,9 +78,10 @@ describe("SettingsCategoryNav hash routing", () => {
       <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />,
     );
 
-    expect(getByRole("navigation", { name: "Settings categories" })).toHaveClass(
-      "top-[var(--shell-scroll-padding)]",
-    );
+    const nav = getByRole("navigation", { name: "Settings categories" });
+    expect(nav.className).toContain("sticky");
+    expect(nav.className).toContain("top-[calc(var(--shell-scroll-padding)+16px)]");
+    expect(nav).toHaveClass("self-start");
     expect(container.querySelector("ul")).toHaveClass("grid", "grid-cols-2");
     expect(container.querySelector("ul")).not.toHaveClass("overflow-x-auto");
   });

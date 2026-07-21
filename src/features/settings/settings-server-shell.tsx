@@ -295,7 +295,7 @@ export function SettingsServerShell(props: SettingsServerShellProps) {
             Manage workspace identity, members, integrations, pipeline, and encrypted secrets.
           </p>
         </header>
-        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
+        <div className="grid grid-cols-1 items-start gap-10 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
           <SettingsCategoryNav
             activeCategory={props.category}
             workspaceSlug={props.initialData.workspace.slug}

@@ -83,7 +83,7 @@ describe("ShellHeader", () => {
   it("keeps workspace identity in the desktop rail", () => {
     const html = renderShell();
 
-    expect(html).toContain("Wallie");
+    expect(html).not.toContain("Wallie");
     expect(html).toContain("Acme Corp");
     expect(html).toContain("data-shell-rail");
     expect(html).toContain(">A<");

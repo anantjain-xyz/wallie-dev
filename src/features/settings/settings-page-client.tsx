@@ -378,7 +378,9 @@ function SettingsCompletePage({
 
         <div
           className={
-            deferredMode ? "" : "grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]"
+            deferredMode
+              ? ""
+              : "grid grid-cols-1 items-start gap-12 lg:grid-cols-[180px_minmax(0,1fr)]"
           }
         >
           {deferredMode ? null : (
@@ -731,7 +733,7 @@ function SettingsStreamingPage({
           </div>
         </header>
 
-        <div className="grid grid-cols-1 gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 items-start gap-12 lg:grid-cols-[180px_minmax(0,1fr)]">
           <SettingsAnchorNav groups={ANCHOR_GROUPS} legacyRedirects={LEGACY_ANCHOR_REDIRECTS} />
 
           <div className="space-y-16 min-w-0">

@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -33,17 +32,9 @@ export default async function WorkspaceOnboardingPage() {
           <Link
             href="/"
             aria-label="Wallie home"
-            className="flex items-center gap-2.5 focus-visible:outline-none"
+            className="flex min-h-11 items-center rounded-[6px] px-1 text-[22px] font-bold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           >
-            <Image
-              src="/wallie-logo-minimal.png"
-              alt=""
-              width={32}
-              height={32}
-              className="h-8 w-8 rounded-[6px] object-contain dark:invert"
-              priority
-            />
-            <span className="text-[16px] font-semibold tracking-tight text-foreground">Wallie</span>
+            Wallie
           </Link>
           <AccountMenu email={user.email ?? null} />
         </div>

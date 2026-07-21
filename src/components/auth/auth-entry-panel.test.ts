@@ -42,16 +42,13 @@ describe("AuthEntryPanel", () => {
     expect(html).not.toContain('name="tokenDigit"');
   });
 
-  it("presents a single page heading, context, visible email label, and recommended method", () => {
+  it("presents a single page heading, context, visible email label, and method", () => {
     const html = renderPanel();
 
     expect(countMatches(html, "<h1")).toBe(1);
     expect(html).toContain("Sign in to Wallie");
     expect(html).toContain("Continue to your workspace and review active sessions.");
     expect(html).toContain("Sign in with email");
-    expect(html).toContain("Recommended");
-    expect(html).toContain("flex flex-wrap items-start");
-    expect(html).toContain("max-w-full rounded-full");
     expect(html).toContain("Work email");
     expect(html).toContain('autoComplete="email"');
     expect(html).toContain('inputMode="email"');

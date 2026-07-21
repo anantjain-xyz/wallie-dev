@@ -62,9 +62,13 @@ describe("SettingsAnchorNav", () => {
   it("sticks below the safe-area-aware shell header", () => {
     render(<SettingsAnchorNav groups={groups} />);
 
-    expect(screen.getByRole("navigation", { name: "Settings sections" })).toHaveClass(
-      "top-[var(--shell-scroll-padding)]",
-    );
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    // The sticky container is the wrapper (parent of nav) to avoid nested sticky losing its containing block
+    const wrapper = nav.parentElement as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.className).toContain("sticky");
+    expect(wrapper.className).toContain("top-[calc(var(--shell-scroll-padding)+16px)]");
+    expect(wrapper.className).toContain("self-start");
   });
 
   it("observes Settings sections inserted after the navigation mounts", async () => {

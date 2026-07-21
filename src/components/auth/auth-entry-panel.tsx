@@ -72,11 +72,8 @@ export function AuthEntryPanel({
       <div className="ui-sheet p-4 sm:p-6">
         {!showEmailCodeForm ? (
           <div>
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+            <div className="mb-4">
               <p className="text-sm font-medium text-foreground">Sign in with email</p>
-              <span className="max-w-full rounded-full bg-accent-soft px-1.5 py-1 text-center type-annotation font-medium text-accent">
-                Recommended
-              </span>
             </div>
             <EmailMagicLinkForm
               errorMessage={emailErrorMessage}

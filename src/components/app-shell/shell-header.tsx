@@ -318,14 +318,8 @@ export function ShellHeader({
           className="ui-shell-rail sticky top-0 z-20 hidden h-svh w-[208px] shrink-0 flex-col border-r border-border bg-sheet lg:flex"
           data-shell-rail=""
         >
-          <div className="flex min-h-0 flex-1 flex-col gap-6 px-3 py-4">
-            <div className="min-w-0 space-y-1 px-1">
-              <Link
-                href={pipelineHref}
-                className="block text-[13px] font-semibold tracking-tight text-foreground hover:opacity-80"
-              >
-                Wallie
-              </Link>
+          <div className="flex h-12 shrink-0 items-center px-3">
+            <div className="min-w-0 flex-1 px-2">
               <Tooltip content={workspace.name}>
                 <Link
                   href={pipelineHref}
@@ -338,7 +332,9 @@ export function ShellHeader({
                 </Link>
               </Tooltip>
             </div>
+          </div>
 
+          <div className="flex min-h-0 flex-1 flex-col gap-6 px-3 py-4">
             <nav aria-label="Workspace navigation" className="min-w-0">
               <div className="flex flex-col gap-1">{renderNavLinks()}</div>
             </nav>
@@ -420,8 +416,7 @@ export function ShellHeader({
           <div className="mb-4 flex min-w-0 items-center gap-2 px-1">
             <WorkspaceAvatar name={workspace.name} url={workspaceAvatarUrl} />
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold text-foreground">Wallie</p>
-              <p className="truncate text-[13px] text-muted">{workspace.name}</p>
+              <p className="truncate text-[13px] font-medium text-foreground">{workspace.name}</p>
             </div>
           </div>
           <nav aria-label="Workspace navigation">
