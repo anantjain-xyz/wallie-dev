@@ -20,7 +20,11 @@ export function PipelineBoardMockup() {
   const lanes: BoardLane[] = [
     {
       name: "Plan",
-      cards: ["Frame auth callback edge cases", "Spec workspace invite flow", "Map Linear webhook retries"],
+      cards: [
+        "Frame auth callback edge cases",
+        "Spec workspace invite flow",
+        "Map Linear webhook retries",
+      ],
     },
     {
       name: "Build",
