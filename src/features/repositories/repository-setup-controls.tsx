@@ -62,7 +62,7 @@ function RepositoryProperty({
       <span className="row-span-2 text-muted">
         <RepoPropertyIcon type={icon} />
       </span>
-      <dt className="truncate text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-muted">
+      <dt className="truncate text-xs font-semibold uppercase leading-4 tracking-[0.08em] text-muted">
         {label}
       </dt>
       <dd
