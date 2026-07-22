@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
-import { Status, configurationStatusFromTone } from "@/components/ui/status";
+import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { Section } from "@/features/settings/settings-ui";
@@ -62,11 +62,15 @@ export function SandboxProviderSection({
   const [vercelProjectId, setVercelProjectId] = useState(vercelConnection?.projectId ?? "");
   const [daytonaApiUrl, setDaytonaApiUrl] = useState(settings.connections.daytona?.apiUrl ?? "");
   const [daytonaTarget, setDaytonaTarget] = useState(settings.connections.daytona?.target ?? "");
-  const [selectedProvider, setSelectedProvider] = useState<SandboxProvider | null>(() =>
-    variant === "onboarding" && settings.connections[settings.activeProvider]
+  const [selectedProvider, setSelectedProvider] = useState<SandboxProvider | null>(() => {
+    if (variant === "onboarding") {
+      return settings.connections[settings.activeProvider] ? settings.activeProvider : null;
+    }
+
+    return settings.enabledProviders.includes(settings.activeProvider)
       ? settings.activeProvider
-      : null,
-  );
+      : (settings.enabledProviders[0] ?? null);
+  });
   const [pending, setPending] = useState<string | null>(null);
 
   async function request<T>(url: string, init: RequestInit): Promise<T> {
@@ -214,161 +218,80 @@ export function SandboxProviderSection({
       title="Sandbox provider"
     >
       <div className="space-y-5">
-        {variant === "onboarding" ? (
-          <div className="space-y-6">
-            <fieldset>
-              <legend className="text-[13px] font-semibold text-foreground">
-                Choose a provider
-              </legend>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Select where Wallie should run agents. You’ll configure only that provider next.
-              </p>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                {enabledProviders.map((provider) => {
-                  const status = connectionStatus(provider.id);
-                  return (
-                    <label className="block cursor-pointer" key={provider.id}>
-                      <input
-                        checked={selectedProvider === provider.id}
-                        className="peer sr-only"
-                        name="sandbox-provider"
-                        onChange={() => setSelectedProvider(provider.id)}
-                        type="radio"
-                        value={provider.id}
-                      />
-                      <span
-                        className={`block h-full rounded-[6px] border p-4 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${
-                          selectedProvider === provider.id
-                            ? "border-accent bg-accent-soft"
-                            : "border-border bg-sheet hover:border-muted"
-                        }`}
-                      >
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="text-[13px] font-semibold text-foreground">
-                            {provider.label}
-                          </span>
-                          {status.active ? <Status label="Active" value="healthy" /> : null}
-                        </span>
-                        <span className="mt-2 block text-xs leading-5 text-muted">
-                          {provider.description}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
-
-            {selectedProvider ? (
-              <div className="max-w-2xl space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-[13px] font-semibold text-foreground">
-                      Configure {providerLabel(selectedProvider)}
-                    </h3>
-                    <p className="mt-1 text-xs text-muted">
-                      Enter the connection details for the provider you selected.
-                    </p>
-                  </div>
-                  <ProviderActions
-                    canManage={canManage}
-                    disabled={pending !== null}
-                    onActivate={() => void activate(selectedProvider)}
-                    onDisconnect={() => void disconnect(selectedProvider)}
-                    status={connectionStatus(selectedProvider)}
-                  />
-                </div>
-                {connectionStatus(selectedProvider).connection?.lastValidationError ? (
-                  <p className="text-xs text-danger">
-                    {connectionStatus(selectedProvider).connection?.lastValidationError}
-                  </p>
-                ) : null}
-                {canManage ? providerForm(selectedProvider) : null}
-              </div>
-            ) : (
-              <div className="rounded-[6px] border border-dashed border-border bg-sheet px-4 py-5 text-[13px] text-muted">
-                Select a provider to continue with its connection details.
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="grid gap-3 lg:grid-cols-3">
+        <div className="space-y-6">
+          <fieldset>
+            <legend className="text-[13px] font-semibold text-foreground">Choose a provider</legend>
+            <p className="mt-1 text-xs leading-5 text-muted">
+              Select where Wallie should run agents. You’ll configure only that provider next.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
               {enabledProviders.map((provider) => {
-                const connection = settings.connections[provider.id];
-                const active = settings.activeProvider === provider.id;
-                const connected = connection?.status === "connected";
+                const status = connectionStatus(provider.id);
                 return (
-                  <article
-                    className={`rounded-[6px] border p-4 ${active ? "border-accent bg-accent-soft" : "border-border bg-sheet"}`}
-                    key={provider.id}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-[13px] font-semibold text-foreground">
-                        {provider.label}
-                      </h3>
-                      <Status
-                        label={
-                          active && connected
-                            ? "Active"
-                            : connection
-                              ? "Needs attention"
-                              : "Missing"
-                        }
-                        value={configurationStatusFromTone(
-                          active && connected ? "success" : connection ? "danger" : "warning",
-                        )}
-                      />
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-muted">{provider.description}</p>
-                    {connection?.lastValidationError ? (
-                      <p className="mt-2 text-xs text-danger">{connection.lastValidationError}</p>
-                    ) : null}
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {canManage && connected && !active ? (
-                        <button
-                          className="ui-button-primary"
-                          disabled={pending !== null}
-                          onClick={() => void activate(provider.id)}
-                          type="button"
-                        >
-                          Use this provider
-                        </button>
-                      ) : null}
-                      {connection && canManage && !active ? (
-                        <button
-                          className="ui-button-danger"
-                          disabled={pending !== null}
-                          onClick={() => void disconnect(provider.id)}
-                          type="button"
-                        >
-                          Disconnect
-                        </button>
-                      ) : null}
-                      {active && connected ? (
-                        <a className="ui-button" href="#verify">
-                          Test capabilities
-                        </a>
-                      ) : null}
-                    </div>
-                  </article>
+                  <label className="block cursor-pointer" key={provider.id}>
+                    <input
+                      checked={selectedProvider === provider.id}
+                      className="peer sr-only"
+                      name="sandbox-provider"
+                      onChange={() => setSelectedProvider(provider.id)}
+                      type="radio"
+                      value={provider.id}
+                    />
+                    <span
+                      className={`block h-full rounded-[6px] border p-4 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent ${
+                        selectedProvider === provider.id
+                          ? "border-accent bg-accent-soft"
+                          : "border-border bg-sheet hover:border-muted"
+                      }`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-[13px] font-semibold text-foreground">
+                          {provider.label}
+                        </span>
+                        {status.active ? <Status label="Active" value="healthy" /> : null}
+                      </span>
+                      <span className="mt-2 block text-xs leading-5 text-muted">
+                        {provider.description}
+                      </span>
+                    </span>
+                  </label>
                 );
               })}
             </div>
+          </fieldset>
 
-            {canManage ? (
-              <div className="grid gap-5 lg:grid-cols-3">
-                {enabledProviders.map((provider) => (
-                  <div key={provider.id}>{providerForm(provider.id)}</div>
-                ))}
+          {selectedProvider ? (
+            <div className="max-w-2xl space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[13px] font-semibold text-foreground">
+                    Configure {providerLabel(selectedProvider)}
+                  </h3>
+                  <p className="mt-1 text-xs text-muted">
+                    Enter the connection details for the provider you selected.
+                  </p>
+                </div>
+                <ProviderActions
+                  canManage={canManage}
+                  disabled={pending !== null}
+                  onActivate={() => void activate(selectedProvider)}
+                  onDisconnect={() => void disconnect(selectedProvider)}
+                  status={connectionStatus(selectedProvider)}
+                />
               </div>
-            ) : (
-              <p className="text-[13px] leading-6 text-muted">
-                Workspace admins can connect and select sandbox providers.
-              </p>
-            )}
-          </>
-        )}
+              {connectionStatus(selectedProvider).connection?.lastValidationError ? (
+                <p className="text-xs text-danger">
+                  {connectionStatus(selectedProvider).connection?.lastValidationError}
+                </p>
+              ) : null}
+              {canManage ? providerForm(selectedProvider) : null}
+            </div>
+          ) : (
+            <div className="rounded-[6px] border border-dashed border-border bg-sheet px-4 py-5 text-[13px] text-muted">
+              Select a provider to continue with its connection details.
+            </div>
+          )}
+        </div>
       </div>
     </Section>
   );
