@@ -261,7 +261,7 @@ export function SandboxProviderSection({
           </fieldset>
 
           {selectedProvider ? (
-            <div className="max-w-2xl space-y-3">
+            <div className="w-full space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-[13px] font-semibold text-foreground">
