@@ -471,7 +471,7 @@ describe("reduceOnboardingMutationData", () => {
         },
         setupHealth: {
           latestSandboxCapabilityCheck: {
-            agentModel: "gpt-5.5",
+            agentModel: "gpt-5.6-sol",
             agentProvider: "codex",
             capabilities: {},
             checkedAt: "2026-05-16T18:01:00.000Z",
@@ -518,7 +518,7 @@ describe("OnboardingPageClient", () => {
     const errorData = onboardingData({
       setupHealth: {
         latestSandboxCapabilityCheck: {
-          agentModel: "gpt-5.5",
+          agentModel: "gpt-5.6-sol",
           agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
@@ -551,7 +551,7 @@ describe("OnboardingPageClient", () => {
     const data = onboardingData({
       setupHealth: {
         latestSandboxCapabilityCheck: {
-          agentModel: "gpt-5.5",
+          agentModel: "gpt-5.6-sol",
           agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
@@ -613,7 +613,7 @@ describe("OnboardingPageClient", () => {
     const savedProfile = profile("repo-a");
 
     const latestSandboxCapabilityCheck = {
-      agentModel: "gpt-5.5",
+      agentModel: "gpt-5.6-sol",
       agentProvider: "codex",
       capabilities: {},
       checkedAt: "2026-05-16T18:30:00.000Z",
@@ -1695,7 +1695,7 @@ describe("OnboardingPageClient", () => {
           status: "ready",
         },
         latestSandboxCapabilityCheck: {
-          agentModel: "gpt-5.5",
+          agentModel: "gpt-5.6-sol",
           agentProvider: "codex",
           capabilities: {},
           checkedAt: "2026-05-16T18:00:00.000Z",
@@ -1744,7 +1744,7 @@ describe("OnboardingPageClient", () => {
             status: "ready",
           },
           latestSandboxCapabilityCheck: {
-            agentModel: "gpt-5.5",
+            agentModel: "gpt-5.6-sol",
             agentProvider: "codex",
             capabilities: {},
             checkedAt: "2026-05-16T18:00:00.000Z",
@@ -1781,7 +1781,7 @@ describe("OnboardingPageClient", () => {
             status: "ready",
           },
           latestSandboxCapabilityCheck: {
-            agentModel: "gpt-5.5",
+            agentModel: "gpt-5.6-sol",
             agentProvider: "codex",
             capabilities: {},
             checkedAt: "2026-05-16T18:00:00.000Z",
