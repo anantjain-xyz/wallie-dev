@@ -6,7 +6,6 @@ import { CodeIcon } from "@/components/shared/icons/code-icon";
 import { GlobeIcon } from "@/components/shared/icons/globe-icon";
 import { LockIcon } from "@/components/shared/icons/lock-icon";
 import { Status, type StatusValue } from "@/components/ui/status";
-import { MetadataItem, MetadataList } from "@/components/ui/page-shell";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
@@ -56,24 +55,28 @@ function RepositoryProperty({
   value: string;
 }) {
   return (
-    <MetadataItem
+    <div
       aria-label={`${label}: ${value}`}
-      className="flex items-center gap-1.5 border-0 py-0"
-      label={
-        <span className="inline-flex items-center gap-1">
+      className="grid min-w-0 flex-1 content-start grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 border-t border-border/70 px-3 py-2.5 first:border-t-0 sm:border-l sm:border-t-0 sm:first:border-l-0"
+    >
+      <dt className="col-span-2 grid grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 text-xs font-semibold uppercase leading-4 tracking-[0.08em] text-muted">
+        <span>
           <RepoPropertyIcon type={icon} />
-          {label}
         </span>
-      }
-      monospace={monospace}
-      value={value}
-    />
+        <span>{label}</span>
+      </dt>
+      <dd
+        className={`col-start-2 min-w-0 break-words text-[13px] font-medium leading-5 text-foreground${monospace ? " font-mono" : ""}`}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
 
 export function RepositoryMetadata({ repository }: { repository: WorkspaceGitHubRepository }) {
   return (
-    <MetadataList className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex">
+    <dl className="flex flex-col overflow-hidden rounded-[6px] border border-border/70 bg-canvas/40 sm:flex-row">
       {repository.defaultProgrammingLanguage ? (
         <RepositoryProperty
           icon="language"
@@ -97,7 +100,7 @@ export function RepositoryMetadata({ repository }: { repository: WorkspaceGitHub
       {repository.isArchived ? (
         <RepositoryProperty icon="archived" label="Status" value="Archived" />
       ) : null}
-    </MetadataList>
+    </dl>
   );
 }
 
