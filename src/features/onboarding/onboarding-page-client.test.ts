@@ -554,8 +554,13 @@ describe("OnboardingPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, { initialData: onboardingData() }),
     );
+    const setupNavigation = html.match(/<nav aria-label="Setup steps"[\s\S]*?<\/nav>/u)?.[0];
 
     expect(html.match(/aria-label="Setup steps"/gu)).toHaveLength(1);
+    expect(setupNavigation).toBeDefined();
+    expect(setupNavigation).not.toContain("data-status");
+    expect(setupNavigation).not.toContain("Running");
+    expect(setupNavigation).not.toContain("Queued");
     expect(html).toContain("grid-cols-2");
     expect(html).not.toContain("overflow-x-auto");
     expect(html).toContain("env(safe-area-inset-bottom)");
