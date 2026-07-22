@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
-import { Status, configurationStatusFromTone, type StatusValue } from "@/components/ui/status";
+import { Status, configurationStatusFromTone } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -94,18 +94,6 @@ const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   completed: "text-muted hover:bg-control-hover hover:text-foreground",
   skipped: "text-muted hover:bg-control-hover hover:text-foreground",
 };
-
-const onboardingStepStatusValues = {
-  active: "running",
-  available: "queued",
-  blocked: "blocked",
-  completed: "complete",
-  skipped: "skipped",
-} satisfies Record<OnboardingStepDisplayState, StatusValue>;
-
-function OnboardingStepStatus({ state }: { state: OnboardingStepDisplayState }) {
-  return <Status compact value={onboardingStepStatusValues[state]} />;
-}
 
 function presenceBadge(configured: boolean) {
   return configured
@@ -350,7 +338,6 @@ function StepNavigation({
               disabled={!canSelect || !step.isNavigable}
               onClick={() => onSelect(step.id)}
             >
-              <OnboardingStepStatus state={step.displayState} />
               <span className="min-w-0 flex-1 truncate">{step.title}</span>
             </button>
           </li>

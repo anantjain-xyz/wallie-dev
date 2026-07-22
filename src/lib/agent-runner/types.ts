@@ -96,7 +96,7 @@ export interface AgentRunner {
 export interface AgentRunnerConfig {
   /** Which provider to use: "codex" | "claude-code". */
   provider: AgentProvider;
-  /** Model to use (provider-specific, e.g. "gpt-5.5" or "claude-opus-4-7[1m]"). */
+  /** Model to use (provider-specific, e.g. "gpt-5.6-sol" or "claude-opus-4-8[1m]"). */
   model?: string;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;

@@ -431,7 +431,7 @@ Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and Verce
 
 ### Configure agent provider
 
-Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. Codex defaults to `gpt-5.5`; Claude Code defaults to `claude-opus-4-7[1m]`. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key.
+Workspaces choose the agent provider and model in **Settings -> Integrations**. Supported providers are Codex and Claude Code. Codex defaults to `gpt-5.6-sol`; Claude Code defaults to `claude-opus-4-8[1m]`. Codex users can connect a ChatGPT subscription with the Codex device-code flow, paste a Business/Enterprise Codex access token, or paste an OpenAI Platform API key; Claude Code users connect by pasting an Anthropic API key.
 
 ### 5. Create a GitHub App
 

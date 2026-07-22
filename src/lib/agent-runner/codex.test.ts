@@ -134,7 +134,7 @@ describe("CodexRunner", () => {
     expect(call.args[1]).toContain(
       `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token -c 'cli_auth_credentials_store="file"' >/dev/stderr`,
     );
-    expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.5'");
+    expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.6-sol'");
     expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
     expect(call.args[1]).toContain(`'-c' 'cli_auth_credentials_store="file"'`);
     expectExternalSandboxMode(call.args[1]!);

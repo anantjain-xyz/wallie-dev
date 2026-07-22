@@ -7,7 +7,7 @@ const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 export interface ClaudeCodeRunnerOptions {
   /** User-supplied Anthropic API key resolved by getClaudeCodeCredentialForUser. */
   credential: ClaudeCodeCredential;
-  /** Model identifier or Claude Code alias, e.g. "claude-opus-4-7[1m]". */
+  /** Model identifier or Claude Code alias, e.g. "claude-opus-4-8[1m]". */
   model?: string;
 }
 

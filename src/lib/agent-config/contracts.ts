@@ -17,8 +17,8 @@ export const AGENT_PROVIDERS = ["codex", "claude-code"] as const satisfies reado
 export type { AgentProvider };
 
 export const RECOMMENDED_AGENT_MODELS = {
-  codex: "gpt-5.5",
-  "claude-code": "claude-opus-4-7[1m]",
+  codex: "gpt-5.6-sol",
+  "claude-code": "claude-opus-4-8[1m]",
 } as const satisfies Record<AgentProvider, string>;
 
 export const RECOMMENDED_CODEX_REASONING_EFFORT = "xhigh";

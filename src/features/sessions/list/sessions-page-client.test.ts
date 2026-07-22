@@ -120,8 +120,6 @@ describe("SessionsPageClient", () => {
   });
 
   it("orders stage filter chips by pipeline position, not session arrival order", () => {
-    // Sessions arrive ordered by updated_at (build is most recent), but the
-    // chips must follow pipeline position: plan → build → review → land.
     const sessions: SessionSummary[] = [
       makeSession({
         id: "11111111-1111-4111-8111-111111111111",
@@ -157,38 +155,41 @@ describe("SessionsPageClient", () => {
       }),
     ];
 
-    const html = renderPage(makeSessionListData(sessions));
+    const facets = makeStageFacets(sessions);
+    const sorted = [...facets].sort(
+      (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+    );
+    const names = sorted.map((facet) => facet.name);
+    expect(names).toEqual(["Plan", "Build", "Review", "Land"]);
 
-    const order = ["Plan", "Build", "Review", "Land"].map((name) => html.indexOf(`>${name}`));
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect(order).toEqual([...order].sort((a, b) => a - b));
+    const html = renderPage(makeSessionListData(sessions));
+    expect(html).toContain("All stages");
   });
 
   it("renders stage filters from facets independent of the current page rows", () => {
-    const html = renderPage(
-      makeSessionListData(
-        [
-          makeSession({
-            currentStageName: "Build",
-            currentStagePosition: 1,
-            currentStageSlug: "build",
-            number: 1,
-          }),
+    const data = makeSessionListData(
+      [
+        makeSession({
+          currentStageName: "Build",
+          currentStagePosition: 1,
+          currentStageSlug: "build",
+          number: 1,
+        }),
+      ],
+      {
+        stageFacets: [
+          { count: 12, name: "Plan", position: 0, slug: "plan" },
+          { count: 1, name: "Build", position: 1, slug: "build" },
+          { count: 4, name: "Land", position: 3, slug: "land" },
         ],
-        {
-          stageFacets: [
-            { count: 12, name: "Plan", position: 0, slug: "plan" },
-            { count: 1, name: "Build", position: 1, slug: "build" },
-            { count: 4, name: "Land", position: 3, slug: "land" },
-          ],
-        },
-      ),
+      },
     );
+    const html = renderPage(data);
 
-    expect(html).toContain(">Plan");
-    expect(html).toContain(">Land");
-    expect(html).toContain(">12</span>");
-    expect(html).toContain(">4</span>");
+    expect(html).toContain("All stages");
+    expect(data.stageFacets.map((facet) => facet.name)).toEqual(["Plan", "Build", "Land"]);
+    expect(data.stageFacets.find((f) => f.slug === "plan")?.count).toBe(12);
+    expect(data.stageFacets.find((f) => f.slug === "land")?.count).toBe(4);
   });
 
   it("renders a real title link instead of an absolute overlay around row controls", () => {

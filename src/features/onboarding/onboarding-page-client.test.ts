@@ -180,7 +180,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
 
   return {
     agentConfig: {
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     },
     canManage: true,
@@ -215,7 +215,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         configuredKeys: ["agent_model", "agent_provider"],
         status: "present",
         values: {
-          agent_model: "gpt-5.5",
+          agent_model: "gpt-5.6-sol",
           agent_provider: "codex",
         },
       },
@@ -584,8 +584,13 @@ describe("OnboardingPageClient", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, { initialData: onboardingData() }),
     );
+    const setupNavigation = html.match(/<nav aria-label="Setup steps"[\s\S]*?<\/nav>/u)?.[0];
 
     expect(html.match(/aria-label="Setup steps"/gu)).toHaveLength(1);
+    expect(setupNavigation).toBeDefined();
+    expect(setupNavigation).not.toContain("data-status");
+    expect(setupNavigation).not.toContain("Running");
+    expect(setupNavigation).not.toContain("Queued");
     expect(html).toContain("grid-cols-2");
     expect(html).not.toContain("overflow-x-auto");
     expect(html).toContain("env(safe-area-inset-bottom)");
@@ -1845,7 +1850,7 @@ describe("OnboardingPageClient", () => {
 
   it("pairs Onboarding provider changes with the provider's recommended model", () => {
     const currentDrafts = {
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
       concurrency_limit: "1",
       max_retries: "3",
@@ -1855,11 +1860,11 @@ describe("OnboardingPageClient", () => {
     expect(
       applyAgentConfigDraftChange(currentDrafts, "agent_provider", "claude-code"),
     ).toMatchObject({
-      agent_model: "claude-opus-4-7[1m]",
+      agent_model: "claude-opus-4-8[1m]",
       agent_provider: "claude-code",
     });
     expect(applyAgentConfigDraftChange(currentDrafts, "agent_provider", "codex")).toMatchObject({
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     });
   });
