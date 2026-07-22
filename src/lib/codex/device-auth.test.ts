@@ -165,6 +165,37 @@ function buildAdminMock(rows: FlowRow[]) {
         update: (value: Partial<FlowRow>) => mutationChain(rows, value, "update"),
       };
     }),
+    rpc: vi.fn(
+      async (
+        name: string,
+        args: {
+          flow_id: string;
+          target_connection_revision: string;
+          target_expires_at: string;
+          target_provider: string;
+          target_user_id: string;
+          target_workspace_id: string;
+        },
+      ) => {
+        if (name !== "begin_codex_device_auth_flow") {
+          throw new Error(`unexpected RPC: ${name}`);
+        }
+        rows.push(
+          buildFlowRow({
+            command_id: "provisioning",
+            expires_at: args.target_expires_at,
+            id: args.flow_id,
+            sandbox_connection_revision: args.target_connection_revision,
+            sandbox_id: `provisioning:${args.flow_id}`,
+            sandbox_provider: args.target_provider,
+            status: "starting",
+            user_id: args.target_user_id,
+            workspace_id: args.target_workspace_id,
+          }),
+        );
+        return { data: "started", error: null };
+      },
+    ),
   };
 }
 
@@ -340,7 +371,8 @@ describe("Codex device auth", () => {
       kill: vi.fn(),
       sandboxId: "e2b-sandbox-1",
     };
-    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
+    const admin = buildAdminMock(rows);
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
     mocked.e2bCreate.mockResolvedValue(e2bSandbox);
     mocked.e2bConnect.mockResolvedValue(e2bSandbox);
 
@@ -366,6 +398,17 @@ describe("Codex device auth", () => {
     expect(mocked.e2bConnect).toHaveBeenCalledWith("e2b-sandbox-1", {
       apiKey: "e2b-secret",
     });
+    expect(admin.rpc).toHaveBeenCalledWith("begin_codex_device_auth_flow", {
+      flow_id: "00000000-0000-0000-0000-000000000123",
+      target_connection_revision: "e2b-revision-1",
+      target_expires_at: expect.any(String),
+      target_provider: "e2b",
+      target_user_id: "user-1",
+      target_workspace_id: "workspace-1",
+    });
+    expect(admin.rpc.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.e2bCreate.mock.invocationCallOrder[0]!,
+    );
     expect(rows[0]).toMatchObject({
       sandbox_connection_revision: "e2b-revision-1",
       sandbox_id: "e2b-sandbox-1",
@@ -408,7 +451,8 @@ describe("Codex device auth", () => {
       create: vi.fn().mockResolvedValue(daytonaSandbox),
       get: vi.fn().mockResolvedValue(daytonaSandbox),
     };
-    mocked.createSupabaseAdminClient.mockReturnValue(buildAdminMock(rows));
+    const admin = buildAdminMock(rows);
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
     mocked.daytonaClient.mockReturnValue(daytonaClient);
 
     const snapshot = await startCodexDeviceAuthFlow({
@@ -439,6 +483,9 @@ describe("Codex device auth", () => {
         labels: expect.objectContaining({ wallie_workspace_id: "workspace-1" }),
       }),
       { timeout: 60 },
+    );
+    expect(admin.rpc.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.daytonaClient.mock.invocationCallOrder[0]!,
     );
     expect(rows[0]).toMatchObject({
       sandbox_connection_revision: "daytona-revision-1",

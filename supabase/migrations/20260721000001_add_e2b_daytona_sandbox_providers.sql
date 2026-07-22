@@ -177,6 +177,94 @@ create table public.workspace_sandbox_connection_mutations (
     check (provider in ('vercel', 'e2b', 'daytona'))
 );
 
+-- Reserve an auth-flow row under the same workspace advisory lock used by
+-- provider mutations. Once this transaction commits, connection changes see
+-- the starting flow and remain blocked until it reaches a terminal state.
+create or replace function public.begin_codex_device_auth_flow(
+  flow_id uuid,
+  target_user_id uuid,
+  target_workspace_id uuid,
+  target_provider text,
+  target_connection_revision uuid,
+  target_expires_at timestamptz
+)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_provider text;
+  current_revision uuid;
+  current_status text;
+begin
+  if target_provider not in ('vercel', 'e2b', 'daytona') then return 'unsupported'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0));
+  delete from public.workspace_sandbox_connection_mutations where expires_at <= now();
+  delete from public.workspace_vercel_sandbox_connection_mutations where expires_at <= now();
+
+  if exists (
+    select 1 from public.workspace_sandbox_connection_mutations
+    where workspace_id = target_workspace_id
+      and provider = target_provider
+      and expires_at > now()
+  ) or (
+    target_provider = 'vercel' and exists (
+      select 1 from public.workspace_vercel_sandbox_connection_mutations
+      where workspace_id = target_workspace_id and expires_at > now()
+    )
+  ) then return 'locked'; end if;
+
+  select active_provider into selected_provider
+  from public.workspace_sandbox_settings
+  where workspace_id = target_workspace_id;
+  if coalesce(selected_provider, 'vercel') <> target_provider then return 'inactive'; end if;
+
+  if target_provider = 'vercel' then
+    select connection_revision, status into current_revision, current_status
+    from public.workspace_vercel_sandbox_connections
+    where workspace_id = target_workspace_id;
+  elsif target_provider = 'e2b' then
+    select connection_revision, status into current_revision, current_status
+    from public.workspace_e2b_sandbox_connections
+    where workspace_id = target_workspace_id;
+  else
+    select connection_revision, status into current_revision, current_status
+    from public.workspace_daytona_sandbox_connections
+    where workspace_id = target_workspace_id;
+  end if;
+
+  if current_revision is null then return 'missing'; end if;
+  if current_status <> 'connected' then return 'invalid'; end if;
+  if current_revision <> target_connection_revision then return 'stale'; end if;
+
+  insert into public.codex_device_auth_flows (
+    id,
+    user_id,
+    workspace_id,
+    sandbox_provider,
+    sandbox_connection_revision,
+    sandbox_id,
+    command_id,
+    status,
+    expires_at
+  ) values (
+    flow_id,
+    target_user_id,
+    target_workspace_id,
+    target_provider,
+    target_connection_revision,
+    'provisioning:' || flow_id::text,
+    'provisioning',
+    'starting',
+    target_expires_at
+  );
+
+  return 'started';
+end;
+$$;
+
 create or replace function internal.enforce_workspace_sandbox_connection_refs()
 returns trigger
 language plpgsql
@@ -701,6 +789,8 @@ $$;
 
 revoke all on function public.begin_sandbox_connection_mutation(uuid, text)
   from public, anon, authenticated;
+revoke all on function public.begin_codex_device_auth_flow(uuid, uuid, uuid, text, uuid, timestamptz)
+  from public, anon, authenticated;
 revoke all on function public.set_active_sandbox_provider(uuid, bigint, text, uuid)
   from public, anon, authenticated;
 revoke all on function public.start_sandbox_capability_check(uuid, uuid)
@@ -710,6 +800,8 @@ revoke all on function public.load_workspace_onboarding_sandbox_checks(uuid)
 revoke all on function public.claim_next_agent_job(integer)
   from public, anon, authenticated;
 grant execute on function public.begin_sandbox_connection_mutation(uuid, text) to service_role;
+grant execute on function public.begin_codex_device_auth_flow(uuid, uuid, uuid, text, uuid, timestamptz)
+  to service_role;
 grant execute on function public.set_active_sandbox_provider(uuid, bigint, text, uuid) to service_role;
 grant execute on function public.start_sandbox_capability_check(uuid, uuid) to service_role;
 grant execute on function public.load_workspace_onboarding_sandbox_checks(uuid) to service_role;

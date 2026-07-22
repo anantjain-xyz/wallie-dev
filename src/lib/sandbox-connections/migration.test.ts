@@ -42,6 +42,15 @@ describe("sandbox provider migration", () => {
     );
   });
 
+  it("reserves Codex auth flows atomically with sandbox connection mutations", () => {
+    expect(migration).toContain("create or replace function public.begin_codex_device_auth_flow");
+    expect(migration).toContain(
+      "perform pg_advisory_xact_lock(hashtextextended(target_workspace_id::text, 0))",
+    );
+    expect(migration).toContain("'provisioning:' || flow_id::text");
+    expect(migration).toContain("grant execute on function public.begin_codex_device_auth_flow");
+  });
+
   it("backfills and persists exact provider connection revisions", () => {
     expect(migration).toContain("add column sandbox_connection_revision uuid");
     expect(migration).toContain("run.sandbox_vercel_team_id = connection.team_id");

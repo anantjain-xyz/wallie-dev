@@ -475,6 +475,21 @@ async function loadWallieVercelSandboxConnection(
   const provider = overview.activeProvider;
   const connection = overview.connections[provider];
 
+  if (!overview.enabledProviders.includes(provider)) {
+    return {
+      connected: false,
+      connectionRevision: connection ? String(connection.connectionRevision) : null,
+      displayName: null,
+      lastValidationError: `${providerLabel(provider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
+      provider,
+      providerLabel: providerLabel(provider),
+      projectId: null,
+      projectName: null,
+      status: "error",
+      teamId: null,
+    };
+  }
+
   if (!connection) {
     return {
       connected: false,

@@ -147,9 +147,17 @@ export async function startCodexDeviceAuthFlow(input: {
 
   const flowId = randomUUID();
   const expiresAt = new Date(Date.now() + FLOW_TTL_MS).toISOString();
+  let flowRow: FlowRow | null = null;
   let sandbox: AuthSandbox | null = null;
 
   try {
+    flowRow = await reserveCodexDeviceAuthFlow(admin, {
+      connection,
+      expiresAt,
+      flowId,
+      userId: input.userId,
+      workspaceId: input.workspaceId,
+    });
     const session = await createAuthSandbox(connection, {
       flowId,
       userId: input.userId,
@@ -163,38 +171,36 @@ export async function startCodexDeviceAuthFlow(input: {
       detached: true,
       env: { CI: "1", CODEX_HOME: session.codexHome },
     });
-
-    const { data, error } = await admin
-      .from("codex_device_auth_flows")
-      .insert({
-        command_id: command.cmdId,
-        expires_at: expiresAt,
-        id: flowId,
-        sandbox_connection_revision: connection?.revision ?? null,
-        sandbox_id: sandbox.sandboxId,
-        sandbox_provider: connection?.provider ?? null,
-        status: "starting",
-        user_id: input.userId,
-        workspace_id: input.workspaceId ?? null,
-      })
-      .select(FLOW_SELECT)
-      .single();
-    if (error) throw error;
+    const provisionedRow = await updateFlow(admin, flowRow, {
+      command_id: command.cmdId,
+      sandbox_id: sandbox.sandboxId,
+    });
+    if (!provisionedRow) throw new Error("Codex sign-in reservation was lost during provisioning.");
+    flowRow = provisionedRow;
     await sandbox.close?.();
 
     return (
-      (await refreshFlowFromSandbox(admin, data, {
+      (await refreshFlowFromSandbox(admin, flowRow, {
         connection,
         waitMs: PROMPT_WAIT_MS,
-      })) ?? snapshotFromRow(data)
+      })) ?? snapshotFromRow(flowRow)
     );
   } catch (error) {
+    const message = startAuthErrorMessage(error);
     if (sandbox) {
       await stopSandboxQuietly(sandbox.sandboxId, connection);
     }
+    if (flowRow) {
+      const failedRow = await markFlowTerminal(admin, flowRow, {
+        encrypted_auth_json: null,
+        error: message,
+        status: "error",
+      }).catch(() => null);
+      if (failedRow) return snapshotFromRow(failedRow);
+    }
 
     return {
-      error: startAuthErrorMessage(error),
+      error: message,
       expiresAt,
       flowId,
       instructions: null,
@@ -203,6 +209,66 @@ export async function startCodexDeviceAuthFlow(input: {
       verificationUri: null,
     };
   }
+}
+
+async function reserveCodexDeviceAuthFlow(
+  admin: AdminClient,
+  input: {
+    connection?: SandboxConnection;
+    expiresAt: string;
+    flowId: string;
+    userId: string;
+    workspaceId?: string;
+  },
+): Promise<FlowRow> {
+  if (input.connection && input.workspaceId) {
+    const { data, error } = await admin.rpc("begin_codex_device_auth_flow", {
+      flow_id: input.flowId,
+      target_connection_revision: input.connection.revision,
+      target_expires_at: input.expiresAt,
+      target_provider: input.connection.provider,
+      target_user_id: input.userId,
+      target_workspace_id: input.workspaceId,
+    });
+    if (error) throw error;
+    if (data !== "started") {
+      throw new Error(codexAuthReservationError(data, input.connection.provider));
+    }
+    const row = await getFlowRow(admin, { flowId: input.flowId, userId: input.userId });
+    if (!row) throw new Error("Codex sign-in reservation could not be loaded.");
+    return row;
+  }
+
+  const { data, error } = await admin
+    .from("codex_device_auth_flows")
+    .insert({
+      command_id: "provisioning",
+      expires_at: input.expiresAt,
+      id: input.flowId,
+      sandbox_connection_revision: input.connection?.revision ?? null,
+      sandbox_id: `provisioning:${input.flowId}`,
+      sandbox_provider: input.connection?.provider ?? null,
+      status: "starting",
+      user_id: input.userId,
+      workspace_id: input.workspaceId ?? null,
+    })
+    .select(FLOW_SELECT)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+function codexAuthReservationError(status: string | null, provider: SandboxProvider): string {
+  if (status === "locked") {
+    return `${providerLabel(provider)} connection update is already in progress. Try again shortly.`;
+  }
+  if (status === "inactive") {
+    return `${providerLabel(provider)} is no longer the active sandbox provider. Refresh and try again.`;
+  }
+  if (status === "missing" || status === "invalid" || status === "stale") {
+    return `${providerLabel(provider)} connection changed before Codex sign-in started. Refresh and try again.`;
+  }
+  return "Codex sign-in could not reserve the active sandbox connection.";
 }
 
 export async function getCodexDeviceAuthFlowSnapshot(input: {

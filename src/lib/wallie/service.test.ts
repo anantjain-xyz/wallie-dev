@@ -827,6 +827,52 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect(insertedRunRows).toHaveLength(0);
   });
 
+  it("blocks queued runs when the active sandbox provider is disabled", async () => {
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "e2b",
+      connections: {
+        daytona: null,
+        e2b: {
+          apiKeyPreview: "e2b_...1234",
+          connectionRevision: "revision-e2b",
+          lastValidatedAt: baseTimestamp,
+          lastValidationError: null,
+          status: "connected",
+          updatedAt: baseTimestamp,
+          workspaceId: "ws-1",
+        },
+        vercel: null,
+      },
+      enabledProviders: ["vercel"],
+      revision: 2,
+      updatedAt: baseTimestamp,
+    });
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await expect(
+      enqueueWallieRun({
+        admin,
+        sessionId: "sess-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        triggerType: "manual_run",
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "sandbox_connection_invalid",
+      provider: "e2b",
+      statusCode: 422,
+    });
+    expect(mocks.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
+    expect(insertedRunRows).toHaveLength(0);
+  });
+
   it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
     mocks.resolveSandboxImplementation.mockReturnValueOnce("fake");
     mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({

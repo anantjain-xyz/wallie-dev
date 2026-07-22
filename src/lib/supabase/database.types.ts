@@ -1958,6 +1958,17 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      begin_codex_device_auth_flow: {
+        Args: {
+          flow_id: string
+          target_connection_revision: string
+          target_expires_at: string
+          target_provider: string
+          target_user_id: string
+          target_workspace_id: string
+        }
+        Returns: string
+      }
       begin_sandbox_connection_mutation: {
         Args: { target_provider: string; target_workspace_id: string }
         Returns: string

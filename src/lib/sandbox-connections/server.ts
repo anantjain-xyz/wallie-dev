@@ -276,6 +276,30 @@ export async function loadAllConnectedSandboxConnections(
   ]);
   if (e2bResult.error) throw e2bResult.error;
   if (daytonaResult.error) throw daytonaResult.error;
+  const daytonaConnections = ((daytonaResult.data ?? []) as DaytonaRow[]).flatMap((row) => {
+    try {
+      return [
+        {
+          connection: {
+            credentials: {
+              apiKey: decryptSecretValue(row.encrypted_api_key),
+              apiUrl: normalizeDaytonaApiUrl(row.api_url),
+              target: row.target ?? undefined,
+            },
+            provider: "daytona" as const,
+            revision: row.connection_revision,
+          },
+          workspaceId: row.workspace_id,
+        },
+      ];
+    } catch (error) {
+      console.warn("[sandbox-reaper] skipping invalid Daytona connection", {
+        error: error instanceof Error ? error.message : "Daytona connection is invalid.",
+        workspaceId: row.workspace_id,
+      });
+      return [];
+    }
+  });
   return [
     ...vercel.map((record) => ({
       connection: {
@@ -293,18 +317,7 @@ export async function loadAllConnectedSandboxConnections(
       },
       workspaceId: row.workspace_id,
     })),
-    ...((daytonaResult.data ?? []) as DaytonaRow[]).map((row) => ({
-      connection: {
-        credentials: {
-          apiKey: decryptSecretValue(row.encrypted_api_key),
-          apiUrl: normalizeDaytonaApiUrl(row.api_url),
-          target: row.target ?? undefined,
-        },
-        provider: "daytona" as const,
-        revision: row.connection_revision,
-      },
-      workspaceId: row.workspace_id,
-    })),
+    ...daytonaConnections,
   ];
 }
 
