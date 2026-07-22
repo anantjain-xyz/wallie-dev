@@ -57,3 +57,39 @@ describe("SandboxProviderSection onboarding flow", () => {
     expect(screen.queryByRole("heading", { name: "Connect E2B" })).not.toBeInTheDocument();
   });
 });
+
+describe("SandboxProviderSection settings flow", () => {
+  it("defaults to the active provider and reveals only the selected provider form", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <SandboxProviderSection
+        canManage
+        onSettingsChange={vi.fn()}
+        setFlashMessage={vi.fn()}
+        settings={{
+          activeProvider: "vercel",
+          connections: { daytona: null, e2b: null, vercel: null },
+          enabledProviders: ["vercel", "e2b", "daytona"],
+          revision: 1,
+          updatedAt: null,
+        }}
+        vercelConnection={null}
+        workspaceId="00000000-0000-4000-8000-000000000001"
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: /Vercel Sandbox/ })).toBeChecked();
+    expect(screen.getByRole("heading", { name: "Connect Vercel Sandbox" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Connect E2B" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connect Daytona" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /E2B/ }));
+
+    expect(screen.getByRole("heading", { name: "Connect E2B" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Connect Vercel Sandbox" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connect Daytona" })).not.toBeInTheDocument();
+  });
+});

@@ -23,6 +23,7 @@ describe("SandboxProviderSection", () => {
     );
 
     expect(html).toContain("Connect Vercel Sandbox");
+    expect(html).toContain("Configure Vercel Sandbox");
     expect(html).not.toContain("Connect E2B");
     expect(html).not.toContain("Connect Daytona");
   });
