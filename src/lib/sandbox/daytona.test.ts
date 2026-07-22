@@ -128,7 +128,7 @@ describe("Daytona sandbox driver", () => {
           wallie_session_id: "session-1",
           wallie_workspace_id: "workspace-1",
         },
-        resources: { cpu: 2, disk: 20, memory: 4 },
+        resources: { cpu: 2, disk: 10, memory: 4 },
         ttlMinutes: 30,
       }),
       { timeout: 1200 },

@@ -26,12 +26,17 @@ type ResultOptions = {
 
 const PLAYWRIGHT_SMOKE_SCRIPT = String.raw`
 const { chromium } = require("playwright");
+const deadline = setTimeout(() => {
+  console.error("Playwright screenshot smoke timed out after 60 seconds.");
+  process.exit(124);
+}, 60_000);
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
   await page.setContent("<main style='font-family:sans-serif'><h1>Wallie screenshot smoke</h1></main>");
   await page.screenshot({ path: "/tmp/wallie-playwright-smoke.png", fullPage: true });
   await browser.close();
+  clearTimeout(deadline);
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : String(error));
   process.exit(1);

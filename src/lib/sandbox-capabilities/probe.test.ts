@@ -92,6 +92,11 @@ describe("probeSandboxCapabilities", () => {
     expect(report.playwrightPackage.ok).toBe(true);
     expect(report.chromium.ok).toBe(true);
     expect(report.screenshotSmoke.ok).toBe(true);
+    expect(
+      sandbox.calls.some((call) =>
+        call.args.join(" ").includes("Playwright screenshot smoke timed out after 60 seconds"),
+      ),
+    ).toBe(true);
   });
 
   it("reports Playwright as missing when bootstrap is disabled", async () => {

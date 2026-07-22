@@ -522,6 +522,7 @@ describe("Codex device auth", () => {
         autoStopInterval: 0,
         image: "node:22-bookworm",
         labels: expect.objectContaining({ wallie_workspace_id: "workspace-1" }),
+        resources: { cpu: 2, disk: 10, memory: 4 },
       }),
       { timeout: 60 },
     );

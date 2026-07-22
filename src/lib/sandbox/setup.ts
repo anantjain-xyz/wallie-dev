@@ -21,6 +21,12 @@ const PLAYWRIGHT_SYSTEM_PACKAGES = [
   "pango",
 ].join(" ");
 
+const NODE_VERSION_CHECK =
+  "node -e " +
+  shellQuote(
+    "const [major,minor]=process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 13)) process.exit(1)",
+  );
+
 export async function prepareSessionSandbox(input: {
   handle: SandboxHandle;
   provider: SandboxProvider;
@@ -50,7 +56,8 @@ export async function prepareSessionSandbox(input: {
     `git -C ${shellQuote(handle.repoPath)} config user.email ${shellQuote(WALLIE_GITHUB_BOT_COMMIT_AUTHOR.email)}`,
     `git -C ${shellQuote(handle.repoPath)} config user.name ${shellQuote(WALLIE_GITHUB_BOT_COMMIT_AUTHOR.name)}`,
     `git -C ${shellQuote(handle.repoPath)} ${checkoutArgs}`,
-    `node -e ${shellQuote("const [major,minor]=process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 13)) process.exit(1)")}`,
+    resolveMemoryBootstrap(provider),
+    resolveNodeBootstrap(provider),
     resolveAgentCliInstall(request.agentProvider),
     resolveBrowserBootstrap(provider),
   ].join(" && ");
@@ -62,10 +69,48 @@ export async function prepareSessionSandbox(input: {
   });
   const [output, code] = await Promise.all([proc.output(), proc.exitCode]);
   if (code !== 0) {
-    throw new Error(
-      `Sandbox setup failed (exit ${code}): ${output.stderr.slice(0, 500) || "(no stderr)"}`,
-    );
+    throw new Error(`Sandbox setup failed (exit ${code}): ${formatFailureOutput(output)}`);
   }
+}
+
+function resolveMemoryBootstrap(provider: SandboxProvider): string {
+  if (provider !== "e2b") return "true";
+
+  // E2B's standard base template has 512 MB of RAM. Chromium cannot reserve
+  // V8's code range at that limit, even though Hobby accounts allow more
+  // memory. A small swap file keeps the zero-config base template usable.
+  return `(
+    if ! swapon --show=NAME --noheadings 2>/dev/null | grep -Fxq '/tmp/wallie.swap'; then
+      sudo fallocate -l 1G /tmp/wallie.swap &&
+      sudo chmod 600 /tmp/wallie.swap &&
+      sudo mkswap /tmp/wallie.swap >/dev/null &&
+      sudo swapon /tmp/wallie.swap
+    fi
+  )`;
+}
+
+function resolveNodeBootstrap(provider: SandboxProvider): string {
+  if (provider !== "e2b") return NODE_VERSION_CHECK;
+
+  return `(
+    ${NODE_VERSION_CHECK} || (
+      if command -v sudo >/dev/null 2>&1; then
+        sudo npm install -g n && sudo n 22
+      else
+        npm install -g n && n 22
+      fi &&
+      hash -r &&
+      ${NODE_VERSION_CHECK}
+    )
+  )`;
+}
+
+function formatFailureOutput(output: { stderr: string; stdout: string }): string {
+  const details = [
+    output.stderr.trim() ? `stderr: ${output.stderr.trim().slice(-500)}` : null,
+    output.stdout.trim() ? `stdout: ${output.stdout.trim().slice(-500)}` : null,
+  ].filter(Boolean);
+  return details.join("\n") || "(no output)";
 }
 
 function resolveBrowserBootstrap(provider: SandboxProvider): string {

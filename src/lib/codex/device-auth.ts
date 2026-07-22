@@ -669,7 +669,7 @@ async function createAuthSandbox(
             wallie_codex_auth_user_id: metadata.userId,
             wallie_workspace_id: metadata.workspaceId ?? "unknown",
           },
-          resources: { cpu: 2, disk: 20, memory: 4 },
+          resources: { cpu: 2, disk: 10, memory: 4 },
           ttlMinutes: Math.ceil((FLOW_TTL_MS + 60_000) / 60_000),
         },
         { timeout: 60 },

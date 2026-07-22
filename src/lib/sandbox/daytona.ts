@@ -170,7 +170,7 @@ export async function createDaytonaSessionSandbox(
           wallie_session_id: input.sessionId,
           wallie_workspace_id: input.workspaceId ?? input.sessionId,
         },
-        resources: { cpu: 2, disk: 20, memory: 4 },
+        resources: { cpu: 2, disk: 10, memory: 4 },
         ttlMinutes: Math.ceil(timeoutMs / 60_000) + 10,
       },
       { timeout: Math.max(60, Math.ceil(timeoutMs / 1000)) },
