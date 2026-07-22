@@ -24,8 +24,19 @@ security definer
 set search_path = ''
 as $$
 declare
+  existing_stage_ids uuid[];
   rewrite_result jsonb;
 begin
+  -- Snapshot stage IDs before the legacy rewrite runs so an omitted policy can
+  -- preserve existing stages without granting workspace-wide approval to a
+  -- newly inserted stage (including one submitted with an unknown UUID).
+  select coalesce(array_agg(ps.id), '{}'::uuid[])
+  into existing_stage_ids
+  from public.pipeline_stages ps
+  join public.pipelines p on p.id = ps.pipeline_id
+  where p.workspace_id = target_workspace_id
+    and p.is_default = true;
+
   rewrite_result := public.rewrite_default_pipeline(
     target_workspace_id,
     pipeline_name,
@@ -38,10 +49,13 @@ begin
   end if;
 
   update public.pipeline_stages ps
-  set anyone_can_approve = coalesce(
-    (payload.stage ->> 'anyoneCanApprove')::boolean,
-    ps.anyone_can_approve
-  )
+  set anyone_can_approve = case
+    when payload.stage ? 'anyoneCanApprove'
+      then (payload.stage ->> 'anyoneCanApprove')::boolean
+    when nullif(payload.stage ->> 'id', '')::uuid = any(existing_stage_ids)
+      then ps.anyone_can_approve
+    else false
+  end
   from public.pipelines p,
        jsonb_array_elements(stage_payload) as payload(stage)
   where p.workspace_id = target_workspace_id

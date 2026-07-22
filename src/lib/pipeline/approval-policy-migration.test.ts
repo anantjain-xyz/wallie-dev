@@ -20,4 +20,12 @@ describe("pipeline stage approval policy migration", () => {
     expect(backfillIndex).toBeGreaterThanOrEqual(0);
     expect(futureDefaultIndex).toBeGreaterThan(backfillIndex);
   });
+
+  it("keeps policy-less API-created stages restrictive", () => {
+    expect(migration).toContain("existing_stage_ids uuid[]");
+    expect(migration).toContain(
+      "when nullif(payload.stage ->> 'id', '')::uuid = any(existing_stage_ids)",
+    );
+    expect(migration).toContain("else false");
+  });
 });
