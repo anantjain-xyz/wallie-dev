@@ -22,7 +22,8 @@ vi.mock("@/features/github/data", () => ({
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadWorkspaceSandboxOverview: mocked.sandboxOverview,
-  providerLabel: () => "Vercel Sandbox",
+  providerLabel: (provider: string) =>
+    provider === "e2b" ? "E2B" : provider === "daytona" ? "Daytona" : "Vercel Sandbox",
 }));
 
 vi.mock("@/lib/sandbox-capabilities/server", () => ({
@@ -297,6 +298,46 @@ describe("canonical onboarding snapshot", () => {
       reconnectReason: "Refresh token was rejected.",
       reconnectRequired: true,
       status: "expired",
+    });
+  });
+
+  it("marks a connected active provider unavailable when deployment rollout disables it", async () => {
+    mocked.sandboxOverview.mockResolvedValueOnce({
+      activeProvider: "e2b",
+      connections: {
+        daytona: null,
+        e2b: {
+          apiKeyPreview: "e2b_…1234",
+          connectionRevision: "revision-e2b",
+          lastValidatedAt: NOW,
+          lastValidationError: null,
+          status: "connected",
+          updatedAt: NOW,
+          workspaceId: workspace.id,
+        },
+        vercel: null,
+      },
+      enabledProviders: ["vercel"],
+      revision: 2,
+      updatedAt: NOW,
+    });
+    const fixture = createFixture({ memberRole: "owner" });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result).toMatchObject({
+      data: {
+        setupHealth: {
+          sandboxConnection: {
+            connected: false,
+            lastValidationError:
+              "E2B is disabled in this Wallie deployment. Switch to an enabled sandbox provider.",
+            provider: "e2b",
+            status: "error",
+          },
+        },
+      },
+      ok: true,
     });
   });
 

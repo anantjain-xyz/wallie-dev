@@ -623,6 +623,7 @@ function deriveActiveSandboxConnectionHealth(
   const provider = settings.activeProvider;
   const connection = settings.connections[provider];
   const vercel = provider === "vercel" ? settings.connections.vercel : null;
+  const enabled = settings.enabledProviders.includes(provider);
   const displayName =
     provider === "vercel"
       ? (vercel?.projectName ?? vercel?.projectId ?? null)
@@ -630,13 +631,15 @@ function deriveActiveSandboxConnectionHealth(
         ? (settings.connections.e2b?.apiKeyPreview ?? null)
         : (settings.connections.daytona?.target ?? settings.connections.daytona?.apiUrl ?? null);
   return {
-    connected: connection?.status === "connected",
+    connected: enabled && connection?.status === "connected",
     connectionRevision: connection ? String(connection.connectionRevision) : null,
     displayName,
-    lastValidationError: connection?.lastValidationError ?? null,
+    lastValidationError: enabled
+      ? (connection?.lastValidationError ?? null)
+      : `${providerLabel(provider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
     provider,
     providerLabel: providerLabel(provider),
-    status: connection?.status ?? "missing",
+    status: enabled ? (connection?.status ?? "missing") : "error",
     updatedAt: connection?.updatedAt ?? null,
   };
 }

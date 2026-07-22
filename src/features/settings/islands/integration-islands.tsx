@@ -18,11 +18,11 @@ import { updateGithubInSettingsData } from "@/features/settings/settings-data-up
 import {
   dispatchSettingsEvent,
   SETTINGS_GITHUB_CHANGED,
+  SETTINGS_SANDBOX_CHANGED,
   SETTINGS_SECRETS_CHANGED,
-  SETTINGS_VERCEL_CHANGED,
   type GithubChangedDetail,
+  type SandboxChangedDetail,
   type SecretsChangedDetail,
-  type VercelChangedDetail,
 } from "@/features/settings/settings-island-events";
 import type { AgentProvider } from "@/lib/agent-config/contracts";
 
@@ -133,7 +133,7 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
         canManage={data.canManage}
         onSettingsChange={(settings) => {
           setData((current) => applySandboxSettingsToData(current, settings));
-          dispatchSettingsEvent(SETTINGS_VERCEL_CHANGED, settings.connections.vercel);
+          dispatchSettingsEvent(SETTINGS_SANDBOX_CHANGED, settings);
         }}
         setFlashMessage={setMessage}
         settings={data.sandboxSettings}
@@ -191,13 +191,15 @@ export function RuntimeIntegrationIsland({
     broadcastSecrets.current = true;
     setSecrets(update);
   };
-  const [vercelConnection, setVercelConnection] = useState(initialData.vercelSandboxConnection);
+  const [sandboxData, setSandboxData] = useState(initialData);
   const { feedback, setMessage } = useIslandFeedback();
   useEffect(() => {
-    const handleVercelChange = (event: Event) =>
-      setVercelConnection((event as CustomEvent<VercelChangedDetail>).detail);
-    window.addEventListener(SETTINGS_VERCEL_CHANGED, handleVercelChange);
-    return () => window.removeEventListener(SETTINGS_VERCEL_CHANGED, handleVercelChange);
+    const handleSandboxChange = (event: Event) =>
+      setSandboxData((current) =>
+        applySandboxSettingsToData(current, (event as CustomEvent<SandboxChangedDetail>).detail),
+      );
+    window.addEventListener(SETTINGS_SANDBOX_CHANGED, handleSandboxChange);
+    return () => window.removeEventListener(SETTINGS_SANDBOX_CHANGED, handleSandboxChange);
   }, []);
   useEffect(() => {
     const handleSecretsChange = (event: Event) =>
@@ -256,16 +258,16 @@ export function RuntimeIntegrationIsland({
         }}
         sandboxConnectionHref="#sandbox"
         sandboxConnectionLabel={
-          initialData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+          sandboxData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
         }
         sandboxConnectionReady={
-          initialData.setupHealth.sandboxConnection?.connected ??
-          initialData.setupHealth.vercelSandboxConnection.connected
+          sandboxData.setupHealth.sandboxConnection?.connected ??
+          sandboxData.setupHealth.vercelSandboxConnection.connected
         }
         setFlashMessage={setMessage}
         tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."
         title="Agent"
-        vercelSandboxConnection={vercelConnection}
+        vercelSandboxConnection={sandboxData.vercelSandboxConnection}
         workspaceId={initialData.workspace.id}
       />
     </>

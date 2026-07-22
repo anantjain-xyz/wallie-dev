@@ -344,13 +344,15 @@ export function applySandboxSettingsToData(
 ): SettingsPageData {
   const active = settings.connections[settings.activeProvider];
   const vercel = settings.connections.vercel;
+  const activeProviderEnabled = settings.enabledProviders.includes(settings.activeProvider);
+  const activeProviderDisabledError = `${providerLabel(settings.activeProvider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`;
   return {
     ...current,
     sandboxSettings: settings,
     setupHealth: {
       ...current.setupHealth,
       sandboxConnection: {
-        connected: active?.status === "connected",
+        connected: activeProviderEnabled && active?.status === "connected",
         connectionRevision: active ? String(active.connectionRevision) : null,
         displayName:
           settings.activeProvider === "vercel"
@@ -360,10 +362,12 @@ export function applySandboxSettingsToData(
               : (settings.connections.daytona?.target ??
                 settings.connections.daytona?.apiUrl ??
                 null),
-        lastValidationError: active?.lastValidationError ?? null,
+        lastValidationError: activeProviderEnabled
+          ? (active?.lastValidationError ?? null)
+          : activeProviderDisabledError,
         provider: settings.activeProvider,
         providerLabel: providerLabel(settings.activeProvider),
-        status: active?.status ?? "missing",
+        status: activeProviderEnabled ? (active?.status ?? "missing") : "error",
         updatedAt: active?.updatedAt ?? null,
       },
       vercelSandboxConnection: vercel

@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getEnabledSandboxProviders, normalizeDaytonaApiUrl } from "./server";
+import {
+  getEnabledSandboxProviders,
+  loadDaytonaSandboxConnectionPreview,
+  loadWorkspaceSandboxConnection,
+  normalizeDaytonaApiUrl,
+} from "./server";
 
 const previousAllowlist = process.env.WALLIE_DAYTONA_API_URL_ALLOWLIST;
 const previousEnabled = process.env.WALLIE_ENABLED_SANDBOX_PROVIDERS;
@@ -37,6 +42,41 @@ describe("Daytona control-plane policy", () => {
     ]) {
       expect(() => normalizeDaytonaApiUrl(value)).toThrow();
     }
+  });
+
+  it("reports stored connections rejected by the current allowlist as invalid", async () => {
+    const row = {
+      api_key_preview: "daytona_…1234",
+      api_url: "https://retired-daytona.example/api",
+      connection_revision: "revision-daytona",
+      encrypted_api_key: "encrypted-key",
+      last_validated_at: "2026-07-22T00:00:00.000Z",
+      last_validation_error: null,
+      status: "connected",
+      target: null,
+      updated_at: "2026-07-22T00:00:00.000Z",
+      workspace_id: "workspace-1",
+    };
+    const maybeSingle = vi.fn(async () => ({ data: row, error: null }));
+    const admin = {
+      from: vi.fn(() => ({
+        select: () => ({ eq: () => ({ maybeSingle }) }),
+      })),
+    };
+
+    await expect(
+      loadDaytonaSandboxConnectionPreview(admin as never, row.workspace_id),
+    ).resolves.toMatchObject({
+      lastValidationError: "Daytona API URL is not allowed by this Wallie deployment.",
+      status: "error",
+    });
+    await expect(
+      loadWorkspaceSandboxConnection(admin as never, row.workspace_id, "daytona"),
+    ).rejects.toMatchObject({
+      message: "Daytona API URL is not allowed by this Wallie deployment.",
+      name: "SandboxConnectionInvalidError",
+      provider: "daytona",
+    });
   });
 });
 

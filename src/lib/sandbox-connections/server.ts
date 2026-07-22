@@ -224,11 +224,20 @@ export async function loadWorkspaceSandboxConnection(
   if (error) throw error;
   if (!data) return null;
   const row = data as DaytonaRow;
+  let apiUrl: string;
+  try {
+    apiUrl = normalizeDaytonaApiUrl(row.api_url);
+  } catch (policyError) {
+    throw new SandboxConnectionInvalidError(
+      "daytona",
+      policyError instanceof Error ? policyError.message : "Daytona API URL is invalid.",
+    );
+  }
   return {
     connection: {
       credentials: {
         apiKey: decryptSecretValue(row.encrypted_api_key),
-        apiUrl: normalizeDaytonaApiUrl(row.api_url),
+        apiUrl,
         target: row.target ?? undefined,
       },
       provider,
@@ -504,9 +513,16 @@ function mapE2BPreview(row: E2BRow): E2BSandboxConnectionPreview {
 }
 
 function mapDaytonaPreview(row: DaytonaRow): DaytonaSandboxConnectionPreview {
+  let policyError: string | null = null;
+  try {
+    normalizeDaytonaApiUrl(row.api_url);
+  } catch (error) {
+    policyError = error instanceof Error ? error.message : "Daytona API URL is invalid.";
+  }
   return {
     ...mapE2BPreview(row),
     apiUrl: row.api_url,
+    ...(policyError ? { lastValidationError: policyError, status: "error" as const } : {}),
     target: row.target,
   };
 }

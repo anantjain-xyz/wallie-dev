@@ -25,7 +25,7 @@ export interface WorkspaceSandboxTeardownResult {
  * owns, right before the workspace row is hard-deleted.
  *
  * Deleting a workspace relies on the FK cascade, which drops `agent_jobs`,
- * `agent_runs`, `sandbox_capability_checks`, AND
+ * `agent_runs`, `sandbox_capability_checks`, `codex_device_auth_flows`, AND
  * the workspace's provider connections in one shot. Once those rows are gone
  * the reaper has no record of the sandbox and no credentials to reach the
  * provider, so a sandbox still running when the processor's `finally` teardown
@@ -39,8 +39,9 @@ export interface WorkspaceSandboxTeardownResult {
  *      not landed yet is flipped first, so a sandbox attaching *after* the flip
  *      is refused by `updateRunSandbox` and stopped by the worker, while one that
  *      landed in the race window *just before* the flip is returned and stopped.
- *   2. Capability checks are not part of the job/run lifecycle; stop any recent
- *      check that still holds a sandbox id, whether or not it is still `running`
+ *   2. Capability checks and Codex device-auth flows are not part of the
+ *      job/run lifecycle; stop any recent check or active auth flow that still
+ *      holds a sandbox id, whether or not a check is still `running`
  *      (a check writes its terminal status before its `finally` stops the
  *      sandbox, so a process that dies in that gap leaves a finished row with a
  *      live sandbox). They normally tear down in-process via their own `finally`;
@@ -80,12 +81,11 @@ export async function stopWorkspaceProviderSandboxes(
     }
     if (!record) continue;
 
-    const checkSandboxIds = await loadActiveCapabilityCheckSandboxIds(
-      admin,
-      workspaceId,
-      record.connection,
-    );
-    for (const sandboxId of checkSandboxIds) {
+    const [checkSandboxIds, authSandboxIds] = await Promise.all([
+      loadActiveCapabilityCheckSandboxIds(admin, workspaceId, record.connection),
+      loadActiveDeviceAuthSandboxIds(admin, workspaceId, record.connection),
+    ]);
+    for (const sandboxId of new Set([...checkSandboxIds, ...authSandboxIds])) {
       if (alreadyStopped.has(sandboxId)) continue;
       await stopSandboxById(sandboxId, { connection: record.connection });
       alreadyStopped.add(sandboxId);
@@ -99,6 +99,37 @@ export async function stopWorkspaceProviderSandboxes(
   }
 
   return result;
+}
+
+async function loadActiveDeviceAuthSandboxIds(
+  admin: AdminClient,
+  workspaceId: string,
+  connection: SandboxConnection,
+): Promise<string[]> {
+  const { data, error } = await admin
+    .from("codex_device_auth_flows")
+    .select("sandbox_id")
+    .eq("workspace_id", workspaceId)
+    .eq("sandbox_provider", connection.provider as SandboxProvider)
+    .eq("sandbox_connection_revision", connection.revision)
+    .in("status", ["starting", "prompted"])
+    .not("sandbox_id", "is", null);
+
+  if (error) {
+    console.error("[workspace-teardown] failed to load active Codex device-auth flows", {
+      error: error.message,
+      workspaceId,
+    });
+    return [];
+  }
+
+  const ids = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.sandbox_id && !row.sandbox_id.startsWith("provisioning:")) {
+      ids.add(row.sandbox_id);
+    }
+  }
+  return [...ids];
 }
 
 async function loadActiveCapabilityCheckSandboxIds(

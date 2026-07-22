@@ -873,6 +873,54 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect(insertedRunRows).toHaveLength(0);
   });
 
+  it("blocks queued runs when Daytona's saved control plane is no longer allowed", async () => {
+    mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
+      activeProvider: "daytona",
+      connections: {
+        daytona: {
+          apiKeyPreview: "daytona_…1234",
+          apiUrl: "https://retired-daytona.example/api",
+          connectionRevision: "revision-daytona",
+          lastValidatedAt: baseTimestamp,
+          lastValidationError: "Daytona API URL is not allowed by this Wallie deployment.",
+          status: "error",
+          target: null,
+          updatedAt: baseTimestamp,
+          workspaceId: "ws-1",
+        },
+        e2b: null,
+        vercel: null,
+      },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 2,
+      updatedAt: baseTimestamp,
+    });
+    const insertedRunRows: Array<Record<string, unknown>> = [];
+    const { admin, supabase } = buildSupabaseMocks({
+      agentConfig: [],
+      insertedRunRows,
+      primaryRepositoryId: "repo-1",
+      repositories: [{ full_name: "acme/app", id: "repo-1" }],
+    });
+
+    await expect(
+      enqueueWallieRun({
+        admin,
+        sessionId: "sess-1",
+        requestedByMemberId: "mem-1",
+        supabase,
+        triggerType: "manual_run",
+        workspace: { id: "ws-1", name: "Acme", slug: "acme" },
+      }),
+    ).rejects.toMatchObject({
+      code: "sandbox_connection_invalid",
+      provider: "daytona",
+      statusCode: 422,
+    });
+    expect(mocks.assertCurrentSandboxCapabilityCheck).not.toHaveBeenCalled();
+    expect(insertedRunRows).toHaveLength(0);
+  });
+
   it("allows queued runs without a Vercel connection when fake sandbox execution is selected", async () => {
     mocks.resolveSandboxImplementation.mockReturnValueOnce("fake");
     mocks.loadWorkspaceSandboxOverview.mockResolvedValueOnce({
