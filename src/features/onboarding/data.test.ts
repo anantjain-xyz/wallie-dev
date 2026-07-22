@@ -231,6 +231,7 @@ describe("canonical onboarding snapshot", () => {
       secrets: [linearSecret],
       stageRows: [
         {
+          anyone_can_approve: false,
           approver_member_ids: [],
           description: null,
           id: "stage-plan",
@@ -448,6 +449,7 @@ describe("canonical onboarding snapshot", () => {
       pipeline,
       stageRows: [
         {
+          anyone_can_approve: false,
           approver_member_ids: [],
           description: null,
           id: "stage-plan",

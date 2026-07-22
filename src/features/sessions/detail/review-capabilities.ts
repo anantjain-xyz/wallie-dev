@@ -30,13 +30,15 @@ export async function resolveCanApprove({
       .maybeSingle(),
     supabase
       .from("pipeline_stages")
-      .select("approver_member_ids")
+      .select("anyone_can_approve, approver_member_ids")
       .eq("id", stageId)
       .eq("workspace_id", workspaceId)
       .maybeSingle(),
   ]);
 
   if (!member || !stage) return false;
+
+  if (stage.anyone_can_approve) return true;
 
   const approvers = stage.approver_member_ids ?? [];
   if (approvers.length > 0) {

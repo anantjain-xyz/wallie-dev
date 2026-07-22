@@ -19,6 +19,7 @@ const pipeline: SessionPipeline = {
   operatingRulesMd: "Keep changes reviewable.",
   stages: [
     {
+      anyoneCanApprove: false,
       approverMemberIds: [memberId],
       description: "Define the work",
       id: "00000000-0000-4000-8000-000000000011",
@@ -29,6 +30,7 @@ const pipeline: SessionPipeline = {
       slug: "plan",
     },
     {
+      anyoneCanApprove: false,
       approverMemberIds: [memberId],
       description: "Implement the plan",
       id: "00000000-0000-4000-8000-000000000012",

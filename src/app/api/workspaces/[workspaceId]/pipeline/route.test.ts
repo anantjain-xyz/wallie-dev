@@ -69,6 +69,7 @@ function setupRpc(result: { data?: unknown; error?: { message: string } } = {}) 
     operatingRulesMd: "",
     stages: [
       {
+        anyoneCanApprove: false,
         approverMemberIds: [],
         description: "",
         id: PRODUCT_STAGE_ID,
@@ -84,6 +85,7 @@ function setupRpc(result: { data?: unknown; error?: { message: string } } = {}) 
 
 function baseStage(overrides: Record<string, unknown> = {}) {
   return {
+    anyoneCanApprove: false,
     approverMemberIds: [],
     description: "",
     id: PRODUCT_STAGE_ID,
@@ -137,7 +139,7 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
       },
       success: true,
     });
-    expect(mocked.rpc).toHaveBeenCalledWith("rewrite_default_pipeline", {
+    expect(mocked.rpc).toHaveBeenCalledWith("rewrite_default_pipeline_with_approval_policy", {
       // Omitted from the body → undefined → RPC preserves existing rules.
       operating_rules_md: undefined,
       pipeline_name: "Default",
@@ -170,6 +172,19 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
 
     expect(response.status).toBe(200);
     expect(rpcArgs().operating_rules_md).toBe("## Operating rules\n- Be autonomous.");
+  });
+
+  it("forwards the anyone-can-approve policy to the rewrite RPC", async () => {
+    grantAccess();
+    setupRpc();
+
+    const response = await putPipeline({
+      name: "Default",
+      stages: [baseStage({ anyoneCanApprove: true })],
+    });
+
+    expect(response.status).toBe(200);
+    expect(rpcArgs().stage_payload).toEqual([baseStage({ anyoneCanApprove: true })]);
   });
 
   it("omits operating rules from the RPC when the caller does not send them", async () => {

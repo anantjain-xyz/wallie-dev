@@ -215,13 +215,15 @@ async function checkApproverAuthorization(
   const admin = createSupabaseAdminClient();
   const { data: stage, error } = await admin
     .from("pipeline_stages")
-    .select("approver_member_ids, name")
+    .select("anyone_can_approve, approver_member_ids, name")
     .eq("id", stageId)
     .eq("workspace_id", workspaceId)
     .maybeSingle();
 
   if (error) return error.message;
   if (!stage) return "Stage not found.";
+
+  if (stage.anyone_can_approve) return null;
 
   const approvers = stage.approver_member_ids ?? [];
   if (approvers.length > 0) {

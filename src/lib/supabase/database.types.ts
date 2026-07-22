@@ -528,6 +528,7 @@ export type Database = {
       }
       pipeline_stages: {
         Row: {
+          anyone_can_approve: boolean
           approver_member_ids: string[]
           created_at: string
           description: string
@@ -541,6 +542,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          anyone_can_approve?: boolean
           approver_member_ids?: string[]
           created_at?: string
           description?: string
@@ -554,6 +556,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          anyone_can_approve?: boolean
           approver_member_ids?: string[]
           created_at?: string
           description?: string
@@ -2166,6 +2169,15 @@ export type Database = {
         }[]
       }
       rewrite_default_pipeline: {
+        Args: {
+          operating_rules_md?: string
+          pipeline_name: string
+          stage_payload: Json
+          target_workspace_id: string
+        }
+        Returns: Json
+      }
+      rewrite_default_pipeline_with_approval_policy: {
         Args: {
           operating_rules_md?: string
           pipeline_name: string
