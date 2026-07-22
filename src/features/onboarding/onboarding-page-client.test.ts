@@ -1372,7 +1372,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("truncate font-mono");
   });
 
-  it("connects the Vercel Sandbox inline from the Connect Agent step", () => {
+  it("selects the connected sandbox provider inline from the Connect Agent step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
@@ -1386,9 +1386,11 @@ describe("OnboardingPageClient", () => {
 
     expect(html).toContain('id="sandbox"');
     expect(html).toContain("Sandbox provider");
+    expect(html).toContain("Choose a provider");
+    expect(html).toContain("Configure Vercel Sandbox");
     expect(html).toContain("Connect Vercel Sandbox");
-    expect(html).toContain("Connect E2B");
-    expect(html).toContain("Connect Daytona");
+    expect(html).not.toContain("Connect E2B");
+    expect(html).not.toContain("Connect Daytona");
     // Active providers cannot be disconnected until the workspace switches providers.
     expect(html).not.toContain("Disconnect");
     // The Vercel connection is made in the wizard, not by detouring into Settings.

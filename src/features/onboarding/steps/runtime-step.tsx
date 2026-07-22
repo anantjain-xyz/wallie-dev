@@ -1170,6 +1170,7 @@ export default function RuntimeStep({
           setRuntimeMessage(message.kind === "error" ? null : message.text);
         }}
         settings={data.sandboxSettings}
+        variant="onboarding"
         vercelConnection={data.vercelSandboxConnection}
         workspaceId={data.workspace.id}
       />
