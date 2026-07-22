@@ -30,6 +30,9 @@ const stageInputSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(500).default(""),
   promptTemplateMd: z.string().max(20000).default(""),
+  // Optional so older clients preserve an existing policy instead of
+  // accidentally resetting it. Current editors always send this field.
+  anyoneCanApprove: z.boolean().optional(),
   approverMemberIds: z.array(z.string().uuid()).default([]),
 });
 
@@ -63,7 +66,7 @@ export async function PUT(request: Request, context: RouteContext) {
 
   const admin = createSupabaseAdminClient();
 
-  const { data, error } = await admin.rpc("rewrite_default_pipeline", {
+  const { data, error } = await admin.rpc("rewrite_default_pipeline_with_approval_policy", {
     // undefined when omitted: dropped from the JSON body, so the RPC falls back
     // to its NULL default and coalesces to the pipeline's current rules.
     operating_rules_md: parsed.operatingRulesMd,

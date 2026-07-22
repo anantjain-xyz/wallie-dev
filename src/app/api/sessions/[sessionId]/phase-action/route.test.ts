@@ -120,7 +120,7 @@ function buildAdmin() {
         eq: () => ({
           eq: () => ({
             maybeSingle: async () => ({
-              data: { approver_member_ids: [], name: "Product" },
+              data: { anyone_can_approve: false, approver_member_ids: [], name: "Product" },
               error: null,
             }),
           }),
@@ -289,7 +289,11 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
           eq: () => ({
             eq: () => ({
               maybeSingle: async () => ({
-                data: { approver_member_ids: ["someone-else"], name: "Product" },
+                data: {
+                  anyone_can_approve: false,
+                  approver_member_ids: ["someone-else"],
+                  name: "Product",
+                },
                 error: null,
               }),
             }),
@@ -300,6 +304,33 @@ describe("POST /api/sessions/[sessionId]/phase-action", () => {
     const forbidden = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());
     expect(forbidden.status).toBe(403);
     await expect(forbidden.json()).resolves.toMatchObject({ code: "forbidden" });
+  });
+
+  it("allows a regular workspace member when anyone can approve", async () => {
+    mocked.createSupabaseServerClient.mockResolvedValue(
+      buildSupabase({ memberRow: { id: "mem-reviewer", role: "member" } }).client,
+    );
+    mocked.createSupabaseAdminClient.mockReturnValue({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { anyone_can_approve: true, approver_member_ids: [], name: "Product" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const response = await POST(makeRequest({ action: "approve", version: 1 }), routeContext());
+
+    expect(response.status).toBe(200);
+    expect(mocked.handleApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ approverMemberId: "mem-reviewer" }),
+    );
   });
 
   it("records auth, lookup, authorization, rate-limit, and mutation timing spans", async () => {

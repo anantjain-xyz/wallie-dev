@@ -245,7 +245,7 @@ describe("session detail loader", () => {
     const memberQuery = {
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({
-        data: { id: "member-1", role: "owner" },
+        data: { id: "member-1", role: "member" },
         error: null,
       }),
       select: vi.fn().mockReturnThis(),
@@ -253,7 +253,7 @@ describe("session detail loader", () => {
     const stageQuery = {
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({
-        data: { approver_member_ids: [] },
+        data: { anyone_can_approve: true, approver_member_ids: [] },
         error: null,
       }),
       select: vi.fn().mockReturnThis(),

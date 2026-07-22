@@ -69,6 +69,7 @@ const onboardingData: WorkspaceOnboardingData = {
     operatingRulesMd: "",
     stages: [
       {
+        anyoneCanApprove: false,
         approverMemberIds: [],
         description: "Product",
         id: "stage-1",

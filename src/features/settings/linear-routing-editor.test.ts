@@ -11,6 +11,7 @@ import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
 
 const stages = [
   {
+    anyoneCanApprove: false,
     approverMemberIds: [],
     description: "Build",
     id: "stage-build",
@@ -21,6 +22,7 @@ const stages = [
     slug: "build",
   },
   {
+    anyoneCanApprove: false,
     approverMemberIds: [],
     description: "Land",
     id: "stage-land",

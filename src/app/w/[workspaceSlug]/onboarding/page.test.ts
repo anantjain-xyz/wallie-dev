@@ -68,6 +68,7 @@ const onboardingData = {
     operatingRulesMd: "",
     stages: [
       {
+        anyoneCanApprove: false,
         approverMemberIds: [],
         description: "Product",
         id: "stage-1",

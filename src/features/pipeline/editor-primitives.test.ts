@@ -23,6 +23,7 @@ import {
 
 function stage(overrides: Partial<DraftPipelineStage> = {}): DraftPipelineStage {
   return {
+    anyoneCanApprove: false,
     approverMemberIds: ["member-1"],
     description: "Product requirements",
     id: "stage-product",
@@ -81,6 +82,12 @@ describe("pipeline editor primitives", () => {
       ok: false,
       stageIndex: 0,
     });
+    expect(
+      validatePipelineDraft({
+        name: "Default",
+        stages: [stage({ anyoneCanApprove: true, approverMemberIds: [] })],
+      }),
+    ).toEqual({ ok: true });
 
     const multiStage = validatePipelineDraft({
       name: "Default",
@@ -280,6 +287,7 @@ describe("pipeline editor primitives", () => {
     expect(html).toContain("product");
     expect(html).toContain("Product requirements");
     expect(html).toContain("Prompt template");
+    expect(html).toContain("Anyone can approve");
     expect(html).toContain("Move Product down to position 2 of 2");
     expect(html).toContain("Remove Product from position 1 of 2");
     expect(html).toContain("Drag to reorder Product");
