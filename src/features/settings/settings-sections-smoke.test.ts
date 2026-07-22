@@ -1108,7 +1108,7 @@ describe("Settings integration sections", () => {
 
   it("pairs Settings provider changes with the provider's recommended model", () => {
     const currentDrafts = {
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
       concurrency_limit: "1",
       max_retries: "3",
@@ -1118,11 +1118,11 @@ describe("Settings integration sections", () => {
     expect(
       applyAgentConfigDraftChange(currentDrafts, "agent_provider", "claude-code"),
     ).toMatchObject({
-      agent_model: "claude-opus-4-7[1m]",
+      agent_model: "claude-opus-4-8[1m]",
       agent_provider: "claude-code",
     });
     expect(applyAgentConfigDraftChange(currentDrafts, "agent_provider", "codex")).toMatchObject({
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     });
   });

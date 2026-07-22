@@ -55,8 +55,8 @@ describe("DEFAULT_AGENT_RUNNER_CONFIG", () => {
   it("has sensible defaults", () => {
     expect(DEFAULT_AGENT_RUNNER_CONFIG.provider).toBe("codex");
     expect(DEFAULT_AGENT_RUNNER_CONFIG.model).toBe(DEFAULT_CODEX_MODEL);
-    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.5");
-    expect(DEFAULT_CLAUDE_CODE_MODEL).toBe("claude-opus-4-7[1m]");
+    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.6-sol");
+    expect(DEFAULT_CLAUDE_CODE_MODEL).toBe("claude-opus-4-8[1m]");
     expect(DEFAULT_AGENT_RUNNER_CONFIG.maxTurns).toBe(5);
   });
 });

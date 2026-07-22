@@ -195,7 +195,7 @@ describe("buildRuntimeReadiness", () => {
         primaryRepositoryId: repositoryId,
         repositorySetup: health().repositorySetup,
       }).model,
-    ).toBe("claude-opus-4-7[1m]");
+    ).toBe("claude-opus-4-8[1m]");
   });
 });
 

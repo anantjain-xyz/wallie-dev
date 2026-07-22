@@ -20,7 +20,7 @@ export interface CodexRunnerOptions {
   credential: CodexCredential;
   /** Required for ChatGPT subscription auth so the runner can lease and persist auth.json. */
   chatGptAuthStore?: CodexChatGptAuthStore;
-  /** Model identifier (e.g. "gpt-5.5"). */
+  /** Model identifier (e.g. "gpt-5.6-sol"). */
   model?: string;
 }
 
