@@ -4,6 +4,12 @@
 alter table public.pipeline_stages
   add column if not exists anyone_can_approve boolean not null default false;
 
+-- Existing stages keep the explicit false value produced by the backfill
+-- above. Future inserts that omit the policy (including create_workspace's
+-- seeded pipeline) opt into workspace-wide approval by default.
+alter table public.pipeline_stages
+  alter column anyone_can_approve set default true;
+
 -- Keep the existing rewrite implementation as the source of truth for stage
 -- validation and ordering, then persist the new policy in the same transaction.
 create or replace function public.rewrite_default_pipeline_with_approval_policy(
