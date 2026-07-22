@@ -57,16 +57,16 @@ function RepositoryProperty({
   return (
     <div
       aria-label={`${label}: ${value}`}
-      className="grid min-w-0 flex-1 grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 border-t border-border/70 px-3 py-2.5 first:border-t-0 sm:border-l sm:border-t-0 sm:first:border-l-0"
+      className="grid min-w-0 flex-1 content-start grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 border-t border-border/70 px-3 py-2.5 first:border-t-0 sm:border-l sm:border-t-0 sm:first:border-l-0"
     >
-      <span className="row-span-2 text-muted">
-        <RepoPropertyIcon type={icon} />
-      </span>
-      <dt className="truncate text-xs font-semibold uppercase leading-4 tracking-[0.08em] text-muted">
-        {label}
+      <dt className="col-span-2 grid grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-2 text-xs font-semibold uppercase leading-4 tracking-[0.08em] text-muted">
+        <span>
+          <RepoPropertyIcon type={icon} />
+        </span>
+        <span>{label}</span>
       </dt>
       <dd
-        className={`min-w-0 truncate text-[13px] font-medium leading-5 text-foreground${monospace ? " font-mono" : ""}`}
+        className={`col-start-2 min-w-0 break-words text-[13px] font-medium leading-5 text-foreground${monospace ? " font-mono" : ""}`}
       >
         {value}
       </dd>
