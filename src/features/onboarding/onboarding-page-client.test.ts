@@ -5,8 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import { reduceOnboardingMutationData } from "@/features/onboarding/mutation-reducer";
+import {
+  buildVerifyChecklist,
+  verifyBlockersFromChecklist,
+} from "@/features/onboarding/runtime-readiness";
 import { isAgentConfigDraftDirty } from "@/features/onboarding/steps/runtime-step";
-import { updateSandboxCapabilityCheckInData } from "@/features/onboarding/steps/verify-step";
+import VerifyStep, {
+  updateSandboxCapabilityCheckInData,
+} from "@/features/onboarding/steps/verify-step";
 import { RepositoryProfileEditor } from "@/features/repository-profile/repository-profile-editor";
 import { applyAgentConfigDraftChange } from "@/lib/agent-config/drafts";
 import { DEFAULT_LINEAR_ROUTING_CONFIG } from "@/lib/linear-routing/contracts";
@@ -310,6 +316,24 @@ function primaryFooterButton(html: string) {
   return footerButton;
 }
 
+function renderVerifyStep(data: WorkspaceOnboardingData) {
+  return renderToStaticMarkup(
+    createElement(VerifyStep, {
+      data,
+      isSaving: false,
+      onCompleteStep: async () => undefined,
+      onDataChange: () => undefined,
+      onPipelineCompleted: async () => undefined,
+      onRefresh: async () => undefined,
+      onRepositoryOnboardingChange: () => undefined,
+      onRepositorySetupMessage: () => undefined,
+      onRuntimeStateChange: () => undefined,
+      onSelectGithubRepository: async () => true,
+      onSelectStep: () => undefined,
+    }),
+  );
+}
+
 function desktopRailButton(html: string, label: string) {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = html.match(
@@ -490,82 +514,70 @@ describe("reduceOnboardingMutationData", () => {
 
 describe("OnboardingPageClient", () => {
   it("uses red for health errors and grey for initial health states", () => {
-    const noCheckHtml = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData(),
-      }),
+    const noCheckData = onboardingData();
+    const errorData = onboardingData({
+      setupHealth: {
+        latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: "sandbox failed",
+          githubRepositoryId: "repo-a",
+          id: "check-1",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
+          status: "error",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo-a",
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+      },
+    });
+    const noCheck = setupHealthItems(noCheckData.setupHealth).find(
+      (item) => item.label === "Sandbox",
     );
-    const errorHtml = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          setupHealth: {
-            latestSandboxCapabilityCheck: {
-              agentModel: "gpt-5.5",
-              agentProvider: "codex",
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: "sandbox failed",
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: "vercel",
-              sandboxVercelProjectId: "prj_123",
-              sandboxVercelTeamId: "team_123",
-              status: "error",
-            },
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-          },
-        }),
-      }),
-    );
+    const error = setupHealthItems(errorData.setupHealth).find((item) => item.label === "Sandbox");
 
-    expect(noCheckHtml).toMatch(/data-status="not_started" data-tone="neutral"[^>]*>.*No check/);
-    expect(errorHtml).toMatch(/data-status="blocked" data-tone="danger"[^>]*>.*Error/);
+    expect(noCheck).toMatchObject({ tone: "neutral", value: "No check" });
+    expect(error).toMatchObject({ tone: "danger", value: "Error" });
   });
 
   it("renders sandbox health check times as relative copy", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-16T18:05:00.000Z"));
+    const data = onboardingData({
+      setupHealth: {
+        latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: "repo-a",
+          id: "check-1",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
+          status: "success",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo-a",
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+      },
+    });
+    const sandbox = setupHealthItems(data.setupHealth, "2026-05-16T18:05:00.000Z").find(
+      (item) => item.label === "Sandbox",
+    );
+    const html = renderToStaticMarkup(createElement("div", null, sandbox?.detail));
 
-    try {
-      const html = renderToStaticMarkup(
-        createElement(OnboardingPageClient, {
-          initialData: onboardingData({
-            setupHealth: {
-              latestSandboxCapabilityCheck: {
-                agentModel: "gpt-5.5",
-                agentProvider: "codex",
-                capabilities: {},
-                checkedAt: "2026-05-16T18:00:00.000Z",
-                errorText: null,
-                githubRepositoryId: "repo-a",
-                id: "check-1",
-                sandboxProvider: "vercel",
-                sandboxVercelProjectId: "prj_123",
-                sandboxVercelTeamId: "team_123",
-                status: "success",
-              },
-              primaryRepositoryProfile: {
-                configured: true,
-                fullName: "acme/repo-a",
-                repositoryId: "repo-a",
-                status: "ready",
-              },
-            },
-          }),
-          initialNow: "2026-05-16T18:05:00.000Z",
-        }),
-      );
-
-      expect(html).toMatch(/Checked <time[^>]*>5m ago<\/time>/);
-      expect(html).toContain('dateTime="2026-05-16T18:00:00.000Z"');
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(html).toMatch(/Checked <time[^>]*>5m ago<\/time>/);
+    expect(html).toContain('dateTime="2026-05-16T18:00:00.000Z"');
   });
 
   it("renders one responsive setup navigation tree without a horizontal rail", () => {
@@ -1618,7 +1630,7 @@ describe("OnboardingPageClient", () => {
     expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Agent");
   });
 
-  it("enables the Verify completion CTA when every blocker passes", () => {
+  it("has no Verify blockers when every requirement passes", () => {
     const repo = repository("repo-a", {
       onboarding: {
         conflictReport: [],
@@ -1634,152 +1646,149 @@ describe("OnboardingPageClient", () => {
       },
       profile: profile("repo-a"),
     });
-    const html = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          github: {
-            installation: null,
-            missingAppKeys: [],
-            missingWebhookKeys: [],
-            primaryProfile: profile("repo-a"),
-            repositories: [repo],
-          },
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
-          },
-          setupHealth: {
-            codexConnection: {
-              accountEmail: null,
-              checkedAt: "2026-05-16T18:00:01.000Z",
-              connected: true,
-              credentialType: "codex_access_token",
-              expiresAt: "2026-05-16T20:00:00.000Z",
-              reconnectReason: null,
-              reconnectRequired: false,
-              status: "connected",
-              updatedAt: "2026-05-16T18:00:00.000Z",
-            },
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            repositorySetup: {
-              configured: true,
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            latestSandboxCapabilityCheck: {
-              agentModel: "gpt-5.5",
-              agentProvider: "codex",
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: null,
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: "vercel",
-              sandboxVercelProjectId: "prj_123",
-              sandboxVercelTeamId: "team_123",
-              status: "success",
-            },
-          },
-        }),
-      }),
-    );
+    const data = onboardingData({
+      github: {
+        installation: null,
+        missingAppKeys: [],
+        missingWebhookKeys: [],
+        primaryProfile: profile("repo-a"),
+        repositories: [repo],
+      },
+      onboarding: {
+        completedAt: null,
+        completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+        createdAt: "2026-05-16T18:00:00.000Z",
+        currentStep: "verify",
+        dismissedAt: null,
+        id: "onboarding-1",
+        skippedSteps: [],
+        status: "in_progress",
+        updatedAt: "2026-05-16T18:00:00.000Z",
+        workspaceId: "workspace-1",
+      },
+      setupHealth: {
+        codexConnection: {
+          accountEmail: null,
+          checkedAt: "2026-05-16T18:00:01.000Z",
+          connected: true,
+          credentialType: "codex_access_token",
+          expiresAt: "2026-05-16T20:00:00.000Z",
+          reconnectReason: null,
+          reconnectRequired: false,
+          status: "connected",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+        },
+        primaryRepositoryProfile: {
+          configured: true,
+          fullName: "acme/repo-a",
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+        repositorySetup: {
+          configured: true,
+          repositoryId: "repo-a",
+          status: "ready",
+        },
+        latestSandboxCapabilityCheck: {
+          agentModel: "gpt-5.5",
+          agentProvider: "codex",
+          capabilities: {},
+          checkedAt: "2026-05-16T18:00:00.000Z",
+          errorText: null,
+          githubRepositoryId: "repo-a",
+          id: "check-1",
+          sandboxProvider: "vercel",
+          sandboxVercelProjectId: "prj_123",
+          sandboxVercelTeamId: "team_123",
+          status: "success",
+        },
+      },
+    });
+    const checklist = buildVerifyChecklist({
+      agentConfig: data.agentConfig,
+      health: data.setupHealth,
+      onboarding: data.onboarding,
+    });
 
-    const button = primaryFooterButton(html);
-    expect(html).toContain("Latest selected-repository sandbox capability check succeeded.");
-    expect(button).not.toContain("disabled");
-    expect(button).toContain(">Complete setup</span>");
+    expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
+    expect(checklist.find((item) => item.id === "sandbox")?.detail).toBe(
+      "Latest selected-repository sandbox capability check succeeded.",
+    );
   });
 
   it("renders sandbox polling and retry states", () => {
-    const running = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
+    const running = renderVerifyStep(
+      onboardingData({
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+          createdAt: "2026-05-16T18:00:00.000Z",
+          currentStep: "verify",
+          dismissedAt: null,
+          id: "onboarding-1",
+          skippedSteps: [],
+          status: "in_progress",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+          workspaceId: "workspace-1",
+        },
+        setupHealth: {
+          primaryRepositoryProfile: {
+            configured: true,
+            fullName: "acme/repo-a",
+            repositoryId: "repo-a",
+            status: "ready",
           },
-          setupHealth: {
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            latestSandboxCapabilityCheck: {
-              agentModel: "gpt-5.5",
-              agentProvider: "codex",
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: null,
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: null,
-              sandboxVercelProjectId: null,
-              sandboxVercelTeamId: null,
-              status: "running",
-            },
+          latestSandboxCapabilityCheck: {
+            agentModel: "gpt-5.5",
+            agentProvider: "codex",
+            capabilities: {},
+            checkedAt: "2026-05-16T18:00:00.000Z",
+            errorText: null,
+            githubRepositoryId: "repo-a",
+            id: "check-1",
+            sandboxProvider: null,
+            sandboxVercelProjectId: null,
+            sandboxVercelTeamId: null,
+            status: "running",
           },
-        }),
+        },
       }),
     );
-    const failed = renderToStaticMarkup(
-      createElement(OnboardingPageClient, {
-        initialData: onboardingData({
-          onboarding: {
-            completedAt: null,
-            completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
-            createdAt: "2026-05-16T18:00:00.000Z",
-            currentStep: "verify",
-            dismissedAt: null,
-            id: "onboarding-1",
-            skippedSteps: [],
-            status: "in_progress",
-            updatedAt: "2026-05-16T18:00:00.000Z",
-            workspaceId: "workspace-1",
+    const failed = renderVerifyStep(
+      onboardingData({
+        onboarding: {
+          completedAt: null,
+          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+          createdAt: "2026-05-16T18:00:00.000Z",
+          currentStep: "verify",
+          dismissedAt: null,
+          id: "onboarding-1",
+          skippedSteps: [],
+          status: "in_progress",
+          updatedAt: "2026-05-16T18:00:00.000Z",
+          workspaceId: "workspace-1",
+        },
+        setupHealth: {
+          primaryRepositoryProfile: {
+            configured: true,
+            fullName: "acme/repo-a",
+            repositoryId: "repo-a",
+            status: "ready",
           },
-          setupHealth: {
-            primaryRepositoryProfile: {
-              configured: true,
-              fullName: "acme/repo-a",
-              repositoryId: "repo-a",
-              status: "ready",
-            },
-            latestSandboxCapabilityCheck: {
-              agentModel: "gpt-5.5",
-              agentProvider: "codex",
-              capabilities: {},
-              checkedAt: "2026-05-16T18:00:00.000Z",
-              errorText: "sandbox failed",
-              githubRepositoryId: "repo-a",
-              id: "check-1",
-              sandboxProvider: "vercel",
-              sandboxVercelProjectId: "prj_123",
-              sandboxVercelTeamId: "team_123",
-              status: "error",
-            },
+          latestSandboxCapabilityCheck: {
+            agentModel: "gpt-5.5",
+            agentProvider: "codex",
+            capabilities: {},
+            checkedAt: "2026-05-16T18:00:00.000Z",
+            errorText: "sandbox failed",
+            githubRepositoryId: "repo-a",
+            id: "check-1",
+            sandboxProvider: "vercel",
+            sandboxVercelProjectId: "prj_123",
+            sandboxVercelTeamId: "team_123",
+            status: "error",
           },
-        }),
+        },
       }),
     );
 
