@@ -18,7 +18,8 @@ import {
 } from "@/features/workspace-members/model";
 import type { WorkspaceMemberRow } from "@/features/workspace-members/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
+import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
+import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
@@ -210,7 +211,7 @@ export async function loadWallieSessionData(input: {
     missingSecretKeys,
     nextRunCursor: runPage.nextCursor,
     repository: input.repository,
-    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
+    requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
     runs: runPage.runs.map((run) => ({
       attemptCount: run.attemptCount,
       created_at: run.createdAt,
@@ -240,12 +241,39 @@ async function loadWallieVercelSandboxConnection(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   workspaceId: string,
 ): Promise<WallieVercelSandboxConnectionStatus> {
-  const connection = await loadVercelSandboxConnectionPreview(admin, workspaceId);
+  const overview = await loadWorkspaceSandboxOverview(admin, workspaceId);
+  return mapWallieSandboxConnectionStatus(overview);
+}
+
+export function mapWallieSandboxConnectionStatus(
+  overview: SandboxSettingsResponse,
+): WallieVercelSandboxConnectionStatus {
+  const provider = overview.activeProvider;
+  const connection = overview.connections[provider];
+
+  if (!overview.enabledProviders.includes(provider)) {
+    return {
+      connected: false,
+      connectionRevision: connection ? String(connection.connectionRevision) : null,
+      displayName: null,
+      lastValidationError: `${providerLabel(provider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
+      provider,
+      providerLabel: providerLabel(provider),
+      projectId: null,
+      projectName: null,
+      status: "error",
+      teamId: null,
+    };
+  }
 
   if (!connection) {
     return {
       connected: false,
+      connectionRevision: null,
+      displayName: null,
       lastValidationError: null,
+      provider,
+      providerLabel: providerLabel(provider),
       projectId: null,
       projectName: null,
       status: "missing",
@@ -253,13 +281,23 @@ async function loadWallieVercelSandboxConnection(
     };
   }
 
+  const vercel = provider === "vercel" ? overview.connections.vercel : null;
   return {
     connected: connection.status === "connected",
+    connectionRevision: String(connection.connectionRevision),
+    displayName:
+      provider === "vercel"
+        ? (vercel?.projectName ?? vercel?.projectId ?? null)
+        : provider === "e2b"
+          ? (overview.connections.e2b?.apiKeyPreview ?? null)
+          : (overview.connections.daytona?.target ?? overview.connections.daytona?.apiUrl ?? null),
     lastValidationError: connection.lastValidationError,
-    projectId: connection.projectId,
-    projectName: connection.projectName,
+    provider,
+    providerLabel: providerLabel(provider),
+    projectId: vercel?.projectId ?? null,
+    projectName: vercel?.projectName ?? null,
     status: connection.status,
-    teamId: connection.teamId,
+    teamId: vercel?.teamId ?? null,
   };
 }
 

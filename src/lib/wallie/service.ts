@@ -22,8 +22,12 @@ import type {
 } from "@/features/wallie/types";
 import { loadWorkspaceAgentConfig } from "@/lib/agent-runner";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
+import {
+  assertCurrentSandboxCapabilityCheck,
+  SandboxCapabilityCheckStaleError,
+} from "@/lib/sandbox-capabilities/readiness";
+import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
 import { buildWallieJobDedupeKey, WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
-import { loadVercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -49,7 +53,7 @@ const sessionSelect =
 const jobSelect =
   "id, workspace_id, session_id, requested_by_member_id, trigger_type, status, attempt_count, last_error, dedupe_key, job_type, stage_id, stage_slug, stage_name, scheduled_at, started_at, finished_at, created_at, updated_at";
 const runSelect =
-  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
+  "id, workspace_id, session_id, agent_job_id, triggered_by_member_id, run_type, stage_id, stage_slug, stage_name, model_provider, model_name, status, started_at, finished_at, last_activity_at, input_tokens, output_tokens, total_cost_usd, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id, created_at, updated_at";
 const DEFAULT_RUN_LOOKUP_RETRY = {
   initialDelayMs: 40,
   maxDelayMs: 640,
@@ -66,18 +70,21 @@ export type WallieRunLookupRetryOptions = {
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
   readonly missingSecretKeys?: string[];
+  readonly provider?: "vercel" | "e2b" | "daytona";
   readonly statusCode: number;
 
   constructor(input: {
     code: WallieActionErrorCode;
     message: string;
     missingSecretKeys?: string[];
+    provider?: "vercel" | "e2b" | "daytona";
     statusCode: number;
   }) {
     super(input.message);
     this.code = input.code;
     this.missingSecretKeys = input.missingSecretKeys;
     this.name = "WallieActionError";
+    this.provider = input.provider;
     this.statusCode = input.statusCode;
   }
 }
@@ -204,6 +211,7 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
     code: blockingReason.code,
     message: reasons.map((reason) => reason.message).join(" "),
     missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
+    provider: blockingReason.provider,
     statusCode: 422,
   });
 }
@@ -239,7 +247,7 @@ export function assertSessionFirstRunReady(input: {
     missingSecretKeys: input.missingSecretKeys,
     mode: inferWallieRunMode(input.repository?.id ?? null),
     repository: input.repository,
-    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
+    requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
     vercelSandboxConnection: input.vercelSandboxConnection,
   });
   const blockingError = toBlockingActionError(blockingReasons, input.missingSecretKeys);
@@ -251,16 +259,63 @@ export function assertSessionFirstRunReady(input: {
   return input.agentConfig;
 }
 
+export async function assertSessionSandboxCapabilityReady(input: {
+  admin?: AdminClient;
+  agentConfig: SessionFirstRunPrerequisites["agentConfig"];
+  repository: WallieSessionRepository | null;
+  sandboxConnection: WallieVercelSandboxConnectionStatus;
+  workspaceId: string;
+}): Promise<void> {
+  if (resolveSandboxImplementation() === "fake" || !input.repository) return;
+
+  const provider = input.sandboxConnection.provider ?? "vercel";
+  const revision = input.sandboxConnection.connectionRevision;
+  if (!revision) {
+    throw new WallieActionError({
+      code: "sandbox_capability_check_stale",
+      message: `Run a successful ${input.sandboxConnection.providerLabel ?? "sandbox provider"} capability check before starting Wallie.`,
+      provider,
+      statusCode: 422,
+    });
+  }
+
+  try {
+    await assertCurrentSandboxCapabilityCheck({
+      admin: input.admin ?? createSupabaseAdminClient(),
+      agent: input.agentConfig,
+      connection: { provider, revision },
+      repositoryId: input.repository.id,
+      workspaceId: input.workspaceId,
+    });
+  } catch (error) {
+    if (!(error instanceof SandboxCapabilityCheckStaleError)) throw error;
+    throw new WallieActionError({
+      code: "sandbox_capability_check_stale",
+      message: error.message,
+      provider: error.provider,
+      statusCode: 422,
+    });
+  }
+}
+
 export async function prepareSessionFirstRun(input: {
   admin?: AdminClient;
   repository: WallieSessionRepository | null;
   workspaceId: string;
 }) {
   const prerequisites = await loadSessionFirstRunPrerequisites(input);
-  return assertSessionFirstRunReady({
+  const agentConfig = assertSessionFirstRunReady({
     ...prerequisites,
     repository: input.repository,
   });
+  await assertSessionSandboxCapabilityReady({
+    admin: input.admin,
+    agentConfig,
+    repository: input.repository,
+    sandboxConnection: prerequisites.vercelSandboxConnection,
+    workspaceId: input.workspaceId,
+  });
+  return agentConfig;
 }
 
 export async function createSessionWithFirstJob(input: {
@@ -416,12 +471,33 @@ async function loadWallieVercelSandboxConnection(
   admin: AdminClient,
   workspaceId: string,
 ): Promise<WallieVercelSandboxConnectionStatus> {
-  const connection = await loadVercelSandboxConnectionPreview(admin, workspaceId);
+  const overview = await loadWorkspaceSandboxOverview(admin, workspaceId);
+  const provider = overview.activeProvider;
+  const connection = overview.connections[provider];
+
+  if (!overview.enabledProviders.includes(provider)) {
+    return {
+      connected: false,
+      connectionRevision: connection ? String(connection.connectionRevision) : null,
+      displayName: null,
+      lastValidationError: `${providerLabel(provider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
+      provider,
+      providerLabel: providerLabel(provider),
+      projectId: null,
+      projectName: null,
+      status: "error",
+      teamId: null,
+    };
+  }
 
   if (!connection) {
     return {
       connected: false,
+      connectionRevision: null,
+      displayName: null,
       lastValidationError: null,
+      provider,
+      providerLabel: providerLabel(provider),
       projectId: null,
       projectName: null,
       status: "missing",
@@ -429,13 +505,24 @@ async function loadWallieVercelSandboxConnection(
     };
   }
 
+  const vercel = provider === "vercel" ? overview.connections.vercel : null;
+  const displayName =
+    provider === "vercel"
+      ? (vercel?.projectName ?? vercel?.projectId ?? null)
+      : provider === "e2b"
+        ? (overview.connections.e2b?.apiKeyPreview ?? null)
+        : (overview.connections.daytona?.target ?? overview.connections.daytona?.apiUrl ?? null);
   return {
     connected: connection.status === "connected",
+    connectionRevision: String(connection.connectionRevision),
+    displayName,
     lastValidationError: connection.lastValidationError,
-    projectId: connection.projectId,
-    projectName: connection.projectName,
+    provider,
+    providerLabel: providerLabel(provider),
+    projectId: vercel?.projectId ?? null,
+    projectName: vercel?.projectName ?? null,
     status: connection.status,
-    teamId: connection.teamId,
+    teamId: vercel?.teamId ?? null,
   };
 }
 
@@ -678,7 +765,7 @@ async function validateQueuedRunRequest(input: {
     missingSecretKeys,
     mode: runType,
     repository,
-    requiresVercelSandbox: resolveSandboxImplementation() === "vercel",
+    requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
     vercelSandboxConnection,
   });
   const blockingError = toBlockingActionError(blockingReasons, missingSecretKeys);
@@ -686,6 +773,15 @@ async function validateQueuedRunRequest(input: {
   if (blockingError) {
     throw blockingError;
   }
+
+  const agentConfig = await loadWorkspaceAgentConfig(input.admin, workspace.id);
+  await assertSessionSandboxCapabilityReady({
+    admin: input.admin,
+    agentConfig,
+    repository,
+    sandboxConnection: vercelSandboxConnection,
+    workspaceId: workspace.id,
+  });
 
   return {
     activeRun,

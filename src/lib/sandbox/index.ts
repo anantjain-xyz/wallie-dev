@@ -1,43 +1,78 @@
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
+  SandboxConnection,
   SandboxHandle,
-  VercelSandboxCredentials,
+  SandboxImplementation,
+  SandboxProvider,
+  SandboxProviderDriver,
 } from "./types";
+import { redactSecrets } from "./command";
 
 export type {
   AgentProvider,
   CreateSessionSandboxInput,
+  DaytonaSandboxCredentials,
+  E2BSandboxCredentials,
   RunningSandboxSummary,
   SandboxCheckoutMode,
+  SandboxConnection,
   SandboxExecHandle,
   SandboxExecOptions,
   SandboxHandle,
   SandboxImplementation,
   SandboxLogEntry,
+  SandboxProvider,
+  SandboxProviderDriver,
   VercelSandboxCredentials,
 } from "./types";
 export { FakeSandbox } from "./fake";
 
-export function resolveSandboxImplementation(
-  override?: CreateSessionSandboxInput["implementation"],
-): "vercel" | "fake" {
-  const impl = override ?? process.env.WALLIE_SANDBOX_IMPL ?? "vercel";
-  if (impl !== "vercel" && impl !== "fake") {
-    throw new Error(`Unknown WALLIE_SANDBOX_IMPL: ${impl}. Expected "vercel" or "fake".`);
-  }
-  return impl;
+const IMPLEMENTATIONS = ["vercel", "e2b", "daytona", "fake"] as const;
+const DRIVER_LOADERS = {
+  daytona: async () => (await import("./daytona")).daytonaSandboxDriver,
+  e2b: async () => (await import("./e2b")).e2bSandboxDriver,
+  vercel: async () => (await import("./vercel")).vercelSandboxDriver,
+} satisfies Record<SandboxProvider, () => Promise<unknown>>;
+
+async function loadProviderDriver<Connection extends SandboxConnection>(
+  connection: Connection,
+): Promise<SandboxProviderDriver<Connection>> {
+  const driver = await DRIVER_LOADERS[connection.provider]();
+  return driver as SandboxProviderDriver<Connection>;
 }
 
-/**
- * Create a per-session sandbox. The real Vercel Sandbox implementation is
- * loaded lazily so test/build paths that set `WALLIE_SANDBOX_IMPL=fake` never
- * pull in `@vercel/sandbox`.
- */
+export function resolveSandboxImplementation(
+  override?: CreateSessionSandboxInput["implementation"],
+): SandboxImplementation {
+  const impl = override ?? process.env.WALLIE_SANDBOX_IMPL ?? "vercel";
+  if (!IMPLEMENTATIONS.includes(impl as SandboxImplementation)) {
+    throw new Error(
+      `Unknown WALLIE_SANDBOX_IMPL: ${impl}. Expected ${IMPLEMENTATIONS.map((value) => `"${value}"`).join(", ")}.`,
+    );
+  }
+  return impl as SandboxImplementation;
+}
+
+function resolveInputImplementation(input: CreateSessionSandboxInput): SandboxImplementation {
+  const explicit = input.implementation ?? process.env.WALLIE_SANDBOX_IMPL;
+  if (explicit === "fake") return "fake";
+  if (input.connection) {
+    if (explicit && explicit !== input.connection.provider) {
+      throw new Error(
+        `Sandbox implementation ${explicit} does not match the ${input.connection.provider} workspace connection.`,
+      );
+    }
+    return input.connection.provider;
+  }
+  return resolveSandboxImplementation(input.implementation);
+}
+
 export async function createSessionSandbox(
   input: CreateSessionSandboxInput,
 ): Promise<SandboxHandle> {
-  if (resolveSandboxImplementation(input.implementation) === "fake") {
+  const implementation = resolveInputImplementation(input);
+  if (implementation === "fake") {
     const { FakeSandbox } = await import("./fake");
     const sandbox = new FakeSandbox(undefined, {
       baseBranch: input.baseBranch,
@@ -47,44 +82,131 @@ export async function createSessionSandbox(
     await input.onSandboxCreated?.({ provider: "fake", sandboxId: sandbox.id });
     return sandbox;
   }
-  const { createVercelSessionSandbox } = await import("./vercel");
-  return createVercelSessionSandbox(input);
+
+  const connection = input.connection;
+  if (!connection || connection.provider !== implementation) {
+    throw new Error(`Workspace ${implementation} Sandbox connection is required.`);
+  }
+
+  try {
+    return await (await loadProviderDriver(connection)).create(input, connection);
+  } catch (error) {
+    throw sanitizedSandboxError(error, connection, [input.installationToken]);
+  }
 }
 
-/**
- * Stop a sandbox by its provider ID. Used by the stall sweep and reaper to
- * terminate orphans. Idempotent and best-effort: errors are logged, not
- * thrown, so a single bad ID does not break a batch sweep.
- */
+export async function validateSandboxConnection(connection: SandboxConnection) {
+  const result = await (await loadProviderDriver(connection)).validate(connection);
+  return result.error
+    ? { ...result, error: redactSecrets(result.error, connectionSecrets(connection)) }
+    : result;
+}
+
 export async function stopSandboxById(
   sandboxId: string,
-  options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
+  options: {
+    connection?: SandboxConnection;
+    throwOnError?: boolean;
+    /** @deprecated Compatibility input while callers migrate to `connection`. */
+    vercelCredentials?: Extract<SandboxConnection, { provider: "vercel" }>["credentials"];
+  } = {},
 ): Promise<void> {
-  if (resolveSandboxImplementation() === "fake") {
-    const { stopFakeSandboxById } = await import("./fake");
-    await stopFakeSandboxById(sandboxId);
+  const connection =
+    options.connection ??
+    (options.vercelCredentials
+      ? ({
+          credentials: options.vercelCredentials,
+          provider: "vercel",
+          revision: "legacy",
+        } satisfies SandboxConnection)
+      : undefined);
+  if (!connection) {
+    if (resolveSandboxImplementation() === "fake") {
+      const { stopFakeSandboxById } = await import("./fake");
+      await stopFakeSandboxById(sandboxId);
+      return;
+    }
+    if (options.throwOnError) throw new Error("Cannot stop sandbox without its connection.");
+    console.error("[sandbox] cannot stop sandbox without its connection", { sandboxId });
     return;
   }
-  const { stopVercelSandboxById } = await import("./vercel");
-  await stopVercelSandboxById(sandboxId, options.vercelCredentials, {
-    throwOnError: options.throwOnError,
-  });
+
+  try {
+    await (await loadProviderDriver(connection)).stopById(sandboxId, connection);
+  } catch (error) {
+    if (options.throwOnError) throw error;
+    console.error("[sandbox] failed to stop sandbox", {
+      error: redactSecrets(
+        error instanceof Error ? error.message : String(error),
+        connectionSecrets(connection),
+      ),
+      provider: connection.provider,
+      sandboxId,
+    });
+  }
 }
 
-/**
- * List sandboxes that are currently in an active state (`pending` or
- * `running`). The reaper cross-references these against active `agent_runs`
- * rows to find orphans.
- */
 export async function listRunningSandboxes(
-  options: { throwOnError?: boolean; vercelCredentials?: VercelSandboxCredentials } = {},
+  options: {
+    connection?: SandboxConnection;
+    throwOnError?: boolean;
+    workspaceId?: string;
+    /** @deprecated Compatibility input while callers migrate to `connection`. */
+    vercelCredentials?: Extract<SandboxConnection, { provider: "vercel" }>["credentials"];
+  } = {},
 ): Promise<RunningSandboxSummary[]> {
-  if (resolveSandboxImplementation() === "fake") {
-    const { listRunningFakeSandboxes } = await import("./fake");
-    return listRunningFakeSandboxes();
+  const connection =
+    options.connection ??
+    (options.vercelCredentials
+      ? ({
+          credentials: options.vercelCredentials,
+          provider: "vercel",
+          revision: "legacy",
+        } satisfies SandboxConnection)
+      : undefined);
+  if (!connection) {
+    if (resolveSandboxImplementation() === "fake") {
+      const { listRunningFakeSandboxes } = await import("./fake");
+      return listRunningFakeSandboxes();
+    }
+    if (options.throwOnError) throw new Error("Cannot list sandboxes without a connection.");
+    return [];
   }
-  const { listRunningVercelSandboxes } = await import("./vercel");
-  return listRunningVercelSandboxes(options.vercelCredentials, {
-    throwOnError: options.throwOnError,
-  });
+
+  try {
+    return await (
+      await loadProviderDriver(connection)
+    ).listRunning(connection, {
+      workspaceId: options.workspaceId,
+    });
+  } catch (error) {
+    if (options.throwOnError) throw error;
+    console.error("[sandbox] failed to list sandboxes", {
+      error: redactSecrets(
+        error instanceof Error ? error.message : String(error),
+        connectionSecrets(connection),
+      ),
+      provider: connection.provider,
+    });
+    return [];
+  }
+}
+
+function connectionSecrets(connection: SandboxConnection): string[] {
+  return connection.provider === "vercel"
+    ? [connection.credentials.token]
+    : [connection.credentials.apiKey];
+}
+
+function sanitizedSandboxError(
+  error: unknown,
+  connection: SandboxConnection,
+  extraSecrets: string[] = [],
+): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  const sanitized = new Error(
+    redactSecrets(message, [...connectionSecrets(connection), ...extraSecrets]),
+  );
+  sanitized.name = error instanceof Error ? error.name : "SandboxError";
+  return sanitized;
 }

@@ -36,9 +36,9 @@ import {
 import type { FlashMessage, SettingsPageClientProps } from "@/features/settings/settings-types";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
 import {
-  VercelSandboxConnectionSection,
-  vercelConnectionHealth,
-} from "@/features/settings/vercel-sandbox-connection-section";
+  applySandboxSettingsToData,
+  SandboxProviderSection,
+} from "@/features/settings/sandbox-provider-section";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 import { WorkspaceAvatarSection } from "@/features/settings/workspace-avatar-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
@@ -52,7 +52,7 @@ const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
     anchors: [
       { id: "github", label: "GitHub" },
       { id: "repository", label: "Repositories" },
-      { id: "vercel", label: "Vercel Sandbox" },
+      { id: "sandbox", label: "Sandbox provider" },
       { id: "linear", label: "Linear" },
       { id: "runtime", label: "Agent" },
     ],
@@ -84,6 +84,7 @@ const LEGACY_ANCHOR_REDIRECTS: Record<string, string> = {
   "coding-agent": "runtime",
   "linear-routing": "linear",
   secrets: "runtime",
+  vercel: "sandbox",
 };
 
 function ContainedSettingsSection({
@@ -295,29 +296,6 @@ function applySecretsToData(
   };
 }
 
-function updateVercelConnectionInData(
-  currentData: SettingsPageData,
-  connection: SettingsPageData["vercelSandboxConnection"],
-): SettingsPageData {
-  const vercelProjectChanged =
-    currentData.vercelSandboxConnection?.teamId !== connection?.teamId ||
-    currentData.vercelSandboxConnection?.projectId !== connection?.projectId;
-  const latestSandboxCapabilityCheck = vercelProjectChanged
-    ? null
-    : currentData.latestSandboxCapabilityCheck;
-
-  return {
-    ...currentData,
-    latestSandboxCapabilityCheck,
-    setupHealth: {
-      ...currentData.setupHealth,
-      latestSandboxCapabilityCheck,
-      vercelSandboxConnection: vercelConnectionHealth(connection),
-    },
-    vercelSandboxConnection: connection,
-  };
-}
-
 function SettingsCompletePage({
   deferredMode = false,
   initialData,
@@ -408,13 +386,14 @@ function SettingsCompletePage({
             </ContainedSettingsSection>
 
             <ContainedSettingsSection>
-              <VercelSandboxConnectionSection
+              <SandboxProviderSection
                 canManage={isManager}
-                connection={pageData.vercelSandboxConnection}
-                onConnectionChange={(connection) =>
-                  setData((currentData) => updateVercelConnectionInData(currentData, connection))
+                onSettingsChange={(settings) =>
+                  setData((currentData) => applySandboxSettingsToData(currentData, settings))
                 }
                 setFlashMessage={setFlashMessage}
+                settings={pageData.sandboxSettings}
+                vercelConnection={pageData.vercelSandboxConnection}
                 workspaceId={pageData.workspace.id}
               />
             </ContainedSettingsSection>
@@ -485,6 +464,14 @@ function SettingsCompletePage({
                 }
                 onCodexStatusChange={(status) =>
                   setData((currentData) => updateCodexConnectionInData(currentData, status))
+                }
+                sandboxConnectionHref="#sandbox"
+                sandboxConnectionLabel={
+                  pageData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+                }
+                sandboxConnectionReady={
+                  pageData.setupHealth.sandboxConnection?.connected ??
+                  pageData.setupHealth.vercelSandboxConnection.connected
                 }
                 setFlashMessage={setFlashMessage}
                 tagline="Check coding-agent configuration, provider access, and workspace secrets used by Wallie runtime."

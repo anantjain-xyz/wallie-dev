@@ -1,8 +1,8 @@
 /**
  * Sandbox abstraction — a per-session Linux microVM used to run the coding
  * agent CLI (Codex or Claude Code). Wraps provider-specific SDKs (Vercel
- * Sandbox today; an E2B adapter could slot in later) so the rest of Wallie
- * only depends on this interface.
+ * Sandbox, E2B, and Daytona) so the rest of Wallie only depends on this
+ * interface.
  */
 
 export interface SandboxExecOptions {
@@ -52,7 +52,7 @@ export interface SandboxExecHandle {
  * multi-turn runs don't need to re-clone).
  */
 export interface SandboxHandle {
-  /** Provider-specific ID (Vercel Sandbox ID, fake UUID, etc.). For logs. */
+  /** Provider-specific sandbox ID. Used for logs, cancellation, and cleanup. */
   readonly id: string;
   /** Absolute path inside the VM where the repo is checked out. */
   readonly repoPath: string;
@@ -75,13 +75,42 @@ export interface SandboxHandle {
 // ---------------------------------------------------------------------------
 
 export type AgentProvider = "codex" | "claude-code";
-export type SandboxImplementation = "vercel" | "fake";
+export type SandboxProvider = "vercel" | "e2b" | "daytona";
+export type SandboxImplementation = SandboxProvider | "fake";
 
 export type VercelSandboxCredentials = {
   projectId: string;
   teamId: string;
   token: string;
 };
+
+export type E2BSandboxCredentials = {
+  apiKey: string;
+};
+
+export type DaytonaSandboxCredentials = {
+  apiKey: string;
+  /** Defaults to Daytona Cloud when omitted. */
+  apiUrl?: string;
+  target?: string;
+};
+
+export type SandboxConnection =
+  | {
+      credentials: VercelSandboxCredentials;
+      provider: "vercel";
+      revision: string;
+    }
+  | {
+      credentials: E2BSandboxCredentials;
+      provider: "e2b";
+      revision: string;
+    }
+  | {
+      credentials: DaytonaSandboxCredentials;
+      provider: "daytona";
+      revision: string;
+    };
 
 export type SandboxCheckoutMode =
   /** Clone baseBranch and create a new `branch` from it (default). */
@@ -96,12 +125,14 @@ export type SandboxCheckoutMode =
  */
 export interface RunningSandboxSummary {
   id: string;
-  status: "pending" | "running";
+  status: "paused" | "pending" | "running";
   /** Unix epoch milliseconds — provider-native. */
   createdAt: number;
 }
 
 export interface CreateSessionSandboxInput {
+  /** Workspace owner metadata. New production callers must provide it. */
+  workspaceId?: string;
   sessionId: string;
   /** "owner/name" */
   repoFullName: string;
@@ -122,14 +153,26 @@ export interface CreateSessionSandboxInput {
   timeoutMs?: number;
   /** Optional deadline signal used by bounded route handlers. */
   signal?: AbortSignal;
-  /** Required for Vercel-backed session sandboxes. */
-  vercelCredentials?: VercelSandboxCredentials;
+  /** Required for provider-backed session sandboxes. Omitted only by the fake adapter. */
+  connection?: SandboxConnection;
+  /** Run/check id used only as provider metadata for ownership and diagnostics. */
+  ownerId?: string;
   /**
    * Called immediately after the provider sandbox is created and before setup
    * commands run. Use this to persist Wallie ownership for crash cleanup.
    */
   onSandboxCreated?: (metadata: {
-    provider: "fake" | "vercel";
+    provider: SandboxImplementation;
     sandboxId: string;
   }) => void | Promise<void>;
+}
+
+export interface SandboxProviderDriver<Connection extends SandboxConnection = SandboxConnection> {
+  create(input: CreateSessionSandboxInput, connection: Connection): Promise<SandboxHandle>;
+  listRunning(
+    connection: Connection,
+    options?: { workspaceId?: string },
+  ): Promise<RunningSandboxSummary[]>;
+  stopById(sandboxId: string, connection: Connection): Promise<void>;
+  validate(connection: Connection): Promise<{ error?: string; ok: boolean }>;
 }

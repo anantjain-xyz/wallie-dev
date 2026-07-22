@@ -189,8 +189,10 @@ workspaces/[workspaceId]/pipeline/                              <- pipeline + st
 workspaces/[workspaceId]/repositories/[repositoryId]/inference/ <- run repo inference
 workspaces/[workspaceId]/repositories/[repositoryId]/onboarding/<- per-repo onboarding state
 workspaces/[workspaceId]/repository-profile/                    <- workspace_repository_profiles editor
-workspaces/[workspaceId]/sandbox-capability-check/              <- probe Vercel Sandbox readiness
-workspaces/[workspaceId]/vercel-sandbox-connection/             <- encrypted workspace Sandbox connection
+workspaces/[workspaceId]/sandbox-capability-check/              <- probe active sandbox-provider readiness
+workspaces/[workspaceId]/sandbox-settings/                      <- active provider + optimistic switching
+workspaces/[workspaceId]/sandbox-connections/[provider]/        <- encrypted Vercel/E2B/Daytona connections
+workspaces/[workspaceId]/vercel-sandbox-connection/             <- compatibility endpoint
 workspaces/[workspaceId]/linear-routing/                        <- workspace_linear_routing rules
 workspaces/[workspaceId]/onboarding/ + onboarding/complete/     <- per-workspace setup state
 workspaces/[workspaceId]/maintenance/tick/                      <- privileged maintenance trigger
@@ -214,11 +216,12 @@ workspaces/[workspaceId]/maintenance/tick/                      <- privileged ma
 - **secrets/** -- [crypto.ts](src/lib/secrets/crypto.ts) AES-256-GCM encrypt/decrypt for stored credentials.
 - **linear/** -- [client.ts](src/lib/linear/client.ts) GraphQL client.
 - **linear-routing/** -- per-workspace rules mapping a Linear issue to a tracked repository.
-- **agent-runner/** -- provider dispatch ([index.ts](src/lib/agent-runner/index.ts)) plus per-provider runners [codex.ts](src/lib/agent-runner/codex.ts) and [claude-code.ts](src/lib/agent-runner/claude-code.ts) that execute the agent CLI inside a Vercel Sandbox via `sandbox.exec()`.
+- **agent-runner/** -- provider dispatch ([index.ts](src/lib/agent-runner/index.ts)) plus per-provider runners [codex.ts](src/lib/agent-runner/codex.ts) and [claude-code.ts](src/lib/agent-runner/claude-code.ts) that execute the agent CLI through the provider-neutral sandbox handle.
 - **agent-config/** -- contracts + parsing for `workspace_agent_config` (provider, model, recommended defaults).
 - **agent-credentials/** -- resolves which user credential a session run should use.
 - **codex/** and **claude-code/** -- provider-specific token validation, device-auth flow (Codex), and `auth.json` shaping.
-- **sandbox/** -- Vercel Sandbox client wrapper plus an in-process `fake` implementation for tests.
+- **sandbox/** -- provider registry and Vercel, E2B, Daytona, and in-process `fake` drivers.
+- **sandbox-connections/** -- encrypted provider connections, active-provider selection, URL policy, and mutation locking.
 - **sandbox-capabilities/** -- probes sandboxes for required tools/runtimes and persists the result.
 - **repo-inference/** -- inspects a connected repo to infer language, frameworks, and install/test/dev commands.
 - **repo-onboarding/** -- planner + server state for the per-repo onboarding flow.
@@ -227,7 +230,7 @@ workspaces/[workspaceId]/maintenance/tick/                      <- privileged ma
 - **wallie/** -- job enqueue + run tracking ([service.ts](src/lib/wallie/service.ts)), HTTP helper, shared constants.
 - **maintenance/** -- privileged workspace maintenance operations used by Settings and its API route.
 - **performance/** and **telemetry/** -- route budgets, server timing, and privacy-safe interaction RUM.
-- **vercel-sandbox/** -- encrypted per-workspace Vercel Sandbox connection handling and teardown.
+- **vercel-sandbox/** -- Vercel-specific connection compatibility and workspace teardown.
 - **workspace-invitations/** and **workspace-members/** -- membership lifecycle contracts and data access.
 - **storage/** -- Supabase Storage helpers (e.g. workspace-avatar upload).
 - **workspaces/**, **workspaces.ts** -- role-based access control.
@@ -320,7 +323,8 @@ src/
     agent-config/               # Provider + model parsing for workspace_agent_config
     agent-credentials/          # Picks the user credential for a session run
     codex/, claude-code/        # Provider token validation + auth flows
-    sandbox/                    # Vercel Sandbox wrapper (+ fake for tests)
+    sandbox/                    # Vercel/E2B/Daytona registry (+ fake for tests)
+    sandbox-connections/        # Active provider + encrypted connection service
     sandbox-capabilities/       # Probe sandboxes for required tools
     repo-inference/             # Infer language / framework / commands per repo
     repo-onboarding/            # Per-repo onboarding planner + state
@@ -415,14 +419,15 @@ Fill in the required values. Integration variables can be left blank until you c
 | `VERCEL_TOKEN`                         | Dev/Ops  | Optional operator token for non-session helper sandboxes or local testing. Wallie session sandboxes use the workspace Vercel connection saved in Settings. |
 | `VERCEL_TEAM_ID`                       | Dev/Ops  | Optional Vercel team for the operator token. Workspace session sandboxes do not read this env var.                                                         |
 | `VERCEL_PROJECT_ID`                    | Dev/Ops  | Optional Vercel project for the operator token. Workspace session sandboxes do not read this env var.                                                      |
-| `WALLIE_SANDBOX_IMPL`                  | No       | Sandbox implementation: `vercel` (default) or `fake` (tests / local without Vercel creds).                                                                 |
-| `WALLIE_SANDBOX_BOOTSTRAP_PLAYWRIGHT`  | No       | Set to `0` to skip Playwright bootstrap inside sandboxes.                                                                                                  |
+| `WALLIE_SANDBOX_IMPL`                  | No       | Set to `fake` for tests/local development; production provider selection is workspace-scoped.                                                              |
+| `WALLIE_ENABLED_SANDBOX_PROVIDERS`     | No       | Comma-separated rollout allowlist; defaults to `vercel,e2b,daytona`.                                                                                       |
+| `WALLIE_DAYTONA_API_URL_ALLOWLIST`     | No       | Exact HTTPS Daytona self-hosted API base URLs; Daytona Cloud is always allowed.                                                                            |
 | `WALLIE_TIMING_LOGS`                   | No       | Set to `1` in a canary to emit server-loader timing logs.                                                                                                  |
 | `WORKER_MAX_CONCURRENT_JOBS`           | No       | Maximum jobs one worker process runs concurrently (default `10`); per-workspace limits still apply.                                                        |
 
 Generate `WALLIE_ENCRYPTION_KEY` with e.g. `openssl rand -hex 32`.
 
-Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and the workspace Vercel Sandbox connection are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in the database. Per-user agent credentials are also entered in Settings and stored encrypted separately.
+Workspace-scoped secrets (`LINEAR_API_KEY`, repository env keys, etc.) and Vercel/E2B/Daytona sandbox connections are **not** environment variables -- they are entered through the app's Settings UI and stored encrypted in the database. Per-user agent credentials are also entered in Settings and stored encrypted separately.
 
 ### Configure agent provider
 
@@ -481,7 +486,7 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 
 1. Open `http://localhost:3000`, sign up / log in via Supabase Auth.
 2. Create a workspace, then complete its onboarding: connect GitHub, analyze/select a repository, review the pipeline, optionally connect Linear, connect the agent/runtime, and verify setup.
-3. Use **Settings -> Integrations** later to change provider credentials, repository connections, Vercel Sandbox, or Linear routing. The pipeline editor lives under **Settings -> Pipeline**.
+3. Use **Settings -> Sandbox provider** later to connect or switch Vercel, E2B, or Daytona. Other credentials and repository connections remain under **Settings -> Integrations**; the pipeline editor lives under **Settings -> Pipeline**.
 4. Create a session from the Sessions ledger, watch the worker claim its first job, then approve or request changes on the resulting artifact from the Review Workbench.
 
 ### Tunnel: what must be publicly reachable

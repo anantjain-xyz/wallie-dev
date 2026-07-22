@@ -10,15 +10,15 @@ const mocked = vi.hoisted(() => ({
   encryptSecretValue: vi.fn((value: string) => `encrypted:${value}`),
   getCodexDeviceAuthFlowSnapshot: vi.fn(),
   getSupabaseUserOrNull: vi.fn(),
-  loadRequiredVercelSandboxConnection: vi.fn(),
+  loadRequiredWorkspaceSandboxConnection: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   resolveAuthenticatedSettingsPath: vi.fn(),
 }));
 
-const vercelCredentials = {
-  projectId: "prj_123",
-  teamId: "team_123",
-  token: "vca_secret",
+const sandboxConnection = {
+  credentials: { apiKey: "e2b_secret" },
+  provider: "e2b" as const,
+  revision: "revision-2",
 };
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -56,10 +56,10 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
-  VercelSandboxConnectionInvalidError: class VercelSandboxConnectionInvalidError extends Error {},
-  VercelSandboxConnectionMissingError: class VercelSandboxConnectionMissingError extends Error {},
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
+  SandboxConnectionInvalidError: class SandboxConnectionInvalidError extends Error {},
+  SandboxConnectionMissingError: class SandboxConnectionMissingError extends Error {},
 }));
 
 import { DELETE, GET } from "./route";
@@ -70,13 +70,9 @@ beforeEach(() => {
   mocked.createSupabaseServerClient.mockResolvedValue({});
   mocked.deleteCodexDeviceAuthFlow.mockResolvedValue(true);
   mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-123" });
-  mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-    credentials: vercelCredentials,
-    preview: {
-      projectId: "prj_123",
-      status: "connected",
-      teamId: "team_123",
-    },
+  mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+    connection: sandboxConnection,
+    provider: "e2b",
   });
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     context: {
@@ -114,7 +110,7 @@ describe("GET /auth/callback/codex", () => {
     expect(mocked.consumeAuthenticatedCodexDeviceAuthFlow).not.toHaveBeenCalled();
   });
 
-  it("polls device auth with workspace Vercel credentials when workspaceId is provided", async () => {
+  it("polls device auth with the active workspace sandbox connection", async () => {
     mocked.getCodexDeviceAuthFlowSnapshot.mockResolvedValue({
       error: null,
       expiresAt: "2026-05-19T00:10:00.000Z",
@@ -136,14 +132,14 @@ describe("GET /auth/callback/codex", () => {
 
     expect(response.status).toBe(200);
     expect(mocked.requireWorkspaceAccessById).toHaveBeenCalledWith("workspace-123");
-    expect(mocked.loadRequiredVercelSandboxConnection).toHaveBeenCalledWith(
+    expect(mocked.loadRequiredWorkspaceSandboxConnection).toHaveBeenCalledWith(
       expect.anything(),
       "workspace-123",
     );
     expect(mocked.getCodexDeviceAuthFlowSnapshot).toHaveBeenCalledWith({
+      connection: sandboxConnection,
       flowId: "flow-1",
       userId: "user-123",
-      vercelCredentials,
     });
   });
 
@@ -270,7 +266,7 @@ describe("DELETE /auth/callback/codex", () => {
     });
   });
 
-  it("cancels device auth with workspace Vercel credentials when workspaceId is provided", async () => {
+  it("cancels device auth with the active workspace sandbox connection", async () => {
     mocked.cancelCodexDeviceAuthFlow.mockResolvedValue(true);
 
     const response = await DELETE(
@@ -281,9 +277,9 @@ describe("DELETE /auth/callback/codex", () => {
 
     expect(response.status).toBe(200);
     expect(mocked.cancelCodexDeviceAuthFlow).toHaveBeenCalledWith({
+      connection: sandboxConnection,
       flowId: "flow-1",
       userId: "user-123",
-      vercelCredentials,
     });
   });
 });

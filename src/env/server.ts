@@ -38,8 +38,10 @@ export const serverEnvSchema = z.object({
   VERCEL_TOKEN: optionalEnvStringSchema,
   VERCEL_TEAM_ID: optionalEnvStringSchema,
   VERCEL_PROJECT_ID: optionalEnvStringSchema,
-  // "vercel" (default) or "fake" (tests). Any other value throws at runtime.
+  // Optional operator override. Workspace settings choose the production provider.
   WALLIE_SANDBOX_IMPL: optionalEnvStringSchema,
+  WALLIE_ENABLED_SANDBOX_PROVIDERS: optionalEnvStringSchema,
+  WALLIE_DAYTONA_API_URL_ALLOWLIST: optionalEnvStringSchema,
   // Opt-in request loader timing logs for production canaries.
   WALLIE_TIMING_LOGS: optionalEnvStringSchema,
 });
@@ -73,6 +75,8 @@ export function parseServerEnv(input: EnvInput = process.env): ServerEnv {
     VERCEL_TEAM_ID: input.VERCEL_TEAM_ID,
     VERCEL_PROJECT_ID: input.VERCEL_PROJECT_ID,
     WALLIE_SANDBOX_IMPL: input.WALLIE_SANDBOX_IMPL,
+    WALLIE_ENABLED_SANDBOX_PROVIDERS: input.WALLIE_ENABLED_SANDBOX_PROVIDERS,
+    WALLIE_DAYTONA_API_URL_ALLOWLIST: input.WALLIE_DAYTONA_API_URL_ALLOWLIST,
     WALLIE_TIMING_LOGS: input.WALLIE_TIMING_LOGS,
   });
 

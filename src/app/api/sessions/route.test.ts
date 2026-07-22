@@ -4,6 +4,7 @@ import { WallieActionError } from "@/lib/wallie/service";
 
 const mocked = vi.hoisted(() => ({
   assertSessionFirstRunReady: vi.fn(),
+  assertSessionSandboxCapabilityReady: vi.fn(),
   createSessionWithFirstJob: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
   loadSessionFirstRunPrerequisites: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock("@/lib/wallie/service", async () => {
   return {
     WallieActionError: actual.WallieActionError,
     assertSessionFirstRunReady: mocked.assertSessionFirstRunReady,
+    assertSessionSandboxCapabilityReady: mocked.assertSessionSandboxCapabilityReady,
     createSessionWithFirstJob: mocked.createSessionWithFirstJob,
     loadSessionFirstRunPrerequisites: mocked.loadSessionFirstRunPrerequisites,
   };
@@ -204,6 +206,7 @@ describe("POST /api/sessions", () => {
       },
     });
     mocked.assertSessionFirstRunReady.mockImplementation(({ agentConfig }) => agentConfig);
+    mocked.assertSessionSandboxCapabilityReady.mockResolvedValue(undefined);
     mocked.createSessionWithFirstJob.mockResolvedValue({
       jobId: "job-1",
       number: 7,
@@ -232,6 +235,13 @@ describe("POST /api/sessions", () => {
     expect(mocked.assertSessionFirstRunReady).toHaveBeenCalledWith(
       expect.objectContaining({
         repository: expect.objectContaining({ id: REPOSITORY_ID, isArchived: false }),
+      }),
+    );
+    expect(mocked.assertSessionSandboxCapabilityReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentConfig: { model: "gpt-5.5", provider: "codex" },
+        repository: expect.objectContaining({ id: REPOSITORY_ID }),
+        workspaceId: WORKSPACE_ID,
       }),
     );
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledTimes(1);
@@ -330,6 +340,27 @@ describe("POST /api/sessions", () => {
         }),
       }),
     );
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
+  });
+
+  it("returns the selected provider when its capability check is stale", async () => {
+    mocked.assertSessionSandboxCapabilityReady.mockRejectedValueOnce(
+      new WallieActionError({
+        code: "sandbox_capability_check_stale",
+        message: "Run a successful E2B capability check before starting Wallie.",
+        provider: "e2b",
+        statusCode: 422,
+      }),
+    );
+
+    const response = await POST(makeRequest({ promptMd: "Add SSO", workspaceId: WORKSPACE_ID }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      code: "sandbox_capability_check_stale",
+      error: "Run a successful E2B capability check before starting Wallie.",
+      provider: "e2b",
+    });
     expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 

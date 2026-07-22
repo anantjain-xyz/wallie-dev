@@ -32,6 +32,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 import {
   ATTEMPT_ORDINAL_PAGE_SIZE,
   loadWallieRunPage,
+  mapWallieSandboxConnectionStatus,
   WALLIE_RUN_PAGE_SIZE,
 } from "@/features/wallie/server";
 
@@ -186,5 +187,37 @@ describe("loadWallieRunPage", () => {
     expect(page.runs.find((run) => run.id === newest.id)?.attemptCount).toBe(
       ATTEMPT_ORDINAL_PAGE_SIZE + 3,
     );
+  });
+});
+
+describe("mapWallieSandboxConnectionStatus", () => {
+  it("blocks a retained active provider disabled by deployment rollout", () => {
+    expect(
+      mapWallieSandboxConnectionStatus({
+        activeProvider: "e2b",
+        connections: {
+          daytona: null,
+          e2b: {
+            apiKeyPreview: "e2b_…1234",
+            connectionRevision: "revision-e2b",
+            lastValidatedAt: "2026-07-22T00:00:00.000Z",
+            lastValidationError: null,
+            status: "connected",
+            updatedAt: "2026-07-22T00:00:00.000Z",
+            workspaceId: "workspace-1",
+          },
+          vercel: null,
+        },
+        enabledProviders: ["vercel"],
+        revision: 2,
+        updatedAt: "2026-07-22T00:00:00.000Z",
+      }),
+    ).toMatchObject({
+      connected: false,
+      lastValidationError:
+        "E2B is disabled in this Wallie deployment. Switch to an enabled sandbox provider.",
+      provider: "e2b",
+      status: "error",
+    });
   });
 });

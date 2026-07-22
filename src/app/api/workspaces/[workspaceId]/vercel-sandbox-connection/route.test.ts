@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
+  loadWorkspaceSandboxSettings: vi.fn(),
   loadVercelSandboxConnection: vi.fn(),
   loadVercelSandboxConnectionPreview: vi.fn(),
   listRunningSandboxes: vi.fn(),
@@ -17,6 +18,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxSettings: mocked.loadWorkspaceSandboxSettings,
 }));
 
 vi.mock("@/lib/vercel-sandbox/server", async () => {
@@ -43,6 +48,7 @@ import { DELETE, GET, PUT } from "./route";
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const memberId = "22222222-2222-4222-8222-222222222222";
 const preview = {
+  connectionRevision: "revision-1",
   lastValidatedAt: "2026-06-06T18:00:00.000Z",
   lastValidationError: null,
   projectId: "prj_123",
@@ -304,6 +310,11 @@ beforeEach(() => {
   mocked.createSupabaseAdminClient.mockReturnValue(adminMock());
   mocked.loadVercelSandboxConnectionPreview.mockResolvedValue(preview);
   mocked.loadVercelSandboxConnection.mockResolvedValue({ credentials, preview });
+  mocked.loadWorkspaceSandboxSettings.mockResolvedValue({
+    activeProvider: "e2b",
+    revision: 2,
+    updatedAt: "2026-06-06T18:00:00.000Z",
+  });
   mocked.listRunningSandboxes.mockResolvedValue([]);
   mocked.stopSandboxById.mockResolvedValue(undefined);
   mocked.validateVercelSandboxCredentials.mockResolvedValue({
@@ -379,7 +390,7 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(admin.releasedMutationLockWorkspaceIds).toEqual([workspaceId]);
   });
 
-  it("cleans previous Vercel project sandboxes before saving a changed Vercel project", async () => {
+  it("cleans previous Vercel project sandboxes before rotating a connection", async () => {
     mockAccess();
     const oldCredentials = {
       projectId: "prj_old",
@@ -420,19 +431,27 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
 
     expect(response.status).toBe(200);
     expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({
+      connection: {
+        credentials: oldCredentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: oldCredentials,
     });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("old-terminal", {
+      connection: {
+        credentials: oldCredentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: oldCredentials,
     });
     expect(mocked.saveVercelSandboxConnection).toHaveBeenCalledWith(
       expect.objectContaining({ credentials: nextCredentials }),
     );
   });
 
-  it("keeps the old connection when changed-project cleanup fails before save", async () => {
+  it("keeps the old connection when rotation cleanup fails before save", async () => {
     mockAccess();
     const oldCredentials = {
       projectId: "prj_old",
@@ -527,6 +546,23 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(mocked.loadVercelSandboxConnection).not.toHaveBeenCalled();
   });
 
+  it("blocks disconnect while Vercel is the active provider", async () => {
+    mockAccess();
+    mocked.loadWorkspaceSandboxSettings.mockResolvedValueOnce({
+      activeProvider: "vercel",
+      revision: 2,
+      updatedAt: "2026-06-06T18:00:00.000Z",
+    });
+
+    const response = await DELETE(new Request("http://localhost"), routeContext());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Switch to another sandbox provider before disconnecting Vercel Sandbox.",
+    });
+    expect(mocked.loadVercelSandboxConnection).not.toHaveBeenCalled();
+  });
+
   it("stops project sandboxes before disconnecting", async () => {
     mockAccess();
     mocked.createSupabaseAdminClient.mockReturnValueOnce(
@@ -549,12 +585,20 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     await expect(response.json()).resolves.toEqual({ connection: null });
     expect(response.status).toBe(200);
     expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({
+      connection: {
+        credentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: credentials,
     });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
+      connection: {
+        credentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: credentials,
     });
   });
 
@@ -632,16 +676,28 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     expect(response.status).toBe(200);
     expect(mocked.stopSandboxById).toHaveBeenCalledTimes(3);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("owned-terminal", {
+      connection: {
+        credentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: credentials,
     });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-terminal", {
+      connection: {
+        credentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: credentials,
     });
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("capability-stale", {
+      connection: {
+        credentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: credentials,
     });
   });
 
@@ -656,8 +712,12 @@ describe("/api/workspaces/[workspaceId]/vercel-sandbox-connection", () => {
     );
 
     expect(mocked.listRunningSandboxes).toHaveBeenCalledWith({
+      connection: {
+        credentials,
+        provider: "vercel",
+        revision: "revision-1",
+      },
       throwOnError: true,
-      vercelCredentials: credentials,
     });
     expect(admin.deletedWorkspaceIds).toEqual([]);
     expect(admin.releasedMutationLockWorkspaceIds).toEqual([workspaceId]);

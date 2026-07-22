@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   stopSandboxById: vi.fn().mockResolvedValue(undefined),
   listRunningSandboxes: vi.fn().mockResolvedValue([]),
-  loadVercelSandboxConnection: vi.fn(),
+  loadWorkspaceSandboxConnection: vi.fn(),
 }));
 
 vi.mock("@/lib/sandbox", () => ({
@@ -12,8 +12,8 @@ vi.mock("@/lib/sandbox", () => ({
   listRunningSandboxes: mocked.listRunningSandboxes,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxConnection: mocked.loadWorkspaceSandboxConnection,
 }));
 
 import { sweepStalledRuns } from "./stall-detector";
@@ -268,7 +268,7 @@ function activeRun(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
     last_activity_at: new Date(Date.now() - TEN_MIN_MS).toISOString(),
     status: "running",
     sandbox_id: "sandbox-1",
-    sandbox_provider: null,
+    sandbox_provider: "fake",
     sandbox_vercel_project_id: null,
     sandbox_vercel_team_id: null,
     ...overrides,
@@ -288,8 +288,8 @@ function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
 beforeEach(() => {
   mocked.stopSandboxById.mockClear();
   mocked.listRunningSandboxes.mockClear();
-  mocked.loadVercelSandboxConnection.mockReset();
-  mocked.loadVercelSandboxConnection.mockResolvedValue(null);
+  mocked.loadWorkspaceSandboxConnection.mockReset();
+  mocked.loadWorkspaceSandboxConnection.mockResolvedValue(null);
 });
 
 describe("sweepStalledRuns", () => {
@@ -363,8 +363,8 @@ describe("sweepStalledRuns", () => {
 
   it("stops Vercel-backed stalled sandboxes with workspace credentials", async () => {
     const credentials = { projectId: "prj_123", teamId: "team_123", token: "vca_secret" };
-    mocked.loadVercelSandboxConnection.mockResolvedValueOnce({
-      credentials,
+    mocked.loadWorkspaceSandboxConnection.mockResolvedValueOnce({
+      connection: { credentials, provider: "vercel", revision: "revision-1" },
       preview: { workspaceId: "ws-1" },
     });
     const state: MockState = {
@@ -385,7 +385,7 @@ describe("sweepStalledRuns", () => {
     await sweepStalledRuns(admin as never, FIVE_MIN_MS);
 
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sandbox-1", {
-      vercelCredentials: credentials,
+      connection: { credentials, provider: "vercel", revision: "revision-1" },
     });
   });
 

@@ -15,6 +15,9 @@ type ProviderAccessPanelProps = {
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
   provider: AgentProvider;
   returnTo?: string;
+  sandboxConnectionHref?: string;
+  sandboxConnectionLabel?: string;
+  sandboxConnectionReady?: boolean;
   variant?: "card" | "embedded";
   vercelConnectionHref?: string;
   vercelSandboxConnection?: VercelSandboxConnectionPreview | null;
@@ -48,6 +51,9 @@ export function ProviderAccessPanel({
   onCodexStatusChange,
   provider,
   returnTo,
+  sandboxConnectionHref,
+  sandboxConnectionLabel,
+  sandboxConnectionReady,
   variant = "card",
   vercelConnectionHref,
   vercelSandboxConnection,
@@ -73,6 +79,9 @@ export function ProviderAccessPanel({
             initialStatus={initialCodexStatus}
             onStatusChange={onCodexStatusChange}
             returnTo={returnTo}
+            sandboxConnectionHref={sandboxConnectionHref}
+            sandboxConnectionLabel={sandboxConnectionLabel}
+            sandboxConnectionReady={sandboxConnectionReady}
             vercelConnectionHref={vercelConnectionHref}
             vercelSandboxConnection={vercelSandboxConnection}
             workspaceId={workspaceId}

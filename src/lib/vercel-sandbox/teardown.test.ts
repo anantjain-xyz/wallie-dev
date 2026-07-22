@@ -14,8 +14,12 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: mocked.stopSandboxById,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxConnection: (admin: unknown, workspaceId: string, provider: string) =>
+    provider === "vercel"
+      ? mocked.loadVercelSandboxConnection(admin, workspaceId)
+      : Promise.resolve(null),
+  providerLabel: (provider: string) => provider,
 }));
 
 import { stopWorkspaceProviderSandboxes } from "./teardown";
@@ -34,16 +38,22 @@ interface SandboxRow {
  * works regardless of filter order.
  */
 function buildAdminMock(tables: {
+  codex_device_auth_flows?: { data?: SandboxRow[]; error?: { message: string } };
   sandbox_capability_checks?: { data?: SandboxRow[]; error?: { message: string } };
 }) {
   const eqCalls: Array<[string, unknown]> = [];
+  const inCalls: Array<[string, unknown]> = [];
   const from = vi.fn((name: string) => {
     const preset = tables[name as keyof typeof tables] ?? { data: [] };
     const result = { data: preset.data ?? [], error: preset.error ?? null };
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "in", "gte", "not"]) {
+    for (const method of ["select", "gte", "not"]) {
       chain[method] = vi.fn(() => chain);
     }
+    chain.in = vi.fn((column: string, value: unknown) => {
+      inCalls.push([column, value]);
+      return chain;
+    });
     chain.eq = vi.fn((column: string, value: unknown) => {
       eqCalls.push([column, value]);
       return chain;
@@ -54,11 +64,14 @@ function buildAdminMock(tables: {
     return chain;
   });
 
-  return { admin: { from } as never, eqCalls };
+  return { admin: { from } as never, eqCalls, inCalls };
 }
 
 function connection() {
-  return { credentials: CREDENTIALS, preview: {} };
+  return {
+    connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+    preview: {},
+  };
 }
 
 function cancelResult(
@@ -112,8 +125,26 @@ describe("stopWorkspaceProviderSandboxes", () => {
     // capability-check sandbox is stopped here.
     expect(mocked.stopSandboxById).toHaveBeenCalledTimes(1);
     expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_check_1", {
-      vercelCredentials: CREDENTIALS,
+      connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
     });
+  });
+
+  it("stops active device-auth sandboxes before their ownership rows are cascaded", async () => {
+    mocked.cancelWorkspaceWork.mockResolvedValue(cancelResult());
+    mocked.loadVercelSandboxConnection.mockResolvedValue(connection());
+    const { admin, inCalls } = buildAdminMock({
+      codex_device_auth_flows: {
+        data: [{ sandbox_id: "sbx_auth_1" }, { sandbox_id: "provisioning:flow-reservation" }],
+      },
+    });
+
+    const result = await stopWorkspaceProviderSandboxes(admin, WORKSPACE_ID);
+
+    expect(result.stoppedSandboxIds).toEqual(["sbx_auth_1"]);
+    expect(mocked.stopSandboxById).toHaveBeenCalledWith("sbx_auth_1", {
+      connection: { credentials: CREDENTIALS, provider: "vercel", revision: "revision-1" },
+    });
+    expect(inCalls).toContainEqual(["status", ["starting", "prompted"]]);
   });
 
   it("does not stop a capability-check sandbox already stopped by the cancel step", async () => {

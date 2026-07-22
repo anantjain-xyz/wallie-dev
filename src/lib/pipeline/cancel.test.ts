@@ -7,11 +7,11 @@ vi.mock("@/lib/sandbox", () => ({
   stopSandboxById: sandboxMocks.stopSandboxById,
 }));
 
-const vercelMocks = vi.hoisted(() => ({
-  loadVercelSandboxConnection: vi.fn(async () => null as unknown),
+const connectionMocks = vi.hoisted(() => ({
+  loadWorkspaceSandboxConnection: vi.fn(async () => null as unknown),
 }));
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnection: vercelMocks.loadVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxConnection: connectionMocks.loadWorkspaceSandboxConnection,
 }));
 
 import { cancelSessionWork, cancelWorkspaceWork, stopRunSandbox } from "@/lib/pipeline/cancel";
@@ -114,10 +114,17 @@ function vercelRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
 describe("cancelSessionWork", () => {
   afterEach(() => {
     vi.clearAllMocks();
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue(null as unknown);
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue(null as unknown);
   });
 
   it("cancels active jobs + runs, stops the sandbox, records a message, and parks the phase", async () => {
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+    } as unknown);
     const { admin, calls } = buildAdmin({
       activeJobs: [{ id: "job-1" }],
       activeRuns: [vercelRun()],
@@ -141,7 +148,13 @@ describe("cancelSessionWork", () => {
     expect(runCancel?.patch).toMatchObject({ status: "canceled" });
     expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
 
-    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1");
+    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1", {
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+    });
 
     const message = calls.find((c) => c.table === "agent_run_messages" && c.op === "insert");
     expect(message?.patch?.message_md).toContain("Canceled");
@@ -187,12 +200,16 @@ describe("cancelSessionWork", () => {
 describe("cancelWorkspaceWork", () => {
   afterEach(() => {
     vi.clearAllMocks();
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue(null as unknown);
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue(null as unknown);
   });
 
   it("cancels active jobs + runs scoped to the workspace and stops their sandboxes", async () => {
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue({
-      credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     } as unknown);
     const { admin, calls } = buildAdmin({
       activeJobs: [{ id: "job-1" }],
@@ -219,7 +236,11 @@ describe("cancelWorkspaceWork", () => {
     expect(runCancel?.filters["in.status"]).toEqual(["queued", "started", "running"]);
 
     expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1", {
-      vercelCredentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     });
 
     // No per-run cancel message — those rows are about to be cascade-deleted.
@@ -260,8 +281,12 @@ describe("cancelWorkspaceWork", () => {
   });
 
   it("stops sandboxes for every active run in the workspace, not just one", async () => {
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue({
-      credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     } as unknown);
     const { admin } = buildAdmin({
       activeRuns: [
@@ -284,29 +309,47 @@ describe("cancelWorkspaceWork", () => {
 describe("stopRunSandbox", () => {
   afterEach(() => {
     vi.clearAllMocks();
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue(null as unknown);
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue(null as unknown);
   });
 
   it("passes matching Vercel credentials when the run ran on the Vercel provider", async () => {
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue({
-      credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     } as unknown);
 
     await stopRunSandbox({} as never, vercelRun());
 
     expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1", {
-      vercelCredentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+      connection: {
+        credentials: { projectId: "proj-1", teamId: "team-1", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     });
   });
 
-  it("stops without credentials when the connection does not match the run", async () => {
-    vercelMocks.loadVercelSandboxConnection.mockResolvedValue({
-      credentials: { projectId: "other", teamId: "other", token: "tok" },
+  it("attempts cleanup with the current credentials after a connection rotation", async () => {
+    connectionMocks.loadWorkspaceSandboxConnection.mockResolvedValue({
+      connection: {
+        credentials: { projectId: "other", teamId: "other", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
     } as unknown);
 
     await stopRunSandbox({} as never, vercelRun());
 
-    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1");
+    expect(sandboxMocks.stopSandboxById).toHaveBeenCalledWith("sb-1", {
+      connection: {
+        credentials: { projectId: "other", teamId: "other", token: "tok" },
+        provider: "vercel",
+        revision: "revision-1",
+      },
+    });
   });
 
   it("is a no-op when the run has no sandbox", async () => {

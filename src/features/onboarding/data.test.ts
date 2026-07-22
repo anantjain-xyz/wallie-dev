@@ -5,7 +5,7 @@ const mocked = vi.hoisted(() => ({
   admin: { from: vi.fn(), rpc: vi.fn() },
   github: vi.fn(),
   sandboxCheck: vi.fn(),
-  vercel: vi.fn(),
+  sandboxOverview: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -20,8 +20,10 @@ vi.mock("@/features/github/data", () => ({
   loadWorkspaceGitHubData: mocked.github,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadVercelSandboxConnectionPreview: mocked.vercel,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadWorkspaceSandboxOverview: mocked.sandboxOverview,
+  providerLabel: (provider: string) =>
+    provider === "e2b" ? "E2B" : provider === "daytona" ? "Daytona" : "Vercel Sandbox",
 }));
 
 vi.mock("@/lib/sandbox-capabilities/server", () => ({
@@ -184,7 +186,13 @@ function createFixture(options: {
 describe("canonical onboarding snapshot", () => {
   beforeEach(() => {
     mocked.github.mockResolvedValue(freshGithub());
-    mocked.vercel.mockResolvedValue(null);
+    mocked.sandboxOverview.mockResolvedValue({
+      activeProvider: "vercel",
+      connections: { daytona: null, e2b: null, vercel: null },
+      enabledProviders: ["vercel", "e2b", "daytona"],
+      revision: 1,
+      updatedAt: null,
+    });
   });
 
   afterEach(() => {
@@ -265,7 +273,7 @@ describe("canonical onboarding snapshot", () => {
       expect(fixture.counts.get(table), table).toBe(1);
     }
     expect(mocked.github).toHaveBeenCalledTimes(1);
-    expect(mocked.vercel).toHaveBeenCalledTimes(1);
+    expect(mocked.sandboxOverview).toHaveBeenCalledTimes(1);
   });
 
   it("preserves Codex reconnect metadata in the server setup snapshot", async () => {
@@ -290,6 +298,46 @@ describe("canonical onboarding snapshot", () => {
       reconnectReason: "Refresh token was rejected.",
       reconnectRequired: true,
       status: "expired",
+    });
+  });
+
+  it("marks a connected active provider unavailable when deployment rollout disables it", async () => {
+    mocked.sandboxOverview.mockResolvedValueOnce({
+      activeProvider: "e2b",
+      connections: {
+        daytona: null,
+        e2b: {
+          apiKeyPreview: "e2b_…1234",
+          connectionRevision: "revision-e2b",
+          lastValidatedAt: NOW,
+          lastValidationError: null,
+          status: "connected",
+          updatedAt: NOW,
+          workspaceId: workspace.id,
+        },
+        vercel: null,
+      },
+      enabledProviders: ["vercel"],
+      revision: 2,
+      updatedAt: NOW,
+    });
+    const fixture = createFixture({ memberRole: "owner" });
+
+    const result = await loadWorkspaceOnboardingDataForContext(fixture.context as never);
+
+    expect(result).toMatchObject({
+      data: {
+        setupHealth: {
+          sandboxConnection: {
+            connected: false,
+            lastValidationError:
+              "E2B is disabled in this Wallie deployment. Switch to an enabled sandbox provider.",
+            provider: "e2b",
+            status: "error",
+          },
+        },
+      },
+      ok: true,
     });
   });
 
@@ -542,7 +590,7 @@ describe("canonical onboarding snapshot", () => {
     expect(fixture.counts.get("pipelines")).toBe(1);
     expect(fixture.counts.get("load_workspace_onboarding_secret_previews")).toBe(1);
     expect(fixture.counts.get("load_workspace_onboarding_sandbox_checks")).toBe(1);
-    expect(mocked.vercel).toHaveBeenCalledTimes(1);
+    expect(mocked.sandboxOverview).toHaveBeenCalledTimes(1);
 
     resolveGithub?.(freshGithub());
     await expect(pending).resolves.toMatchObject({ ok: true });
@@ -600,7 +648,7 @@ describe("canonical onboarding snapshot", () => {
         "snapshot.agent-config",
         "snapshot.providers",
         "snapshot.sandbox",
-        "snapshot.vercel",
+        "snapshot.sandbox-settings",
         "snapshot.members",
       ]),
     );

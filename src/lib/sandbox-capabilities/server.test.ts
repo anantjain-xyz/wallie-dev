@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocked = vi.hoisted(() => ({
   createSessionSandbox: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
-  loadRequiredVercelSandboxConnection: vi.fn(),
+  loadRequiredWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceAgentConfig: vi.fn(),
   octokitRequest: vi.fn(),
   probeSandboxCapabilities: vi.fn(),
@@ -39,8 +39,8 @@ vi.mock("@/lib/sandbox", () => ({
   createSessionSandbox: mocked.createSessionSandbox,
 }));
 
-vi.mock("@/lib/vercel-sandbox/server", () => ({
-  loadRequiredVercelSandboxConnection: mocked.loadRequiredVercelSandboxConnection,
+vi.mock("@/lib/sandbox-connections/server", () => ({
+  loadRequiredWorkspaceSandboxConnection: mocked.loadRequiredWorkspaceSandboxConnection,
 }));
 
 vi.mock("@/lib/sandbox-capabilities/probe", () => ({
@@ -173,9 +173,9 @@ function adminMock() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocked.loadWorkspaceAgentConfig.mockResolvedValue({ model: "gpt-5.5", provider: "codex" });
-  mocked.loadRequiredVercelSandboxConnection.mockResolvedValue({
-    credentials,
-    preview: { workspaceId: "workspace-1" },
+  mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
+    connection: { credentials, provider: "vercel", revision: "revision-1" },
+    provider: "vercel",
   });
   mocked.octokitRequest.mockResolvedValue({ data: { token: "gh-token" } });
   mocked.getCodexCredentialForUser.mockResolvedValue({ secret: "codex-token" });
@@ -211,7 +211,9 @@ describe("completeSandboxCapabilityCheck", () => {
     });
 
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
-      expect.objectContaining({ vercelCredentials: credentials }),
+      expect.objectContaining({
+        connection: { credentials, provider: "vercel", revision: "revision-1" },
+      }),
     );
     expect(updates).toContainEqual(
       expect.objectContaining({
@@ -224,7 +226,7 @@ describe("completeSandboxCapabilityCheck", () => {
   });
 
   it("records an error when Vercel Sandbox is not connected", async () => {
-    mocked.loadRequiredVercelSandboxConnection.mockRejectedValueOnce(
+    mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(
       new Error("Connect a Vercel Sandbox account before starting Wallie runs."),
     );
     const { admin, updates } = adminMock();

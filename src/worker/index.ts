@@ -82,7 +82,7 @@ async function main() {
   }, config.reconcileIntervalMs);
 
   // --- Sandbox reaper interval ---
-  // Recovers Vercel sandboxes whose owning agent_run row is missing or
+  // Recovers provider sandboxes whose owning agent_run row is missing or
   // already terminal — the case where a worker crashed mid-stage before the
   // processor's `finally` could call sandbox.stop(). Independent of the
   // stall sweep so we still catch sandboxes whose linked run never made it

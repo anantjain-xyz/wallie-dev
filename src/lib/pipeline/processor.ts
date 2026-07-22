@@ -23,10 +23,11 @@ import {
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
-import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
+import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
+import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { renderStagePrompt } from "@/lib/prompt-templates";
-import { loadRequiredVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 
 import { openSessionPullRequest } from "./pull-request";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
@@ -249,24 +250,35 @@ async function runStage(input: {
         await markPipelineJobError(admin, job, message);
         return { jobId: job.id, processed: true, result: "error", runId: null };
       }
-      const installationToken = await mintInstallationToken(github.installationId);
       const sandboxImplementation = resolveSandboxImplementation();
-      const vercelConnection =
-        sandboxImplementation === "vercel"
-          ? await loadRequiredVercelSandboxConnection(admin, session.workspace_id)
-          : null;
+      const sandboxSelection =
+        sandboxImplementation === "fake"
+          ? null
+          : await loadRequiredWorkspaceSandboxConnection(admin, session.workspace_id);
+      if (sandboxSelection) {
+        await assertCurrentSandboxCapabilityCheck({
+          admin,
+          agent: { model: config.model, provider },
+          connection: sandboxSelection.connection,
+          repositoryId: github.repo.id,
+          workspaceId: session.workspace_id,
+        });
+      }
+      const installationToken = await mintInstallationToken(github.installationId);
       branch = buildStageBranchName(session.id, stage.slug);
       throwIfAborted(signal);
       sandbox = await createSessionSandbox({
         agentProvider: provider,
         baseBranch: github.repo.default_branch ?? "main",
         branch,
-        implementation: sandboxImplementation,
+        implementation: sandboxSelection?.provider ?? "fake",
+        connection: sandboxSelection?.connection,
         installationToken,
+        ownerId: runId ?? undefined,
         repoFullName: github.repo.full_name,
         signal,
         sessionId: session.id,
-        vercelCredentials: vercelConnection?.credentials,
+        workspaceId: session.workspace_id,
         onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
           if (!runId) return;
           if (sandboxProvider === "fake") {
@@ -276,20 +288,19 @@ async function runStage(input: {
             }
             return;
           }
-          if (!vercelConnection) {
-            throw new Error("Workspace Vercel Sandbox credentials are required.");
+          if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
+            throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
           }
           const attached = await updateRunSandbox(admin, runId, sandboxId, {
-            provider: "vercel",
-            projectId: vercelConnection.credentials.projectId,
-            teamId: vercelConnection.credentials.teamId,
+            connection: sandboxSelection.connection,
+            provider: sandboxSelection.provider,
           });
           if (!attached) {
             // The run was canceled before its sandbox id landed; stop the
             // sandbox we just created so it doesn't keep executing detached
             // from the now-canceled run.
             await stopSandboxById(sandboxId, {
-              vercelCredentials: vercelConnection.credentials,
+              connection: sandboxSelection.connection,
             });
           }
         },
@@ -461,8 +472,7 @@ async function runStage(input: {
     const message = getErrorMessage(error, "Stage generation failed");
     await markPipelineJobError(admin, job, message, {
       retry:
-        !(error instanceof MissingReviewableOutputError) &&
-        !isVercelSandboxConnectionSetupError(error),
+        !(error instanceof MissingReviewableOutputError) && !isSandboxConnectionSetupError(error),
     });
     return { jobId: job.id, processed: true, result: "error", runId };
   } finally {
@@ -506,10 +516,13 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw signal.reason instanceof Error ? signal.reason : new Error("Pipeline job aborted.");
 }
 
-function isVercelSandboxConnectionSetupError(error: unknown): boolean {
+function isSandboxConnectionSetupError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    (error.name === "VercelSandboxConnectionMissingError" ||
+    (error.name === "SandboxConnectionMissingError" ||
+      error.name === "SandboxConnectionInvalidError" ||
+      error.name === "SandboxCapabilityCheckStaleError" ||
+      error.name === "VercelSandboxConnectionMissingError" ||
       error.name === "VercelSandboxConnectionInvalidError")
   );
 }
@@ -1092,16 +1105,15 @@ async function updateRunSandbox(
         provider: "fake";
       }
     | {
-        projectId: string;
-        provider: "vercel";
-        teamId: string;
+        connection: SandboxConnection;
+        provider: "daytona" | "e2b" | "vercel";
       },
 ): Promise<boolean> {
   const vercelMetadata =
-    metadata.provider === "vercel"
+    metadata.provider === "vercel" && metadata.connection.provider === "vercel"
       ? {
-          sandbox_vercel_project_id: metadata.projectId,
-          sandbox_vercel_team_id: metadata.teamId,
+          sandbox_vercel_project_id: metadata.connection.credentials.projectId,
+          sandbox_vercel_team_id: metadata.connection.credentials.teamId,
         }
       : {
           sandbox_vercel_project_id: null,
@@ -1112,6 +1124,8 @@ async function updateRunSandbox(
     .update({
       sandbox_id: sandboxId,
       sandbox_provider: metadata.provider,
+      sandbox_connection_revision:
+        metadata.provider === "fake" ? null : metadata.connection.revision,
       ...vercelMetadata,
     })
     .eq("id", runId)

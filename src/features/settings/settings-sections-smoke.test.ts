@@ -445,7 +445,7 @@ describe("Settings integration sections", () => {
     const items = [
       "GitHub",
       "Repositories",
-      "Vercel Sandbox",
+      "Sandbox provider",
       "Linear",
       "Agent",
       "Pipeline",
@@ -660,8 +660,8 @@ describe("Settings integration sections", () => {
     expect(html).toContain(">Linear</h2>");
     expect(html).toContain('id="runtime"');
     expect(html).toContain("Workspace secrets");
-    expect(html).toContain('id="vercel"');
-    expect(html).toContain(">Vercel Sandbox</h2>");
+    expect(html).toContain('id="sandbox"');
+    expect(html).toContain(">Sandbox provider</h2>");
     expect(html).toContain('id="verify"');
     expect(html).toContain("Verify setup");
   });
@@ -1159,8 +1159,9 @@ describe("Settings integration sections", () => {
             repoId: 1,
           },
         ],
+        sandboxConnected: true,
+        sandboxProviderLabel: "E2B",
         setFlashMessage: vi.fn(),
-        vercelSandboxConnected: true,
         workspaceId,
       }),
     );

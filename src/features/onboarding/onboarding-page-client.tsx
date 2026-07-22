@@ -29,6 +29,7 @@ import { buildRepositorySetupHealth } from "@/features/onboarding/repository-hea
 import {
   buildRuntimeReadiness,
   buildVerifyChecklist,
+  capabilityCheckMatchesCurrentSetup,
   verifyBlockersFromChecklist,
   type RuntimeReadiness,
 } from "@/features/onboarding/runtime-readiness";
@@ -191,39 +192,46 @@ export function setupHealthItems(
     : providerCredential.expired
       ? { tone: "danger" as const, value: "Expired" }
       : { tone: "warning" as const, value: "Missing" };
-  const vercelSandbox = health.vercelSandboxConnection.connected
+  const sandboxConnection = health.sandboxConnection ?? {
+    connected: health.vercelSandboxConnection.connected,
+    displayName:
+      health.vercelSandboxConnection.projectName ?? health.vercelSandboxConnection.projectId,
+    lastValidationError: health.vercelSandboxConnection.lastValidationError,
+    providerLabel: "Vercel Sandbox",
+    status: health.vercelSandboxConnection.status,
+  };
+  const sandboxProviderHealth = sandboxConnection.connected
     ? {
-        detail:
-          health.vercelSandboxConnection.projectName ??
-          health.vercelSandboxConnection.projectId ??
-          "Vercel project connected",
+        detail: sandboxConnection.displayName ?? `${sandboxConnection.providerLabel} connected`,
         tone: "success" as const,
         value: "Connected",
       }
-    : health.vercelSandboxConnection.status === "error"
+    : sandboxConnection.status === "error"
       ? {
-          detail:
-            health.vercelSandboxConnection.lastValidationError ?? "Connection needs attention",
+          detail: sandboxConnection.lastValidationError ?? "Connection needs attention",
           tone: "danger" as const,
           value: "Error",
         }
       : {
-          detail: "Vercel project required",
+          detail: `${sandboxConnection.providerLabel} connection required`,
           tone: "warning" as const,
           value: "Missing",
         };
+  const capabilityCheckMatches = capabilityCheckMatchesCurrentSetup(health);
   const sandbox = health.latestSandboxCapabilityCheck
-    ? !health.vercelSandboxConnection.connected
+    ? !sandboxConnection.connected
       ? { tone: "warning" as const, value: "Blocked" }
-      : health.latestSandboxCapabilityCheck.status === "success"
+      : health.latestSandboxCapabilityCheck.status === "success" && capabilityCheckMatches
         ? { tone: "success" as const, value: "Ready" }
-        : health.latestSandboxCapabilityCheck.status === "running"
+        : health.latestSandboxCapabilityCheck.status === "running" && capabilityCheckMatches
           ? { tone: "accent" as const, value: "Running" }
-          : { tone: "danger" as const, value: "Error" }
+          : health.latestSandboxCapabilityCheck.status === "error" && capabilityCheckMatches
+            ? { tone: "danger" as const, value: "Error" }
+            : { tone: "warning" as const, value: "Stale" }
     : { tone: "neutral" as const, value: "No check" };
-  const sandboxDetail = !health.vercelSandboxConnection.connected ? (
-    "Connect Vercel first"
-  ) : health.latestSandboxCapabilityCheck ? (
+  const sandboxDetail = !sandboxConnection.connected ? (
+    `Connect ${sandboxConnection.providerLabel} first`
+  ) : health.latestSandboxCapabilityCheck && capabilityCheckMatches ? (
     <>
       Checked{" "}
       <TimeDisplay
@@ -232,6 +240,8 @@ export function setupHealthItems(
         variant="relative"
       />
     </>
+  ) : health.latestSandboxCapabilityCheck ? (
+    "Run a capability check for the current sandbox, repository, and agent"
   ) : (
     "Run a capability check"
   );
@@ -286,10 +296,10 @@ export function setupHealthItems(
       value: providerCredentialBadge.value,
     },
     {
-      detail: vercelSandbox.detail,
-      label: "Vercel",
-      tone: vercelSandbox.tone,
-      value: vercelSandbox.value,
+      detail: sandboxProviderHealth.detail,
+      label: "Sandbox provider",
+      tone: sandboxProviderHealth.tone,
+      value: sandboxProviderHealth.value,
     },
     {
       detail: sandboxDetail,
@@ -547,7 +557,10 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
     (!runtimeCompletionState.readiness.canComplete ||
       runtimeCompletionState.hasInvalidDrafts ||
       runtimeCompletionState.hasUnsavedDrafts ||
-      !data.setupHealth.vercelSandboxConnection.connected);
+      !(
+        data.setupHealth.sandboxConnection?.connected ??
+        data.setupHealth.vercelSandboxConnection.connected
+      ));
   const verifyChecklist = buildVerifyChecklist({
     agentConfig: data.agentConfig,
     health: data.setupHealth,

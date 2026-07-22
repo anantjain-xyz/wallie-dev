@@ -74,7 +74,7 @@ describe("buildWallieBlockingReasons", () => {
     expect(reasons).toHaveLength(0);
   });
 
-  it("blocks when Vercel Sandbox is missing", () => {
+  it("identifies the selected provider when its sandbox connection is missing", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
       missingSecretKeys: [],
@@ -83,6 +83,8 @@ describe("buildWallieBlockingReasons", () => {
       vercelSandboxConnection: {
         connected: false,
         lastValidationError: null,
+        provider: "e2b",
+        providerLabel: "E2B",
         projectId: null,
         projectName: null,
         status: "missing",
@@ -91,7 +93,10 @@ describe("buildWallieBlockingReasons", () => {
     });
 
     expect(reasons).toHaveLength(1);
-    expect(reasons[0]!.code).toBe("vercel_sandbox_connection_missing");
+    expect(reasons[0]).toMatchObject({
+      code: "sandbox_connection_missing",
+      provider: "e2b",
+    });
   });
 
   it("does not block missing Vercel Sandbox when the selected sandbox does not require Vercel", () => {
@@ -131,6 +136,6 @@ describe("buildWallieBlockingReasons", () => {
     });
 
     expect(reasons).toHaveLength(1);
-    expect(reasons[0]!.code).toBe("vercel_sandbox_connection_invalid");
+    expect(reasons[0]!.code).toBe("sandbox_connection_invalid");
   });
 });

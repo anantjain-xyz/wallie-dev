@@ -10,7 +10,7 @@ export const SETTINGS_CATEGORY_LINKS: ReadonlyArray<{
   label: string;
 }> = [
   {
-    description: "GitHub, repositories, Vercel, Linear, and agent access",
+    description: "GitHub, repositories, sandbox providers, Linear, and agent access",
     id: "integrations",
     label: "Integrations",
   },
