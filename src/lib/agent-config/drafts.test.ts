@@ -67,14 +67,14 @@ describe("applyAgentConfigDraftChange", () => {
   it("pairs a provider change with the provider's recommended model", () => {
     const drafts = {
       agent_provider: "codex",
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       concurrency_limit: "1",
       stall_timeout_ms: "15",
       max_retries: "3",
     };
     expect(applyAgentConfigDraftChange(drafts, "agent_provider", "claude-code")).toMatchObject({
       agent_provider: "claude-code",
-      agent_model: "claude-opus-4-7[1m]",
+      agent_model: "claude-opus-4-8[1m]",
     });
   });
 });

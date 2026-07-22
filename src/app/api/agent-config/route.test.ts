@@ -311,11 +311,11 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
     const payload = (await response.json()) as { applied: Array<{ key: string; value: unknown }> };
     expect(payload.applied).toContainEqual({
       key: "agent_model",
-      value: "claude-opus-4-7[1m]",
+      value: "claude-opus-4-8[1m]",
     });
     expect(upsert).toHaveBeenCalledWith(
       expect.arrayContaining([
-        { key: "agent_model", value_json: "claude-opus-4-7[1m]", workspace_id: WORKSPACE_ID },
+        { key: "agent_model", value_json: "claude-opus-4-8[1m]", workspace_id: WORKSPACE_ID },
       ]),
       { onConflict: "workspace_id,key" },
     );

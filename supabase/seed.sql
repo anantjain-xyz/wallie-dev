@@ -53,7 +53,7 @@ BEGIN
      status, last_activity_at, started_at, finished_at, created_at)
   VALUES
     (v_run_id, p_workspace_id, p_session_id, null, p_member_id,
-     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-7[1m]',
+     p_stage_id, p_stage_slug, p_stage_name, 'code', 'anthropic', 'claude-opus-4-8[1m]',
      v_status,
      CASE WHEN v_queued THEN null ELSE coalesce(p_finished_at, p_started_at) END,
      CASE WHEN v_queued THEN null ELSE p_started_at END,
@@ -370,7 +370,7 @@ BEGIN
     (workspace_id, key, value_json, created_at)
   VALUES
     (ws_id, 'agent_provider', to_jsonb('claude-code'::text), now() - interval '13 days'),
-    (ws_id, 'agent_model', to_jsonb('claude-opus-4-7[1m]'::text), now() - interval '13 days'),
+    (ws_id, 'agent_model', to_jsonb('claude-opus-4-8[1m]'::text), now() - interval '13 days'),
     (ws_id, 'concurrency_limit', to_jsonb(1), now() - interval '13 days'),
     (ws_id, 'max_retries', to_jsonb(3), now() - interval '13 days'),
     (ws_id, 'stall_timeout_ms', to_jsonb(900000), now() - interval '13 days');

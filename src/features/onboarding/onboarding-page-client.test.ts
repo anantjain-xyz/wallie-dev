@@ -174,7 +174,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
 
   return {
     agentConfig: {
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     },
     canManage: true,
@@ -209,7 +209,7 @@ function onboardingData(overrides: OnboardingDataOverrides = {}): WorkspaceOnboa
         configuredKeys: ["agent_model", "agent_provider"],
         status: "present",
         values: {
-          agent_model: "gpt-5.5",
+          agent_model: "gpt-5.6-sol",
           agent_provider: "codex",
         },
       },
@@ -1813,7 +1813,7 @@ describe("OnboardingPageClient", () => {
 
   it("pairs Onboarding provider changes with the provider's recommended model", () => {
     const currentDrafts = {
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
       concurrency_limit: "1",
       max_retries: "3",
@@ -1823,11 +1823,11 @@ describe("OnboardingPageClient", () => {
     expect(
       applyAgentConfigDraftChange(currentDrafts, "agent_provider", "claude-code"),
     ).toMatchObject({
-      agent_model: "claude-opus-4-7[1m]",
+      agent_model: "claude-opus-4-8[1m]",
       agent_provider: "claude-code",
     });
     expect(applyAgentConfigDraftChange(currentDrafts, "agent_provider", "codex")).toMatchObject({
-      agent_model: "gpt-5.5",
+      agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
     });
   });

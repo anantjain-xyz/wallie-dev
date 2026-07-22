@@ -71,7 +71,7 @@ describe("ClaudeCodeRunner", () => {
     const [call] = sandbox.calls;
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
-    expect(call.args[1]).toContain("'--model' 'claude-opus-4-7[1m]'");
+    expect(call.args[1]).toContain("'--model' 'claude-opus-4-8[1m]'");
     expect(call.args[1]).toContain("'--effort' 'xhigh'");
     expect(call.args[1]).toContain("'--permission-mode' 'bypassPermissions'");
     expect(call.args[1]).toContain("'--resume' 'prev-session'");

@@ -189,21 +189,21 @@ describe("parseAgentConfigValue — agent_provider", () => {
 });
 
 describe("provider-specific recommended defaults", () => {
-  it("uses GPT-5.5 for Codex and Opus 4.7 1M for Claude Code", () => {
-    expect(getRecommendedAgentModel("codex")).toBe("gpt-5.5");
-    expect(getRecommendedAgentModel("claude-code")).toBe("claude-opus-4-7[1m]");
+  it("uses GPT-5.6 Sol for Codex and Opus 4.8 1M for Claude Code", () => {
+    expect(getRecommendedAgentModel("codex")).toBe("gpt-5.6-sol");
+    expect(getRecommendedAgentModel("claude-code")).toBe("claude-opus-4-8[1m]");
     expect(RECOMMENDED_AGENT_MODELS).toEqual({
-      codex: "gpt-5.5",
-      "claude-code": "claude-opus-4-7[1m]",
+      codex: "gpt-5.6-sol",
+      "claude-code": "claude-opus-4-8[1m]",
     });
   });
 
   it("keeps the public agent config default provider on Codex", () => {
     expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_provider).toBe("codex");
-    expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model).toBe("gpt-5.5");
+    expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_model).toBe("gpt-5.6-sol");
     expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms).toBe(900_000);
     expect(getRecommendedAgentConfigDefault("agent_model", "claude-code")).toBe(
-      "claude-opus-4-7[1m]",
+      "claude-opus-4-8[1m]",
     );
   });
 
