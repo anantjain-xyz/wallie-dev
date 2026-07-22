@@ -57,4 +57,11 @@ describe("sandbox provider migration", () => {
     expect(migration).toContain("check_row.sandbox_vercel_project_id = connection.project_id");
     expect(migration).toContain("new.connection_revision := gen_random_uuid()");
   });
+
+  it("allows pre-provision Vercel capability failures to become terminal", () => {
+    expect(migration).toContain("status in ('running', 'error')");
+    expect(migration).toContain("and sandbox_id is null");
+    expect(migration).toContain("and sandbox_vercel_team_id is null");
+    expect(migration).toContain("and sandbox_vercel_project_id is null");
+  });
 });

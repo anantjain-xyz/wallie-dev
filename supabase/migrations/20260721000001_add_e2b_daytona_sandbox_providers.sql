@@ -74,7 +74,7 @@ alter table public.sandbox_capability_checks
         and sandbox_vercel_project_id is not null
       )
       or (
-        status = 'running'
+        status in ('running', 'error')
         and sandbox_id is null
         and sandbox_vercel_team_id is null
         and sandbox_vercel_project_id is null

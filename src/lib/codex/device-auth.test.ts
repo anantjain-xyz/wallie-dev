@@ -347,6 +347,47 @@ describe("Codex device auth", () => {
     });
   });
 
+  it("stops a provisioned sandbox when cancellation wins the reservation race", async () => {
+    const rows: FlowRow[] = [];
+    const admin = buildAdminMock(rows);
+    const command = new FakeCommand();
+    const sandbox = {
+      getCommand: vi.fn().mockResolvedValue(command),
+      runCommand: vi.fn(async () => {
+        rows[0] = {
+          ...rows[0]!,
+          canceled_at: "2026-05-19T00:00:30.000Z",
+          status: "canceled",
+        };
+        return command;
+      }),
+      sandboxId: "sandbox-race",
+      stop: vi.fn(),
+    };
+    mocked.createSupabaseAdminClient.mockReturnValue(admin);
+    mocked.sandboxCreate.mockResolvedValue(sandbox);
+    mocked.sandboxGet.mockResolvedValue(sandbox);
+
+    const snapshot = await startCodexDeviceAuthFlow({
+      userId: "user-1",
+      vercelCredentials,
+    });
+
+    expect(snapshot).toMatchObject({ status: "canceled" });
+    expect(rows[0]).toMatchObject({
+      command_id: "provisioning",
+      sandbox_id: "provisioning:00000000-0000-0000-0000-000000000123",
+      status: "canceled",
+    });
+    expect(mocked.sandboxGet).toHaveBeenCalledWith({
+      projectId: "prj_workspace",
+      sandboxId: "sandbox-race",
+      teamId: "team_workspace",
+      token: "vca_workspace",
+    });
+    expect(sandbox.stop).toHaveBeenCalledTimes(1);
+  });
+
   it("runs and reconnects ChatGPT device auth through E2B", async () => {
     const rows: FlowRow[] = [];
     const authJson = JSON.stringify({

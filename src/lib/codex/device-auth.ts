@@ -175,7 +175,14 @@ export async function startCodexDeviceAuthFlow(input: {
       command_id: command.cmdId,
       sandbox_id: sandbox.sandboxId,
     });
-    if (!provisionedRow) throw new Error("Codex sign-in reservation was lost during provisioning.");
+    if (
+      !provisionedRow ||
+      provisionedRow.status !== "starting" ||
+      provisionedRow.sandbox_id !== sandbox.sandboxId ||
+      provisionedRow.command_id !== command.cmdId
+    ) {
+      throw new Error("Codex sign-in reservation was lost during provisioning.");
+    }
     flowRow = provisionedRow;
     await sandbox.close?.();
 
