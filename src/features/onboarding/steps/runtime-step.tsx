@@ -331,12 +331,13 @@ export function updateVercelSandboxConnectionInData(
   };
 }
 
-function updateSandboxSettingsInData(
+export function updateSandboxSettingsInData(
   currentData: WorkspaceOnboardingData,
   settings: SandboxSettingsResponse,
 ): WorkspaceOnboardingData {
   const active = settings.connections[settings.activeProvider];
   const vercel = settings.connections.vercel;
+  const activeProviderEnabled = settings.enabledProviders.includes(settings.activeProvider);
   const providerLabel =
     settings.activeProvider === "vercel"
       ? "Vercel Sandbox"
@@ -350,7 +351,7 @@ function updateSandboxSettingsInData(
     setupHealth: {
       ...currentData.setupHealth,
       sandboxConnection: {
-        connected: active?.status === "connected",
+        connected: activeProviderEnabled && active?.status === "connected",
         connectionRevision: active ? String(active.connectionRevision) : null,
         displayName:
           settings.activeProvider === "vercel"
@@ -360,10 +361,12 @@ function updateSandboxSettingsInData(
               : (settings.connections.daytona?.target ??
                 settings.connections.daytona?.apiUrl ??
                 null),
-        lastValidationError: active?.lastValidationError ?? null,
+        lastValidationError: activeProviderEnabled
+          ? (active?.lastValidationError ?? null)
+          : `${providerLabel} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
         provider: settings.activeProvider,
         providerLabel,
-        status: active?.status ?? "missing",
+        status: activeProviderEnabled ? (active?.status ?? "missing") : "error",
         updatedAt: active?.updatedAt ?? null,
       },
       vercelSandboxConnection: vercel
