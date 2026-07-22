@@ -69,6 +69,7 @@ function setupRpc(result: { data?: unknown; error?: { message: string } } = {}) 
     operatingRulesMd: "",
     stages: [
       {
+        allowAnyMemberToApprove: false,
         approverMemberIds: [],
         description: "",
         id: PRODUCT_STAGE_ID,
@@ -84,6 +85,7 @@ function setupRpc(result: { data?: unknown; error?: { message: string } } = {}) 
 
 function baseStage(overrides: Record<string, unknown> = {}) {
   return {
+    allowAnyMemberToApprove: false,
     approverMemberIds: [],
     description: "",
     id: PRODUCT_STAGE_ID,
@@ -271,6 +273,7 @@ describe("PUT /api/workspaces/[workspaceId]/pipeline", () => {
     expect(rpcArgs().stage_payload).toEqual([
       baseStage({ id: DESIGN_STAGE_ID, name: "Design", slug: "design" }),
       {
+        allowAnyMemberToApprove: false,
         approverMemberIds: [],
         description: "Build it",
         name: "Engineering",

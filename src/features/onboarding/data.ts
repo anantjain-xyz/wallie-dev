@@ -303,6 +303,7 @@ type OnboardingSnapshotContext = Pick<
 type PipelineRow = Pick<Tables<"pipelines">, "id" | "is_default" | "name" | "operating_rules_md">;
 type PipelineStageRow = Pick<
   Tables<"pipeline_stages">,
+  | "allow_any_member_to_approve"
   | "approver_member_ids"
   | "description"
   | "id"
@@ -439,7 +440,7 @@ function createOnboardingSnapshot(
         context.supabase
           .from("pipeline_stages")
           .select(
-            "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids",
+            "id, pipeline_id, position, slug, name, description, prompt_template_md, approver_member_ids, allow_any_member_to_approve",
           )
           .eq("workspace_id", workspaceId)
           .eq("pipeline_id", pipelineId)
@@ -589,6 +590,7 @@ function derivePipeline(snapshot: OnboardingSnapshot): SessionPipeline | null {
   const stages: PipelineStage[] = snapshot.stageRows
     .filter((stage) => stage.pipeline_id === snapshot.pipelineRow?.id)
     .map((stage) => ({
+      allowAnyMemberToApprove: stage.allow_any_member_to_approve ?? false,
       approverMemberIds: stage.approver_member_ids ?? [],
       description: stage.description,
       id: stage.id,

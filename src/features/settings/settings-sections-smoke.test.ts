@@ -34,6 +34,7 @@ const pipeline = {
   operatingRulesMd: "",
   stages: [
     {
+      allowAnyMemberToApprove: false,
       approverMemberIds: [],
       description: "Product",
       id: "stage-product",

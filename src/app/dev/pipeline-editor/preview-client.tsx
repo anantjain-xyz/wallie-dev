@@ -16,6 +16,7 @@ const fixturePipeline: SessionPipeline = {
   operatingRulesMd: "Keep changes reviewable and prefer small diffs.",
   stages: [
     {
+      allowAnyMemberToApprove: false,
       approverMemberIds: [MEMBER_ID],
       description: "Define the work before implementation begins",
       id: "00000000-0000-4000-8000-000000000011",
@@ -26,6 +27,7 @@ const fixturePipeline: SessionPipeline = {
       slug: "plan",
     },
     {
+      allowAnyMemberToApprove: false,
       approverMemberIds: [MEMBER_ID],
       description: "Implement the approved plan",
       id: "00000000-0000-4000-8000-000000000012",
@@ -36,6 +38,7 @@ const fixturePipeline: SessionPipeline = {
       slug: "build",
     },
     {
+      allowAnyMemberToApprove: false,
       approverMemberIds: [MEMBER_ID],
       description: "Land the change",
       id: "00000000-0000-4000-8000-000000000013",

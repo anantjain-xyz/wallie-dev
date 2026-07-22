@@ -528,6 +528,7 @@ export type Database = {
       }
       pipeline_stages: {
         Row: {
+          allow_any_member_to_approve: boolean
           approver_member_ids: string[]
           created_at: string
           description: string
@@ -541,6 +542,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          allow_any_member_to_approve?: boolean
           approver_member_ids?: string[]
           created_at?: string
           description?: string
@@ -554,6 +556,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          allow_any_member_to_approve?: boolean
           approver_member_ids?: string[]
           created_at?: string
           description?: string

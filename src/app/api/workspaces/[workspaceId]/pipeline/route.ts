@@ -31,6 +31,7 @@ const stageInputSchema = z.object({
   description: z.string().max(500).default(""),
   promptTemplateMd: z.string().max(20000).default(""),
   approverMemberIds: z.array(z.string().uuid()).default([]),
+  allowAnyMemberToApprove: z.boolean().default(false),
 });
 
 const pipelineUpdateSchema = z.object({

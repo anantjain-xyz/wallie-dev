@@ -8,6 +8,7 @@ import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 export type SessionPhaseStatus = PipelinePhaseStatus;
 
 export type PipelineStage = {
+  allowAnyMemberToApprove: boolean;
   approverMemberIds: string[];
   description: string;
   id: string;

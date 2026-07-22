@@ -31,6 +31,7 @@ const session: SessionDetail = {
     operatingRulesMd: "",
     stages: [
       {
+        allowAnyMemberToApprove: false,
         approverMemberIds: [],
         description: "",
         id: "stage-plan",
@@ -41,6 +42,7 @@ const session: SessionDetail = {
         slug: "plan",
       },
       {
+        allowAnyMemberToApprove: false,
         approverMemberIds: [],
         description: "",
         id: "stage-build",

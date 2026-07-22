@@ -21,6 +21,7 @@ export type WorkspaceMemberSummary = {
 };
 
 export type DraftPipelineStage = {
+  allowAnyMemberToApprove: boolean;
   approverMemberIds: string[];
   description: string;
   id: string | null;
@@ -99,6 +100,7 @@ export function truncateSlugBase(base: string, maxLen: number): string {
 
 export function stageToDraft(stage: PipelineStage): DraftPipelineStage {
   return {
+    allowAnyMemberToApprove: stage.allowAnyMemberToApprove,
     approverMemberIds: stage.approverMemberIds,
     description: stage.description,
     id: stage.id,
@@ -138,6 +140,7 @@ export function nextUniqueSlug(base: string, stages: DraftPipelineStage[]): stri
 export function createDraftStage(stages: DraftPipelineStage[] = []): DraftPipelineStage {
   const name = "New stage";
   return {
+    allowAnyMemberToApprove: false,
     approverMemberIds: [],
     description: "",
     id: null,
@@ -338,7 +341,7 @@ export function validatePipelineDraft({
       });
     }
 
-    if (stage.approverMemberIds.length === 0) {
+    if (!stage.allowAnyMemberToApprove && stage.approverMemberIds.length === 0) {
       issues.push({
         code: "missing-stage-approver",
         field: "stage-approvers",
@@ -424,6 +427,7 @@ export function serializePipelineDraft(input: {
     name: input.name,
     operatingRules: input.operatingRules,
     stages: input.stages.map((stage) => ({
+      allowAnyMemberToApprove: stage.allowAnyMemberToApprove,
       approverMemberIds: stage.approverMemberIds,
       description: stage.description,
       id: stage.id,
@@ -629,8 +633,9 @@ export function StageRowEditor({
   const positionLabel = `position ${index + 1} of ${totalStages}`;
   const slugReadOnly = stage.id !== null;
   const isDragging = dragIndex === index;
-  const approverPreview =
-    stage.approverMemberIds.length === 0
+  const approverPreview = stage.allowAnyMemberToApprove
+    ? "Anyone in workspace"
+    : stage.approverMemberIds.length === 0
       ? "Select at least one approver"
       : `${stage.approverMemberIds.length} member${stage.approverMemberIds.length === 1 ? "" : "s"}`;
   const approverOptions = workspaceMembers.map((member) => ({
@@ -799,18 +804,48 @@ export function StageRowEditor({
               ) : null}
             </div>
 
-            <MultiSelectField
-              description="Choose who can approve this stage before the session advances."
-              disabled={!canManage}
-              emptyMessage="No human members are available."
-              error={errors.approvers}
-              id={`${fieldPrefix}-approvers`}
-              label="Approvers"
-              onValuesChange={(approverMemberIds) => onChange({ approverMemberIds })}
-              options={approverOptions}
-              summary={approverPreview}
-              values={stage.approverMemberIds}
-            />
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`${fieldPrefix}-allow-any`}
+                  checked={stage.allowAnyMemberToApprove}
+                  disabled={!canManage}
+                  onChange={(event) => {
+                    const allowAnyMemberToApprove = event.target.checked;
+                    onChange({
+                      allowAnyMemberToApprove,
+                      approverMemberIds: allowAnyMemberToApprove ? [] : stage.approverMemberIds,
+                    });
+                  }}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                />
+                <label
+                  className="text-[13px] font-medium text-foreground"
+                  htmlFor={`${fieldPrefix}-allow-any`}
+                >
+                  Anyone can approve
+                </label>
+              </div>
+              {stage.allowAnyMemberToApprove ? (
+                <p className="type-annotation text-muted">
+                  Any member of the workspace can approve this stage.
+                </p>
+              ) : (
+                <MultiSelectField
+                  description="Choose who can approve this stage before the session advances."
+                  disabled={!canManage}
+                  emptyMessage="No human members are available."
+                  error={errors.approvers}
+                  id={`${fieldPrefix}-approvers`}
+                  label="Approvers"
+                  onValuesChange={(approverMemberIds) => onChange({ approverMemberIds })}
+                  options={approverOptions}
+                  summary={approverPreview}
+                  values={stage.approverMemberIds}
+                />
+              )}
+            </div>
           </div>
         </div>
       </fieldset>

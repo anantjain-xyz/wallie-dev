@@ -23,6 +23,7 @@ import {
 
 function stage(overrides: Partial<DraftPipelineStage> = {}): DraftPipelineStage {
   return {
+    allowAnyMemberToApprove: false,
     approverMemberIds: ["member-1"],
     description: "Product requirements",
     id: "stage-product",

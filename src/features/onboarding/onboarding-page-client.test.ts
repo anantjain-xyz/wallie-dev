@@ -84,6 +84,7 @@ const configuredPipeline = {
   operatingRulesMd: "",
   stages: [
     {
+      allowAnyMemberToApprove: false,
       approverMemberIds: [],
       description: "Product",
       id: "stage-product",
@@ -654,6 +655,7 @@ describe("OnboardingPageClient", () => {
       stages: [
         ...configuredPipeline.stages,
         {
+          allowAnyMemberToApprove: false,
           approverMemberIds: [],
           description: "Build",
           id: "stage-build",

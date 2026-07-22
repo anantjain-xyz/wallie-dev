@@ -9,6 +9,7 @@ type AdminClient = SupabaseClient<Database>;
 
 export function mapStageRow(row: Tables<"pipeline_stages">): PipelineStage {
   return {
+    allowAnyMemberToApprove: row.allow_any_member_to_approve ?? false,
     approverMemberIds: row.approver_member_ids ?? [],
     description: row.description,
     id: row.id,
