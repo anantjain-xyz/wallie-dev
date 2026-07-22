@@ -12,6 +12,7 @@ import {
   loadWorkspaceSandboxOverview,
   loadWorkspaceSandboxSettings,
   SandboxConnectionActiveWorkError,
+  SandboxConnectionInvalidError,
   SandboxConnectionMutationInProgressError,
   saveDaytonaSandboxConnection,
   saveE2BSandboxConnection,
@@ -60,7 +61,7 @@ export async function PUT(request: Request, context: RouteContext) {
       access.context.workspace.id,
       params.provider,
     );
-    const existing = await loadWorkspaceSandboxConnection(
+    const existing = await loadExistingConnectionForCleanup(
       admin,
       access.context.workspace.id,
       params.provider,
@@ -175,7 +176,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
         { status: 409 },
       );
     }
-    const existing = await loadWorkspaceSandboxConnection(
+    const existing = await loadExistingConnectionForCleanup(
       admin,
       access.context.workspace.id,
       params.provider,
@@ -216,6 +217,25 @@ export async function DELETE(_request: Request, context: RouteContext) {
     throw error;
   } finally {
     if (release) await release();
+  }
+}
+
+async function loadExistingConnectionForCleanup(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+  provider: "daytona" | "e2b" | "vercel",
+) {
+  try {
+    return await loadWorkspaceSandboxConnection(admin, workspaceId, provider);
+  } catch (error) {
+    if (provider === "daytona" && error instanceof SandboxConnectionInvalidError) {
+      console.warn("[sandbox-connection] skipping cleanup for policy-rejected Daytona endpoint", {
+        error: error.message,
+        workspaceId,
+      });
+      return null;
+    }
+    throw error;
   }
 }
 

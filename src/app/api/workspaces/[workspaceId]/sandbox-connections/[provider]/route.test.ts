@@ -6,7 +6,10 @@ const mocked = vi.hoisted(() => ({
   loadWorkspaceSandboxConnection: vi.fn(),
   loadWorkspaceSandboxSettings: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
+  saveDaytonaSandboxConnection: vi.fn(),
+  stopWorkspaceOwnedSandboxes: vi.fn(),
   stopVercelWorkspaceOwnedSandboxes: vi.fn(),
+  validateDaytonaSandboxCredentials: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -30,10 +33,14 @@ vi.mock("@/lib/sandbox-connections/server", async () => {
     acquireSandboxConnectionMutationLock: mocked.acquireSandboxConnectionMutationLock,
     loadWorkspaceSandboxConnection: mocked.loadWorkspaceSandboxConnection,
     loadWorkspaceSandboxSettings: mocked.loadWorkspaceSandboxSettings,
+    saveDaytonaSandboxConnection: mocked.saveDaytonaSandboxConnection,
+    stopWorkspaceOwnedSandboxes: mocked.stopWorkspaceOwnedSandboxes,
+    validateDaytonaSandboxCredentials: mocked.validateDaytonaSandboxCredentials,
   };
 });
 
-import { DELETE } from "./route";
+import { SandboxConnectionInvalidError } from "@/lib/sandbox-connections/server";
+import { DELETE, PUT } from "./route";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const connection = {
@@ -68,6 +75,24 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
       revision: 2,
       updatedAt: null,
     });
+    mocked.validateDaytonaSandboxCredentials.mockResolvedValue({
+      credentials: {
+        apiKey: "daytona-secret",
+        apiUrl: "https://app.daytona.io/api",
+      },
+      ok: true,
+    });
+    mocked.saveDaytonaSandboxConnection.mockResolvedValue({
+      apiKeyPreview: "daytona_…cret",
+      apiUrl: "https://app.daytona.io/api",
+      connectionRevision: "revision-daytona",
+      lastValidatedAt: "2026-07-22T00:00:00.000Z",
+      lastValidationError: null,
+      status: "connected",
+      target: null,
+      updatedAt: "2026-07-22T00:00:00.000Z",
+      workspaceId,
+    });
   });
 
   it("rejects deleting the active provider before loading or deleting its connection", async () => {
@@ -100,5 +125,61 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
       workspaceId,
     });
     expect(admin.from).toHaveBeenCalledWith("workspace_vercel_sandbox_connections");
+  });
+
+  it("allows replacing a Daytona connection rejected by the current URL policy", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocked.loadWorkspaceSandboxConnection.mockRejectedValueOnce(
+      new SandboxConnectionInvalidError(
+        "daytona",
+        "Daytona API URL is not allowed by this Wallie deployment.",
+      ),
+    );
+
+    const response = await PUT(
+      new Request("http://localhost", {
+        body: JSON.stringify({
+          apiKey: "daytona-secret",
+          apiUrl: "https://app.daytona.io/api",
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
+      }),
+      context("daytona"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocked.stopWorkspaceOwnedSandboxes).not.toHaveBeenCalled();
+    expect(mocked.saveDaytonaSandboxConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiUrl: "https://app.daytona.io/api",
+        workspaceId,
+      }),
+    );
+    expect(warning).toHaveBeenCalledWith(
+      "[sandbox-connection] skipping cleanup for policy-rejected Daytona endpoint",
+      expect.objectContaining({ workspaceId }),
+    );
+    warning.mockRestore();
+  });
+
+  it("allows deleting an inactive Daytona connection rejected by URL policy", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const admin = mocked.createSupabaseAdminClient();
+    mocked.createSupabaseAdminClient.mockReturnValueOnce(admin);
+    mocked.loadWorkspaceSandboxConnection.mockRejectedValueOnce(
+      new SandboxConnectionInvalidError(
+        "daytona",
+        "Daytona API URL is not allowed by this Wallie deployment.",
+      ),
+    );
+
+    const response = await DELETE(new Request("http://localhost"), context("daytona"));
+
+    expect(response.status).toBe(200);
+    expect(mocked.stopWorkspaceOwnedSandboxes).not.toHaveBeenCalled();
+    expect(admin.from).toHaveBeenCalledWith("workspace_daytona_sandbox_connections");
+    expect(warning).toHaveBeenCalled();
+    warning.mockRestore();
   });
 });

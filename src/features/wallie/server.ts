@@ -19,6 +19,7 @@ import {
 import type { WorkspaceMemberRow } from "@/features/workspace-members/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
+import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
@@ -241,8 +242,29 @@ async function loadWallieVercelSandboxConnection(
   workspaceId: string,
 ): Promise<WallieVercelSandboxConnectionStatus> {
   const overview = await loadWorkspaceSandboxOverview(admin, workspaceId);
+  return mapWallieSandboxConnectionStatus(overview);
+}
+
+export function mapWallieSandboxConnectionStatus(
+  overview: SandboxSettingsResponse,
+): WallieVercelSandboxConnectionStatus {
   const provider = overview.activeProvider;
   const connection = overview.connections[provider];
+
+  if (!overview.enabledProviders.includes(provider)) {
+    return {
+      connected: false,
+      connectionRevision: connection ? String(connection.connectionRevision) : null,
+      displayName: null,
+      lastValidationError: `${providerLabel(provider)} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
+      provider,
+      providerLabel: providerLabel(provider),
+      projectId: null,
+      projectName: null,
+      status: "error",
+      teamId: null,
+    };
+  }
 
   if (!connection) {
     return {

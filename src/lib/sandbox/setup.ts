@@ -56,6 +56,7 @@ export async function prepareSessionSandbox(input: {
   ].join(" && ");
 
   const proc = await handle.exec("bash", ["-lc", script], {
+    cwd: "/tmp",
     env: { CI: "1", GH_TOKEN: request.installationToken },
     signal: request.signal,
   });
