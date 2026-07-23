@@ -10,6 +10,7 @@ export const WORKSPACE_ONBOARDING_STEPS = [
   "repository",
   "pipeline",
   "linear",
+  "sandbox",
   "runtime",
   "verify",
 ] as const;

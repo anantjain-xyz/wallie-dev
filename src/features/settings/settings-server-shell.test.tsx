@@ -26,8 +26,9 @@ import {
 
 describe("Settings server shell", () => {
   it("selects exactly one supported category and falls back safely", () => {
-    expect(parseSettingsCategory("pipeline")).toBe("pipeline");
+    expect(parseSettingsCategory("integrations")).toBe("integrations");
     expect(parseSettingsCategory(["workspace", "advanced"])).toBe("workspace");
+    expect(parseSettingsCategory("pipeline")).toBe(DEFAULT_SETTINGS_CATEGORY);
     expect(parseSettingsCategory("unknown")).toBe(DEFAULT_SETTINGS_CATEGORY);
     expect(parseSettingsCategory(undefined)).toBe(DEFAULT_SETTINGS_CATEGORY);
   });

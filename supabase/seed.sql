@@ -401,7 +401,7 @@ BEGIN
      completed_steps, skipped_steps, completed_at, created_at)
   VALUES
     (onboarding_id, ws_id, 'completed', 'verify', gh_repo1_id,
-     array['github', 'repository', 'pipeline', 'runtime', 'verify']::text[],
+     array['github', 'repository', 'pipeline', 'sandbox', 'runtime', 'verify']::text[],
      array['linear']::text[],
      now() - interval '12 days',
      now() - interval '13 days');

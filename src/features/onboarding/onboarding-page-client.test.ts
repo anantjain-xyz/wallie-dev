@@ -33,11 +33,12 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/features/onboarding/steps/active-step", async () => {
   const React = await import("react");
-  const [github, repository, pipeline, linear, runtime, verify] = await Promise.all([
+  const [github, repository, pipeline, linear, sandbox, runtime, verify] = await Promise.all([
     import("@/features/onboarding/steps/github-step"),
     import("@/features/onboarding/steps/repository-step"),
     import("@/features/onboarding/steps/pipeline-step"),
     import("@/features/onboarding/steps/linear-step"),
+    import("@/features/onboarding/steps/sandbox-step"),
     import("@/features/onboarding/steps/runtime-step"),
     import("@/features/onboarding/steps/verify-step"),
   ]);
@@ -46,6 +47,7 @@ vi.mock("@/features/onboarding/steps/active-step", async () => {
     repository: repository.default,
     pipeline: pipeline.default,
     linear: linear.default,
+    sandbox: sandbox.default,
     runtime: runtime.default,
     verify: verify.default,
   };
@@ -1394,13 +1396,13 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain("truncate font-mono");
   });
 
-  it("selects the connected sandbox provider inline from the Connect Agent step", () => {
+  it("selects the connected sandbox provider inline from the Connect Sandbox step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           onboarding: {
             completedSteps: ["github", "repository", "pipeline", "linear"],
-            currentStep: "runtime",
+            currentStep: "sandbox",
           },
         }),
       }),
@@ -1436,7 +1438,7 @@ describe("OnboardingPageClient", () => {
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           onboarding: {
-            completedSteps: ["github", "repository", "pipeline", "linear"],
+            completedSteps: ["github", "repository", "pipeline", "linear", "sandbox"],
             currentStep: "runtime",
           },
           setupHealth: {
@@ -1456,13 +1458,12 @@ describe("OnboardingPageClient", () => {
       }),
     );
     expect(primaryFooterButton(blockedHtml)).toContain("disabled");
-    expect(blockedHtml).toContain("Vercel-managed microVMs connected to a team and project.");
 
     const readyHtml = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
           onboarding: {
-            completedSteps: ["github", "repository", "pipeline", "linear"],
+            completedSteps: ["github", "repository", "pipeline", "linear", "sandbox"],
             currentStep: "runtime",
           },
           setupHealth: {
@@ -1600,7 +1601,7 @@ describe("OnboardingPageClient", () => {
     expect(button).toContain(">Complete setup</span>");
   });
 
-  it("routes the Vercel Sandbox blocker back into the Connect Agent step", () => {
+  it("routes the Vercel Sandbox blocker back into the Connect Sandbox step", () => {
     const html = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
         initialData: onboardingData({
@@ -1633,11 +1634,11 @@ describe("OnboardingPageClient", () => {
 
     const vercelRow = html.slice(html.indexOf("Vercel Sandbox connected"));
     expect(html).toContain("Vercel Sandbox connected");
-    // The blocker stays inside the wizard (Connect Agent / runtime step), not Settings.
+    // The blocker stays inside the wizard (Connect Sandbox step), not Settings.
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
     expect(html).not.toContain("Open Vercel");
-    expect(vercelRow).toContain('data-step-link="runtime"');
-    expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Agent");
+    expect(vercelRow).toContain('data-step-link="sandbox"');
+    expect(vercelRow.slice(0, vercelRow.indexOf("</button>") + 9)).toContain("Open Sandbox");
   });
 
   it("has no Verify blockers when every requirement passes", () => {

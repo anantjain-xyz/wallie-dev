@@ -28,7 +28,6 @@ import {
 import type { ClaudeCodeConnectionStatus } from "@/features/settings/claude-code-connection-panel";
 import type { CodexConnectionStatus } from "@/features/settings/codex-connection-panel";
 import { ProviderAccessPanel } from "@/features/settings/provider-access-panel";
-import { SandboxProviderSection } from "@/features/settings/sandbox-provider-section";
 import { upsertSecretPreview } from "@/features/settings/secret-previews";
 import {
   type AgentConfigKey,
@@ -1162,21 +1161,6 @@ export default function RuntimeStep({
           />
         </div>
       </div>
-
-      <SandboxProviderSection
-        canManage={data.canManage && !isSaving}
-        onSettingsChange={(settings) =>
-          onDataChange((current) => updateSandboxSettingsInData(current, settings))
-        }
-        setFlashMessage={(message) => {
-          setRuntimeError(message.kind === "error" ? message.text : null);
-          setRuntimeMessage(message.kind === "error" ? null : message.text);
-        }}
-        settings={data.sandboxSettings}
-        variant="onboarding"
-        vercelConnection={data.vercelSandboxConnection}
-        workspaceId={data.workspace.id}
-      />
 
       <div className="space-y-4">
         <div className="rounded-[6px] border border-border bg-sheet">

@@ -251,7 +251,7 @@ describe("loadSettingsPageData", () => {
     await Promise.all([loader.initialData, loader.setupData, loader.usage]);
   });
 
-  it("does not start usage or invitation reads for the pipeline category", async () => {
+  it("does not start usage or invitation reads for the integrations category", async () => {
     const { currentMember, supabase } = buildSupabase({
       member: { id: "member-1", is_active: true, kind: "human", role: "owner" },
       usageResult: Promise.resolve({ data: null, error: null }),
@@ -267,7 +267,7 @@ describe("loadSettingsPageData", () => {
       github: Promise.resolve(github),
     });
 
-    const loader = await loadSettingsPageData(workspace.slug, "pipeline");
+    const loader = await loadSettingsPageData(workspace.slug, "integrations");
 
     await expect(loader.usage).resolves.toEqual({
       totalCostUsd: 0,

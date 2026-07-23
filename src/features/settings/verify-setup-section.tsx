@@ -22,6 +22,7 @@ const stepAnchor: Record<WorkspaceOnboardingStep, string> = {
   pipeline: "pipeline",
   repository: "repository",
   runtime: "runtime",
+  sandbox: "sandbox",
   verify: "verify",
 };
 

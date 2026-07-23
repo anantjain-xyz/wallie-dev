@@ -854,7 +854,15 @@ describe("buildWorkspaceOnboardingUpdatePayload", () => {
     expect(
       buildWorkspaceOnboardingUpdatePayload(
         {
-          completedSteps: ["github", "repository", "pipeline", "linear", "runtime", "verify"],
+          completedSteps: [
+            "github",
+            "repository",
+            "pipeline",
+            "linear",
+            "sandbox",
+            "runtime",
+            "verify",
+          ],
           currentStep: "verify",
           status: "completed",
         },
@@ -862,7 +870,15 @@ describe("buildWorkspaceOnboardingUpdatePayload", () => {
       ),
     ).toEqual({
       completed_at: "2026-05-16T18:00:00.000Z",
-      completed_steps: ["github", "repository", "pipeline", "linear", "runtime", "verify"],
+      completed_steps: [
+        "github",
+        "repository",
+        "pipeline",
+        "linear",
+        "sandbox",
+        "runtime",
+        "verify",
+      ],
       current_step: "verify",
       dismissed_at: null,
       status: "completed",

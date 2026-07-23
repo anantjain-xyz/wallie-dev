@@ -52,14 +52,11 @@ const ANCHOR_GROUPS: SettingsAnchorGroup[] = [
     anchors: [
       { id: "github", label: "GitHub" },
       { id: "repository", label: "Repositories" },
-      { id: "sandbox", label: "Sandbox provider" },
+      { id: "pipeline", label: "Pipeline" },
       { id: "linear", label: "Linear" },
+      { id: "sandbox", label: "Sandbox provider" },
       { id: "runtime", label: "Agent" },
     ],
-  },
-  {
-    label: "Pipeline",
-    anchors: [{ id: "pipeline", label: "Pipeline" }],
   },
   {
     label: "Advanced",
@@ -385,17 +382,21 @@ function SettingsCompletePage({
               />
             </ContainedSettingsSection>
 
-            <ContainedSettingsSection>
-              <SandboxProviderSection
-                canManage={isManager}
-                onSettingsChange={(settings) =>
-                  setData((currentData) => applySandboxSettingsToData(currentData, settings))
-                }
-                setFlashMessage={setFlashMessage}
-                settings={pageData.sandboxSettings}
-                vercelConnection={pageData.vercelSandboxConnection}
-                workspaceId={pageData.workspace.id}
-              />
+            <ContainedSettingsSection size="large">
+              <Section
+                anchorId="pipeline"
+                statusBadge={<PipelineUnsavedBadge dirty={pipelineDirty} />}
+                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Existing artifacts stay unchanged; in-progress sessions may follow the updated stage order when they advance."
+                title="Pipeline"
+              >
+                <PipelineEditor
+                  canManage={isManager}
+                  onDirtyChange={setPipelineDirty}
+                  pipeline={pageData.pipeline}
+                  workspaceId={pageData.workspace.id}
+                  workspaceMembers={pageData.workspaceMembers}
+                />
+              </Section>
             </ContainedSettingsSection>
 
             <ContainedSettingsSection size="large">
@@ -409,6 +410,19 @@ function SettingsCompletePage({
                 routing={pageData.linearRouting}
                 setSecrets={setSecrets}
                 stages={pageData.pipeline?.stages ?? []}
+                workspaceId={pageData.workspace.id}
+              />
+            </ContainedSettingsSection>
+
+            <ContainedSettingsSection>
+              <SandboxProviderSection
+                canManage={isManager}
+                onSettingsChange={(settings) =>
+                  setData((currentData) => applySandboxSettingsToData(currentData, settings))
+                }
+                setFlashMessage={setFlashMessage}
+                settings={pageData.sandboxSettings}
+                vercelConnection={pageData.vercelSandboxConnection}
                 workspaceId={pageData.workspace.id}
               />
             </ContainedSettingsSection>
@@ -479,23 +493,6 @@ function SettingsCompletePage({
                 vercelSandboxConnection={pageData.vercelSandboxConnection}
                 workspaceId={pageData.workspace.id}
               />
-            </ContainedSettingsSection>
-
-            <ContainedSettingsSection size="large">
-              <Section
-                anchorId="pipeline"
-                statusBadge={<PipelineUnsavedBadge dirty={pipelineDirty} />}
-                tagline="Stages run in order; each stage's prompt is sent to the agent, and an approver reviews the markdown output before the session advances. Existing artifacts stay unchanged; in-progress sessions may follow the updated stage order when they advance."
-                title="Pipeline"
-              >
-                <PipelineEditor
-                  canManage={isManager}
-                  onDirtyChange={setPipelineDirty}
-                  pipeline={pageData.pipeline}
-                  workspaceId={pageData.workspace.id}
-                  workspaceMembers={pageData.workspaceMembers}
-                />
-              </Section>
             </ContainedSettingsSection>
 
             <ContainedSettingsSection>

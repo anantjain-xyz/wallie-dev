@@ -1,4 +1,4 @@
-export const SETTINGS_CATEGORIES = ["integrations", "pipeline", "advanced", "workspace"] as const;
+export const SETTINGS_CATEGORIES = ["integrations", "advanced", "workspace"] as const;
 
 export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number];
 
@@ -10,14 +10,9 @@ export const SETTINGS_CATEGORY_LINKS: ReadonlyArray<{
   label: string;
 }> = [
   {
-    description: "GitHub, repositories, sandbox providers, Linear, and agent access",
+    description: "GitHub, repositories, pipeline, sandbox, Linear, and agent access",
     id: "integrations",
     label: "Integrations",
-  },
-  {
-    description: "Stages, prompts, and approvers",
-    id: "pipeline",
-    label: "Pipeline",
   },
   {
     description: "Setup health, usage, and rate limits",

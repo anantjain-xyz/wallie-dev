@@ -13,6 +13,7 @@ const stepLoaders = {
   repository: () => import("./repository-step"),
   pipeline: () => import("./pipeline-step"),
   linear: () => import("./linear-step"),
+  sandbox: () => import("./sandbox-step"),
   runtime: () => import("./runtime-step"),
   verify: () => import("./verify-step"),
 } satisfies Record<
@@ -44,6 +45,7 @@ const deferredSteps = {
   repository: createDeferredStep("repository"),
   pipeline: createDeferredStep("pipeline"),
   linear: createDeferredStep("linear"),
+  sandbox: createDeferredStep("sandbox"),
   runtime: createDeferredStep("runtime"),
   verify: createDeferredStep("verify"),
 } satisfies Record<WorkspaceOnboardingStep, React.ComponentType<OnboardingStepProps>>;
