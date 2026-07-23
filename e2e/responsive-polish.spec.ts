@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import axe from "axe-core";
 
+import { signIn } from "./helpers/auth";
+
 const workspacePath = "/w/acme-corp";
 const viewports = [320, 390, 768, 1024, 1440] as const;
 const themes = ["light", "dark"] as const;
@@ -23,16 +25,6 @@ const authenticatedRoutes = [
 ] as const;
 
 type Theme = (typeof themes)[number];
-
-async function signIn(page: Page) {
-  await page.goto(`${workspacePath}/sessions`);
-  await expect(page).toHaveURL(/\/login\?/u);
-  await page.getByText("Development alternative").click();
-  await page.getByPlaceholder("dev@localhost.com").fill("anant@example.com");
-  await page.getByPlaceholder("Password (min 6)").fill("password123");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(new RegExp(workspacePath, "u"));
-}
 
 async function applyTheme(page: Page, theme: Theme) {
   await page.evaluate((nextTheme) => {

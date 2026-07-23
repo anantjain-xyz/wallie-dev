@@ -3,7 +3,6 @@ import Link from "next/link";
 import { AuthForm } from "@/components/auth/auth-form";
 import { EmailMagicLinkForm } from "@/components/auth/email-magic-link-form";
 import { EmailCodeInputs } from "@/components/auth/email-code-inputs";
-import { isLocalDev } from "@/env/deploy";
 import { loginPath } from "@/lib/routes";
 
 const authErrorMessages = {
@@ -14,7 +13,6 @@ const authErrorMessages = {
     "That code could not be verified. Check all six digits or request a new code, then try again.",
   email_sign_in_failed:
     "We could not send a sign-in email. Check the address or your connection, then try again.",
-  password_auth_failed: "Dev password sign-in failed. Check credentials and try again.",
   invalid_provider: "That sign-in provider is not supported on this route.",
   oauth_sign_in_failed: "That sign-in method could not start. Choose another method and try again.",
 } as const;
@@ -50,7 +48,6 @@ export function AuthEntryPanel({
     canUseEmailCode &&
     (statusCode === "check_email" || (errorCode ? emailCodeFallbackErrors.has(errorCode) : false));
   const requestAnotherCodeHref = loginPath(next);
-  const emailErrorMessage = errorCode === "password_auth_failed" ? null : errorMessage;
   const emailStatusMessage = showEmailCodeForm ? null : statusMessage;
   const codeFeedback = errorMessage
     ? { kind: "error" as const, message: errorMessage }
@@ -76,7 +73,7 @@ export function AuthEntryPanel({
               <p className="text-sm font-medium text-foreground">Sign in with email</p>
             </div>
             <EmailMagicLinkForm
-              errorMessage={emailErrorMessage}
+              errorMessage={errorMessage}
               next={next}
               statusMessage={emailStatusMessage}
             />
@@ -113,58 +110,6 @@ export function AuthEntryPanel({
             </Link>
           </div>
         ) : null}
-
-        {isLocalDev() && (
-          <details
-            className="mt-5 border-t border-border pt-4"
-            open={errorCode === "password_auth_failed" ? true : undefined}
-          >
-            <summary className="inline-flex min-h-11 w-full cursor-pointer list-none items-center justify-center rounded-[6px] px-1 text-center text-xs font-medium uppercase leading-5 tracking-[0.14em] text-muted transition-colors hover:text-foreground">
-              Development alternative
-            </summary>
-            <AuthForm
-              action="/auth/password"
-              className="mt-3 grid gap-3"
-              feedback={
-                errorCode === "password_auth_failed" && errorMessage
-                  ? { kind: "error", message: errorMessage }
-                  : null
-              }
-              pendingLabel="Signing in…"
-              submitClassName="ui-button min-h-11 w-full"
-              submitLabel={
-                errorCode === "password_auth_failed"
-                  ? "Try password again"
-                  : "Continue with password"
-              }
-            >
-              <input type="hidden" name="next" value={next} />
-              <label className="block">
-                <span className="ui-label mb-1.5 block text-foreground">Developer email</span>
-                <input
-                  type="email"
-                  name="email"
-                  required
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="dev@localhost.com"
-                  className="ui-input"
-                />
-              </label>
-              <label className="block">
-                <span className="ui-label mb-1.5 block text-foreground">Developer password</span>
-                <input
-                  type="password"
-                  name="password"
-                  required
-                  minLength={6}
-                  autoComplete="current-password"
-                  className="ui-input"
-                />
-              </label>
-            </AuthForm>
-          </details>
-        )}
       </div>
 
       <p className="mt-5 text-center text-xs leading-5 text-muted">

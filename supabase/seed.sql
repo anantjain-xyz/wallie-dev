@@ -168,7 +168,7 @@ DECLARE
 BEGIN
 
   -- -------------------------------------------------------------------------
-  -- 1. Auth users (email / password123)
+  -- 1. Auth users
   -- -------------------------------------------------------------------------
   INSERT INTO auth.users (
     instance_id, id, aud, role, email, encrypted_password,
@@ -181,7 +181,7 @@ BEGIN
       '00000000-0000-0000-0000-000000000000',
       user1_id, 'authenticated', 'authenticated',
       'anant@example.com',
-      crypt('password123', gen_salt('bf')),
+      '',
       now(), '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object(
         'sub', user1_id::text,
@@ -197,7 +197,7 @@ BEGIN
       '00000000-0000-0000-0000-000000000000',
       user2_id, 'authenticated', 'authenticated',
       'wallie@example.com',
-      crypt('password123', gen_salt('bf')),
+      '',
       now(), '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object(
         'sub', user2_id::text,
@@ -210,7 +210,7 @@ BEGIN
       now() - interval '12 days', now(), false, false
     );
 
-  -- Auth identities (required for email/password login)
+  -- Auth identities (required for email login)
   INSERT INTO auth.identities (
     id, provider_id, user_id, identity_data, provider,
     last_sign_in_at, created_at, updated_at

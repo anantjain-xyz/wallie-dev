@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { AuthEntryPanel } from "@/components/auth/auth-entry-panel";
 
@@ -17,22 +17,7 @@ function renderPanel(props: Partial<Parameters<typeof AuthEntryPanel>[0]> = {}) 
   );
 }
 
-const originalVercelEnv = process.env.VERCEL_ENV;
-
 describe("AuthEntryPanel", () => {
-  beforeEach(() => {
-    process.env.VERCEL_ENV = "production";
-  });
-
-  afterEach(() => {
-    if (originalVercelEnv === undefined) {
-      delete process.env.VERCEL_ENV;
-      return;
-    }
-
-    process.env.VERCEL_ENV = originalVercelEnv;
-  });
-
   it("hides the email code form until code has been requested", () => {
     const html = renderPanel();
 
@@ -153,19 +138,5 @@ describe("AuthEntryPanel", () => {
 
     expect(html).not.toContain('name="tokenDigit"');
     expect(html).not.toContain("Continue with code");
-  });
-
-  it("labels and retries the development-only password alternative", () => {
-    process.env.VERCEL_ENV = "development";
-    const html = renderPanel({ errorCode: "password_auth_failed" });
-
-    expect(html).toContain("Development alternative");
-    expect(html).toContain("Developer email");
-    expect(html).toContain("Developer password");
-    expect(html).toContain("Try password again");
-    expect(html).toContain("ui-button min-h-11 w-full");
-    expect(html).toContain("<details");
-    expect(html).toContain('open=""');
-    expect(countMatches(html, 'role="alert"')).toBe(1);
   });
 });

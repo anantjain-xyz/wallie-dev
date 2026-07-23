@@ -1,18 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const workspacePath = "/w/acme-corp";
+import { signIn } from "./helpers/auth";
 
-async function signIn(page: Page, destination: string) {
-  await page.goto(destination);
-  await expect(page).toHaveURL(/\/login\?/);
-  await page.getByText("Dev password").click();
-  await page.getByPlaceholder("dev@localhost.com").fill("anant@example.com");
-  await page.getByPlaceholder("Password (min 6)").fill("password123");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(new RegExp(workspacePath));
-  if (new URL(page.url()).pathname !== destination) await page.goto(destination);
-  await expect(page).toHaveURL(destination);
-}
+const workspacePath = "/w/acme-corp";
 
 async function expectNoPageOverflow(page: Page) {
   await expect
