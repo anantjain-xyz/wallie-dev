@@ -1,10 +1,10 @@
 import Link from "next/link";
 
 import {
-  ArtifactDecisionMockup,
-  IssueInputMockup,
+  ExpertApprovalMockup,
   PipelineBoardMockup,
-  PipelineProgressMockup,
+  StackWorkflowMockup,
+  ValidationProofMockup,
 } from "@/components/landing/product-mockups";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
 
@@ -56,97 +56,55 @@ export function LandingPage() {
       <section
         id="product-walkthrough"
         tabIndex={-1}
-        aria-labelledby="issue-input-title"
+        aria-labelledby="stack-workflow-title"
         className="scroll-mt-20 border-b border-border bg-canvas px-5 py-14 outline-none sm:px-8 sm:py-18 lg:px-10"
       >
         <StorySection
-          eyebrow="01 · Start with the source"
-          title="Bring the Linear issue into focus."
-          body="Link the issue to a new session so its title and source stay attached to the work moving through Wallie."
+          id="stack-workflow-title"
+          title="Bring your agents. Design your workflow."
+          body="Use the coding-agent access you already pay for, pair it with the sandbox provider you prefer, and shape every stage and approval gate around your team. Wallie is open source, MIT licensed, and built to stay provider-agnostic."
         >
-          <IssueInputMockup />
+          <StackWorkflowMockup />
         </StorySection>
       </section>
 
       <section
-        aria-labelledby="pipeline-title"
+        aria-labelledby="expert-approval-title"
         className="border-b border-border bg-sheet px-5 py-14 sm:px-8 sm:py-18 lg:px-10"
       >
         <StorySection
-          eyebrow="02 · Follow the pipeline"
-          title="See exactly which stage owns the work."
-          body="The session advances through the workspace’s ordered stages. Each handoff stays visible without compressing a desktop dashboard onto a phone."
+          id="expert-approval-title"
+          title="Let the right experts move work forward."
+          body="Choose who reviews each stage. An engineer can approve the plan, a designer can approve visual changes, and the next stage begins only when the right approval arrives."
           reverse
         >
-          <PipelineProgressMockup />
+          <ExpertApprovalMockup />
         </StorySection>
       </section>
 
       <section
-        aria-labelledby="artifact-title"
+        aria-labelledby="validation-proof-title"
         className="border-b border-border bg-canvas px-5 py-14 sm:px-8 sm:py-18 lg:px-10"
       >
         <StorySection
-          eyebrow="03 · Make the decision"
-          title="Review the output, then approve or return it."
-          body="Every stage produces a versioned markdown artifact or a pull request. A reviewer decides whether the session advances or reruns with feedback."
+          id="validation-proof-title"
+          title="Bring review-ready PRs, with the proof attached."
+          body="Wallie completes the loop with the checks your workflow requires—from tests and typechecks to end-to-end flows and visual evidence—so your team reviews work that is ready to ship."
         >
-          <ArtifactDecisionMockup />
+          <ValidationProofMockup />
         </StorySection>
-      </section>
-
-      <section
-        aria-labelledby="trust-title"
-        className="border-b border-border bg-sheet px-5 py-14 sm:px-8 sm:py-18 lg:px-10"
-      >
-        <div className="mx-auto w-full max-w-[1080px]">
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accent">
-            Human control, kept explicit
-          </p>
-          <h2
-            id="trust-title"
-            className="type-display mt-4 max-w-[680px] sm:text-[42px] sm:leading-[1.1]"
-          >
-            Boundaries your team can see.
-          </h2>
-          <div className="mt-8 grid gap-px overflow-hidden rounded-[6px] border border-border bg-border md:grid-cols-3">
-            {[
-              [
-                "Human approval gates",
-                "A reviewer approves or rejects the output before the next stage begins.",
-              ],
-              [
-                "Workspace isolation",
-                "Sessions, pipelines, artifacts, and secrets remain scoped to their workspace.",
-              ],
-              [
-                "Integration boundaries",
-                "Linear supplies issue context; GitHub and the configured runtime handle their connected parts.",
-              ],
-            ].map(([title, body]) => (
-              <article key={title} className="bg-sheet p-5 sm:p-6">
-                <h3 className="text-[15px] font-semibold text-foreground">{title}</h3>
-                <p className="mt-3 text-[14px] leading-6 text-muted">{body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
       </section>
 
       <section
         aria-labelledby="final-cta-title"
-        className="bg-canvas px-5 py-16 sm:px-8 sm:py-20 lg:px-10"
+        className="bg-sheet px-5 py-16 sm:px-8 sm:py-20 lg:px-10"
       >
-        <div className="mx-auto flex w-full max-w-[860px] flex-col items-start rounded-[10px] border border-border bg-sheet p-6 shadow-[var(--shadow-elevated)] sm:items-center sm:p-10 sm:text-center">
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accent">
-            Keep the next handoff reviewable
-          </p>
-          <h2 id="final-cta-title" className="type-display mt-4 sm:text-[42px] sm:leading-[1.1]">
+        <div className="mx-auto flex w-full max-w-[860px] flex-col items-start rounded-[10px] border border-border bg-canvas p-6 shadow-[var(--shadow-elevated)] sm:items-center sm:p-10 sm:text-center">
+          <h2 id="final-cta-title" className="type-display sm:text-[42px] sm:leading-[1.1]">
             Direct your team&apos;s attention to where it has the most leverage
           </h2>
           <p className="mt-4 max-w-[560px] text-[15px] leading-7 text-muted">
-            Sign in, choose a workspace, and create the session that carries it through your
-            pipeline.
+            Sign in, design your workspace, and start working through your backlog.
           </p>
           <Link href="/login" className={`${primaryCtaClassName} mt-7`}>
             Sign in to Wallie
@@ -181,31 +139,22 @@ function LandingHeader() {
 function StorySection({
   body,
   children,
-  eyebrow,
+  id,
   reverse = false,
   title,
 }: {
   body: string;
   children: React.ReactNode;
-  eyebrow: string;
+  id: string;
   reverse?: boolean;
   title: string;
 }) {
-  const titleId = eyebrow.startsWith("01")
-    ? "issue-input-title"
-    : eyebrow.startsWith("02")
-      ? "pipeline-title"
-      : "artifact-title";
-
   return (
     <div
       className={`mx-auto grid w-full max-w-[1080px] gap-8 lg:grid-cols-2 lg:items-center lg:gap-14 ${reverse ? "lg:[&>*:first-child]:order-2" : ""}`}
     >
       <div>
-        <p className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accent">
-          {eyebrow}
-        </p>
-        <h2 id={titleId} className="type-display mt-4 sm:text-[42px] sm:leading-[1.1]">
+        <h2 id={id} className="type-display sm:text-[42px] sm:leading-[1.1]">
           {title}
         </h2>
         <p className="mt-5 max-w-[560px] text-[15px] leading-7 text-muted sm:text-[16px]">{body}</p>
