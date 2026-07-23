@@ -87,6 +87,10 @@ type RuntimeCompletionState = {
   readiness: RuntimeReadiness;
 };
 
+type SetupHealthItemsOptions = {
+  pipelineReviewed?: boolean;
+};
+
 const railStateClasses: Record<OnboardingStepDisplayState, string> = {
   active: "bg-accent-soft text-accent",
   available: "text-muted hover:bg-control-hover hover:text-foreground",
@@ -133,7 +137,11 @@ function runtimeReadinessFromData(data: WorkspaceOnboardingData) {
 export function setupHealthItems(
   health: OnboardingSetupHealth,
   initialNow = "1970-01-01T00:00:00.000Z",
+  options: SetupHealthItemsOptions = {},
 ): HealthSummaryItem[] {
+  const pipelineStageLabel = `${health.defaultPipeline.stageCount} ${
+    health.defaultPipeline.stageCount === 1 ? "stage" : "stages"
+  }`;
   const github = health.githubInstallation.connected
     ? {
         detail: health.githubInstallation.targetName ?? "Connected installation",
@@ -145,17 +153,23 @@ export function setupHealthItems(
         tone: "warning" as const,
         value: "Missing",
       };
-  const pipeline = health.defaultPipeline.configured
+  const pipeline = !health.defaultPipeline.configured
     ? {
-        detail: `${health.defaultPipeline.stageCount} stages`,
-        tone: "success" as const,
-        value: "Ready",
-      }
-    : {
         detail: "Default pipeline unavailable",
         tone: "warning" as const,
         value: "Missing",
-      };
+      }
+    : options.pipelineReviewed
+      ? {
+          detail: pipelineStageLabel,
+          tone: "success" as const,
+          value: "Ready",
+        }
+      : {
+          detail: `${pipelineStageLabel} from defaults — review and save`,
+          tone: "neutral" as const,
+          value: "Defaults",
+        };
   const linearKey = presenceBadge(health.linearKey.configured);
   // Routing rows are seeded with workspace defaults, so `configured` is true even
   // before a Linear key exists. Only show the green "Saved" state once the key is
@@ -350,11 +364,13 @@ function StepNavigation({
 function SetupHealthSummary({
   health,
   initialNow,
+  pipelineReviewed,
 }: {
   health: OnboardingSetupHealth;
   initialNow: string;
+  pipelineReviewed: boolean;
 }) {
-  const items = setupHealthItems(health, initialNow);
+  const items = setupHealthItems(health, initialNow, { pipelineReviewed });
 
   return (
     <aside className="h-fit min-w-0 lg:sticky lg:top-8">
@@ -978,7 +994,11 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
           </div>
         </section>
 
-        <SetupHealthSummary health={data.setupHealth} initialNow={renderNow} />
+        <SetupHealthSummary
+          health={data.setupHealth}
+          initialNow={renderNow}
+          pipelineReviewed={isCompleted || onboarding.completedSteps.includes("pipeline")}
+        />
       </main>
 
       <footer className="sticky bottom-0 z-20 border-t border-border bg-sheet/95 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">

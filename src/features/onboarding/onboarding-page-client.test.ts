@@ -1995,3 +1995,28 @@ describe("setupHealthItems Linear routing badge", () => {
     ).toMatchObject({ value: "Missing", tone: "warning" });
   });
 });
+
+describe("setupHealthItems Pipeline badge", () => {
+  const pipelineItem = (pipelineReviewed: boolean) => {
+    const data = onboardingData();
+    return setupHealthItems(data.setupHealth, undefined, { pipelineReviewed }).find(
+      (item) => item.label === "Pipeline",
+    );
+  };
+
+  it("does not check off a seeded default pipeline before onboarding review", () => {
+    expect(pipelineItem(false)).toMatchObject({
+      detail: "1 stage from defaults — review and save",
+      tone: "neutral",
+      value: "Defaults",
+    });
+  });
+
+  it("checks off the pipeline after it has been reviewed and saved", () => {
+    expect(pipelineItem(true)).toMatchObject({
+      detail: "1 stage",
+      tone: "success",
+      value: "Ready",
+    });
+  });
+});
