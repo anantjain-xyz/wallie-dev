@@ -1335,6 +1335,144 @@ html:has([data-app-shell-fixture]) nextjs-portal {
   }
 }
 
+@keyframes wallie-landing-task-progress {
+  0%,
+  22% {
+    left: 0.25rem;
+  }
+
+  34%,
+  58% {
+    left: calc(50% - 2rem);
+  }
+
+  70%,
+  100% {
+    left: calc(100% - 4.5rem);
+  }
+}
+
+@keyframes wallie-landing-flow-progress {
+  0%,
+  22% {
+    transform: scaleX(0.05);
+  }
+
+  34%,
+  58% {
+    transform: scaleX(0.5);
+  }
+
+  70%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes wallie-landing-stage-one {
+  0%,
+  22% {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  34%,
+  100% {
+    border-color: color-mix(in srgb, var(--success) 60%, var(--border));
+    background: var(--success-soft);
+  }
+}
+
+@keyframes wallie-landing-stage-two {
+  0%,
+  30% {
+    border-color: var(--border);
+    background: var(--surface-sheet);
+  }
+
+  38%,
+  58% {
+    border-color: color-mix(in srgb, var(--warning) 60%, var(--border));
+    background: var(--warning-soft);
+  }
+
+  70%,
+  100% {
+    border-color: color-mix(in srgb, var(--success) 60%, var(--border));
+    background: var(--success-soft);
+  }
+}
+
+@keyframes wallie-landing-stage-three {
+  0%,
+  64% {
+    border-color: var(--border);
+    background: var(--surface-sheet);
+  }
+
+  72%,
+  100% {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+}
+
+@keyframes wallie-landing-event-one {
+  0%,
+  24% {
+    opacity: 0.38;
+    transform: translateY(2px);
+  }
+
+  34%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes wallie-landing-event-two {
+  0%,
+  60% {
+    opacity: 0.38;
+    transform: translateY(2px);
+  }
+
+  70%,
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-flow-task {
+  animation: wallie-landing-task-progress 9s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.landing-flow-progress {
+  animation: wallie-landing-flow-progress 9s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.landing-flow-stage-1 {
+  animation: wallie-landing-stage-one 9s ease-in-out infinite;
+}
+
+.landing-flow-stage-2 {
+  animation: wallie-landing-stage-two 9s ease-in-out infinite;
+}
+
+.landing-flow-stage-3 {
+  animation: wallie-landing-stage-three 9s ease-in-out infinite;
+}
+
+.landing-flow-event-1 {
+  animation: wallie-landing-event-one 9s ease-in-out infinite;
+}
+
+.landing-flow-event-2 {
+  animation: wallie-landing-event-two 9s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1348,6 +1486,36 @@ html:has([data-app-shell-fixture]) nextjs-portal {
   .ui-route-progress-value {
     width: 68%;
     transform: none;
+  }
+
+  .landing-flow-task {
+    left: calc(100% - 4.5rem);
+    animation: none !important;
+  }
+
+  .landing-flow-progress {
+    transform: scaleX(1);
+    animation: none !important;
+  }
+
+  .landing-flow-stage-1,
+  .landing-flow-stage-2 {
+    border-color: color-mix(in srgb, var(--success) 60%, var(--border));
+    background: var(--success-soft);
+    animation: none !important;
+  }
+
+  .landing-flow-stage-3 {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    animation: none !important;
+  }
+
+  .landing-flow-event-1,
+  .landing-flow-event-2 {
+    opacity: 1;
+    transform: none;
+    animation: none !important;
   }
 }
 
@@ -1363,4 +1531,34 @@ html:has([data-app-shell-fixture]) nextjs-portal {
 :root[data-reduced-motion="reduce"] .ui-route-progress-value {
   width: 68%;
   transform: none;
+}
+
+:root[data-reduced-motion="reduce"] .landing-flow-task {
+  left: calc(100% - 4.5rem);
+  animation: none !important;
+}
+
+:root[data-reduced-motion="reduce"] .landing-flow-progress {
+  transform: scaleX(1);
+  animation: none !important;
+}
+
+:root[data-reduced-motion="reduce"] .landing-flow-stage-1,
+:root[data-reduced-motion="reduce"] .landing-flow-stage-2 {
+  border-color: color-mix(in srgb, var(--success) 60%, var(--border));
+  background: var(--success-soft);
+  animation: none !important;
+}
+
+:root[data-reduced-motion="reduce"] .landing-flow-stage-3 {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  animation: none !important;
+}
+
+:root[data-reduced-motion="reduce"] .landing-flow-event-1,
+:root[data-reduced-motion="reduce"] .landing-flow-event-2 {
+  opacity: 1;
+  transform: none;
+  animation: none !important;
 }

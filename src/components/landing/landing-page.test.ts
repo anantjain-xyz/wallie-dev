@@ -4,25 +4,26 @@ import { describe, expect, it } from "vitest";
 
 import { LandingPage } from "@/components/landing/landing-page";
 import {
-  ArtifactDecisionMockup,
-  IssueInputMockup,
+  ExpertApprovalMockup,
   PipelineBoardMockup,
-  PipelineProgressMockup,
+  StackWorkflowMockup,
+  ValidationProofMockup,
 } from "@/components/landing/product-mockups";
 
 describe("LandingPage", () => {
-  it("renders exactly six sections with one h1 and sequential section headings", () => {
+  it("renders exactly five sections with one h1 and a focused product narrative", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html.match(/<section(?:\s|>)/g)).toHaveLength(6);
+    expect(html.match(/<section(?:\s|>)/g)).toHaveLength(5);
     expect(html.match(/<h1(?:\s|>)/g)).toHaveLength(1);
-    expect(html.match(/<h2(?:\s|>)/g)).toHaveLength(5);
+    expect(html.match(/<h2(?:\s|>)/g)).toHaveLength(4);
     expect(html).toContain("The Future of Software Factories is Multiplayer");
-    expect(html).toContain("Bring the Linear issue into focus.");
-    expect(html).toContain("See exactly which stage owns the work.");
-    expect(html).toContain("Review the output, then approve or return it.");
-    expect(html).toContain("Boundaries your team can see.");
+    expect(html).toContain("Bring your agents. Design your workflow.");
+    expect(html).toContain("Let the right experts move work forward.");
+    expect(html).toContain("Bring review-ready PRs, with the proof attached.");
     expect(html).toContain("Direct your team");
+    expect(html).not.toContain("Human control, kept explicit");
+    expect(html).not.toContain("Keep the next handoff reviewable");
   });
 
   it("uses the required CTA destinations and a focusable walkthrough target", () => {
@@ -40,46 +41,50 @@ describe("LandingPage", () => {
 
     expect(html).not.toMatch(/<(button|input|select|textarea)(?:\s|>)/);
     expect(html.match(/aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(4);
-    expect(html).toContain("Create session");
-    expect(html).toContain("Approve artifact");
-    expect(html).toContain("Return with feedback");
+    expect(html).toContain("Use subscription");
+    expect(html).toContain("Engineer approved Plan");
+    expect(html).toContain("Ready to review");
   });
 
-  it("shows a kanban-style pipeline board preview in the hero", () => {
+  it("shows a multiplayer pipeline board with complete task and approval states", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain("Pipeline board preview");
+    expect(html).toContain("Multiplayer pipeline board");
     expect(html).toContain("Plan");
     expect(html).toContain("Build");
     expect(html).toContain("Review");
     expect(html).toContain("Land");
-    expect(html).toContain("Frame auth callback edge cases");
-    expect(html).toContain("Wire session create from Linear");
-    expect(html).toContain("Tighten RLS on artifacts");
-    expect(html).toContain("Update Linear and Agent labels");
-    expect(html).toContain("Cut landing page mobile noise");
-    expect(html).not.toContain("Add pipeline stage reorder");
-    expect(html).not.toContain("PR #191");
-    expect(html).not.toContain("OP-349 ready");
+    expect(html).toContain("Task 1");
+    expect(html).toContain("Task 6");
+    expect(html).toContain("Agent working");
+    expect(html).toContain("Ready for approval");
+    expect(html).toContain("Approved");
+    expect(html).not.toContain("line-clamp");
   });
 
-  it("uses a complete static three-state story without time-driven motion", () => {
+  it("uses the supported providers and labels future agent options honestly", () => {
     const html = renderToStaticMarkup(createElement(LandingPage));
 
-    expect(html).toContain("New session · Source");
-    expect(html).toContain("Session · Pipeline");
-    expect(html).toContain("Build · Artifact v2");
-    expect(html).not.toContain("animate-");
+    expect(html).toContain("Codex");
+    expect(html).toContain("Claude Code");
+    expect(html).toContain("Cursor");
+    expect(html).toContain("Coming soon");
+    expect(html).toContain("Vercel");
+    expect(html).toContain("E2B");
+    expect(html).toContain("Daytona");
+    expect(html).toContain("Open source · MIT licensed");
+    expect(html).toContain("Linear issue source");
+  });
+
+  it("uses CSS-only pipeline motion with complete static content", () => {
+    const html = renderToStaticMarkup(createElement(LandingPage));
+
+    expect(html).toContain("Session · Approval routing");
+    expect(html).toContain("landing-flow-task");
+    expect(html).toContain("Engineer approved Plan");
+    expect(html).toContain("Designer approved UI");
     expect(html).not.toContain("aria-live");
-  });
-
-  it("limits trust copy to the three approved boundaries", () => {
-    const html = renderToStaticMarkup(createElement(LandingPage));
-
-    expect(html).toContain("Human approval gates");
-    expect(html).toContain("Workspace isolation");
-    expect(html).toContain("Integration boundaries");
-    expect(html).not.toMatch(/customers|teams trust|work faster/i);
+    expect(html).not.toContain("<script");
   });
 
   it("smoke-renders each focused product crop", () => {
@@ -88,18 +93,20 @@ describe("LandingPage", () => {
         "div",
         null,
         createElement(PipelineBoardMockup),
-        createElement(IssueInputMockup),
-        createElement(PipelineProgressMockup),
-        createElement(ArtifactDecisionMockup),
+        createElement(StackWorkflowMockup),
+        createElement(ExpertApprovalMockup),
+        createElement(ValidationProofMockup),
       ),
     );
 
-    expect(html).toContain("Pipeline board preview");
-    expect(html).toContain("OP-349");
+    expect(html).toContain("Multiplayer pipeline board");
+    expect(html).toContain("Your stack · Your workflow");
+    expect(html).toContain("TASK 2");
+    expect(html).toContain("PR #184");
     expect(html).toContain("Plan");
     expect(html).toContain("Build");
     expect(html).toContain("Review");
     expect(html).toContain("Land");
-    expect(html).toContain("Awaiting review");
+    expect(html).toContain("All checks passed");
   });
 });
