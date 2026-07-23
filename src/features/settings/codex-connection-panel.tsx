@@ -94,7 +94,7 @@ export function ChatGptSubscriptionControls({
   onStart,
   pendingAction = null,
   sandboxConnectionHref,
-  sandboxConnectionLabel = "Vercel Sandbox",
+  sandboxConnectionLabel = "a sandbox provider",
   vercelConnectionHref = "#vercel",
 }: {
   blocked: boolean;

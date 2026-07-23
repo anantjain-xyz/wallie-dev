@@ -1149,7 +1149,7 @@ export default function RuntimeStep({
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             sandboxConnectionHref="#sandbox"
             sandboxConnectionLabel={
-              data.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+              data.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
             }
             sandboxConnectionReady={
               data.setupHealth.sandboxConnection?.connected ??

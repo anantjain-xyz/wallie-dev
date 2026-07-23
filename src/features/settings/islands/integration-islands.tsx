@@ -258,7 +258,7 @@ export function RuntimeIntegrationIsland({
         }}
         sandboxConnectionHref="#sandbox"
         sandboxConnectionLabel={
-          sandboxData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+          sandboxData.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
         }
         sandboxConnectionReady={
           sandboxData.setupHealth.sandboxConnection?.connected ??
