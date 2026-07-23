@@ -376,7 +376,7 @@ describe("Settings integration sections", () => {
     expect(html).not.toContain("Connect yours below");
   });
 
-  it("blocks ChatGPT subscription sign-in until Vercel Sandbox is connected", () => {
+  it("blocks ChatGPT subscription sign-in until a sandbox provider is connected", () => {
     const html = renderToStaticMarkup(
       createElement(ChatGptSubscriptionControls, {
         blocked: true,
@@ -389,7 +389,7 @@ describe("Settings integration sections", () => {
     );
 
     expect(html).toContain("Connect");
-    expect(html).toContain("Vercel Sandbox");
+    expect(html).toContain("a sandbox provider");
     expect(html).toContain('href="/w/acme/settings#vercel"');
     expect(html).toMatch(/<button[^>]*disabled/);
     expect(html).toContain("Sign in with ChatGPT");

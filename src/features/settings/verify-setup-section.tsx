@@ -42,7 +42,7 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   const activeSandbox = data.setupHealth.sandboxConnection;
   const sandboxConnected =
     activeSandbox?.connected ?? data.setupHealth.vercelSandboxConnection.connected;
-  const sandboxProviderLabel = activeSandbox?.providerLabel ?? "Vercel Sandbox";
+  const sandboxProviderLabel = activeSandbox?.providerLabel ?? "a sandbox provider";
 
   return (
     <Section

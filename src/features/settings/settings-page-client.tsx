@@ -467,7 +467,7 @@ function SettingsCompletePage({
                 }
                 sandboxConnectionHref="#sandbox"
                 sandboxConnectionLabel={
-                  pageData.setupHealth.sandboxConnection?.providerLabel ?? "Vercel Sandbox"
+                  pageData.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
                 }
                 sandboxConnectionReady={
                   pageData.setupHealth.sandboxConnection?.connected ??
