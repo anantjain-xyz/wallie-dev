@@ -16,7 +16,7 @@ test("missing sessions preserve the protected-page login redirect", async ({ pag
 
   // Unauthenticated workspace loaders redirect to the workspace base path as `next`.
   await expect(page).toHaveURL(/\/login\?next=%2Fw%2Facme-corp$/);
-  await expect(page.getByText("Development alternative")).toBeVisible();
+  await expect(page.getByText("Sign in to Wallie")).toBeVisible();
 });
 
 test("logout without a mutable user record clears the flow back to login", async ({ page }) => {

@@ -1,16 +1,8 @@
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
+
+import { signIn } from "./helpers/auth";
 
 const workspacePath = "/w/acme-corp";
-
-async function signIn(page: Page, destination = `${workspacePath}/sessions`) {
-  await page.goto(destination);
-  await expect(page).toHaveURL(/\/login\?/);
-  await page.getByText("Dev password").click();
-  await page.getByPlaceholder("dev@localhost.com").fill("anant@example.com");
-  await page.getByPlaceholder("Password (min 6)").fill("password123");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(destination);
-}
 
 function delayedResponse() {
   let release!: () => void;

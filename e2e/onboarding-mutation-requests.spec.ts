@@ -1,17 +1,6 @@
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 
-async function signIn(page: Page) {
-  await page.goto("/w/acme-corp/sessions");
-  await expect(page).toHaveURL(/\/login\?/);
-
-  await page.getByText("Development alternative").click();
-  await page.getByPlaceholder("dev@localhost.com").fill("anant@example.com");
-  await page.getByLabel("Developer password").fill("password123");
-  await page.getByRole("button", { name: "Continue with password" }).click();
-
-  await expect(page).not.toHaveURL(/\/login/);
-  await expect(page).toHaveURL(/\/w\/acme-corp(?:\/|$)/);
-}
+import { signIn } from "./helpers/auth";
 
 test("onboarding navigation saves once without a follow-up route refresh", async ({ page }) => {
   await signIn(page);

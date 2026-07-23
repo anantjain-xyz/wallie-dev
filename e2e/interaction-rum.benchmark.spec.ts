@@ -1,17 +1,9 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 
+import { signIn } from "./helpers/auth";
+
 const workspacePath = "/w/acme-corp";
 const detailPath = /^\/w\/acme-corp\/sessions\/\d+$/;
-
-async function signIn(page: Page) {
-  await page.goto(`${workspacePath}/sessions`);
-  await expect(page).toHaveURL(/\/login\?/);
-  await page.getByText("Dev password").click();
-  await page.getByPlaceholder("dev@localhost.com").fill("anant@example.com");
-  await page.getByPlaceholder("Password (min 6)").fill("password123");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page).toHaveURL(`${workspacePath}/sessions`);
-}
 
 function isDetailRscRequest(request: Request) {
   const url = new URL(request.url());
