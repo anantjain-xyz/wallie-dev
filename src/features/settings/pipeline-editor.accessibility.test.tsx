@@ -88,12 +88,13 @@ afterEach(() => {
   document.body.removeAttribute("style");
 });
 
-function renderEditor() {
+function renderEditor(onPipelineSaved?: (pipeline: SessionPipeline) => void) {
   return render(
     <OverlayProvider>
       <main>
         <PipelineEditor
           canManage
+          onPipelineSaved={onPipelineSaved}
           pipeline={pipeline}
           workspaceId="00000000-0000-4000-8000-000000000002"
           workspaceMembers={workspaceMembers}
@@ -169,6 +170,7 @@ describe("PipelineEditor accessibility", () => {
 
   it("supports a keyboard-only create, reorder, remove, and save flow", async () => {
     const user = userEvent.setup();
+    const onPipelineSaved = vi.fn();
     const fetchMock = vi.fn().mockResolvedValue({
       json: async () => ({
         pipeline: {
@@ -190,7 +192,7 @@ describe("PipelineEditor accessibility", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    renderEditor();
+    renderEditor(onPipelineSaved);
 
     await user.click(screen.getByRole("button", { name: "+ Add stage" }));
     const names = screen.getAllByRole("textbox", { name: "Name" });
@@ -226,6 +228,11 @@ describe("PipelineEditor accessibility", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PUT" });
     await waitFor(() => expect(screen.getByText(/Saved at/)).toBeInTheDocument());
+    expect(onPipelineSaved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stages: expect.arrayContaining([expect.objectContaining({ slug: "intake" })]),
+      }),
+    );
 
     const results = await axe.run(document.body, axeOptions);
     expect(results.violations).toEqual([]);

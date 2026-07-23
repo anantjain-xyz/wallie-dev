@@ -44,6 +44,7 @@ interface CodexConnectionPanelProps {
   initialStatus?: CodexConnectionStatus;
   /** Called whenever the panel learns a new connection status (refresh, save, disconnect). */
   onStatusChange?: (status: CodexConnectionStatus) => void;
+  onSandboxConnectionSelect?: () => void;
   sandboxConnectionHref?: string;
   sandboxConnectionLabel?: string;
   sandboxConnectionReady?: boolean;
@@ -91,6 +92,7 @@ export function ChatGptSubscriptionControls({
   deviceFlow,
   isBusy,
   onCancel,
+  onSandboxConnectionSelect,
   onStart,
   pendingAction = null,
   sandboxConnectionHref,
@@ -101,6 +103,7 @@ export function ChatGptSubscriptionControls({
   deviceFlow: CodexDeviceFlow | null;
   isBusy: boolean;
   onCancel: () => void;
+  onSandboxConnectionSelect?: () => void;
   onStart: () => void;
   pendingAction?: "cancel" | "disconnect" | "save" | "start" | null;
   sandboxConnectionHref?: string;
@@ -115,6 +118,11 @@ export function ChatGptSubscriptionControls({
           <a
             className="underline underline-offset-2"
             href={sandboxConnectionHref ?? vercelConnectionHref}
+            onClick={(event) => {
+              if (!onSandboxConnectionSelect) return;
+              event.preventDefault();
+              onSandboxConnectionSelect();
+            }}
           >
             {sandboxConnectionLabel}
           </a>{" "}
@@ -181,6 +189,7 @@ export function ChatGptSubscriptionControls({
 export function CodexConnectionPanel({
   connectFlash,
   initialStatus,
+  onSandboxConnectionSelect,
   onStatusChange,
   returnTo,
   sandboxConnectionHref,
@@ -536,6 +545,7 @@ export function CodexConnectionPanel({
               deviceFlow={deviceFlow}
               isBusy={isBusy}
               onCancel={handleCancelChatGptSignIn}
+              onSandboxConnectionSelect={onSandboxConnectionSelect}
               onStart={handleStartChatGptSignIn}
               pendingAction={pendingAction}
               sandboxConnectionHref={sandboxConnectionHref}

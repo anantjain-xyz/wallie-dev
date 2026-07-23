@@ -13,6 +13,7 @@ type ProviderAccessPanelProps = {
   initialCodexStatus?: CodexConnectionStatus;
   onClaudeCodeStatusChange?: (status: ClaudeCodeConnectionStatus) => void;
   onCodexStatusChange?: (status: CodexConnectionStatus) => void;
+  onSandboxConnectionSelect?: () => void;
   provider: AgentProvider;
   returnTo?: string;
   sandboxConnectionHref?: string;
@@ -49,6 +50,7 @@ export function ProviderAccessPanel({
   initialCodexStatus,
   onClaudeCodeStatusChange,
   onCodexStatusChange,
+  onSandboxConnectionSelect,
   provider,
   returnTo,
   sandboxConnectionHref,
@@ -77,6 +79,7 @@ export function ProviderAccessPanel({
           <CodexConnectionPanel
             connectFlash={connectFlash}
             initialStatus={initialCodexStatus}
+            onSandboxConnectionSelect={onSandboxConnectionSelect}
             onStatusChange={onCodexStatusChange}
             returnTo={returnTo}
             sandboxConnectionHref={sandboxConnectionHref}

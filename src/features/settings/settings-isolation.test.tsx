@@ -46,6 +46,12 @@ vi.mock("@/features/settings/github-install-section", () => ({
   },
 }));
 
+vi.mock("@/features/settings/linear-configuration-section", () => ({
+  LinearConfigurationSection: ({ stages }: { stages: Array<{ slug: string }> }) => (
+    <output>Linear stages {stages.map((stage) => stage.slug).join(", ")}</output>
+  ),
+}));
+
 vi.mock("@/features/settings/sandbox-provider-section", () => ({
   SandboxProviderSection: ({
     vercelConnection,
@@ -105,9 +111,11 @@ vi.mock("@/features/settings/sandbox-provider-section", () => ({
 
 import {
   GithubIntegrationIsland,
+  LinearIntegrationIsland,
   RuntimeIntegrationIsland,
   VercelIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
+import { SETTINGS_PIPELINE_CHANGED } from "@/features/settings/settings-island-events";
 
 function data(): SettingsPageData {
   return {
@@ -151,6 +159,35 @@ function data(): SettingsPageData {
 }
 
 describe("Settings client-island isolation", () => {
+  it("refreshes Linear stage options when the pipeline island saves", () => {
+    const initialData = {
+      ...data(),
+      linearRouting: {},
+      pipeline: {
+        id: "pipeline-1",
+        isDefault: true,
+        name: "Default",
+        operatingRulesMd: "",
+        stages: [{ slug: "plan" }],
+      },
+    } as unknown as SettingsPageData;
+
+    render(<LinearIntegrationIsland initialData={initialData} />);
+    expect(screen.getByText("Linear stages plan")).not.toBeNull();
+
+    fireEvent(
+      window,
+      new CustomEvent(SETTINGS_PIPELINE_CHANGED, {
+        detail: {
+          ...initialData.pipeline,
+          stages: [{ slug: "design" }, { slug: "build" }],
+        },
+      }),
+    );
+
+    expect(screen.getByText("Linear stages design, build")).not.toBeNull();
+  });
+
   it("does not rerender a sibling integration when local section state changes", () => {
     renders.github = 0;
     renders.runtime = 0;

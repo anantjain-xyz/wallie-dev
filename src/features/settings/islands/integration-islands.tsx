@@ -18,9 +18,11 @@ import { updateGithubInSettingsData } from "@/features/settings/settings-data-up
 import {
   dispatchSettingsEvent,
   SETTINGS_GITHUB_CHANGED,
+  SETTINGS_PIPELINE_CHANGED,
   SETTINGS_SANDBOX_CHANGED,
   SETTINGS_SECRETS_CHANGED,
   type GithubChangedDetail,
+  type PipelineChangedDetail,
   type SandboxChangedDetail,
   type SecretsChangedDetail,
 } from "@/features/settings/settings-island-events";
@@ -145,6 +147,7 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
 }
 
 export function LinearIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
+  const [pipeline, setPipeline] = useState(initialData.pipeline);
   const [routing, setRouting] = useState(initialData.linearRouting);
   const [secrets, setSecrets] = useState(initialData.workspaceSecrets);
   const broadcastSecrets = useRef(false);
@@ -152,6 +155,12 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
     broadcastSecrets.current = true;
     setSecrets(update);
   };
+  useEffect(() => {
+    const handlePipelineChange = (event: Event) =>
+      setPipeline((event as CustomEvent<PipelineChangedDetail>).detail);
+    window.addEventListener(SETTINGS_PIPELINE_CHANGED, handlePipelineChange);
+    return () => window.removeEventListener(SETTINGS_PIPELINE_CHANGED, handlePipelineChange);
+  }, []);
   useEffect(() => {
     const handleSecretsChange = (event: Event) =>
       setSecrets((event as CustomEvent<SecretsChangedDetail>).detail);
@@ -172,7 +181,7 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
       onRoutingSaved={setRouting}
       routing={routing}
       setSecrets={updateSecrets}
-      stages={initialData.pipeline?.stages ?? []}
+      stages={pipeline?.stages ?? []}
       workspaceId={initialData.workspace.id}
     />
   );

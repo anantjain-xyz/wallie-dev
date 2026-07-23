@@ -691,6 +691,7 @@ export default function RuntimeStep({
   isSaving,
   onDataChange,
   onRuntimeStateChange,
+  onSelectStep,
 }: OnboardingStepProps) {
   const [drafts, setDrafts] = useState<AgentConfigDrafts>(() =>
     buildAgentConfigDrafts(data.agentConfig),
@@ -1144,6 +1145,7 @@ export default function RuntimeStep({
             }}
             onClaudeCodeStatusChange={handleClaudeCodeStatusChange}
             onCodexStatusChange={handleCodexStatusChange}
+            onSandboxConnectionSelect={() => onSelectStep("sandbox")}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
             sandboxConnectionHref="#sandbox"
