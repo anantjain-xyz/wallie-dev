@@ -47,7 +47,13 @@ export const ONBOARDING_STEPS: OnboardingStepDefinition[] = [
     title: "Connect Linear",
   },
   {
-    description: "Check coding-agent and sandbox runtime readiness.",
+    description: "Choose and connect a sandbox provider for running agents.",
+    id: "sandbox",
+    shortTitle: "Sandbox",
+    title: "Connect Sandbox",
+  },
+  {
+    description: "Configure the coding agent provider and credentials.",
     id: "runtime",
     shortTitle: "Agent",
     title: "Connect Agent",

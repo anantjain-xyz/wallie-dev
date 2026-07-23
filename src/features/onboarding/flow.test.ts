@@ -61,6 +61,7 @@ describe("onboarding flow helpers", () => {
       ["repository", "skipped"],
       ["pipeline", "active"],
       ["linear", "available"],
+      ["sandbox", "available"],
       ["runtime", "available"],
       ["verify", "available"],
     ]);
@@ -174,7 +175,7 @@ describe("onboarding flow helpers", () => {
       ),
     ).toEqual({
       completedSteps: ["linear"],
-      currentStep: "runtime",
+      currentStep: "sandbox",
       skippedSteps: [],
       status: "in_progress",
     });
@@ -184,13 +185,21 @@ describe("onboarding flow helpers", () => {
     expect(
       buildOnboardingContinuePatch(
         onboardingState({
-          completedSteps: ["github", "repository", "pipeline", "linear", "runtime"],
+          completedSteps: ["github", "repository", "pipeline", "linear", "sandbox", "runtime"],
           currentStep: "verify",
           status: "in_progress",
         }),
       ),
     ).toEqual({
-      completedSteps: ["github", "repository", "pipeline", "linear", "runtime", "verify"],
+      completedSteps: [
+        "github",
+        "repository",
+        "pipeline",
+        "linear",
+        "sandbox",
+        "runtime",
+        "verify",
+      ],
       currentStep: "verify",
       skippedSteps: [],
       status: "completed",
@@ -201,7 +210,7 @@ describe("onboarding flow helpers", () => {
     expect(buildOnboardingSkipPatch(onboardingState({ currentStep: "pipeline" }))).toBeNull();
     expect(buildOnboardingSkipPatch(onboardingState({ currentStep: "linear" }))).toEqual({
       completedSteps: [],
-      currentStep: "runtime",
+      currentStep: "sandbox",
       skippedSteps: ["linear"],
       status: "in_progress",
     });
@@ -218,7 +227,7 @@ describe("onboarding flow helpers", () => {
       ),
     ).toEqual({
       completedSteps: ["github", "repository", "pipeline"],
-      currentStep: "runtime",
+      currentStep: "sandbox",
       skippedSteps: ["linear"],
       status: "in_progress",
     });
@@ -247,7 +256,15 @@ describe("onboarding flow helpers", () => {
 
   it("does not persist rail navigation after onboarding is completed", () => {
     const state = onboardingState({
-      completedSteps: ["github", "repository", "pipeline", "linear", "runtime", "verify"],
+      completedSteps: [
+        "github",
+        "repository",
+        "pipeline",
+        "linear",
+        "sandbox",
+        "runtime",
+        "verify",
+      ],
       currentStep: "verify",
       status: "completed",
     });

@@ -434,7 +434,7 @@ describe("Settings integration sections", () => {
       }),
     );
 
-    const groupHeadings = ["Integrations", "Pipeline", "Advanced", "Workspace"];
+    const groupHeadings = ["Integrations", "Advanced", "Workspace"];
     expect((html.match(/settings-contained-section(?:\s|&quot;|\")/g) ?? []).length).toBe(11);
     let lastGroupIndex = -1;
     for (const heading of groupHeadings) {
@@ -446,10 +446,10 @@ describe("Settings integration sections", () => {
     const items = [
       "GitHub",
       "Repositories",
-      "Sandbox provider",
-      "Linear",
-      "Agent",
       "Pipeline",
+      "Linear",
+      "Sandbox provider",
+      "Agent",
       "Verify setup",
       "Usage",
       "Rate limits",

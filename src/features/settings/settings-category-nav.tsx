@@ -27,13 +27,14 @@ const HASH_ROUTES: Record<string, SettingsHashRoute> = {
   linear: { anchor: "linear", category: "integrations" },
   "linear-routing": { anchor: "linear", category: "integrations" },
   members: { anchor: "members", category: "workspace" },
-  pipeline: { anchor: "pipeline", category: "pipeline" },
+  pipeline: { anchor: "pipeline", category: "integrations" },
   "rate-limits": { anchor: "rate-limits", category: "advanced" },
   repository: { anchor: "repository", category: "integrations" },
   runtime: { anchor: "runtime", category: "integrations" },
+  sandbox: { anchor: "sandbox", category: "integrations" },
   secrets: { anchor: "runtime", category: "integrations" },
   usage: { anchor: "usage", category: "advanced" },
-  vercel: { anchor: "vercel", category: "integrations" },
+  vercel: { anchor: "sandbox", category: "integrations" },
   verify: { anchor: "verify", category: "advanced" },
   workspace: { anchor: "workspace", category: "workspace" },
 };
@@ -47,8 +48,6 @@ export function preloadSettingsCategory(category: SettingsCategory) {
   switch (category) {
     case "integrations":
       void import("@/features/settings/islands/integration-islands");
-      break;
-    case "pipeline":
       void import("@/features/settings/islands/pipeline-island").then((module) =>
         module.preloadPipelineEditor(),
       );

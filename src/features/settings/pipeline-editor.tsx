@@ -37,6 +37,7 @@ import { finishInteraction, startInteraction } from "@/lib/telemetry/interaction
 type PipelineEditorProps = {
   canManage: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onPipelineSaved?: (pipeline: SessionPipeline) => void;
   pipeline: SessionPipeline | null;
   workspaceId: string;
   workspaceMembers: WorkspaceMemberSummary[];
@@ -52,6 +53,7 @@ function draftsFromPipeline(
 export function PipelineEditor({
   canManage,
   onDirtyChange,
+  onPipelineSaved,
   pipeline,
   workspaceId,
   workspaceMembers,
@@ -177,6 +179,9 @@ export function PipelineEditor({
     setHasAttemptedSave(false);
     setError(null);
     setSavedAt(new Date());
+    if (savedPipeline) {
+      onPipelineSaved?.(savedPipeline);
+    }
     announce("Pipeline saved.");
     finishInteraction("save_settings", "success");
   }

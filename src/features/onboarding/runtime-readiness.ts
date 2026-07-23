@@ -452,7 +452,7 @@ export function buildVerifyChecklist(input: {
       passed: sandboxConnection.connected,
       statusLabel: sandboxConnection.connected ? "Ready" : "Blocked",
       statusTone: sandboxConnection.connected ? "success" : "warning",
-      step: "runtime",
+      step: "sandbox",
     },
     {
       detail: !sandboxConnection.connected

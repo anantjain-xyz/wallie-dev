@@ -32,7 +32,7 @@ describe("deferred onboarding steps", () => {
       item.id === "pipeline" ? { ...item, displayState: "blocked" as const } : item,
     );
 
-    expect(nextPreloadableStep("repository", items)).toBe("runtime");
+    expect(nextPreloadableStep("repository", items)).toBe("sandbox");
   });
 
   it("does not preload after the final valid step", () => {

@@ -574,6 +574,13 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
   const githubContinueBlocked = activeStep.id === "github" && !canCompleteGitHubSetupStep(data);
   const repositoryContinueBlocked =
     activeStep.id === "repository" && !canCompleteRepositoryStep(data);
+  const sandboxContinueBlocked =
+    activeStep.id === "sandbox" &&
+    !activeStepAlreadyResolved &&
+    !(
+      data.setupHealth.sandboxConnection?.connected ??
+      data.setupHealth.vercelSandboxConnection.connected
+    );
   const runtimeCompletionBlocked =
     activeStep.id === "runtime" &&
     !activeStepAlreadyResolved &&
@@ -1012,6 +1019,7 @@ export function OnboardingPageClient({ initialData, initialNow }: OnboardingPage
                 isSaving ||
                 githubContinueBlocked ||
                 repositoryContinueBlocked ||
+                sandboxContinueBlocked ||
                 runtimeCompletionBlocked ||
                 verifyCompletionBlocked ||
                 requiresInlineCompletion

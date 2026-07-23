@@ -119,20 +119,21 @@ async function IntegrationDetails({
   return (
     <>
       <div aria-label="Integration sections" className="flex flex-wrap gap-2">
-        <a className="ui-button" href="#repository">
-          Repositories
-        </a>
-        <a className="ui-button" href="#sandbox">
-          Sandbox
+        <a className="ui-button" href="#pipeline">
+          Pipeline
         </a>
         <a className="ui-button" href="#linear">
           Linear
         </a>
+        <a className="ui-button" href="#sandbox">
+          Sandbox
+        </a>
         <ProviderIntentLink provider={provider} />
       </div>
       <RepositoryIntegrationIsland initialData={data} />
-      <VercelIntegrationIsland initialData={data} />
+      <PipelineIsland data={data} />
       <LinearIntegrationIsland initialData={data} />
+      <VercelIntegrationIsland initialData={data} />
       <RuntimeIntegrationIsland codexStatus={searchState.codexStatus} initialData={data} />
     </>
   );
@@ -154,14 +155,6 @@ function IntegrationsCategory(props: SettingsServerShellProps) {
       </Suspense>
     </div>
   );
-}
-
-async function PipelineCategory({ initialData, setupData }: SettingsServerShellProps) {
-  const setup = await settle(setupData);
-  if (!setup.ok) {
-    return <SettingsSectionError label="Pipeline" minHeight="min-h-96" />;
-  }
-  return <PipelineIsland data={completeSettingsData(initialData, setup.value)} />;
 }
 
 async function UsageSection({
@@ -270,12 +263,6 @@ function WorkspaceCategory(props: SettingsServerShellProps) {
 
 function ActiveCategory(props: SettingsServerShellProps) {
   switch (props.category) {
-    case "pipeline":
-      return (
-        <Suspense fallback={<SettingsSectionFallback label="pipeline" minHeight="min-h-96" />}>
-          <PipelineCategory {...props} />
-        </Suspense>
-      );
     case "advanced":
       return <AdvancedCategory {...props} />;
     case "workspace":

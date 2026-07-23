@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ClaudeCodeConnectionPanel } from "@/features/settings/claude-code-connection-panel";
@@ -96,6 +96,28 @@ describe("provider status cache", () => {
     );
 
     expect(screen.getByText("Signed in as owner@example.com")).toBeTruthy();
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("routes a blocked ChatGPT setup prompt through the sandbox step selector", async () => {
+    const fetchMock = vi.fn();
+    const onSandboxConnectionSelect = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <CodexConnectionPanel
+        initialStatus={{ checkedAt: new Date().toISOString(), connected: false }}
+        onSandboxConnectionSelect={onSandboxConnectionSelect}
+        sandboxConnectionHref="#sandbox"
+        sandboxConnectionLabel="Vercel Sandbox"
+        sandboxConnectionReady={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Vercel Sandbox" }));
+
+    expect(onSandboxConnectionSelect).toHaveBeenCalledOnce();
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
   });
