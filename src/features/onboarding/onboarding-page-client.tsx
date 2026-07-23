@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { TimeDisplay } from "@/components/shared/time-display";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
-import { Status, configurationStatusFromTone } from "@/components/ui/status";
+import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import type { WorkspaceGitHubData, WorkspaceGitHubRepository } from "@/features/github/data";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
@@ -354,23 +354,46 @@ function SetupHealthSummary({
   health: OnboardingSetupHealth;
   initialNow: string;
 }) {
+  const items = setupHealthItems(health, initialNow);
+
   return (
     <aside className="h-fit min-w-0 lg:sticky lg:top-8">
       <h2 className="text-[13px] font-semibold tracking-tight text-foreground">Health</h2>
-      <div className="mt-4 space-y-3">
-        {setupHealthItems(health, initialNow).map((item) => (
-          <div key={item.label} className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-foreground">{item.label}</p>
-              <p className="mt-0.5 truncate type-annotation text-muted">{item.detail}</p>
-            </div>
-            <Status
-              label={item.value}
-              value={item.value === "Running" ? "running" : configurationStatusFromTone(item.tone)}
-            />
-          </div>
-        ))}
-      </div>
+      <ul className="mt-4 space-y-2.5">
+        {items.map((item) => {
+          const complete = item.tone === "success";
+          return (
+            <li key={item.label} className="flex items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+                  complete
+                    ? "border-[1.5px] border-foreground bg-transparent text-foreground"
+                    : "border-border bg-transparent text-transparent",
+                )}
+              >
+                {complete ? (
+                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+                    <path
+                      d="m3.5 8.25 3 3 6-6.5"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : null}
+              </span>
+              <span
+                className={cn("text-[13px] leading-5", complete ? "text-foreground" : "text-muted")}
+              >
+                {item.label}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </aside>
   );
 }
