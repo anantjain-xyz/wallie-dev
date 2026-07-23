@@ -13,7 +13,6 @@ function renderSection(check: SandboxCapabilityCheckState) {
       initialCheck: check,
       repositories: [],
       sandboxConnected: true,
-      sandboxProviderLabel: "E2B",
       setFlashMessage: () => {},
       workspaceId: "00000000-0000-4000-8000-000000000001",
     }),
@@ -33,6 +32,22 @@ const baseCheck: SandboxCapabilityCheckState = {
 };
 
 describe("SandboxCapabilitySection capability tiles", () => {
+  it("uses sandbox-neutral guidance when no provider is connected", () => {
+    const markup = renderToStaticMarkup(
+      createElement(SandboxCapabilitySection, {
+        canManage: true,
+        initialCheck: null,
+        repositories: [],
+        sandboxConnected: false,
+        setFlashMessage: () => {},
+        workspaceId: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+
+    expect(markup).toContain("Connect a sandbox provider before running a capability check.");
+    expect(markup).not.toContain("Connect Vercel Sandbox before running a capability check.");
+  });
+
   it("renders missing-detail capabilities neutral, not as failures", () => {
     const markup = renderSection({
       ...baseCheck,

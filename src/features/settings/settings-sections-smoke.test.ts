@@ -1161,7 +1161,6 @@ describe("Settings integration sections", () => {
           },
         ],
         sandboxConnected: true,
-        sandboxProviderLabel: "E2B",
         setFlashMessage: vi.fn(),
         workspaceId,
       }),

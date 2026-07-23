@@ -22,7 +22,6 @@ type SandboxCapabilitySectionProps = {
   preferredRepositoryId?: string | null;
   repositories: SettingsPageData["github"]["repositories"];
   sandboxConnected: boolean;
-  sandboxProviderLabel: string;
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
@@ -81,7 +80,6 @@ export function SandboxCapabilitySection({
   preferredRepositoryId,
   repositories,
   sandboxConnected,
-  sandboxProviderLabel,
   setFlashMessage,
   workspaceId,
 }: SandboxCapabilitySectionProps) {
@@ -228,7 +226,7 @@ export function SandboxCapabilitySection({
       </div>
       {!sandboxConnected ? (
         <p className="text-xs leading-5 text-warning">
-          Connect {sandboxProviderLabel} before running a capability check.
+          Connect a sandbox provider before running a capability check.
         </p>
       ) : null}
 

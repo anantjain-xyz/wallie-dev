@@ -456,7 +456,7 @@ export function buildVerifyChecklist(input: {
     },
     {
       detail: !sandboxConnection.connected
-        ? `Connect ${sandboxConnection.providerLabel} before running a capability check.`
+        ? "Connect a sandbox provider before running a capability check."
         : latestSelectedRepositoryCheckStatus === "success"
           ? "Latest selected-repository sandbox capability check succeeded."
           : latestSelectedRepositoryCheckStatus === "running"

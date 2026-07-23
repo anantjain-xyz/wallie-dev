@@ -212,6 +212,30 @@ describe("buildVerifyChecklist", () => {
     expect(verifyBlockersFromChecklist(checklist)).toEqual([]);
   });
 
+  it("uses sandbox-neutral capability guidance when the active provider is disconnected", () => {
+    const checklist = buildVerifyChecklist({
+      agentConfig: health().agentConfig.values,
+      health: health({
+        sandboxConnection: {
+          connected: false,
+          connectionRevision: null,
+          displayName: null,
+          lastValidationError: null,
+          provider: "vercel",
+          providerLabel: "Vercel Sandbox",
+          status: "missing",
+          updatedAt: null,
+        },
+      }),
+      onboarding: onboarding(),
+    });
+
+    expect(checklist.find((item) => item.id === "sandbox")).toMatchObject({
+      detail: "Connect a sandbox provider before running a capability check.",
+      passed: false,
+    });
+  });
+
   it("links blockers to their owning onboarding steps", () => {
     const checklist = buildVerifyChecklist({
       agentConfig: { agent_model: "gpt-5.5", agent_provider: "codex" },

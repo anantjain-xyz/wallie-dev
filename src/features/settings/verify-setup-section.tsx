@@ -43,7 +43,6 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
   const activeSandbox = data.setupHealth.sandboxConnection;
   const sandboxConnected =
     activeSandbox?.connected ?? data.setupHealth.vercelSandboxConnection.connected;
-  const sandboxProviderLabel = activeSandbox?.providerLabel ?? "a sandbox provider";
 
   return (
     <Section
@@ -102,7 +101,6 @@ export function VerifySetupSection({ data, setData, setFlashMessage }: VerifySet
             preferredRepositoryId={preferredRepositoryId}
             repositories={data.github.repositories}
             sandboxConnected={sandboxConnected}
-            sandboxProviderLabel={sandboxProviderLabel}
             setFlashMessage={setFlashMessage}
             workspaceId={data.workspace.id}
           />
