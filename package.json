@@ -99,6 +99,7 @@
     "prettier": "^3.8.1",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.0.7"
+    "vitest": "^4.0.7",
+    "yaml": "^2.9.0"
   }
 }
