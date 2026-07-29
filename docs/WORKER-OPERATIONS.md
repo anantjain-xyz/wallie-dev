@@ -84,13 +84,18 @@ The stall sweep:
 2. Ignores a queued run until its parent job is running.
 3. Calculates the workspace timeout from last activity or creation time.
 4. Skips jobs owned by a fresh worker heartbeat.
-5. CAS-marks a stale active run as error and writes a diagnostic.
+5. Issues a status-filtered update that marks a stale active run as error, but
+   does not request or verify an affected row.
 6. Attempts to stop its sandbox.
 7. Reschedules the job with exponential backoff when retries remain, otherwise
    marks it terminally errored.
 8. Parks a generating session in `rejected`.
 
 A scheduled retry returns to `agent_generating` only after a worker claims it.
+Because the detector does not verify that step 5 changed the run, a processor
+can complete between the sweep's read and update while the detector continues
+with diagnostics, sandbox stop, retry/error handling, and session parking. This
+transition is not currently a successful compare-and-swap boundary.
 
 ### Linear reconciler
 
@@ -168,9 +173,12 @@ no health endpoint.
 | Linear state is stale                           | Reconciler errors/rate-limit messages                                                                 | Run one manager maintenance tick or wait for the next sweep                     |
 | Connection cannot rotate                        | Active jobs/runs/checks/device-auth or mutation-lock evidence                                         | Finish or cancel related work; do not delete the lock or credential row         |
 
-The manager maintenance endpoint runs stall cleanup, sandbox reaping, and Linear
-reconciliation. It does not process queued jobs. Use it as a bounded recovery
-trigger, not as a replacement worker loop.
+The manager maintenance endpoint runs workspace-scoped stall cleanup and Linear
+reconciliation, but its sandbox-reaper call is currently global. A manager can
+therefore trigger reaping of eligible Wallie-known resources belonging to other
+workspaces. It does not process queued jobs. Treat this cross-workspace reaper
+scope as an implementation gap, and do not use the endpoint as a replacement
+worker loop.
 
 ## Unsafe manual repairs
 
@@ -208,6 +216,10 @@ A healthy deployment should provide:
   marker exists.
 - Shutdown does not drain.
 - Periodic recovery sweeps can overlap.
+- The stall detector does not verify that its status-filtered run update won
+  before performing the remaining recovery actions.
+- Manager-triggered maintenance invokes the sandbox reaper without a workspace
+  filter.
 - `WORKER_MAX_CONCURRENT_JOBS` is consumed directly by worker config but is not
   represented in the shared environment schema.
 - Railway watch patterns omit some transitive sandbox lifecycle owners.

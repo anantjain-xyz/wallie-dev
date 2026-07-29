@@ -46,6 +46,13 @@ A user-triggered privileged route must:
 Return not-found for cross-workspace resource probes where revealing existence
 would cross the tenant boundary.
 
+The manager-triggered maintenance path is a current exception to this pattern.
+It scopes stall detection and Linear reconciliation to the authorized
+workspace, but invokes sandbox reaping without a workspace filter. The reaper
+can therefore inspect and stop eligible Wallie-known resources for other
+workspaces. Do not treat workspace-manager authorization on that endpoint as a
+tenant-scoped reaper boundary.
+
 The worker is different: it is an infrastructure principal, uses the admin
 client directly, and operates only on durable queue/configuration rows. Its
 query predicates and database constraints are its scope boundary.
@@ -61,8 +68,12 @@ query predicates and database constraints are its scope boundary.
 - RLS policy and SQL privilege are separate gates. A policy cannot compensate
   for an accidentally broad grant, and a revoke cannot express row-level
   identity.
-- Secret-bearing tables expose only the minimum preview/status metadata needed
-  by authenticated clients. Plaintext decryption stays in server-only services.
+- Plaintext credential decryption stays in server-only services. However, the
+  baseline grants table-wide `SELECT` on a user's own
+  `user_codex_credentials` and `user_claude_code_credentials` rows, so
+  authenticated browser clients can read ciphertext and non-preview columns.
+  Minimum preview/status projection is a desired boundary, not one currently
+  enforced for those two tables.
 - Service-only tables revoke authenticated access and use explicit restrictive
   policies as defense in depth.
 
@@ -185,6 +196,10 @@ substitute for applying the migration or exercising Postgres identities.
 - Existing definer functions use several `search_path` styles rather than one
   documented exception model.
 - A temporary loose Supabase client remains in production call paths.
+- Personal agent credential tables grant authenticated users table-wide
+  self-`SELECT`, exposing ciphertext and non-preview columns to browser clients.
+- Manager-triggered maintenance scopes stall and Linear work to one workspace
+  but runs sandbox reaping globally.
 - Generated-type freshness and a global applied-schema RLS/grant inventory are
   not enforced in CI.
 - Most migration tests inspect source text; the transactional session-creation

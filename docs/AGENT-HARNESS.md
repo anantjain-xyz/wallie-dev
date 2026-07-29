@@ -31,7 +31,9 @@ resource ownership and cleanup, see
    unarchived session into `agent_generating`.
 2. The processor resolves the workspace's selected agent provider and model.
 3. It loads pipeline operating rules, the latest feedback for this stage, and
-   the latest artifact version for each previous stage slug.
+   the latest artifact version for every stage slug present on the session.
+   After a rejection, that map can include the current stage's unapproved
+   artifact.
 4. It prepends operating rules to the stage template and performs template
    substitution.
 5. It resolves the credential belonging to the human who created the session.
@@ -56,26 +58,29 @@ Wallie session does not own a persistent filesystem across attempts.
 
 The renderer currently exposes:
 
-| Variable                         | Source                                             | Classification                           |
-| -------------------------------- | -------------------------------------------------- | ---------------------------------------- |
-| `session.title`                  | `sessions.title`                                   | Member-controlled data                   |
-| `session.prompt`                 | `sessions.prompt_md`                               | Member-controlled data                   |
-| `session.stageSlug`              | Current `pipeline_stages` row                      | Manager-controlled configuration         |
-| `attempt.number`                 | `rejection_count + 1`                              | Derived value                            |
-| `attempt.feedback`               | Latest feedback for the current immutable stage ID | Reviewer-controlled data                 |
-| `artifact.previousStages.<slug>` | Latest artifact version found for each stage slug  | Agent-generated data                     |
-| `repo.name`                      | Declared by the renderer                           | Currently empty in pipeline execution    |
-| `repo.fullName`                  | Declared by the renderer                           | Currently empty in pipeline execution    |
-| `repo.defaultBranch`             | Renderer fallback                                  | Currently `"main"` in pipeline execution |
+| Variable                         | Source                                                        | Classification                           |
+| -------------------------------- | ------------------------------------------------------------- | ---------------------------------------- |
+| `session.title`                  | `sessions.title`                                              | Member-controlled data                   |
+| `session.prompt`                 | `sessions.prompt_md`                                          | Member-controlled data                   |
+| `session.stageSlug`              | Current `pipeline_stages` row                                 | Manager-controlled configuration         |
+| `attempt.number`                 | `rejection_count + 1`                                         | Derived value                            |
+| `attempt.feedback`               | Latest feedback for the current immutable stage ID            | Reviewer-controlled data                 |
+| `artifact.previousStages.<slug>` | Latest artifact per slug, including the current slug on retry | Agent-generated data                     |
+| `repo.name`                      | Declared by the renderer                                      | Currently empty in pipeline execution    |
+| `repo.fullName`                  | Declared by the renderer                                      | Currently empty in pipeline execution    |
+| `repo.defaultBranch`             | Renderer fallback                                             | Currently `"main"` in pipeline execution |
 
 Pipeline `operating_rules_md` is trimmed and prepended to
 `pipeline_stages.prompt_template_md`. Both are manager-controlled instruction
 planes. The renderer supports variable substitution and non-nested conditional
 blocks. Unknown variables become empty strings.
 
-`loadCompletedStageArtifacts()` currently chooses the latest artifact version
-per slug; it does not require a matching completion row. Treat previous
-artifacts as agent-generated input even when their stage was approved.
+Despite its name, `loadCompletedStageArtifacts()` currently chooses the latest
+artifact version for every slug on the session. It does not require a matching
+completion row or filter by stage position. On a retry after rejection,
+`artifact.previousStages.<current-slug>` therefore contains the current stage's
+unapproved prior output. Treat every value in this map as agent-generated input,
+even when its stage was approved.
 
 ## Current instruction and trust boundary
 
@@ -125,8 +130,12 @@ the target repository remains their runtime semantic owner.
 - Artifact versions are per session and stage slug.
 - Publishing the artifact requires the session to remain unarchived and
   `agent_generating`.
-- PR synchronization is recoverable plumbing. A PR failure is logged but does
-  not prevent the artifact from becoming reviewable.
+- After the GitHub App and installation client initialize, PR synchronization
+  failures are returned and logged without preventing artifact review.
+- GitHub App construction or installation-client initialization happens outside
+  that recoverable boundary; either failure currently fails the stage after the
+  artifact insert, removes the unpublished artifact, and enters job retry/error
+  handling.
 - The artifact prefix is used as fallback PR prose; the artifact in Supabase is
   the review source of truth.
 
@@ -140,8 +149,10 @@ reusable.
   session in `rejected`.
 - Retry scheduling belongs to the job lifecycle and may reuse the stage branch,
   but never the sandbox.
-- A busy Codex credential lease defers the job rather than consuming a terminal
-  attempt.
+- A busy Codex credential lease defers the job without running the agent.
+  However, each worker claim already incremented `attempt_count`, and deferral
+  does not restore or separately account for it. Repeated contention can
+  therefore consume retry headroom before a genuine runner failure.
 - Cancellation first makes the job and run terminal, then attempts sandbox
   cleanup. Late processor writes preserve `canceled`.
 - Setup failure after sandbox creation must stop the resource before the create
@@ -166,6 +177,10 @@ These are current limitations, not desired contracts:
   an accidental Git add by the target repository.
 - Persisted text, tool, artifact, and PR output is not uniformly passed through
   one diagnostic-redaction boundary.
+- GitHub App construction and installation-client initialization are outside
+  the recoverable PR-synchronization boundary.
+- Credential-lease deferrals share `attempt_count` with real execution
+  failures, so contention can exhaust the retry budget.
 
 Remove a limitation from this section only in the pull request that establishes
 and proves the replacement contract.

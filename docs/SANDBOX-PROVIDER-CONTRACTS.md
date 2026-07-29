@@ -87,13 +87,16 @@ A repository capability check records:
 - Playwright and Chromium.
 - Screenshot smoke behavior.
 
-A session is ready only when the latest successful check matches workspace,
-repository, agent provider/model, sandbox provider, and connection revision, and
-all required capabilities passed.
+A session is ready only when the latest check row for the workspace and
+repository is itself successful, matches agent provider/model, sandbox
+provider, and connection revision, and reports every required capability as
+passed. An older successful row is not authoritative when a newer check is
+running, failed, or mismatched.
 
-The current readiness function does not apply a wall-clock expiration to a
-successful check. "Stale" currently means the configuration identity or
-revision no longer matches, not that a fixed number of hours elapsed.
+The current readiness function does not apply a wall-clock expiration. "Stale"
+currently includes a latest check that is not successful or whose configuration
+identity or revision no longer matches; it does not mean that a fixed number of
+hours elapsed.
 
 ## Command and deadline behavior
 
