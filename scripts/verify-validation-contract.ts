@@ -260,25 +260,42 @@ function findProfileCycle(
 function verifyReachablePackageScriptReferences(
   scripts: Readonly<Record<string, string>>,
   referencesByScript: ReadonlyMap<string, readonly string[]>,
-  profileScripts: readonly string[],
+  canonicalProfiles: readonly Profile[],
+  classifiedScripts: ReadonlyMap<string, ClassifiedCheck["classification"]>,
   errors: string[],
 ) {
-  const visited = new Set<string>();
+  for (const profile of canonicalProfiles) {
+    const visited = new Set<string>();
+    const reportedClassifiedScripts = new Set<string>();
 
-  function visit(script: string) {
-    if (visited.has(script)) return;
-    visited.add(script);
+    function visit(script: string, path: readonly string[]) {
+      if (visited.has(script)) return;
+      visited.add(script);
 
-    for (const reference of referencesByScript.get(script) ?? []) {
-      if (!(reference in scripts)) {
-        errors.push(repairMissingScript(reference, `Package script "${script}"`));
-        continue;
+      for (const reference of referencesByScript.get(script) ?? []) {
+        if (!(reference in scripts)) {
+          errors.push(repairMissingScript(reference, `Package script "${script}"`));
+          continue;
+        }
+
+        const classification = classifiedScripts.get(reference);
+        if (
+          classification &&
+          script !== profile.script &&
+          !reportedClassifiedScripts.has(reference)
+        ) {
+          reportedClassifiedScripts.add(reference);
+          errors.push(
+            `Package script "${profile.script}" must not reach classified ${classification} command "pnpm ${reference}" through ${[...path, reference].map((item) => `"${item}"`).join(" -> ")}. Remove the classified command from the ${profile.name} validation dependency chain or remove its explicit classification.`,
+          );
+        }
+
+        visit(reference, [...path, reference]);
       }
-      visit(reference);
     }
-  }
 
-  for (const profile of profileScripts) visit(profile);
+    visit(profile.script, [profile.script]);
+  }
 }
 
 function usesRepositoryRoot(workingDirectory: unknown) {
@@ -291,15 +308,21 @@ function verifyCheckoutRevision(job: WorkflowJob, context: string, errors: strin
       typeof step.uses !== "string" ||
       !step.uses.toLowerCase().startsWith("actions/checkout@") ||
       typeof step.with !== "object" ||
-      step.with === null ||
-      !("ref" in step.with)
+      step.with === null
     ) {
       continue;
     }
 
-    errors.push(
-      `${context} must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.`,
-    );
+    if ("ref" in step.with) {
+      errors.push(
+        `${context} must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.`,
+      );
+    }
+    if ("repository" in step.with) {
+      errors.push(
+        `${context} must validate the triggering repository. Remove "repository" from the actions/checkout step so GitHub checks out this pull request's repository.`,
+      );
+    }
   }
 }
 
@@ -567,7 +590,13 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
     verifyWorkflowDelegation(projectDirectory, profile, scripts, errors);
   }
 
-  verifyReachablePackageScriptReferences(scripts, referencesByScript, profileScripts, errors);
+  verifyReachablePackageScriptReferences(
+    scripts,
+    referencesByScript,
+    profiles,
+    classifiedScripts,
+    errors,
+  );
 
   const profileCycle = findProfileCycle(referencesByScript, profileScripts);
   if (profileCycle) {
