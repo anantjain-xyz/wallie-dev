@@ -40,7 +40,7 @@ function lintFixture(name: string) {
 }
 
 describe("wallie-supabase/no-unbound-client-methods", () => {
-  it("accepts direct calls and deliberately bound aliases through casts", () => {
+  it("accepts direct calls and deliberately bound aliases through transparent syntax", () => {
     const lint = lintFixture("supabase-rpc-bound.ts");
 
     expect(lint.stderr).toBe("");
@@ -48,7 +48,7 @@ describe("wallie-supabase/no-unbound-client-methods", () => {
     expect(lint.results.flatMap((result) => result.messages)).toEqual([]);
   }, 30_000);
 
-  it("rejects destructured, assigned, cast, and passed rpc references", () => {
+  it("rejects every detached rpc reference, including cast, effectful, and computed forms", () => {
     const lint = lintFixture("supabase-rpc-unbound.ts");
     const messages = lint.results
       .flatMap((result) => result.messages)
@@ -56,7 +56,7 @@ describe("wallie-supabase/no-unbound-client-methods", () => {
 
     expect(lint.stderr).toBe("");
     expect(lint.exitCode).toBe(1);
-    expect(messages).toHaveLength(4);
+    expect(messages).toHaveLength(7);
     expect(messages.every((message) => message.message.includes("depend on their receiver"))).toBe(
       true,
     );

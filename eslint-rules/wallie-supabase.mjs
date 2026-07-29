@@ -3,6 +3,7 @@ const transparentExpressionTypes = new Set([
   "TSAsExpression",
   "TSInstantiationExpression",
   "TSNonNullExpression",
+  "TSSatisfiesExpression",
   "TSTypeAssertion",
 ]);
 
@@ -41,6 +42,15 @@ function staticPropertyName(node) {
     return property.value;
   }
 
+  if (
+    node.computed &&
+    property.type === "TemplateLiteral" &&
+    property.expressions.length === 0 &&
+    property.quasis.length === 1
+  ) {
+    return property.quasis[0].value.cooked ?? property.quasis[0].value.raw;
+  }
+
   return undefined;
 }
 
@@ -76,13 +86,25 @@ function createNoUnboundSupabaseClientMethods(context) {
   const checker = services.program.getTypeChecker();
 
   function hasSupabaseRpc(typeNode) {
-    if (!typeNode) return false;
+    let current = typeNode;
 
-    const tsNode = services.esTreeNodeToTSNodeMap.get(typeNode);
-    const type = checker.getTypeAtLocation(tsNode);
-    const rpc = checker.getPropertyOfType(type, "rpc");
+    while (current) {
+      const tsNode = services.esTreeNodeToTSNodeMap.get(current);
+      const type = checker.getTypeAtLocation(tsNode);
+      const rpc = checker.getPropertyOfType(type, "rpc");
 
-    return Boolean(rpc?.declarations?.some(isDeclarationFromSupabaseJs));
+      if (rpc?.declarations?.some(isDeclarationFromSupabaseJs)) {
+        return true;
+      }
+
+      if (!transparentExpressionTypes.has(current.type) || !("expression" in current)) {
+        return false;
+      }
+
+      current = current.expression;
+    }
+
+    return false;
   }
 
   function sameReceiver(left, right) {
@@ -90,15 +112,23 @@ function createNoUnboundSupabaseClientMethods(context) {
     const unwrappedRight = unwrapExpression(right);
 
     if (!unwrappedLeft || !unwrappedRight) return false;
-    if (sourceCode.getText(unwrappedLeft) === sourceCode.getText(unwrappedRight)) return true;
 
-    const leftTsNode = services.esTreeNodeToTSNodeMap.get(unwrappedLeft);
-    const rightTsNode = services.esTreeNodeToTSNodeMap.get(unwrappedRight);
+    if (unwrappedLeft.type === "ThisExpression" && unwrappedRight.type === "ThisExpression") {
+      return true;
+    }
 
-    return (
-      checker.getSymbolAtLocation(leftTsNode) !== undefined &&
-      checker.getSymbolAtLocation(leftTsNode) === checker.getSymbolAtLocation(rightTsNode)
+    if (unwrappedLeft.type !== "Identifier" || unwrappedRight.type !== "Identifier") {
+      return false;
+    }
+
+    const leftSymbol = checker.getSymbolAtLocation(
+      services.esTreeNodeToTSNodeMap.get(unwrappedLeft),
     );
+    const rightSymbol = checker.getSymbolAtLocation(
+      services.esTreeNodeToTSNodeMap.get(unwrappedRight),
+    );
+
+    return leftSymbol !== undefined && leftSymbol === rightSymbol;
   }
 
   function isReceiverPreservingUse(node) {
