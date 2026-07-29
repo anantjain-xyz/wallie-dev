@@ -186,6 +186,28 @@ describe("privileged import boundary verifier", () => {
     ).toEqual([]);
   });
 
+  it("does not let one client exception hide a sibling forbidden edge", () => {
+    const diagnostics = verifyFixture("parallel-exception", [
+      {
+        code: "client-reachability",
+        from: "cases/parallel-exception/bridge-a.ts",
+        owner: "security@example.com",
+        reason: "Temporary browser path with a tracked removal date.",
+        to: "cases/parallel-exception/admin.ts",
+      },
+    ]);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      code: "client-reachability",
+      from: "cases/parallel-exception/bridge-b.ts",
+      to: "cases/parallel-exception/admin.ts",
+    });
+    expect(diagnostics[0]?.message).toContain(
+      "cases/parallel-exception/client.ts -> cases/parallel-exception/bridge-b.ts -> cases/parallel-exception/admin.ts",
+    );
+  });
+
   it("fails when an exception no longer suppresses a violation", () => {
     const diagnostics = verifyFixture("valid-seams", [
       {

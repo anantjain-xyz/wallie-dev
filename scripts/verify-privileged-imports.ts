@@ -466,7 +466,7 @@ export function verifyPrivilegedImports({
   for (const browserRoot of browserRoots) {
     if (!modules.has(browserRoot)) continue;
     const pathsToVisit: ImportEdge[][] = [[]];
-    const reportedTargets = new Set<string>();
+    const reportedEdges = new Set<string>();
     const visited = new Set([browserRoot]);
     while (pathsToVisit.length > 0) {
       const path = pathsToVisit.shift()!;
@@ -478,8 +478,9 @@ export function verifyPrivilegedImports({
         const nextPath = [...path, edge];
         const privilegedModule = privilegedModuleByPath.get(edge.to);
         if (privilegedModule) {
-          if (reportedTargets.has(edge.to)) continue;
-          reportedTargets.add(edge.to);
+          const edgeKey = `${edge.from}\0${edge.to}`;
+          if (reportedEdges.has(edgeKey)) continue;
+          reportedEdges.add(edgeKey);
           if (consumeException("client-reachability", edge.from, edge.to)) continue;
           const approvedOwners = approvedOwnerDescriptions(privilegedModule, ownerRuleById);
           diagnostics.push({
