@@ -35,8 +35,9 @@ definition, not by the copy in the baseline.
 | Agent run `status`     | `queued`, `started`, `running`                    | `success`, `error`, `canceled` | One observable agent execution            |
 
 `sessions.archived_at` is an orthogonal freeze marker, not another phase.
-Archived sessions accept no new work even if their retained phase would
-otherwise be active.
+Enqueue preflight rejects a session already observed as archived, and processor
+eligibility requires `archived_at is null`. Enqueue is not transactionally
+excluded from racing archive; that gap is detailed below.
 
 `rejected` is also the general parked/recoverable phase. Reviewer rejection,
 explicit cancellation, generation failure, stall recovery, and some Linear
@@ -104,9 +105,10 @@ must test failures between every step.
 Current limitation: approval can land after step 1 while the rejection remains
 in progress. Approval does not check `rejection_count`, and the rejection's
 final `phase_status = rejected` write is unguarded. The rejection can therefore
-enqueue work and overwrite an approved or terminally archived result. Treat
-approval versus an in-flight rejection as an unresolved concurrency bug, not a
-safe losing-race outcome.
+enqueue against the now-current stage and change an `agent_generating` or
+`approved` phase to `rejected`. A terminal approval remains archived because
+rejection does not clear `archived_at`. Treat approval versus an in-flight
+rejection as an unresolved concurrency bug, not a safe losing-race outcome.
 
 ## Deduplication
 
@@ -141,8 +143,10 @@ primitive:
 5. When requested, park an `agent_generating` session in `rejected`.
 
 Terminal job/run writes are guarded so a late worker cannot overwrite
-`canceled` with `success` or `error`. Sandbox attachment also checks active run
-status so a sandbox acquired after cancellation is stopped instead of leaked.
+`canceled` with `success` or `error`. The sandbox-attachment callback also
+checks active run status and best-effort stops a sandbox when cancellation wins
+that race. A crash before the callback records ownership remains outside this
+guard.
 
 User-facing archive writes `archived_at` before cancellation. Subsequent
 enqueue validation and processor claims reject the archived session, but the
@@ -170,8 +174,9 @@ does not enqueue work.
   check is no longer active. It skips unknown provider sandboxes, including one
   created before a crash that prevented ownership from being recorded; those
   rely on provider TTLs or operator cleanup.
-- Graceful worker shutdown deregisters immediately. Any abandoned work is
-  recovered after its heartbeat becomes stale.
+- Graceful worker shutdown deregisters immediately. Recorded active jobs and
+  runs become eligible for stall recovery after their heartbeat becomes stale;
+  unrecorded provider resources remain outside that recovery path.
 
 ## Race outcomes that are normal
 
@@ -186,9 +191,9 @@ corruption:
   sandbox ID.
 - A retry collides with an existing active dedupe key.
 
-Except for the approval-versus-rejection gap documented above, each losing path
-must close or preserve its own job, run, artifact, and sandbox state without
-resurrecting work.
+Handled losing-race paths are designed to close or preserve their own job, run,
+artifact, and sandbox state without resurrecting work. The approval/rejection
+gap and unrecorded provider resources documented above are current exceptions.
 
 ## Change checklist
 

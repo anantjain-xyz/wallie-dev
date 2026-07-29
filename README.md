@@ -37,8 +37,8 @@ create_session_with_first_job RPC
      streams run activity, writes the markdown artifact,
      best-effort syncs a stage PR, status=awaiting_review
   -> in the dashboard, the reviewer clicks Approve or Request Changes
-  -> approve  -> approve_session_stage RPC advances to next stage by position,
-                 enqueues the next job
+  -> approve  -> approve_session_stage RPC advances to next stage by position;
+                 TypeScript enqueues the next job after the transaction
   -> reject   -> feedback recorded for the artifact version;
                  new job re-runs the same stage
   -> repeat until the terminal stage is approved -> session archived
@@ -77,8 +77,8 @@ Workspace (tenant)
   |    `-- Stages (position, slug, name, description, prompt_template_md,
   |                approver_member_ids[])
   `-- Sessions <- the unit of work
-       |-- pipeline_id (pinned at create time -- edits to the pipeline
-       |   don't reshape historical sessions)
+       |-- pipeline_id (pinned at create time; stage rows remain shared, so
+       |   edits can change prompts or ordering observed by pinned sessions)
        |-- current_stage_id, current_artifact_version, rejection_count
        |-- phase_status: agent_generating | awaiting_review
        |                 | approved | rejected
@@ -117,7 +117,8 @@ Worker scheduler polls agent_jobs --> claim_next_agent_job RPC
       v
 [POST /api/sessions/[sessionId]/phase-action]  (from the dashboard)
       |- Approve -> approve_session_stage RPC: records completion,
-      |             advances to next stage by position, enqueues next job
+      |             advances to next stage by position; TypeScript then
+      |             enqueues the next job
       `- Reject  -> feedback recorded for the artifact version;
                     new job re-runs the same stage
 ```
