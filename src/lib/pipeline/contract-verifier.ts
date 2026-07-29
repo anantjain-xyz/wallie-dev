@@ -50,7 +50,6 @@ type RecoveryOwner = TransitionOwner & {
 };
 
 type SqlTransitionOwner = {
-  activeDefinitionPath: string;
   canonicalApi: string;
   functionName: string;
   id: string;
@@ -147,6 +146,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       "archived_at",
       "current_artifact_version",
       "current_stage_id",
+      "pipeline_id",
       "phase_status",
       "rejection_count",
     ],
@@ -535,8 +535,6 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
   ],
   sqlOwners: [
     {
-      activeDefinitionPath:
-        "supabase/migrations/20260722000000_any_workspace_member_stage_approval.sql",
       canonicalApi: "Use the approve_session_stage transactional RPC.",
       functionName: "public.approve_session_stage",
       id: "stage-approval-rpc",
@@ -568,7 +566,6 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       ],
     },
     {
-      activeDefinitionPath: "supabase/migrations/20260422000000_init.sql",
       canonicalApi: "Use the claim_agent_job transactional RPC.",
       functionName: "public.claim_agent_job",
       id: "legacy-job-claim-rpc",
@@ -585,8 +582,6 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       ],
     },
     {
-      activeDefinitionPath:
-        "supabase/migrations/20260721000001_add_e2b_daytona_sandbox_providers.sql",
       canonicalApi: "Use the claim_next_agent_job transactional RPC.",
       functionName: "public.claim_next_agent_job",
       id: "worker-job-claim-rpc",
@@ -603,7 +598,6 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       ],
     },
     {
-      activeDefinitionPath: "supabase/migrations/20260607000002_guard_schedule_job_retry.sql",
       canonicalApi: "Use the schedule_job_retry transactional RPC.",
       functionName: "public.schedule_job_retry",
       id: "job-retry-rpc",
@@ -620,12 +614,11 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       ],
     },
     {
-      activeDefinitionPath: "supabase/migrations/20260718000003_create_session_with_first_job.sql",
       canonicalApi: "Use the create_session_with_first_job transactional RPC.",
       functionName: "public.create_session_with_first_job",
       id: "session-create-rpc",
       transitions: [
-        sqlTransition("sessions", "insert", ["current_stage_id", "phase_status"]),
+        sqlTransition("sessions", "insert", ["current_stage_id", "phase_status", "pipeline_id"]),
         sqlTransition("agent_jobs", "insert", ["status"]),
         sqlTransition("agent_runs", "insert", ["status"]),
       ],
@@ -650,6 +643,7 @@ const PREDICATE_METHODS = new Set(["eq", "in", "is", "neq", "not"]);
 type Initializer = {
   expression: ts.Expression;
   position: number;
+  scope: ts.Node;
 };
 
 type BindingSource = Initializer & {
@@ -658,6 +652,7 @@ type BindingSource = Initializer & {
 
 type SourceContext = {
   bindingSources: Map<string, BindingSource[]>;
+  declaredNames: Map<ts.Node, Set<string>>;
   initializers: Map<string, Initializer[]>;
   objectFactories: Map<string, ts.Expression>;
   sourceFile: ts.SourceFile;
@@ -691,13 +686,13 @@ export function verifyPipelineContract(
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
   const usedRecoveryTransitions = new Set<string>();
-  const availablePaths = new Set(files.map((file) => normalizePath(file.path)));
+  const latestSqlDefinitions = findLatestSqlDefinitions(files, contract);
 
   for (const file of files) {
     const normalizedPath = normalizePath(file.path);
     if (normalizedPath.endsWith(".sql")) {
       diagnostics.push(
-        ...verifySqlFile({ ...file, path: normalizedPath }, contract, availablePaths),
+        ...verifySqlFile({ ...file, path: normalizedPath }, contract, latestSqlDefinitions),
       );
       continue;
     }
@@ -714,6 +709,7 @@ export function verifyPipelineContract(
     );
     const context: SourceContext = {
       bindingSources: collectBindingSources(sourceFile),
+      declaredNames: collectDeclaredNames(sourceFile),
       initializers: collectInitializers(sourceFile),
       objectFactories: collectObjectFactories(sourceFile),
       sourceFile,
@@ -862,6 +858,35 @@ export function verifyPipelineContract(
   );
 }
 
+type SqlDefinitionLocation = {
+  path: string;
+  start: number;
+};
+
+function findLatestSqlDefinitions(
+  files: readonly PipelineContractFile[],
+  contract: PipelineTransitionContract,
+): ReadonlyMap<string, SqlDefinitionLocation> {
+  const ownerNames = new Set(contract.sqlOwners.map((owner) => owner.functionName));
+  const latestDefinitions = new Map<string, SqlDefinitionLocation>();
+  const sqlFiles = files
+    .map((file) => ({ ...file, path: normalizePath(file.path) }))
+    .filter((file) => file.path.endsWith(".sql"))
+    .sort((left, right) => left.path.localeCompare(right.path));
+
+  for (const file of sqlFiles) {
+    for (const sqlFunction of readSqlFunctions(maskSqlComments(file.source))) {
+      if (ownerNames.has(sqlFunction.name)) {
+        latestDefinitions.set(sqlFunction.name, {
+          path: file.path,
+          start: sqlFunction.start,
+        });
+      }
+    }
+  }
+  return latestDefinitions;
+}
+
 export function formatPipelineContractDiagnostics(
   diagnostics: readonly PipelineContractDiagnostic[],
 ): string {
@@ -899,11 +924,53 @@ function collectInitializers(sourceFile: ts.SourceFile): Map<string, Initializer
   walk(sourceFile, (node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       const entries = initializers.get(node.name.text) ?? [];
-      entries.push({ expression: node.initializer, position: node.getStart(sourceFile) });
+      entries.push({
+        expression: node.initializer,
+        position: node.getStart(sourceFile),
+        scope: variableDeclarationScope(node),
+      });
       initializers.set(node.name.text, entries);
     }
   });
   return initializers;
+}
+
+function collectDeclaredNames(sourceFile: ts.SourceFile): Map<ts.Node, Set<string>> {
+  const declarations = new Map<ts.Node, Set<string>>();
+  walk(sourceFile, (node) => {
+    if (ts.isVariableDeclaration(node)) {
+      addBindingNames(declarations, variableDeclarationScope(node), node.name);
+    } else if (ts.isParameter(node)) {
+      const scope = enclosingFunction(node);
+      if (scope) {
+        addBindingNames(declarations, scope, node.name);
+      }
+    } else if (ts.isCatchClause(node) && node.variableDeclaration) {
+      addBindingNames(declarations, node, node.variableDeclaration.name);
+    }
+  });
+  return declarations;
+}
+
+function addBindingNames(
+  declarations: Map<ts.Node, Set<string>>,
+  scope: ts.Node,
+  name: ts.BindingName,
+): void {
+  const names = declarations.get(scope) ?? new Set<string>();
+  const collect = (bindingName: ts.BindingName): void => {
+    if (ts.isIdentifier(bindingName)) {
+      names.add(bindingName.text);
+      return;
+    }
+    for (const element of bindingName.elements) {
+      if (!ts.isOmittedExpression(element)) {
+        collect(element.name);
+      }
+    }
+  };
+  collect(name);
+  declarations.set(scope, names);
 }
 
 function collectObjectFactories(sourceFile: ts.SourceFile): Map<string, ts.Expression> {
@@ -950,6 +1017,7 @@ function collectBindingSources(sourceFile: ts.SourceFile): Map<string, BindingSo
         expression: node.initializer,
         position: node.getStart(sourceFile),
         propertyName: element.propertyName ? propertyName(element.propertyName) : element.name.text,
+        scope: variableDeclarationScope(node),
       });
       bindingSources.set(element.name.text, entries);
     }
@@ -1020,7 +1088,13 @@ function resolveExpression(
   }
   if (ts.isIdentifier(expression) && !seen.has(expression.text)) {
     seen.add(expression.text);
-    const initializer = nearestInitializer(context.initializers.get(expression.text), position);
+    const initializer = nearestInitializer(
+      context.initializers.get(expression.text),
+      position,
+      expression,
+      context,
+      expression.text,
+    );
     if (initializer) {
       return resolveExpression(initializer.expression, position, context, seen);
     }
@@ -1031,23 +1105,108 @@ function resolveExpression(
 function nearestInitializer(
   initializers: readonly Initializer[] | undefined,
   position: number,
+  useNode: ts.Node,
+  context: SourceContext,
+  name: string,
 ): Initializer | null {
-  return (
-    initializers
-      ?.filter((initializer) => initializer.position < position)
-      .sort((left, right) => right.position - left.position)[0] ?? null
-  );
+  return nearestScopedEntry(initializers, position, useNode, context, name);
 }
 
 function nearestBindingSource(
   sources: readonly BindingSource[] | undefined,
   position: number,
+  useNode: ts.Node,
+  context: SourceContext,
+  name: string,
 ): BindingSource | null {
-  return (
-    sources
-      ?.filter((source) => source.position < position)
-      .sort((left, right) => right.position - left.position)[0] ?? null
-  );
+  return nearestScopedEntry(sources, position, useNode, context, name);
+}
+
+function nearestScopedEntry<T extends Initializer>(
+  entries: readonly T[] | undefined,
+  position: number,
+  useNode: ts.Node,
+  context: SourceContext,
+  name: string,
+): T | null {
+  for (const scope of lexicalScopeChain(useNode)) {
+    const candidate =
+      entries
+        ?.filter((entry) => entry.scope === scope && entry.position < position)
+        .sort((left, right) => right.position - left.position)[0] ?? null;
+    if (candidate) {
+      return candidate;
+    }
+    if (context.declaredNames.get(scope)?.has(name)) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function variableDeclarationScope(declaration: ts.VariableDeclaration): ts.Node {
+  const declarationList = declaration.parent;
+  if (ts.isCatchClause(declarationList)) {
+    return declarationList;
+  }
+  if (
+    ts.isVariableDeclarationList(declarationList) &&
+    (declarationList.flags & ts.NodeFlags.BlockScoped) !== 0
+  ) {
+    return nearestBlockScope(declarationList);
+  }
+  return enclosingFunction(declaration) ?? declaration.getSourceFile();
+}
+
+function nearestBlockScope(node: ts.Node): ts.Node {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isCatchClause(current) ||
+      ts.isForStatement(current) ||
+      ts.isForInStatement(current) ||
+      ts.isForOfStatement(current) ||
+      ts.isSourceFile(current)
+    ) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return node.getSourceFile();
+}
+
+function enclosingFunction(node: ts.Node): ts.SignatureDeclaration | null {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isFunctionLike(current)) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function lexicalScopeChain(node: ts.Node): ts.Node[] {
+  const scopes: ts.Node[] = [];
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (
+      ts.isFunctionLike(current) ||
+      ts.isBlock(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isCatchClause(current) ||
+      ts.isForStatement(current) ||
+      ts.isForInStatement(current) ||
+      ts.isForOfStatement(current) ||
+      ts.isSourceFile(current)
+    ) {
+      scopes.push(current);
+    }
+    current = current.parent;
+  }
+  return scopes;
 }
 
 function readString(
@@ -1423,12 +1582,24 @@ function isStageSlugExpression(
   }
   seen.add(name);
 
-  const initializer = nearestInitializer(context.initializers.get(name), position);
+  const initializer = nearestInitializer(
+    context.initializers.get(name),
+    position,
+    unwrapped,
+    context,
+    name,
+  );
   if (initializer) {
     return isStageSlugExpression(initializer.expression, position, context, seen);
   }
 
-  const binding = nearestBindingSource(context.bindingSources.get(name), position);
+  const binding = nearestBindingSource(
+    context.bindingSources.get(name),
+    position,
+    unwrapped,
+    context,
+    name,
+  );
   return Boolean(
     binding &&
     binding.propertyName === "slug" &&
@@ -1448,7 +1619,13 @@ function isStageExpression(
       return /\bstage\b/i.test(unwrapped.text);
     }
     seen.add(unwrapped.text);
-    const initializer = nearestInitializer(context.initializers.get(unwrapped.text), position);
+    const initializer = nearestInitializer(
+      context.initializers.get(unwrapped.text),
+      position,
+      unwrapped,
+      context,
+      unwrapped.text,
+    );
     if (initializer) {
       return isStageExpression(initializer.expression, position, context, seen);
     }
@@ -1491,7 +1668,7 @@ function isSeededSlugExpression(
 function verifySqlFile(
   file: PipelineContractFile,
   contract: PipelineTransitionContract,
-  availablePaths: ReadonlySet<string>,
+  latestSqlDefinitions: ReadonlyMap<string, SqlDefinitionLocation>,
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
   const commentMaskedSource = maskSqlComments(file.source);
@@ -1501,9 +1678,9 @@ function verifySqlFile(
     const owner = contract.sqlOwners.find(
       (candidate) => candidate.functionName === sqlFunction.name,
     );
+    const latestDefinition = latestSqlDefinitions.get(sqlFunction.name);
     const enforceOwnerPredicates = Boolean(
-      owner &&
-      (!availablePaths.has(owner.activeDefinitionPath) || file.path === owner.activeDefinitionPath),
+      owner && latestDefinition?.path === file.path && latestDefinition.start === sqlFunction.start,
     );
     const mutations = [
       ...readSqlMutations(
@@ -1834,7 +2011,7 @@ function findMissingSqlPredicates(
   predicateSource: string,
   requirements: readonly SqlPredicateRequirement[],
 ): string[] {
-  const observed = readSqlPredicates(predicateSource);
+  const observed = readConjunctiveSqlPredicates(predicateSource);
   return requirements
     .filter(
       (requirement) =>
@@ -1846,6 +2023,88 @@ function findMissingSqlPredicates(
         ),
     )
     .map(formatSqlPredicateRequirement);
+}
+
+function readConjunctiveSqlPredicates(source: string): ObservedSqlPredicate[] {
+  if (hasSqlBooleanKeyword(source, "or", true)) {
+    return [];
+  }
+  return splitTopLevelSqlTerms(source, "and").flatMap((term) =>
+    hasSqlBooleanKeyword(term, "or", false) ? [] : readSqlPredicates(term),
+  );
+}
+
+function splitTopLevelSqlTerms(source: string, keyword: "and"): string[] {
+  const positions = sqlBooleanKeywordPositions(source, keyword, true);
+  const terms: string[] = [];
+  let start = 0;
+  for (const position of positions) {
+    terms.push(source.slice(start, position));
+    start = position + keyword.length;
+  }
+  terms.push(source.slice(start));
+  return terms;
+}
+
+function hasSqlBooleanKeyword(source: string, keyword: "or", topLevelOnly: boolean): boolean {
+  return sqlBooleanKeywordPositions(source, keyword, topLevelOnly).length > 0;
+}
+
+function sqlBooleanKeywordPositions(
+  source: string,
+  keyword: "and" | "or",
+  topLevelOnly: boolean,
+): number[] {
+  const positions: number[] = [];
+  let depth = 0;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inSingleQuote) {
+      if (character === "'" && next === "'") {
+        index += 1;
+      } else if (character === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+    if (inDoubleQuote) {
+      if (character === '"' && next === '"') {
+        index += 1;
+      } else if (character === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (character === '"') {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (
+      (!topLevelOnly || depth === 0) &&
+      source.slice(index, index + keyword.length).toLowerCase() === keyword &&
+      !/[a-z_0-9]/i.test(source[index - 1] ?? "") &&
+      !/[a-z_0-9]/i.test(source[index + keyword.length] ?? "")
+    ) {
+      positions.push(index);
+      index += keyword.length - 1;
+    }
+  }
+  return positions;
 }
 
 function readSqlPredicates(source: string): ObservedSqlPredicate[] {

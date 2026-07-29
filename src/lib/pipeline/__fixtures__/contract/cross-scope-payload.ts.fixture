@@ -1,0 +1,8 @@
+function unrelatedPatch() {
+  const patch = { title: "safe-looking field" };
+  return patch;
+}
+
+export async function repinSessionIndirectly(admin: any, patch: Record<string, unknown>) {
+  await admin.from("sessions").update(patch).eq("id", "session-1");
+}

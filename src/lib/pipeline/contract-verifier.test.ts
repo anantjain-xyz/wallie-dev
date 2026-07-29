@@ -158,6 +158,34 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it("protects the session pipeline pin from direct updates", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("direct-pipeline-pin", "src/features/unsafe-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
+  it("does not resolve a parameter from an unrelated function's same-name initializer", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("cross-scope-payload", "src/features/hidden-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("processPipelineJob"),
+      }),
+    ]);
+  });
+
   it("requires every transition-specific expected-state predicate", () => {
     const sessionOwner = PIPELINE_TRANSITION_CONTRACT.ordinaryOwners.find(
       (owner) => owner.id === "pipeline-session-transitions",
@@ -541,6 +569,46 @@ describe("pipeline contract verifier", () => {
       expect.objectContaining({
         code: "pipeline-cas",
         message: expect.stringContaining("phase_status"),
+      }),
+    ]);
+  });
+
+  it("requires SQL CAS predicates to constrain the mutation conjunctively", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("sql-owner-disjunctive-cas", "supabase/migrations/fixture.sql")],
+      fixtureContract({ sqlOwners: [approvalOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        message: expect.stringContaining("phase_status"),
+      }),
+    ]);
+  });
+
+  it("enforces SQL CAS on the effective latest RPC redefinition", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [
+        sqlFixture("sql-owner-latest-safe", "supabase/migrations/20260722000000_approval.sql"),
+        sqlFixture(
+          "sql-owner-latest-unsafe",
+          "supabase/migrations/20260801000000_redefine_approval.sql",
+        ),
+      ],
+      fixtureContract({ sqlOwners: [approvalOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        path: "supabase/migrations/20260801000000_redefine_approval.sql",
       }),
     ]);
   });

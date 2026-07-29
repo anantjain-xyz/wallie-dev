@@ -1,0 +1,6 @@
+export async function repinSessionDirectly(admin: any) {
+  await admin
+    .from("sessions")
+    .update({ pipeline_id: "pipeline-2" })
+    .eq("id", "session-1");
+}

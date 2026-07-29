@@ -1,0 +1,14 @@
+create or replace function public.approve_session_stage()
+returns void
+language plpgsql
+as $$
+begin
+  update public.sessions
+  set phase_status = 'approved'
+  where id = target_session_id
+     or workspace_id = expected_workspace_id
+     or current_artifact_version = expected_version
+     or phase_status = 'awaiting_review'
+     or archived_at is null;
+end;
+$$;
