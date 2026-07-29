@@ -27,6 +27,7 @@ import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sand
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
+import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest } from "./pull-request";
@@ -177,14 +178,26 @@ async function runStage(input: {
   // stage prompt so the cross-cutting discipline applies to every stage.
   const operatingRulesMd = await loadPipelineOperatingRules(admin, stage.pipelineId);
 
-  const prompt = renderStagePrompt(stage, {
-    attemptFeedback,
-    attemptNumber: session.rejection_count + 1,
-    operatingRulesMd,
-    previousStages,
-    sessionPrompt: session.prompt_md,
-    sessionTitle: session.title,
-  });
+  const prompt = renderStagePrompt(
+    {
+      promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
+      slug: trustedPromptValue("stage.slug", stage.slug),
+    },
+    {
+      attemptFeedback:
+        attemptFeedback === null ? null : untrustedPromptValue("attempt.feedback", attemptFeedback),
+      attemptNumber: session.rejection_count + 1,
+      operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
+      previousStages: Object.fromEntries(
+        Object.entries(previousStages).map(([slug, artifact]) => [
+          slug,
+          untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
+        ]),
+      ),
+      sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
+      sessionTitle: untrustedPromptValue("session.title", session.title),
+    },
+  );
 
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
