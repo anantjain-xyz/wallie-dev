@@ -55,9 +55,14 @@ can therefore inspect and stop eligible Wallie-known resources for other
 workspaces. Do not treat workspace-manager authorization on that endpoint as a
 tenant-scoped reaper boundary.
 
-The worker is different: it is an infrastructure principal, uses the admin
-client directly, and operates only on durable queue/configuration rows. Its
-query predicates and database constraints are its scope boundary.
+The worker is different: it is an infrastructure principal and uses the admin
+client directly across pipelines and stages, sessions, jobs, runs, messages,
+artifacts, PR records, sandbox connection and capability state, workspace
+configuration, and integration routing. Reconciliation also reads and decrypts
+workspace secrets such as Linear API keys. Because the service role bypasses
+RLS, explicit workspace and state predicates, transition guards, database
+constraints, and narrowly scoped secret loaders are the worker's authority
+boundaries.
 
 ## Tenant and identity model
 

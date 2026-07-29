@@ -51,15 +51,20 @@ After the provider allocates a resource:
 7. Install Playwright and Chromium support.
 8. Return the handle only after setup succeeds.
 
-If the ownership callback or any later setup step fails, the provider must stop
-the sandbox before propagating the error. This closes the gap where a resource
-exists but no durable run row can identify it.
+On an ordinary ownership-callback or later setup failure, the provider must stop
+the sandbox before propagating the error. A process death after provider
+allocation but before the callback records the ID is different: Wallie has no
+durable identifier for discovery, so the reaper cannot recover that resource.
+It relies on provider TTL or operator cleanup.
 
 ## Connections and revisions
 
 - A workspace may retain multiple provider connections but selects one active
   provider.
-- Each provider connection has an optimistic connection revision.
+- Each provider connection has a generated revision that changes on update and
+  identifies the credential generation that owns runs, checks, and sandboxes.
+  Connection update routes do not submit or compare an expected revision, so it
+  is not an optimistic stale-writer guard.
 - Active-provider settings have their own optimistic revision.
 - Secrets are encrypted in provider-specific database rows and decrypted only
   in server code.
@@ -67,8 +72,12 @@ exists but no durable run row can identify it.
   disconnected, or does not match the requested implementation.
 - Connection mutation is rejected while related jobs, runs, capability checks,
   or device-auth flows are active.
-- Saving rotated credentials first cleans up owned sandboxes from the previous
-  revision.
+- Saving rotated credentials normally cleans up owned sandboxes from the
+  previous revision first. If a stored Daytona custom endpoint no longer passes
+  the current allowlist or URL policy, the cleanup loader returns no usable
+  previous connection; rotation then skips that cleanup and overwrites the
+  credentials and revision. Resources reachable only through the old endpoint
+  can remain without credentials for later Wallie cleanup.
 - The active connection cannot be disconnected before another provider is
   selected.
 
@@ -151,6 +160,11 @@ A provider change is incomplete until it covers:
   duplicated across storage, readiness, UI, auth, and cleanup.
 - Provider discovery and cleanup result types do not distinguish confirmed stop
   from best-effort attempted stop.
+- Sandboxes allocated before their provider ID is recorded cannot be discovered
+  by the reaper and depend on provider TTL or operator cleanup.
+- Policy-rejected stored Daytona endpoints cause rotation to skip cleanup of the
+  previous revision and can strand resources reachable only through the old
+  endpoint.
 - Successful capability checks have no wall-clock freshness policy.
 - Railway worker watch patterns do not include every transitive
   sandbox-connection, sandbox-capability, and teardown owner.

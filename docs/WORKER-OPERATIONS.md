@@ -113,11 +113,15 @@ aborts the sweep so the next interval can continue later.
 
 ### Sandbox reaper
 
-The reaper is independent of stall detection so it can recover resources
-created before a run attachment or left after a terminal run. It gives new
-resources a creation grace period and only attempts to stop provider resources
-that are known to Wallie and are not protected by an active run, job, or recent
-capability check.
+The reaper is independent of stall detection so it can recover resources whose
+IDs were recorded on run or capability-check rows and later lost their active
+owner. It gives new resources a creation grace period and only attempts to stop
+provider resources that are known to Wallie and are not protected by an active
+run, job, or recent capability check.
+
+A process death after provider allocation but before `onSandboxCreated` records
+the ID leaves no Wallie-known row for the reaper to match. Such an unrecorded
+resource relies on provider TTL or operator cleanup.
 
 Timer tasks are fire-and-forget. There is currently no mutex preventing a slow
 sweep from overlapping its next interval or a manager-triggered maintenance
@@ -220,6 +224,8 @@ A healthy deployment should provide:
   before performing the remaining recovery actions.
 - Manager-triggered maintenance invokes the sandbox reaper without a workspace
   filter.
+- The reaper cannot discover a sandbox whose provider ID was never recorded on
+  a run or capability-check row.
 - `WORKER_MAX_CONCURRENT_JOBS` is consumed directly by worker config but is not
   represented in the shared environment schema.
 - Railway watch patterns omit some transitive sandbox lifecycle owners.
