@@ -3,6 +3,8 @@ import eslintConfigPrettier from "eslint-config-prettier/flat";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
+import wallieSupabasePlugin from "./eslint-rules/wallie-supabase.mjs";
+
 const arbitrarySmallTextPattern = /text-\[(?:9|10|11|12)(?:\.\d+)?px\]/;
 
 const wallieTypographyPlugin = {
@@ -42,6 +44,20 @@ const wallieTypographyPlugin = {
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    files: ["**/*.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+      },
+    },
+    plugins: {
+      "wallie-supabase": wallieSupabasePlugin,
+    },
+    rules: {
+      "wallie-supabase/no-unbound-client-methods": "error",
+    },
+  },
   {
     files: ["src/**/*.{ts,tsx}"],
     plugins: {
@@ -89,7 +105,14 @@ const eslintConfig = defineConfig([
     },
   },
   eslintConfigPrettier,
-  globalIgnores([".next/**", "out/**", "build/**", "coverage/**", ".codex/**"]),
+  globalIgnores([
+    ".next/**",
+    "out/**",
+    "build/**",
+    "coverage/**",
+    ".codex/**",
+    "test/eslint-fixtures/**",
+  ]),
 ]);
 
 export default eslintConfig;
