@@ -40,6 +40,8 @@ A user-triggered privileged route must:
 3. Require the role appropriate for the operation.
 4. Only then create or call an admin-backed service.
 5. Scope every user-derived admin query to the already-authorized workspace.
+   The manager maintenance reaper currently violates this rule, as called out
+   below.
 6. Repeat identity, workspace, version, or state predicates inside the final
    transactional RPC when the mutation must be atomic.
 
