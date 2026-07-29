@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSupabaseAdminConfig, resolveSupabasePublicConfig } from "@/lib/supabase/config";
+import { resolveSupabaseAdminConfig } from "@/lib/supabase/admin-config";
+import { resolveSupabasePublicConfig } from "@/lib/supabase/config";
 
 const publicEnv = {
   NEXT_PUBLIC_APP_URL: "http://localhost:3000",

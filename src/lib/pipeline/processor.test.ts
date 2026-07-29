@@ -661,14 +661,62 @@ describe("processPipelineJob (generic stage runner)", () => {
   it("renders the stage prompt, runs the agent, writes the artifact, and flips status", async () => {
     const session = baseSession();
     const job = baseJob();
+    mocked.loadCompletedStageArtifacts.mockResolvedValueOnce({ plan: "Approved plan" });
+    mocked.loadPipelineOperatingRules.mockResolvedValueOnce(
+      "Keep changes scoped to the approved plan.",
+    );
     const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
       session,
       agentConfig: [],
+      latestFeedback: { feedback_text: "Preserve the public API." },
     });
 
     const result = await processPipelineJob({ admin, job });
 
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptTemplateMd: expect.objectContaining({
+          source: "stage.promptTemplate",
+          trust: "trusted",
+          value: productStage.promptTemplateMd,
+        }),
+        slug: expect.objectContaining({
+          source: "stage.slug",
+          trust: "trusted",
+          value: productStage.slug,
+        }),
+      }),
+      expect.objectContaining({
+        attemptFeedback: expect.objectContaining({
+          source: "attempt.feedback",
+          trust: "untrusted",
+          value: "Preserve the public API.",
+        }),
+        operatingRulesMd: expect.objectContaining({
+          source: "pipeline.operatingRules",
+          trust: "trusted",
+          value: "Keep changes scoped to the approved plan.",
+        }),
+        previousStages: {
+          plan: expect.objectContaining({
+            source: "artifact.previousStages.plan",
+            trust: "untrusted",
+            value: "Approved plan",
+          }),
+        },
+        sessionPrompt: expect.objectContaining({
+          source: "session.prompt",
+          trust: "untrusted",
+          value: session.prompt_md,
+        }),
+        sessionTitle: expect.objectContaining({
+          source: "session.title",
+          trust: "untrusted",
+          value: session.title,
+        }),
+      }),
+    );
     expect(mocked.createSessionSandbox).toHaveBeenCalledWith(
       expect.objectContaining({
         connection: {
