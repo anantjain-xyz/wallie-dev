@@ -67,6 +67,7 @@ type SqlMigrationOwner = {
 type SqlTransitionPermission = {
   fields: readonly string[];
   operation: MutationOperation;
+  requiredPriorTransitionIndex?: number;
   requiredPredicates: readonly SqlPredicateRequirement[];
   table: ProtectedTable;
 };
@@ -114,6 +115,22 @@ function sqlTransition(
   return { fields, operation, requiredPredicates, table };
 }
 
+function dependentSqlTransition(
+  table: ProtectedTable,
+  operation: MutationOperation,
+  fields: readonly string[],
+  requiredPriorTransitionIndex: number,
+  requiredPredicates: readonly SqlPredicateRequirement[] = [],
+): SqlTransitionPermission {
+  return {
+    fields,
+    operation,
+    requiredPredicates,
+    requiredPriorTransitionIndex,
+    table,
+  };
+}
+
 function predicate(
   field: string,
   method: PredicateMethod,
@@ -158,6 +175,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       "status",
     ],
     agent_runs: [
+      "agent_job_id",
       "finished_at",
       "last_activity_at",
       "sandbox_connection_revision",
@@ -165,6 +183,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       "sandbox_provider",
       "sandbox_vercel_project_id",
       "sandbox_vercel_team_id",
+      "session_id",
       "started_at",
       "status",
     ],
@@ -277,7 +296,10 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       id: "pipeline-run-transitions",
       path: "src/lib/pipeline/processor.ts",
       transitions: [
-        transition("enqueueSessionJobWithRun", "agent_runs", "insert", []),
+        transition("enqueueSessionJobWithRun", "agent_runs", "insert", [
+          "agent_job_id",
+          "session_id",
+        ]),
         transition(
           "startAgentRun",
           "agent_runs",
@@ -285,7 +307,12 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           ["started_at", "status"],
           predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
-        transition("startAgentRun", "agent_runs", "insert", ["started_at", "status"]),
+        transition("startAgentRun", "agent_runs", "insert", [
+          "agent_job_id",
+          "session_id",
+          "started_at",
+          "status",
+        ]),
         transition(
           "updateRunSandbox",
           "agent_runs",
@@ -372,7 +399,9 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: CANONICAL_RUN_API,
       id: "wallie-run-transitions",
       path: "src/lib/wallie/service.ts",
-      transitions: [transition("createQueuedRun", "agent_runs", "insert", [])],
+      transitions: [
+        transition("createQueuedRun", "agent_runs", "insert", ["agent_job_id", "session_id"]),
+      ],
     },
     {
       canonicalApi: CANONICAL_JOB_API,
@@ -584,16 +613,14 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
             sqlPredicate("archived_at", "is", null),
           ],
         ),
-        sqlTransition(
-          "sessions",
-          "update",
-          ["archived_at"],
-          [sqlPredicate("id", "=", expression("target_session_id"))],
-        ),
-        sqlTransition(
+        dependentSqlTransition("sessions", "update", ["archived_at"], 0, [
+          sqlPredicate("id", "=", expression("target_session_id")),
+        ]),
+        dependentSqlTransition(
           "sessions",
           "update",
           ["current_artifact_version", "current_stage_id", "phase_status", "rejection_count"],
+          0,
           [sqlPredicate("id", "=", expression("target_session_id"))],
         ),
       ],
@@ -658,7 +685,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       transitions: [
         sqlTransition("sessions", "insert", ["current_stage_id", "phase_status", "pipeline_id"]),
         sqlTransition("agent_jobs", "insert", ["dedupe_key", "status"]),
-        sqlTransition("agent_runs", "insert", ["status"]),
+        sqlTransition("agent_runs", "insert", ["agent_job_id", "session_id", "status"]),
       ],
     },
   ],
@@ -1112,15 +1139,27 @@ function walk(node: ts.Node, visit: (node: ts.Node) => void): void {
 }
 
 function readMutation(call: ts.CallExpression, context: SourceContext): Mutation | null {
-  if (!ts.isPropertyAccessExpression(call.expression)) {
+  const operationExpression = call.expression;
+  let mutationTarget: ts.Expression;
+  let operation: MutationOperation | null;
+  if (ts.isPropertyAccessExpression(operationExpression)) {
+    mutationTarget = operationExpression.expression;
+    operation = operationExpression.name.text as MutationOperation;
+  } else if (ts.isElementAccessExpression(operationExpression)) {
+    mutationTarget = operationExpression.expression;
+    operation = readString(
+      operationExpression.argumentExpression,
+      call.getStart(),
+      context,
+    ) as MutationOperation | null;
+  } else {
     return null;
   }
-  const operation = call.expression.name.text as MutationOperation;
-  if (!MUTATION_OPERATIONS.has(operation)) {
+  if (!operation || !MUTATION_OPERATIONS.has(operation)) {
     return null;
   }
 
-  const table = findTable(call.expression.expression, call.getStart(), context);
+  const table = findTable(mutationTarget, call.getStart(), context);
   if (!table) {
     return null;
   }
@@ -1777,7 +1816,7 @@ function verifySqlFile(
         sqlFunction.body,
       ),
       ...readExecutedSqlMutations(sqlFunction.body, sqlFunction.bodyStart),
-    ];
+    ].sort((left, right) => left.position - right.position);
     for (const mutation of mutations) {
       const protectedFields = readProtectedSqlFields(mutation, contract);
       const writesProtectedState =
@@ -1811,6 +1850,19 @@ function verifySqlFile(
         });
       } else if (enforceOwnerPredicates) {
         const missingPredicates = findMissingSqlPredicates(mutation, permission.requiredPredicates);
+        const missingDependency = !hasRequiredSqlTransitionDependency(
+          mutation,
+          mutations,
+          permission,
+          owner!,
+          contract,
+          sqlFunction,
+        );
+        if (missingDependency) {
+          missingPredicates.push(
+            `dominating transition ${permission.requiredPriorTransitionIndex} followed by IF NOT FOUND RETURN`,
+          );
+        }
         if (missingPredicates.length > 0) {
           diagnostics.push({
             code: "pipeline-cas",
@@ -2027,6 +2079,66 @@ function splitTopLevelSqlList(source: string): string[] {
   return parts;
 }
 
+function findTopLevelSqlKeyword(source: string, keyword: string): number {
+  return findTopLevelSqlKeywords(source, keyword)[0] ?? -1;
+}
+
+function findTopLevelSqlKeywords(source: string, keyword: string): number[] {
+  const positions: number[] = [];
+  let caseDepth = 0;
+  let depth = 0;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inSingleQuote) {
+      if (character === "'" && next === "'") {
+        index += 1;
+      } else if (character === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+    if (inDoubleQuote) {
+      if (character === '"' && next === '"') {
+        index += 1;
+      } else if (character === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (character === '"') {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    const word = /^[a-z_][\w]*/i.exec(source.slice(index))?.[0];
+    if (!word) continue;
+    const normalizedWord = word.toLowerCase();
+    if (depth === 0 && normalizedWord === "case") {
+      caseDepth += 1;
+    } else if (depth === 0 && normalizedWord === "end" && caseDepth > 0) {
+      caseDepth -= 1;
+    } else if (depth === 0 && caseDepth === 0 && normalizedWord === keyword) {
+      positions.push(index);
+    }
+    index += word.length - 1;
+  }
+  return positions;
+}
+
 type SqlMutation = {
   fields: string[];
   fieldsKnown: boolean;
@@ -2045,11 +2157,10 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
     const maskedBody = match[3] ?? "";
     const bodyStart = (match.index ?? 0) + match[0].length - maskedBody.length;
     const originalBody = originalSource.slice(bodyStart, bodyStart + maskedBody.length);
-    const whereMatch = /\bwhere\b/i.exec(maskedBody);
-    const setClause = whereMatch ? originalBody.slice(0, whereMatch.index) : originalBody;
-    const predicateSource = whereMatch
-      ? originalBody.slice(whereMatch.index + whereMatch[0].length)
-      : "";
+    const wherePosition = findTopLevelSqlKeyword(maskedBody, "where");
+    const setClause = wherePosition >= 0 ? originalBody.slice(0, wherePosition) : originalBody;
+    const predicateSource =
+      wherePosition >= 0 ? originalBody.slice(wherePosition + "where".length) : "";
     mutations.push({
       fields: readSqlAssignedFields(setClause),
       fieldsKnown: true,
@@ -2093,16 +2204,15 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
         updateBodyStart,
         statementEnd < 0 ? originalSource.length : statementEnd,
       );
-      const whereMatch = /\bwhere\b/i.exec(maskedBody);
+      const wherePosition = findTopLevelSqlKeyword(maskedBody, "where");
       mutations.push({
         fields: readSqlAssignedFields(
-          whereMatch ? originalBody.slice(0, whereMatch.index) : originalBody,
+          wherePosition >= 0 ? originalBody.slice(0, wherePosition) : originalBody,
         ),
         fieldsKnown: true,
         operation: "update",
-        predicateSource: whereMatch
-          ? originalBody.slice(whereMatch.index + whereMatch[0].length)
-          : "",
+        predicateSource:
+          wherePosition >= 0 ? originalBody.slice(wherePosition + "where".length) : "",
         position: offset + position + conflictUpdate.index,
         table,
         targetAlias: null,
@@ -2122,7 +2232,113 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
       targetAlias: null,
     });
   }
+  mutations.push(...readSqlMergeMutations(source, offset, originalSource));
   return mutations;
+}
+
+function readSqlMergeMutations(
+  source: string,
+  offset: number,
+  originalSource: string,
+): SqlMutation[] {
+  const mutations: SqlMutation[] = [];
+  const mergePattern =
+    /\bmerge\s+into\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s+(?:as\s+)?([a-z_][\w]*))?\s+using\b/gi;
+  for (const match of source.matchAll(mergePattern)) {
+    const statementStart = match.index ?? 0;
+    const statementEnd = source.indexOf(";", statementStart);
+    const end = statementEnd < 0 ? source.length : statementEnd;
+    const maskedStatement = source.slice(statementStart, end);
+    const originalStatement = originalSource.slice(statementStart, end);
+    const whenPositions = findTopLevelSqlKeywords(maskedStatement, "when");
+    if (whenPositions.length === 0) continue;
+    const onPosition = findTopLevelSqlKeyword(maskedStatement, "on");
+    const onPredicate =
+      onPosition >= 0 ? originalStatement.slice(onPosition + "on".length, whenPositions[0]) : "";
+    const table = match[1]!.toLowerCase() as ProtectedTable;
+    const targetAlias = match[2]?.toLowerCase() ?? null;
+
+    for (const [index, whenPosition] of whenPositions.entries()) {
+      const actionEnd = whenPositions[index + 1] ?? maskedStatement.length;
+      const maskedActionClause = maskedStatement.slice(whenPosition, actionEnd);
+      const originalActionClause = originalStatement.slice(whenPosition, actionEnd);
+      const thenPosition = findTopLevelSqlKeyword(maskedActionClause, "then");
+      if (thenPosition < 0) continue;
+      const whenPredicate = originalActionClause
+        .slice(0, thenPosition)
+        .replace(/^\s*when\s+(?:not\s+)?matched(?:\s+by\s+(?:source|target))?/i, "")
+        .replace(/^\s*and\b/i, "")
+        .trim();
+      const actionStart = thenPosition + "then".length;
+      const maskedAction = maskedActionClause.slice(actionStart).trimStart();
+      const originalActionOffset =
+        actionStart + (maskedActionClause.slice(actionStart).length - maskedAction.length);
+      const originalAction = originalActionClause.slice(originalActionOffset);
+      const predicatePrefix = joinSqlPredicates(onPredicate, whenPredicate);
+      const position = offset + statementStart + whenPosition + originalActionOffset;
+
+      const updateMatch = /^update\s+set\b/i.exec(maskedAction);
+      if (updateMatch) {
+        const maskedBody = maskedAction.slice(updateMatch[0].length);
+        const originalBody = originalAction.slice(updateMatch[0].length);
+        const wherePosition = findTopLevelSqlKeyword(maskedBody, "where");
+        mutations.push({
+          fields: readSqlAssignedFields(
+            wherePosition >= 0 ? originalBody.slice(0, wherePosition) : originalBody,
+          ),
+          fieldsKnown: true,
+          operation: "update",
+          predicateSource: joinSqlPredicates(
+            predicatePrefix,
+            wherePosition >= 0 ? originalBody.slice(wherePosition + "where".length) : "",
+          ),
+          position,
+          table,
+          targetAlias,
+        });
+        continue;
+      }
+
+      if (/^delete\b/i.test(maskedAction)) {
+        mutations.push({
+          fields: [],
+          fieldsKnown: true,
+          operation: "delete",
+          predicateSource: predicatePrefix,
+          position,
+          table,
+          targetAlias,
+        });
+        continue;
+      }
+
+      const insertMatch = /^insert\b(?:\s*\(([\s\S]*?)\))?/i.exec(maskedAction);
+      if (insertMatch) {
+        const fieldList = insertMatch[1];
+        mutations.push({
+          fields: (fieldList ?? "")
+            .split(",")
+            .map((field) => field.trim().replaceAll('"', "").toLowerCase())
+            .filter(Boolean),
+          fieldsKnown: fieldList !== undefined,
+          operation: "insert",
+          predicateSource: predicatePrefix,
+          position,
+          table,
+          targetAlias,
+        });
+      }
+    }
+  }
+  return mutations;
+}
+
+function joinSqlPredicates(...sources: readonly string[]): string {
+  return sources
+    .map((source) => source.trim())
+    .filter(Boolean)
+    .map((source) => `(${source})`)
+    .join(" and ");
 }
 
 function readExecutedSqlMutations(source: string, offset: number): SqlMutation[] {
@@ -2218,8 +2434,8 @@ function stripSqlExecuteClauses(source: string): string {
 function readSqlDeletePredicateSource(source: string, position: number): string {
   const statementEnd = source.indexOf(";", position);
   const statement = source.slice(position, statementEnd < 0 ? source.length : statementEnd);
-  const whereMatch = /\bwhere\b/i.exec(statement);
-  return whereMatch ? statement.slice(whereMatch.index + whereMatch[0].length) : "";
+  const wherePosition = findTopLevelSqlKeyword(statement, "where");
+  return wherePosition >= 0 ? statement.slice(wherePosition + "where".length) : "";
 }
 
 function readSqlExecuteStatements(source: string): Array<{ expression: string; position: number }> {
@@ -2295,14 +2511,20 @@ function readProtectedSqlFields(
 }
 
 function readSqlAssignedFields(setClause: string): string[] {
-  const fields = new Set(
-    [...setClause.matchAll(/\b([a-z_][\w]*)\s*=/gi)].map((match) => match[1]!.toLowerCase()),
-  );
-  for (const match of setClause.matchAll(/(?:^|,)\s*\(([^)]+)\)\s*=/gi)) {
-    for (const field of (match[1] ?? "").split(",")) {
-      const normalized = field.trim().replaceAll('"', "").toLowerCase();
-      if (/^[a-z_][\w]*$/.test(normalized)) {
-        fields.add(normalized);
+  const fields = new Set<string>();
+  for (const assignment of splitTopLevelSqlList(setClause)) {
+    const scalarMatch = /^\s*"?([a-z_][\w]*)"?\s*=/i.exec(assignment);
+    if (scalarMatch) {
+      fields.add(scalarMatch[1]!.toLowerCase());
+      continue;
+    }
+    const tupleMatch = /^\s*\(([^)]+)\)\s*=/i.exec(assignment);
+    if (tupleMatch) {
+      for (const field of (tupleMatch[1] ?? "").split(",")) {
+        const normalized = field.trim().replaceAll('"', "").toLowerCase();
+        if (/^[a-z_][\w]*$/.test(normalized)) {
+          fields.add(normalized);
+        }
       }
     }
   }
@@ -2334,6 +2556,67 @@ function findMissingSqlPredicates(
         ),
     )
     .map(formatSqlPredicateRequirement);
+}
+
+function hasRequiredSqlTransitionDependency(
+  mutation: SqlMutation,
+  mutations: readonly SqlMutation[],
+  permission: SqlTransitionPermission,
+  owner: SqlTransitionOwner,
+  contract: PipelineTransitionContract,
+  sqlFunction: SqlFunctionSpan,
+): boolean {
+  if (permission.requiredPriorTransitionIndex === undefined) {
+    return true;
+  }
+  const priorPermission = owner.transitions[permission.requiredPriorTransitionIndex];
+  if (!priorPermission) {
+    return false;
+  }
+  const priorMutation = mutations
+    .filter((candidate) => {
+      if (
+        candidate.position >= mutation.position ||
+        candidate.table !== priorPermission.table ||
+        candidate.operation !== priorPermission.operation
+      ) {
+        return false;
+      }
+      const fields = readProtectedSqlFields(candidate, contract);
+      return (
+        fields !== null &&
+        sameFields(fields, priorPermission.fields) &&
+        findMissingSqlPredicates(candidate, priorPermission.requiredPredicates).length === 0
+      );
+    })
+    .at(-1);
+  if (!priorMutation) {
+    return false;
+  }
+
+  const priorPosition = priorMutation.position - sqlFunction.bodyStart;
+  const mutationPosition = mutation.position - sqlFunction.bodyStart;
+  if (
+    priorPosition < 0 ||
+    mutationPosition <= priorPosition ||
+    readPlpgsqlIfDepth(sqlFunction.body, priorPosition) !== 0
+  ) {
+    return false;
+  }
+  const interveningSource = maskSqlStringLiterals(
+    maskSqlComments(sqlFunction.body.slice(priorPosition, mutationPosition)),
+  );
+  return /\bif\s+not\s+found\s+then\s+return\s*;\s*end\s+if\s*;/i.test(interveningSource);
+}
+
+function readPlpgsqlIfDepth(source: string, position: number): number {
+  const prefix = maskSqlStringLiterals(maskSqlComments(source.slice(0, position)));
+  let depth = 0;
+  for (const match of prefix.matchAll(/\bend\s+if\b|\bif\b/gi)) {
+    depth += /^end/i.test(match[0]) ? -1 : 1;
+    depth = Math.max(0, depth);
+  }
+  return depth;
 }
 
 function readConjunctiveSqlPredicates(source: string): ObservedSqlPredicate[] {

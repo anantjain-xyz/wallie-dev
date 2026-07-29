@@ -1,0 +1,30 @@
+create or replace function public.approve_session_stage(
+  target_session_id uuid,
+  expected_workspace_id uuid,
+  expected_version integer,
+  approver_member_id uuid default null
+)
+returns void
+language plpgsql
+as $$
+begin
+  update public.sessions
+  set current_stage_id = gen_random_uuid(),
+      phase_status = 'agent_generating',
+      current_artifact_version = 0,
+      rejection_count = 0
+  where id = target_session_id;
+
+  update public.sessions
+  set phase_status = 'approved'
+  where id = target_session_id
+    and workspace_id = expected_workspace_id
+    and current_artifact_version = expected_version
+    and phase_status = 'awaiting_review'
+    and archived_at is null;
+
+  if not found then
+    return;
+  end if;
+end;
+$$;

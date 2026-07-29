@@ -1,0 +1,5 @@
+export async function updateSessionThroughBracketAccess(admin: any) {
+  await admin
+    .from("sessions")["update"]({ phase_status: "approved" })
+    .eq("id", "session-1");
+}

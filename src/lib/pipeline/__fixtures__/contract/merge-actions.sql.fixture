@@ -1,0 +1,22 @@
+create or replace function public.bypass_transition()
+returns void
+language plpgsql
+as $$
+begin
+  merge into public.sessions as target
+  using (
+    select gen_random_uuid() as id
+  ) as source
+  on case
+    when target.id = source.id then true
+    else false
+  end
+  when matched and target.phase_status = 'awaiting_review' then
+    update set phase_status = 'approved'
+  when matched and target.phase_status = 'rejected' then
+    delete
+  when not matched then
+    insert (phase_status, current_stage_id)
+    values ('agent_generating', gen_random_uuid());
+end;
+$$;

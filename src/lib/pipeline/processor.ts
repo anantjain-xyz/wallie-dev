@@ -866,11 +866,12 @@ export async function handleRejection(input: {
   let resultPhaseStatus: SessionRow["phase_status"] = "rejected";
   if (!rejectedSession) {
     // Enqueue happens before this CAS so the worker may legitimately claim the
-    // rerun first and either move the same stage/version to `agent_generating`
-    // or finish it at the next artifact version before this reload. Verify every
-    // rejection-owned pointer before treating either ordering as success; an
-    // approval advances the stage (or leaves the session approved), while
-    // archive/cancellation changes archived_at or the phase.
+    // rerun first and either move the same stage/version to `agent_generating`,
+    // fail it back to `rejected`, or finish it at the next artifact version
+    // before this reload. Verify every rejection-owned pointer before treating
+    // those orderings as success; an approval advances the stage (or leaves the
+    // session approved), while archive/cancellation changes archived_at or the
+    // phase.
     const workerResult = await loadSessionById(admin, input.sessionId);
     const workerClaimed =
       workerResult?.current_artifact_version === input.version &&
@@ -878,13 +879,16 @@ export async function handleRejection(input: {
     const workerCompleted =
       workerResult?.current_artifact_version === input.version + 1 &&
       workerResult.phase_status === "awaiting_review";
+    const workerFailed =
+      workerResult?.current_artifact_version === input.version &&
+      workerResult.phase_status === "rejected";
     if (
       !workerResult ||
       workerResult.workspace_id !== input.expectedWorkspaceId ||
       workerResult.archived_at ||
       workerResult.current_stage_id !== session.current_stage_id ||
       workerResult.rejection_count !== newRejectionCount ||
-      (!workerClaimed && !workerCompleted)
+      (!workerClaimed && !workerCompleted && !workerFailed)
     ) {
       return {
         error: "Rejection raced with another update — please refresh and try again.",

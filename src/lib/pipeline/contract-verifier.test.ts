@@ -131,6 +131,20 @@ describe("pipeline contract verifier", () => {
     expect(diagnostics.map((item) => item.code)).toEqual(["pipeline-owner"]);
   });
 
+  it("finds a write invoked through constant element access", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("element-access-mutation", "src/features/hidden-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
   it("treats an unresolved update payload as a protected write", () => {
     const diagnostics = verifyPipelineContract(
       [fixture("unresolved-payload", "src/features/hidden-transition.ts")],
@@ -190,6 +204,20 @@ describe("pipeline contract verifier", () => {
   it("protects persisted sandbox routing metadata from direct updates", () => {
     const diagnostics = verifyPipelineContract(
       [fixture("direct-sandbox-routing", "src/features/unsafe-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("processor run lifecycle helpers"),
+      }),
+    ]);
+  });
+
+  it("protects run ownership links from direct updates", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("direct-run-ownership", "src/features/unsafe-transition.ts")],
       fixtureContract(),
     );
 
@@ -599,6 +627,33 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it("rejects every protected lifecycle action in a SQL MERGE", () => {
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("merge-actions", "supabase/migrations/fixture.sql")],
+      fixtureContract({
+        sqlOwners: [
+          {
+            canonicalApi: "Use a canonical transition RPC.",
+            functionName: "public.bypass_transition",
+            id: "fixture-merge-owner",
+            signature: "public.bypass_transition()",
+            transitions: [],
+          },
+        ],
+      }),
+    );
+
+    expect(diagnostics).toHaveLength(3);
+    expect(diagnostics.map((item) => item.code)).toEqual([
+      "pipeline-owner",
+      "pipeline-owner",
+      "pipeline-owner",
+    ]);
+    expect(diagnostics.map((item) => item.message).join("\n")).toContain("update");
+    expect(diagnostics.map((item) => item.message).join("\n")).toContain("delete");
+    expect(diagnostics.map((item) => item.message).join("\n")).toContain("insert");
+  });
+
   it("rejects a transactional SQL owner missing its exact expected-state predicates", () => {
     const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
       (owner) => owner.id === "stage-approval-rpc",
@@ -639,6 +694,23 @@ describe("pipeline contract verifier", () => {
     )!;
     const diagnostics = verifyPipelineContract(
       [sqlFixture("sql-owner-foreign-qualifier", "supabase/migrations/fixture.sql")],
+      fixtureContract({ sqlOwners: [approvalOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        message: expect.stringContaining("phase_status"),
+      }),
+    ]);
+  });
+
+  it("does not credit predicates from a SET scalar subquery as the UPDATE outer CAS", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("sql-owner-subquery-where", "supabase/migrations/fixture.sql")],
       fixtureContract({ sqlOwners: [approvalOwner] }),
     );
 
@@ -715,6 +787,26 @@ describe("pipeline contract verifier", () => {
       }),
     ]);
   });
+
+  it.each(["sql-owner-dependent-before-claim", "sql-owner-dependent-without-gate"])(
+    "requires a guarded approval claim to dominate dependent writes: %s",
+    (name) => {
+      const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+        (owner) => owner.id === "stage-approval-rpc",
+      )!;
+      const diagnostics = verifyPipelineContract(
+        [sqlFixture(name, "supabase/migrations/fixture.sql")],
+        fixtureContract({ sqlOwners: [approvalOwner] }),
+      );
+
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          code: "pipeline-cas",
+          message: expect.stringContaining("dominating transition"),
+        }),
+      ]);
+    },
+  );
 
   it("accepts executable SQL when its transactional RPC owns the exact mutation", () => {
     const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(

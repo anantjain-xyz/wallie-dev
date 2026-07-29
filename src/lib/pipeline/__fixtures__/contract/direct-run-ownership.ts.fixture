@@ -1,0 +1,9 @@
+export async function detachRunDirectly(admin: any) {
+  await admin
+    .from("agent_runs")
+    .update({
+      agent_job_id: "job-2",
+      session_id: "session-2",
+    })
+    .eq("id", "run-1");
+}
