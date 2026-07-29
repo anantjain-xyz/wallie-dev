@@ -1,0 +1,4 @@
+export async function bypassTransitionImports() {
+  const specifier = "./transitions";
+  return import(specifier);
+}

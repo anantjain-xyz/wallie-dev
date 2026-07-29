@@ -137,7 +137,7 @@ function walkFiles(root: string, extensions: ReadonlySet<string>): string[] {
 
 export function loadPipelineTransitionFiles(projectRoot = process.cwd()): PipelineTransitionFile[] {
   return [
-    ...walkFiles(resolve(projectRoot, "src"), new Set([".ts", ".tsx"])),
+    ...walkFiles(resolve(projectRoot, "src"), new Set([".cts", ".mts", ".ts", ".tsx"])),
     ...walkFiles(resolve(projectRoot, "supabase/migrations"), new Set([".sql"])),
   ].map((path) => ({
     path: normalizePath(relative(projectRoot, path)),
@@ -169,22 +169,28 @@ function propertyReceiver(expression: ts.Expression): ts.Expression | null {
 }
 
 function enclosingFunctionName(node: ts.Node): string | null {
+  let outermostFunction: ts.Node | null = null;
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
-    if (ts.isFunctionDeclaration(current) && current.name) return current.name.text;
-    if (
-      (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) &&
-      ts.isVariableDeclaration(current.parent) &&
-      ts.isIdentifier(current.parent.name)
-    ) {
-      return current.parent.name.text;
-    }
-    if (
-      (ts.isMethodDeclaration(current) || ts.isMethodSignature(current)) &&
-      current.name &&
-      ts.isIdentifier(current.name)
-    ) {
-      return current.name.text;
-    }
+    if (ts.isFunctionLike(current)) outermostFunction = current;
+  }
+  if (
+    outermostFunction &&
+    ts.isFunctionDeclaration(outermostFunction) &&
+    outermostFunction.name &&
+    ts.isSourceFile(outermostFunction.parent)
+  ) {
+    return outermostFunction.name.text;
+  }
+  if (
+    outermostFunction &&
+    (ts.isArrowFunction(outermostFunction) || ts.isFunctionExpression(outermostFunction)) &&
+    ts.isVariableDeclaration(outermostFunction.parent) &&
+    ts.isIdentifier(outermostFunction.parent.name) &&
+    ts.isVariableDeclarationList(outermostFunction.parent.parent) &&
+    ts.isVariableStatement(outermostFunction.parent.parent.parent) &&
+    ts.isSourceFile(outermostFunction.parent.parent.parent.parent)
+  ) {
+    return outermostFunction.parent.name.text;
   }
   return null;
 }
@@ -575,20 +581,22 @@ export function verifyPipelineTransitions({
         const method = propertyName(node.expression);
         const receiver = propertyReceiver(node.expression);
 
-        if (
-          node.arguments[0] &&
-          ts.isStringLiteralLike(node.arguments[0]) &&
-          isTransitionModuleSpecifier(node.arguments[0].text, config.transitionModule) &&
-          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-            (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-        ) {
-          diagnostics.push({
-            code: "unauthorized-transition-import",
-            line: lineOf(sourceFile, node),
-            message:
-              "Pipeline transition owners must use an exact static named import so the caller allowlist remains enforceable.",
-            path: file.path,
-          });
+        const isDynamicModuleLoad =
+          node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require");
+        if (node.arguments[0] && isDynamicModuleLoad) {
+          if (
+            !ts.isStringLiteralLike(node.arguments[0]) ||
+            isTransitionModuleSpecifier(node.arguments[0].text, config.transitionModule)
+          ) {
+            diagnostics.push({
+              code: "unauthorized-transition-import",
+              line: lineOf(sourceFile, node),
+              message:
+                "Computed module loads and dynamic transition imports are fail-closed; pipeline callers must use an exact static named import.",
+              path: file.path,
+            });
+          }
         }
 
         if (method === "from" && receiver) {

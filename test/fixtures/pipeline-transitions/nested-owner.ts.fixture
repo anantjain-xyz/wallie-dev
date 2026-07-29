@@ -1,0 +1,10 @@
+export function unrelatedBoundary(admin: any) {
+  function cancelSessionAgentJobs() {
+    return admin
+      .from("agent_jobs")
+      .update({ status: "canceled" })
+      .eq("session_id", "session-1");
+  }
+
+  return cancelSessionAgentJobs();
+}

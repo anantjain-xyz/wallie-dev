@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -55,6 +56,25 @@ describe("pipeline transition boundary verifier", () => {
       }),
     ).toEqual([]);
   }, 15_000);
+
+  it("discovers production .mts and .cts modules", () => {
+    const projectRoot = mkdtempSync(resolve(tmpdir(), "wallie-pipeline-transitions-"));
+    try {
+      const sourceRoot = resolve(projectRoot, "src");
+      mkdirSync(sourceRoot, { recursive: true });
+      mkdirSync(resolve(projectRoot, "supabase/migrations"), { recursive: true });
+      writeFileSync(resolve(sourceRoot, "first.mts"), "export const first = true;\n");
+      writeFileSync(resolve(sourceRoot, "second.cts"), "export const second = true;\n");
+
+      expect(
+        loadPipelineTransitionFiles(projectRoot)
+          .map((file) => file.path)
+          .sort(),
+      ).toEqual(["src/first.mts", "src/second.cts"]);
+    } finally {
+      rmSync(projectRoot, { force: true, recursive: true });
+    }
+  });
 
   it("accepts a named cancellation owner and legitimate reaper read path", () => {
     const config = fixtureConfig({
@@ -238,6 +258,46 @@ describe("pipeline transition boundary verifier", () => {
     expect(
       diagnostics.every((diagnostic) => diagnostic.message.includes("cannot be re-exported")),
     ).toBe(true);
+  });
+
+  it("rejects computed dynamic module imports fail-closed", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("computed-import.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "computed-import.ts",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("fail-closed");
+  });
+
+  it("does not grant ownership to a same-named nested declaration", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig({
+        mutationOwners: [
+          {
+            callers: ["nested-owner-caller.ts"],
+            canonicalApi: "Use cancelSessionAgentJobs().",
+            functionName: "cancelSessionAgentJobs",
+            operation: "update",
+            path: "nested-owner.ts",
+            table: "agent_jobs",
+          },
+        ],
+      }),
+      files: [fixture("nested-owner.ts")],
+    });
+
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "pipeline-owner",
+        path: "nested-owner.ts",
+      }),
+    );
   });
 
   it("rejects seeded-stage aliases in generic production code", () => {
