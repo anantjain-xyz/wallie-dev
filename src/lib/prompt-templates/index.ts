@@ -1,4 +1,8 @@
-import type { PipelineStage } from "@/features/sessions/types";
+import {
+  verifyPromptBoundary,
+  type TrustedPromptValue,
+  type UntrustedPromptValue,
+} from "@/lib/pipeline/prompt-safety";
 
 import { renderTemplate, type TemplateVariables } from "./render";
 
@@ -21,57 +25,69 @@ export { renderTemplate, type TemplateVariables } from "./render";
  * the stage template before rendering, so they can reference these variables too.
  */
 export function buildStageTemplateVariables(input: {
-  sessionTitle: string;
-  sessionPrompt: string;
-  stageSlug: string;
+  sessionTitle: UntrustedPromptValue;
+  sessionPrompt: UntrustedPromptValue;
+  stageSlug: TrustedPromptValue;
   attemptNumber: number;
-  attemptFeedback: string | null;
-  repoName?: string;
-  repoFullName?: string;
-  repoDefaultBranch?: string;
-  previousStages?: Record<string, string>;
+  attemptFeedback: UntrustedPromptValue | null;
+  repoName?: UntrustedPromptValue;
+  repoFullName?: UntrustedPromptValue;
+  repoDefaultBranch?: UntrustedPromptValue;
+  previousStages?: Record<string, UntrustedPromptValue>;
 }): TemplateVariables {
   return {
     session: {
-      title: input.sessionTitle,
-      prompt: input.sessionPrompt,
-      stageSlug: input.stageSlug,
+      title: verifyPromptBoundary(input.sessionTitle),
+      prompt: verifyPromptBoundary(input.sessionPrompt),
+      stageSlug: verifyPromptBoundary(input.stageSlug),
     },
     attempt: {
       number: input.attemptNumber,
-      feedback: input.attemptFeedback ?? "",
+      feedback: input.attemptFeedback ? verifyPromptBoundary(input.attemptFeedback) : "",
     },
     repo: {
-      name: input.repoName ?? "",
-      fullName: input.repoFullName ?? "",
-      defaultBranch: input.repoDefaultBranch ?? "main",
+      name: input.repoName ? verifyPromptBoundary(input.repoName) : "",
+      fullName: input.repoFullName ? verifyPromptBoundary(input.repoFullName) : "",
+      defaultBranch: input.repoDefaultBranch
+        ? verifyPromptBoundary(input.repoDefaultBranch)
+        : "main",
     },
     artifact: {
-      previousStages: input.previousStages ?? {},
+      previousStages: Object.fromEntries(
+        Object.entries(input.previousStages ?? {}).map(([slug, value]) => [
+          slug,
+          verifyPromptBoundary(value),
+        ]),
+      ),
     },
   };
 }
 
 export function renderStagePrompt(
-  stage: Pick<PipelineStage, "promptTemplateMd" | "slug">,
+  stage: {
+    promptTemplateMd: TrustedPromptValue;
+    slug: TrustedPromptValue;
+  },
   input: {
-    sessionTitle: string;
-    sessionPrompt: string;
+    sessionTitle: UntrustedPromptValue;
+    sessionPrompt: UntrustedPromptValue;
     attemptNumber: number;
-    attemptFeedback: string | null;
-    repoName?: string;
-    repoFullName?: string;
-    repoDefaultBranch?: string;
-    previousStages?: Record<string, string>;
+    attemptFeedback: UntrustedPromptValue | null;
+    repoName?: UntrustedPromptValue;
+    repoFullName?: UntrustedPromptValue;
+    repoDefaultBranch?: UntrustedPromptValue;
+    previousStages?: Record<string, UntrustedPromptValue>;
     // Workspace-editable operating rules (pipelines.operating_rules_md),
     // prepended to every stage prompt. Empty/whitespace-only → no preamble.
-    operatingRulesMd?: string;
+    operatingRulesMd?: TrustedPromptValue;
   },
 ): string {
   const variables = buildStageTemplateVariables({ ...input, stageSlug: stage.slug });
-  const operatingRules = input.operatingRulesMd?.trim() ? input.operatingRulesMd.trim() : "";
-  const source = operatingRules
-    ? `${operatingRules}\n\n${stage.promptTemplateMd}`
-    : stage.promptTemplateMd;
+  const operatingRulesValue = input.operatingRulesMd
+    ? verifyPromptBoundary(input.operatingRulesMd)
+    : "";
+  const operatingRules = operatingRulesValue.trim();
+  const stageTemplate = verifyPromptBoundary(stage.promptTemplateMd);
+  const source = operatingRules ? `${operatingRules}\n\n${stageTemplate}` : stageTemplate;
   return renderTemplate(source, variables);
 }
