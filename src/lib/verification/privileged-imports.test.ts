@@ -90,6 +90,25 @@ describe("privileged import boundary verifier", () => {
     expect(verifyFixture("type-only")).toEqual([]);
   });
 
+  it("does not accept an erased server-only import as a privileged boundary", () => {
+    const diagnostics = verifyFixture("type-only-boundary");
+
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "missing-server-only-boundary",
+          from: "cases/type-only-boundary/admin.ts",
+        }),
+        expect.objectContaining({
+          code: "unapproved-owner",
+          from: "cases/type-only-boundary/shared.ts",
+          to: "cases/type-only-boundary/admin.ts",
+        }),
+      ]),
+    );
+  });
+
   it("rejects a mixed type-and-value import from a client module", () => {
     const diagnostics = verifyFixture("mixed-type-value");
 
@@ -97,6 +116,19 @@ describe("privileged import boundary verifier", () => {
       "unapproved-owner",
       "client-reachability",
     ]);
+  });
+
+  it("inspects dynamic imports that include import options", () => {
+    const diagnostics = verifyFixture("dynamic-import-options");
+
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      "unapproved-owner",
+      "client-reachability",
+    ]);
+    expect(diagnostics[0]).toMatchObject({
+      from: "cases/dynamic-import-options/client.ts",
+      to: "cases/dynamic-import-options/admin.ts",
+    });
   });
 
   it("rejects direct service-role imports without an approved owner boundary", () => {
@@ -135,6 +167,20 @@ describe("privileged import boundary verifier", () => {
           owner: "security@example.com",
           reason: "Temporary migration seam with a tracked removal date.",
           to: "cases/invalid-owner/admin.ts",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("matches client exceptions to the forbidden edge reported by the diagnostic", () => {
+    expect(
+      verifyFixture("indirect-alias", [
+        {
+          code: "client-reachability",
+          from: "cases/indirect-alias/bridge.ts",
+          owner: "security@example.com",
+          reason: "Temporary browser path with a tracked removal date.",
+          to: "cases/indirect-alias/admin.ts",
         },
       ]),
     ).toEqual([]);

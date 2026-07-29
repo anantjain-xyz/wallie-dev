@@ -137,6 +137,13 @@ function importDeclarationIsTypeOnly(node: ts.ImportDeclaration) {
   );
 }
 
+function exportDeclarationIsTypeOnly(node: ts.ExportDeclaration) {
+  if (node.isTypeOnly) return true;
+  const clause = node.exportClause;
+  if (!clause || !ts.isNamedExports(clause)) return false;
+  return clause.elements.length > 0 && clause.elements.every((element) => element.isTypeOnly);
+}
+
 function resolveImport(
   specifier: string,
   containingFile: string,
@@ -156,7 +163,7 @@ function collectModule(
   let importsServerOnly = false;
 
   function addEdge(specifier: string, node: ts.Node, isTypeOnly: boolean) {
-    if (specifier === "server-only") importsServerOnly = true;
+    if (specifier === "server-only" && !isTypeOnly) importsServerOnly = true;
     const resolvedPath = resolveImport(specifier, sourceFile.fileName, compilerOptions);
     if (!resolvedPath) return;
     const targetPath = sourcePathByAbsolutePath.get(resolvedPath);
@@ -181,7 +188,7 @@ function collectModule(
       node.moduleSpecifier &&
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
-      addEdge(node.moduleSpecifier.text, node.moduleSpecifier, node.isTypeOnly);
+      addEdge(node.moduleSpecifier.text, node.moduleSpecifier, exportDeclarationIsTypeOnly(node));
       return;
     }
     if (
@@ -207,14 +214,18 @@ function collectModule(
     }
     if (
       ts.isCallExpression(node) &&
-      node.arguments.length === 1 &&
+      node.arguments.length > 0 &&
       ts.isStringLiteralLike(node.arguments[0])
     ) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         addEdge(node.arguments[0].text, node.arguments[0], false);
         return;
       }
-      if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+      if (
+        node.arguments.length === 1 &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "require"
+      ) {
         addEdge(node.arguments[0].text, node.arguments[0], false);
         return;
       }
@@ -397,9 +408,8 @@ export function verifyPrivilegedImports({
   const consumedExceptions = new Set<number>();
 
   function consumeException(code: PrivilegedImportException["code"], from: string, to: string) {
-    const index = config.exceptions.findIndex(
-      (exception, candidateIndex) =>
-        !consumedExceptions.has(candidateIndex) && exceptionMatches(exception, code, from, to),
+    const index = config.exceptions.findIndex((exception) =>
+      exceptionMatches(exception, code, from, to),
     );
     if (index === -1) return false;
     consumedExceptions.add(index);
@@ -470,7 +480,7 @@ export function verifyPrivilegedImports({
         if (privilegedModule) {
           if (reportedTargets.has(edge.to)) continue;
           reportedTargets.add(edge.to);
-          if (consumeException("client-reachability", browserRoot, edge.to)) continue;
+          if (consumeException("client-reachability", edge.from, edge.to)) continue;
           const approvedOwners = approvedOwnerDescriptions(privilegedModule, ownerRuleById);
           diagnostics.push({
             approvedOwners,
