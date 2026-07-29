@@ -9,6 +9,13 @@ This document assigns semantic ownership and dependency direction. For the
 exact session and job transitions, see
 [Pipeline and worker lifecycle](PIPELINE-WORKER-LIFECYCLE.md).
 
+Runtime-specific contracts live in:
+
+- [Agent harness](AGENT-HARNESS.md)
+- [Database and RLS](DATABASE-AND-RLS.md)
+- [Sandbox provider contracts](SANDBOX-PROVIDER-CONTRACTS.md)
+- [Worker operations](WORKER-OPERATIONS.md)
+
 ## System context
 
 ```mermaid
