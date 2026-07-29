@@ -1,0 +1,7 @@
+export async function deleteQueuedJobDirectly(admin: any) {
+  await admin
+    .from("agent_jobs")
+    .delete()
+    .eq("id", "job-1")
+    .eq("status", "queued");
+}

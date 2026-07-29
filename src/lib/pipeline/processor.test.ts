@@ -1719,6 +1719,7 @@ describe("handleApproval", () => {
 
 interface RejectionMockOptions {
   session: Tables<"sessions"> | null;
+  postPhaseSession?: Tables<"sessions"> | null;
   rejectionClaim?: { id: string } | null;
   rejectionClaimError?: { message: string } | null;
   phaseClaim?: { id: string } | null;
@@ -1733,12 +1734,20 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   const artifactUpdates: Array<{ patch: Record<string, unknown> }> = [];
   const insertedFeedback: Array<Record<string, unknown>> = [];
   const enqueuedJobs: Array<Record<string, unknown>> = [];
+  let sessionSelectCount = 0;
 
   const sessionsTable = {
     select: () => {
+      sessionSelectCount += 1;
       const builder = {
         eq: () => builder,
-        maybeSingle: async () => ({ data: opts.session, error: null }),
+        maybeSingle: async () => ({
+          data:
+            sessionSelectCount >= 3 && opts.postPhaseSession !== undefined
+              ? opts.postPhaseSession
+              : opts.session,
+          error: null,
+        }),
       };
       return builder;
     },
@@ -2039,7 +2048,7 @@ describe("handleRejection", () => {
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
   });
 
-  it("returns a race error when the final phase-status CAS loses after enqueue", async () => {
+  it("treats the final phase-status CAS as successful when the rerun worker claimed first", async () => {
     const session = baseSession({
       current_artifact_version: 1,
       phase_status: "awaiting_review",
@@ -2047,6 +2056,52 @@ describe("handleRejection", () => {
     });
     const { admin, enqueuedJobs, sessionUpdates } = buildRejectionMock({
       phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 1,
+        phase_status: "agent_generating",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      jobId: "job-retry",
+      session: {
+        archivedAt: null,
+        currentArtifactVersion: 1,
+        currentStageId: "stage-product",
+        phaseStatus: "agent_generating",
+        rejectionCount: 1,
+      },
+      success: true,
+    });
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
+  });
+
+  it("returns a race error when approval wins the final phase-status CAS after enqueue", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin, enqueuedJobs, sessionUpdates } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 0,
+        current_stage_id: "stage-build",
+        phase_status: "approved",
+        rejection_count: 1,
+      }),
       session,
     });
 

@@ -1,0 +1,5 @@
+-- update public.sessions set phase_status = 'approved';
+/*
+  delete from public.agent_jobs where status = 'queued';
+*/
+select 'update public.agent_runs set status = ''success'';' as example;

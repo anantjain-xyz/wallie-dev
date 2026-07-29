@@ -849,11 +849,29 @@ export async function handleRejection(input: {
     return { error: rejectSessionError.message, success: false };
   }
 
+  let resultPhaseStatus: SessionRow["phase_status"] = "rejected";
   if (!rejectedSession) {
-    return {
-      error: "Rejection raced with another update — please refresh and try again.",
-      success: false,
-    };
+    // Enqueue happens before this CAS so the worker may legitimately claim the
+    // rerun first and move the same stage/version to `agent_generating`. Verify
+    // every rejection-owned pointer before treating that ordering as success;
+    // an approval advances the stage/version (or leaves the session approved),
+    // while archive/cancellation changes archived_at or the phase.
+    const claimedByWorker = await loadSessionById(admin, input.sessionId);
+    if (
+      !claimedByWorker ||
+      claimedByWorker.workspace_id !== input.expectedWorkspaceId ||
+      claimedByWorker.archived_at ||
+      claimedByWorker.current_stage_id !== session.current_stage_id ||
+      claimedByWorker.current_artifact_version !== input.version ||
+      claimedByWorker.rejection_count !== newRejectionCount ||
+      claimedByWorker.phase_status !== "agent_generating"
+    ) {
+      return {
+        error: "Rejection raced with another update — please refresh and try again.",
+        success: false,
+      };
+    }
+    resultPhaseStatus = "agent_generating";
   }
 
   return {
@@ -862,7 +880,7 @@ export async function handleRejection(input: {
       archivedAt: session.archived_at,
       currentArtifactVersion: session.current_artifact_version,
       currentStageId: session.current_stage_id,
-      phaseStatus: "rejected",
+      phaseStatus: resultPhaseStatus,
       rejectionCount: newRejectionCount,
     },
     success: true,

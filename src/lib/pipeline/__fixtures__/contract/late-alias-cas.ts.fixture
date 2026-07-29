@@ -1,0 +1,8 @@
+export async function guardTransitionAfterExecution(admin: any) {
+  const query = admin
+    .from("sessions")
+    .update({ phase_status: "approved" })
+    .eq("id", "session-1");
+  await query;
+  query.eq("phase_status", "awaiting_review");
+}

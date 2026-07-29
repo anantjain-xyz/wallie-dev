@@ -1,0 +1,10 @@
+export async function conditionallyGuardTransition(admin: any, applyGuard: boolean) {
+  const query = admin
+    .from("sessions")
+    .update({ phase_status: "approved" })
+    .eq("id", "session-1");
+  if (applyGuard) {
+    query.eq("phase_status", "awaiting_review");
+  }
+  await query;
+}

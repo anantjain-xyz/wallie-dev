@@ -20,6 +20,13 @@ function fixture(name: string, path: string) {
   };
 }
 
+function sqlFixture(name: string, path: string) {
+  return {
+    path,
+    source: readFileSync(join(fixtureDirectory, `${name}.sql.fixture`), "utf8"),
+  };
+}
+
 function fixtureContract(
   overrides: Partial<PipelineTransitionContract> = {},
 ): PipelineTransitionContract {
@@ -102,6 +109,84 @@ describe("pipeline contract verifier", () => {
     expect(diagnostics.map((item) => item.code)).toEqual(["pipeline-owner"]);
   });
 
+  it("treats an unresolved update payload as a protected write", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("unresolved-payload", "src/features/hidden-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("processPipelineJob"),
+      }),
+    ]);
+  });
+
+  it.each(["conditional-alias-cas", "late-alias-cas"])(
+    "rejects a CAS predicate that is not guaranteed before execution: %s",
+    (name) => {
+      const functionName =
+        name === "conditional-alias-cas"
+          ? "conditionallyGuardTransition"
+          : "guardTransitionAfterExecution";
+      const diagnostics = verifyPipelineContract(
+        [fixture(name, "src/lib/pipeline/processor.ts")],
+        fixtureContract({
+          ordinaryOwners: [
+            {
+              canonicalApi: "Use processPipelineJob().",
+              functions: [functionName],
+              id: "fixture-session-owner",
+              path: "src/lib/pipeline/processor.ts",
+              tables: ["sessions"],
+            },
+          ],
+        }),
+      );
+
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          code: "pipeline-cas",
+          message: expect.stringContaining("Use processPipelineJob()."),
+        }),
+      ]);
+    },
+  );
+
+  it("accepts a named destructive cleanup owner with an expected-state predicate", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("canonical-delete", "src/lib/pipeline/processor.ts")],
+      fixtureContract({
+        ordinaryOwners: [
+          {
+            canonicalApi: "Use cleanupQueuedJob().",
+            functions: ["cleanupQueuedJob"],
+            id: "fixture-job-cleanup-owner",
+            path: "src/lib/pipeline/processor.ts",
+            tables: ["agent_jobs"],
+          },
+        ],
+      }),
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("rejects a destructive delete outside a named transition owner", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("direct-delete", "src/features/unsafe-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("claim_next_agent_job"),
+      }),
+    ]);
+  });
+
   it("accepts a declared recovery owner with an active-state guard", () => {
     const contract = fixtureContract({
       recoveryOwners: [
@@ -158,6 +243,20 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it("rejects seeded-stage branching through object and destructured slug aliases", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("seeded-stage-alias", "src/lib/pipeline/generic-runner.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "seeded-stage-branch",
+        path: "src/lib/pipeline/generic-runner.ts",
+      }),
+    ]);
+  });
+
   it("rejects protected SQL writes outside a named transactional RPC", () => {
     const diagnostics = verifyPipelineContract(
       [
@@ -184,6 +283,41 @@ describe("pipeline contract verifier", () => {
         message: expect.stringContaining("approve_session_stage"),
       }),
     ]);
+  });
+
+  it("rejects protected SQL deletes outside a named transactional RPC", () => {
+    const diagnostics = verifyPipelineContract(
+      [
+        {
+          path: "supabase/migrations/fixture.sql",
+          source: `
+            create or replace function public.bypass_transition()
+            returns void language plpgsql as $$
+            begin
+              delete from public.agent_jobs where status = 'queued';
+            end;
+            $$;
+          `,
+        },
+      ],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("claim_next_agent_job"),
+      }),
+    ]);
+  });
+
+  it("ignores mutation-looking SQL comments and string literals", () => {
+    expect(
+      verifyPipelineContract(
+        [sqlFixture("sql-comments", "supabase/migrations/fixture.sql")],
+        fixtureContract(),
+      ),
+    ).toEqual([]);
   });
 
   it("keeps the repository inside the declared pipeline transition contract", () => {

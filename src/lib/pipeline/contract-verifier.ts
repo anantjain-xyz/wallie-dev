@@ -4,7 +4,7 @@ import { relative, resolve } from "node:path";
 import ts from "typescript";
 
 type ProtectedTable = "agent_jobs" | "agent_runs" | "sessions";
-type MutationOperation = "insert" | "update" | "upsert";
+type MutationOperation = "delete" | "insert" | "update" | "upsert";
 
 export type PipelineContractFile = {
   path: string;
@@ -77,7 +77,12 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
     },
     {
       canonicalApi: CANONICAL_JOB_API,
-      functions: ["enqueueSessionJobWithRun", "markPipelineJobSuccess", "markPipelineJobError"],
+      functions: [
+        "cleanupQueuedJob",
+        "enqueueSessionJobWithRun",
+        "markPipelineJobSuccess",
+        "markPipelineJobError",
+      ],
       id: "pipeline-job-transitions",
       path: "src/lib/pipeline/processor.ts",
       tables: ["agent_jobs"],
@@ -105,7 +110,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
     },
     {
       canonicalApi: CANONICAL_JOB_API,
-      functions: ["createQueuedRun", "claimJobIfQueued"],
+      functions: ["claimJobIfQueued", "cleanupQueuedJob", "createQueuedRun"],
       id: "wallie-job-transitions",
       path: "src/lib/wallie/service.ts",
       tables: ["agent_jobs"],
@@ -237,7 +242,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
   ],
 };
 
-const MUTATION_OPERATIONS = new Set<MutationOperation>(["insert", "update", "upsert"]);
+const MUTATION_OPERATIONS = new Set<MutationOperation>(["delete", "insert", "update", "upsert"]);
 const EXPECTED_STATE_FIELDS: Readonly<Record<ProtectedTable, readonly string[]>> = {
   agent_jobs: ["attempt_count", "status"],
   agent_runs: ["status"],
@@ -250,7 +255,12 @@ type Initializer = {
   position: number;
 };
 
+type BindingSource = Initializer & {
+  propertyName: string | null;
+};
+
 type SourceContext = {
+  bindingSources: Map<string, BindingSource[]>;
   initializers: Map<string, Initializer[]>;
   sourceFile: ts.SourceFile;
 };
@@ -258,6 +268,7 @@ type SourceContext = {
 type Mutation = {
   call: ts.CallExpression;
   fields: Set<string>;
+  fieldsKnown: boolean;
   functionName: string | null;
   operation: MutationOperation;
   table: ProtectedTable;
@@ -301,6 +312,7 @@ export function verifyPipelineContract(
       normalizedPath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
     const context: SourceContext = {
+      bindingSources: collectBindingSources(sourceFile),
       initializers: collectInitializers(sourceFile),
       sourceFile,
     };
@@ -310,7 +322,10 @@ export function verifyPipelineContract(
         const mutation = readMutation(node, context);
         if (mutation) {
           const writesProtectedState =
+            mutation.operation === "delete" ||
             mutation.operation === "insert" ||
+            mutation.operation === "upsert" ||
+            !mutation.fieldsKnown ||
             [...mutation.fields].some((field) =>
               contract.protectedFields[mutation.table].includes(field),
             );
@@ -346,6 +361,7 @@ export function verifyPipelineContract(
               }
               if (
                 mutation.operation !== "insert" &&
+                mutation.operation !== "upsert" &&
                 !hasExpectedStatePredicate(mutation, context)
               ) {
                 diagnostics.push(
@@ -460,6 +476,30 @@ function collectInitializers(sourceFile: ts.SourceFile): Map<string, Initializer
   return initializers;
 }
 
+function collectBindingSources(sourceFile: ts.SourceFile): Map<string, BindingSource[]> {
+  const bindingSources = new Map<string, BindingSource[]>();
+  walk(sourceFile, (node) => {
+    if (
+      !ts.isVariableDeclaration(node) ||
+      !ts.isObjectBindingPattern(node.name) ||
+      !node.initializer
+    ) {
+      return;
+    }
+    for (const element of node.name.elements) {
+      if (!ts.isIdentifier(element.name)) continue;
+      const entries = bindingSources.get(element.name.text) ?? [];
+      entries.push({
+        expression: node.initializer,
+        position: node.getStart(sourceFile),
+        propertyName: element.propertyName ? propertyName(element.propertyName) : element.name.text,
+      });
+      bindingSources.set(element.name.text, entries);
+    }
+  });
+  return bindingSources;
+}
+
 function walk(node: ts.Node, visit: (node: ts.Node) => void): void {
   visit(node);
   node.forEachChild((child) => walk(child, visit));
@@ -479,9 +519,11 @@ function readMutation(call: ts.CallExpression, context: SourceContext): Mutation
     return null;
   }
 
+  const payload = readObjectFields(call.arguments[0], call.getStart(), context);
   return {
     call,
-    fields: readObjectFields(call.arguments[0], call.getStart(), context),
+    fields: payload.fields,
+    fieldsKnown: operation === "delete" || payload.known,
     functionName: enclosingFunctionName(call),
     operation,
     table,
@@ -540,6 +582,17 @@ function nearestInitializer(
   );
 }
 
+function nearestBindingSource(
+  sources: readonly BindingSource[] | undefined,
+  position: number,
+): BindingSource | null {
+  return (
+    sources
+      ?.filter((source) => source.position < position)
+      .sort((left, right) => right.position - left.position)[0] ?? null
+  );
+}
+
 function readString(
   expression: ts.Expression | undefined,
   position: number,
@@ -555,25 +608,32 @@ function readObjectFields(
   position: number,
   context: SourceContext,
   seen = new Set<ts.Expression>(),
-): Set<string> {
-  if (!expression) return new Set();
+): { fields: Set<string>; known: boolean } {
+  if (!expression) return { fields: new Set(), known: false };
   const resolved = resolveExpression(expression, position, context);
   if (seen.has(resolved) || !ts.isObjectLiteralExpression(resolved)) {
-    return new Set();
+    return { fields: new Set(), known: false };
   }
   seen.add(resolved);
   const fields = new Set<string>();
+  let known = true;
   for (const property of resolved.properties) {
     if (ts.isSpreadAssignment(property)) {
-      for (const field of readObjectFields(property.expression, position, context, seen)) {
+      const spread = readObjectFields(property.expression, position, context, seen);
+      known &&= spread.known;
+      for (const field of spread.fields) {
         fields.add(field);
       }
       continue;
     }
     const name = property.name && propertyName(property.name);
-    if (name) fields.add(name);
+    if (name) {
+      fields.add(name);
+    } else {
+      known = false;
+    }
   }
-  return fields;
+  return { fields, known };
 }
 
 function propertyName(name: ts.PropertyName): string | null {
@@ -625,23 +685,6 @@ function hasExpectedStatePredicate(mutation: Mutation, context: SourceContext): 
   const predicateFields = new Set<string>();
   collectOuterPredicates(mutation.call, mutation.call.getStart(), context, predicateFields);
 
-  const alias = mutationAlias(mutation.call);
-  if (alias) {
-    const functionNode = enclosingFunctionNode(mutation.call) ?? context.sourceFile;
-    walk(functionNode, (node) => {
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === alias &&
-        PREDICATE_METHODS.has(node.expression.name.text)
-      ) {
-        const field = readString(node.arguments[0], node.getStart(), context);
-        if (field) predicateFields.add(field);
-      }
-    });
-  }
-
   return EXPECTED_STATE_FIELDS[mutation.table].some((field) => predicateFields.has(field));
 }
 
@@ -669,37 +712,6 @@ function collectOuterPredicates(
   }
 }
 
-function mutationAlias(call: ts.CallExpression): string | null {
-  let current: ts.Node = call;
-  while (current.parent) {
-    if (
-      ts.isVariableDeclaration(current.parent) &&
-      current.parent.initializer &&
-      ts.isIdentifier(current.parent.name)
-    ) {
-      return current.parent.name.text;
-    }
-    if (
-      ts.isExpressionStatement(current.parent) ||
-      ts.isReturnStatement(current.parent) ||
-      ts.isBlock(current.parent)
-    ) {
-      return null;
-    }
-    current = current.parent;
-  }
-  return null;
-}
-
-function enclosingFunctionNode(node: ts.Node): ts.Node | null {
-  let current: ts.Node | undefined = node.parent;
-  while (current) {
-    if (ts.isFunctionLike(current)) return current;
-    current = current.parent;
-  }
-  return null;
-}
-
 function isSeededStageBranch(
   node: ts.Node,
   context: SourceContext,
@@ -707,9 +719,9 @@ function isSeededStageBranch(
 ): boolean {
   if (ts.isBinaryExpression(node) && isEqualityOperator(node.operatorToken.kind)) {
     return (
-      (isStageSlugExpression(node.left) &&
+      (isStageSlugExpression(node.left, node.getStart(), context) &&
         isSeededSlugExpression(node.right, node.getStart(), context, seededSlugs)) ||
-      (isStageSlugExpression(node.right) &&
+      (isStageSlugExpression(node.right, node.getStart(), context) &&
         isSeededSlugExpression(node.left, node.getStart(), context, seededSlugs))
     );
   }
@@ -717,7 +729,7 @@ function isSeededStageBranch(
     const switchStatement = node.parent.parent;
     return (
       ts.isSwitchStatement(switchStatement) &&
-      isStageSlugExpression(switchStatement.expression) &&
+      isStageSlugExpression(switchStatement.expression, node.getStart(), context) &&
       isSeededSlugExpression(node.expression, node.getStart(), context, seededSlugs)
     );
   }
@@ -733,9 +745,88 @@ function isEqualityOperator(kind: ts.SyntaxKind): boolean {
   ].includes(kind);
 }
 
-function isStageSlugExpression(expression: ts.Expression): boolean {
-  const text = expression.getText().toLowerCase();
-  return text.includes("stage") && (text.includes("slug") || text.endsWith(".stage"));
+function isStageSlugExpression(
+  expression: ts.Expression,
+  position: number,
+  context: SourceContext,
+  seen = new Set<string>(),
+): boolean {
+  const unwrapped = unwrapExpression(expression);
+  if (ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "slug") {
+    return isStageExpression(unwrapped.expression, position, context, seen);
+  }
+  if (
+    ts.isElementAccessExpression(unwrapped) &&
+    readString(unwrapped.argumentExpression, position, context) === "slug"
+  ) {
+    return isStageExpression(unwrapped.expression, position, context, seen);
+  }
+  if (!ts.isIdentifier(unwrapped)) {
+    return false;
+  }
+
+  const name = unwrapped.text;
+  if (/\bstage[\w$]*slug\b|\bslug[\w$]*stage\b/i.test(name)) {
+    return true;
+  }
+  if (seen.has(name)) {
+    return false;
+  }
+  seen.add(name);
+
+  const initializer = nearestInitializer(context.initializers.get(name), position);
+  if (initializer) {
+    return isStageSlugExpression(initializer.expression, position, context, seen);
+  }
+
+  const binding = nearestBindingSource(context.bindingSources.get(name), position);
+  return Boolean(
+    binding &&
+    binding.propertyName === "slug" &&
+    isStageExpression(binding.expression, position, context, seen),
+  );
+}
+
+function isStageExpression(
+  expression: ts.Expression,
+  position: number,
+  context: SourceContext,
+  seen: Set<string>,
+): boolean {
+  const unwrapped = unwrapExpression(expression);
+  if (ts.isIdentifier(unwrapped)) {
+    if (seen.has(unwrapped.text)) {
+      return /\bstage\b/i.test(unwrapped.text);
+    }
+    seen.add(unwrapped.text);
+    const initializer = nearestInitializer(context.initializers.get(unwrapped.text), position);
+    if (initializer) {
+      return isStageExpression(initializer.expression, position, context, seen);
+    }
+    return /stage/i.test(unwrapped.text) && !/slug/i.test(unwrapped.text);
+  }
+  if (ts.isPropertyAccessExpression(unwrapped)) {
+    return (
+      /stage/i.test(unwrapped.name.text) ||
+      isStageExpression(unwrapped.expression, position, context, seen)
+    );
+  }
+  if (ts.isCallExpression(unwrapped)) {
+    return /stage/i.test(unwrapped.expression.getText(context.sourceFile));
+  }
+  return false;
+}
+
+function unwrapExpression(expression: ts.Expression): ts.Expression {
+  if (
+    ts.isAsExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isParenthesizedExpression(expression) ||
+    ts.isTypeAssertionExpression(expression)
+  ) {
+    return unwrapExpression(expression.expression);
+  }
+  return expression;
 }
 
 function isSeededSlugExpression(
@@ -753,15 +844,20 @@ function verifySqlFile(
   contract: PipelineTransitionContract,
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
-  const functionSpans = readSqlFunctions(file.source);
+  const commentMaskedSource = maskSqlComments(file.source);
+  const functionSpans = readSqlFunctions(commentMaskedSource);
 
   for (const sqlFunction of functionSpans) {
     const owner = contract.sqlOwners.find(
       (candidate) => candidate.functionName === sqlFunction.name,
     );
-    for (const mutation of readSqlMutations(sqlFunction.body, sqlFunction.bodyStart)) {
+    for (const mutation of readSqlMutations(
+      maskSqlStringLiterals(sqlFunction.body),
+      sqlFunction.bodyStart,
+    )) {
       const protectedFields = contract.protectedFields[mutation.table];
       const writesProtectedState =
+        mutation.operation === "delete" ||
         mutation.operation === "insert" ||
         mutation.fields.some((field) => protectedFields.includes(field));
       if (!writesProtectedState) continue;
@@ -790,10 +886,11 @@ function verifySqlFile(
     }
   }
 
-  const maskedSource = maskSpans(file.source, functionSpans);
-  for (const mutation of readSqlMutations(maskedSource, 0)) {
+  const maskedSource = maskSpans(commentMaskedSource, functionSpans);
+  for (const mutation of readSqlMutations(maskSqlStringLiterals(maskedSource), 0)) {
     const protectedFields = contract.protectedFields[mutation.table];
     const writesProtectedState =
+      mutation.operation === "delete" ||
       mutation.operation === "insert" ||
       mutation.fields.some((field) => protectedFields.includes(field));
     if (writesProtectedState) {
@@ -878,6 +975,16 @@ function readSqlMutations(source: string, offset: number): SqlMutation[] {
       table: match[1]!.toLowerCase() as ProtectedTable,
     });
   }
+
+  const deletePattern = /\bdelete\s+from\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b/gi;
+  for (const match of source.matchAll(deletePattern)) {
+    mutations.push({
+      fields: [],
+      operation: "delete",
+      position: offset + (match.index ?? 0),
+      table: match[1]!.toLowerCase() as ProtectedTable,
+    });
+  }
   return mutations;
 }
 
@@ -892,6 +999,111 @@ function maskSpans(source: string, spans: readonly SqlFunctionSpan[]): string {
       if (characters[index] !== "\n") characters[index] = " ";
     }
   }
+  return characters.join("");
+}
+
+function maskSqlComments(source: string): string {
+  const characters = [...source];
+  let blockDepth = 0;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inSingleQuote = false;
+
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index]!;
+    const next = characters[index + 1];
+
+    if (inLineComment) {
+      if (character === "\n") {
+        inLineComment = false;
+      } else {
+        characters[index] = " ";
+      }
+      continue;
+    }
+
+    if (blockDepth > 0) {
+      if (character === "/" && next === "*") {
+        characters[index] = " ";
+        characters[index + 1] = " ";
+        blockDepth += 1;
+        index += 1;
+      } else if (character === "*" && next === "/") {
+        characters[index] = " ";
+        characters[index + 1] = " ";
+        blockDepth -= 1;
+        index += 1;
+      } else if (character !== "\n") {
+        characters[index] = " ";
+      }
+      continue;
+    }
+
+    if (inSingleQuote) {
+      if (character === "'" && next === "'") {
+        index += 1;
+      } else if (character === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (character === '"' && next === '"') {
+        index += 1;
+      } else if (character === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+
+    if (character === "-" && next === "-") {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      inLineComment = true;
+      index += 1;
+    } else if (character === "/" && next === "*") {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      blockDepth = 1;
+      index += 1;
+    } else if (character === "'") {
+      inSingleQuote = true;
+    } else if (character === '"') {
+      inDoubleQuote = true;
+    }
+  }
+
+  return characters.join("");
+}
+
+function maskSqlStringLiterals(source: string): string {
+  const characters = [...source];
+  let inLiteral = false;
+
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index]!;
+    const next = characters[index + 1];
+    if (!inLiteral) {
+      if (character === "'") {
+        characters[index] = " ";
+        inLiteral = true;
+      }
+      continue;
+    }
+
+    if (character === "'" && next === "'") {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      index += 1;
+    } else if (character === "'") {
+      characters[index] = " ";
+      inLiteral = false;
+    } else if (character !== "\n") {
+      characters[index] = " ";
+    }
+  }
+
   return characters.join("");
 }
 

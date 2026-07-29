@@ -1,0 +1,8 @@
+export function instructionsFor(stage: { slug: string }) {
+  const stageAlias = stage;
+  const { slug } = stageAlias;
+  if (slug === "plan") {
+    return "seed-specific behavior";
+  }
+  return "generic behavior";
+}
