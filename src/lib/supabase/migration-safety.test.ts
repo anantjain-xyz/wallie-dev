@@ -90,6 +90,38 @@ returns text language sql as 'select target_id::text';`;
     expect(verifyWithBase(baseSql, newSql)).toEqual([]);
   });
 
+  it("accepts an ordered procedure recreation when its output contract is unchanged", () => {
+    const baseSql = `create procedure public.lookup_job(in job_id uuid, out result bigint)
+language plpgsql as 'begin result := 1; end';`;
+    const newSql = `drop procedure public.lookup_job(uuid);
+create procedure public.lookup_job(in target_id uuid, out result bigint)
+language plpgsql as 'begin result := 1; end';`;
+
+    expect(verifyWithBase(baseSql, newSql)).toEqual([]);
+  });
+
+  it.each([
+    ["out result bigint", "out result text", "uuid"],
+    ["out result bigint", "out value bigint", "uuid"],
+    ["inout result bigint", "inout result text", "uuid, bigint"],
+  ])(
+    "requires an exact waiver when a procedure output contract changes from %s to %s",
+    (deployedOutput, replacementOutput, deployedIdentity) => {
+      const baseSql = `create procedure public.lookup_job(in job_id uuid, ${deployedOutput})
+language plpgsql as 'begin null; end';`;
+      const newSql = `drop procedure public.lookup_job(${deployedIdentity});
+create procedure public.lookup_job(in target_id uuid, ${replacementOutput})
+language plpgsql as 'begin null; end';`;
+
+      expect(verifyWithBase(baseSql, newSql)).toEqual([
+        expect.objectContaining({
+          code: "unsafe-operation",
+          operationKey: `drop-procedure:public.lookup_job(${deployedIdentity.replace(" ", "")})`,
+        }),
+      ]);
+    },
+  );
+
   it.each([
     [
       `create function public.lookup_job(job_id uuid)
@@ -194,6 +226,56 @@ drop table public.jobs;`;
       "set-generated-always:public.jobs.id",
     ],
     [
+      "alter table public.jobs alter column id add generated always as identity;",
+      "set-generated-always:public.jobs.id",
+    ],
+    [
+      "alter table public.jobs disable trigger jobs_enforce_refs;",
+      "disable-trigger:public.jobs.jobs_enforce_refs",
+    ],
+    ["alter table public.jobs disable trigger all;", "disable-trigger:public.jobs.all"],
+    ["alter table public.jobs disable trigger user;", "disable-trigger:public.jobs.user"],
+    [
+      "alter table public.jobs add constraint jobs_state_check check (state <> '');",
+      "add-constraint:public.jobs.jobs_state_check",
+    ],
+    [
+      "alter table public.jobs add constraint jobs_external_id_key unique (external_id);",
+      "add-constraint:public.jobs.jobs_external_id_key",
+    ],
+    [
+      "alter table public.jobs add constraint jobs_workspace_fk foreign key (workspace_id) references public.workspaces(id);",
+      "add-constraint:public.jobs.jobs_workspace_fk",
+    ],
+    [
+      "alter table public.jobs add constraint jobs_period_excl exclude using gist (period with &&);",
+      "add-constraint:public.jobs.jobs_period_excl",
+    ],
+    [
+      "alter table public.jobs add constraint jobs_pkey primary key (id);",
+      "add-constraint:public.jobs.jobs_pkey",
+    ],
+    [
+      "alter table public.jobs add check (state <> '');",
+      "add-constraint:public.jobs.unnamed-check",
+    ],
+    [
+      "alter function public.lookup_job(uuid) security definer;",
+      "security-definer-function:public.lookup_job(uuid)",
+    ],
+    [
+      "alter function public.lookup_job(uuid) external security definer;",
+      "security-definer-function:public.lookup_job(uuid)",
+    ],
+    [
+      "alter procedure public.refresh_jobs(uuid) security definer;",
+      "security-definer-procedure:public.refresh_jobs(uuid)",
+    ],
+    [
+      "alter routine public.refresh_jobs(uuid) security definer;",
+      "security-definer-routine:public.refresh_jobs(uuid)",
+    ],
+    [
       "alter table public.jobs disable row level security;",
       "disable-row-level-security:public.jobs",
     ],
@@ -246,6 +328,42 @@ drop trigger touch_updated_at on public.sessions;`;
     ]);
   });
 
+  it("keeps DISABLE TRIGGER waivers relation- and trigger-specific", () => {
+    const sql = `-- wallie-migration-safety: allow disable-trigger:public.jobs.enforce_refs owner=@anantjain-xyz issue=OP-387
+alter table public.sessions disable trigger enforce_refs;`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "disable-trigger:public.jobs.enforce_refs",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "disable-trigger:public.sessions.enforce_refs",
+      }),
+    ]);
+  });
+
+  it("allows SECURITY INVOKER without a retirement waiver", () => {
+    expect(verifyNew("alter function public.lookup_job(uuid) security invoker;")).toEqual([]);
+  });
+
+  it("keeps SECURITY DEFINER waivers overload-specific", () => {
+    const sql = `-- wallie-migration-safety: allow security-definer-function:public.lookup_job(uuid) owner=@anantjain-xyz issue=OP-387
+alter function public.lookup_job(text) security definer;`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "security-definer-function:public.lookup_job(uuid)",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "security-definer-function:public.lookup_job(text)",
+      }),
+    ]);
+  });
+
   it.each([
     ["drop-trigger:public.jobs.touch_updated_at", "drop trigger touch_updated_at on public.jobs;"],
     ["truncate-table:public.jobs", "truncate table public.jobs;"],
@@ -278,6 +396,20 @@ drop trigger touch_updated_at on public.sessions;`;
       "alter policy member_read on public.jobs using (true);",
     ],
     ["drop-routine:public.lookup(uuid)", "drop routine public.lookup(uuid);"],
+    ["drop-procedure:public.lookup(uuid)", "drop procedure public.lookup(uuid);"],
+    ["drop-aggregate:public.collect(uuid)", "drop aggregate public.collect(uuid);"],
+    [
+      "disable-trigger:public.jobs.enforce_refs",
+      "alter table public.jobs disable trigger enforce_refs;",
+    ],
+    [
+      "add-constraint:public.jobs.jobs_state_check",
+      "alter table public.jobs add constraint jobs_state_check check (state <> '');",
+    ],
+    [
+      "security-definer-function:public.lookup(uuid)",
+      "alter function public.lookup(uuid) security definer;",
+    ],
     ["drop-table:public%2Ejobs", 'drop table "public.jobs";'],
   ])("accepts an exact waiver for %s", (operationKey, statement) => {
     const sql = `-- wallie-migration-safety: allow ${operationKey} owner=@anantjain-xyz issue=OP-387
@@ -369,6 +501,33 @@ drop routine public.lookup(text);`;
         operationKey: "drop-routine:public.lookup(text)",
       }),
     ]);
+  });
+
+  it("retains overload signatures in DROP AGGREGATE waiver keys", () => {
+    const sql = `-- wallie-migration-safety: allow drop-aggregate:public.collect(uuid) owner=@anantjain-xyz issue=OP-387
+drop aggregate public.collect(text);`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "drop-aggregate:public.collect(uuid)",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "drop-aggregate:public.collect(text)",
+      }),
+    ]);
+  });
+
+  it("retains ordered-set signatures in DROP AGGREGATE waiver keys", () => {
+    const sql = `-- wallie-migration-safety: allow drop-aggregate:public.percentile(float8+order+by+anyelement) owner=@anantjain-xyz issue=OP-387
+drop aggregate public.percentile(float8 order by anyelement);`;
+
+    expect(verifyNew(sql)).toEqual([]);
+  });
+
+  it("keeps destructive DML outside the forward-compatible DDL policy", () => {
+    expect(verifyNew("delete from public.sessions;")).toEqual([]);
   });
 
   it("classifies each relation in a multi-table TRUNCATE", () => {

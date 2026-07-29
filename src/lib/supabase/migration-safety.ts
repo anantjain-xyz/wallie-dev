@@ -329,12 +329,32 @@ function normalizedTokens(tokens: readonly Token[]): string {
   return result;
 }
 
-function functionArgumentType(tokens: readonly Token[], declaration: boolean): string | undefined {
-  let argument = [...tokens];
-  const defaultIndex = argument.findIndex(
+function withoutDefault(tokens: readonly Token[]): Token[] {
+  const defaultIndex = tokens.findIndex(
     (token) => isKeyword(token, "default") || token.value === "=",
   );
-  if (defaultIndex !== -1) argument = argument.slice(0, defaultIndex);
+  return defaultIndex === -1 ? [...tokens] : tokens.slice(0, defaultIndex);
+}
+
+function hasFunctionArgumentName(tokens: readonly Token[]): boolean {
+  if (tokens.length <= 1 || !isNameToken(tokens[0])) return false;
+
+  const words = tokens
+    .filter((token) => isNameToken(token))
+    .map((token) => token.value.toLowerCase())
+    .join(" ");
+  const startsWithKnownType = [...MULTIWORD_TYPES].some(
+    (type) => words === type || words.startsWith(`${type} `),
+  );
+  const schemaQualifiedType = tokens[1]?.value === ".";
+  const decoratedType =
+    ["[", "(", "%"].includes(tokens[1]?.value ?? "") || isKeyword(tokens[1], "array");
+
+  return !startsWithKnownType && !schemaQualifiedType && !decoratedType;
+}
+
+function functionArgumentType(tokens: readonly Token[], declaration: boolean): string | undefined {
+  let argument = withoutDefault(tokens);
 
   const mode = argument[0]?.kind === "identifier" ? argument[0].value.toLowerCase() : undefined;
   if (mode && ["in", "inout", "out", "variadic"].includes(mode)) {
@@ -342,23 +362,21 @@ function functionArgumentType(tokens: readonly Token[], declaration: boolean): s
     if (mode === "out") return undefined;
   }
 
-  if (declaration && argument.length > 1 && isNameToken(argument[0])) {
-    const words = argument
-      .filter((token) => isNameToken(token))
-      .map((token) => token.value.toLowerCase())
-      .join(" ");
-    const startsWithKnownType = [...MULTIWORD_TYPES].some(
-      (type) => words === type || words.startsWith(`${type} `),
-    );
-    const schemaQualifiedType = argument[1]?.value === ".";
-    const decoratedType =
-      ["[", "(", "%"].includes(argument[1]?.value ?? "") || isKeyword(argument[1], "array");
-    if (!startsWithKnownType && !schemaQualifiedType && !decoratedType) {
-      argument = argument.slice(1);
-    }
-  }
+  if (declaration && hasFunctionArgumentName(argument)) argument = argument.slice(1);
 
   return normalizedTokens(argument);
+}
+
+function procedureOutputArgument(tokens: readonly Token[]): string | undefined {
+  let argument = withoutDefault(tokens);
+  const mode = argument[0]?.kind === "identifier" ? argument[0].value.toLowerCase() : undefined;
+  if (mode !== "out" && mode !== "inout") return undefined;
+  argument = argument.slice(1);
+
+  const hasName = hasFunctionArgumentName(argument);
+  const name = hasName ? canonicalNameToken(argument[0]!) : "";
+  const type = normalizedTokens(hasName ? argument.slice(1) : argument);
+  return type ? `${name}:${type}` : undefined;
 }
 
 function readFunctionIdentity(
@@ -396,7 +414,13 @@ function readCreatedFunction(tokens: readonly Token[]): FunctionContract | undef
   const parsed = readFunctionIdentity(tokens, kindIndex + 1, true);
   if (!parsed.identity) return undefined;
   if (kind === "procedure") {
-    return { identity: parsed.identity, kind, result: "procedure" };
+    const { next: openIndex } = readQualifiedName(tokens, kindIndex + 1);
+    const closeIndex = matchingParenthesis(tokens, openIndex);
+    if (closeIndex === -1) return undefined;
+    const outputs = splitTopLevel(tokens.slice(openIndex + 1, closeIndex), ",")
+      .map(procedureOutputArgument)
+      .filter((output): output is string => Boolean(output));
+    return { identity: parsed.identity, kind, result: `procedure(${outputs.join(",")})` };
   }
 
   const returnsIndex = tokens.findIndex(
@@ -501,8 +525,8 @@ function parseDropStatement(tokens: readonly Token[]): UnsafeOperation[] {
   const operations: UnsafeOperation[] = [];
 
   for (const item of splitTopLevel(tokens.slice(index), ",")) {
-    if (kind === "function" || kind === "procedure" || kind === "routine") {
-      const parsed = readFunctionIdentity(item, 0, true);
+    if (kind === "aggregate" || kind === "function" || kind === "procedure" || kind === "routine") {
+      const parsed = readFunctionIdentity(item, 0, kind !== "aggregate");
       const identity = parsed.identity ?? readQualifiedName(item, 0).name;
       operations.push({
         key: `drop-${kind}:${identity}`,
@@ -531,7 +555,7 @@ function alterObject(tokens: readonly Token[]) {
   let index = skipIfExists(tokens, afterKind);
   if (isKeyword(tokens[index], "only")) index += 1;
 
-  if (kind === "function" || kind === "procedure") {
+  if (kind === "function" || kind === "procedure" || kind === "routine") {
     const parsed = readFunctionIdentity(tokens, index, true);
     return {
       kind,
@@ -566,6 +590,22 @@ function actionName(tokens: readonly Token[], start: number): string {
   if (literal !== undefined) return encodeOperationComponent(literal);
 
   return readQualifiedName(tokens, start).name;
+}
+
+function restrictiveConstraintKind(tokens: readonly Token[], start: number): string | undefined {
+  if (isKeyword(tokens[start], "check")) return "check";
+  if (isKeyword(tokens[start], "exclude")) return "exclude";
+  if (isKeyword(tokens[start], "unique")) return "unique";
+  if (isKeyword(tokens[start], "foreign") && isKeyword(tokens[start + 1], "key")) {
+    return "foreign-key";
+  }
+  if (isKeyword(tokens[start], "primary") && isKeyword(tokens[start + 1], "key")) {
+    return "primary-key";
+  }
+  if (isKeyword(tokens[start], "not") && isKeyword(tokens[start + 1], "null")) {
+    return "not-null";
+  }
+  return undefined;
 }
 
 function parseAlterAction(
@@ -637,6 +677,35 @@ function parseAlterAction(
   }
 
   if (isKeyword(action[0], "add")) {
+    if (isKeyword(action[1], "constraint")) {
+      let constraintIndex = 2;
+      if (
+        isKeyword(action[constraintIndex], "if") &&
+        isKeyword(action[constraintIndex + 1], "not") &&
+        isKeyword(action[constraintIndex + 2], "exists")
+      ) {
+        constraintIndex += 3;
+      }
+
+      const constraint = readQualifiedName(action, constraintIndex);
+      const kindIndex = constraint.next;
+      const constraintKind = restrictiveConstraintKind(action, kindIndex);
+
+      return constraintKind
+        ? [{ key: `add-constraint:${objectName}.${constraint.name}`, line }]
+        : [];
+    }
+
+    const anonymousConstraintKind = restrictiveConstraintKind(action, 1);
+    if (anonymousConstraintKind) {
+      return [
+        {
+          key: `add-constraint:${objectName}.unnamed-${anonymousConstraintKind}`,
+          line,
+        },
+      ];
+    }
+
     let index = isKeyword(action[1], "column") ? 2 : 1;
     if (isKeyword(action[index], "if") && isKeyword(action[index + 1], "not")) {
       index += isKeyword(action[index + 2], "exists") ? 3 : 0;
@@ -691,6 +760,13 @@ function parseAlterAction(
     ) {
       return [{ key: `set-generated-always:${objectName}.${target}`, line }];
     }
+    if (
+      isKeyword(action[operationIndex], "add") &&
+      isKeyword(action[operationIndex + 1], "generated") &&
+      isKeyword(action[operationIndex + 2], "always")
+    ) {
+      return [{ key: `set-generated-always:${objectName}.${target}`, line }];
+    }
     if (isKeyword(action[operationIndex], "drop")) {
       const property = normalizedTokens(action.slice(operationIndex + 1)) || "property";
       return [{ key: `drop-${targetKind}-${property}:${objectName}.${target}`, line }];
@@ -699,6 +775,20 @@ function parseAlterAction(
 
   if (isKeyword(action[0], "set") && isKeyword(action[1], "schema")) {
     return [{ key: `rename-${objectKind}-schema:${objectName}`, line }];
+  }
+
+  const securityIndex = isKeyword(action[0], "external") ? 1 : 0;
+  if (
+    (objectKind === "function" || objectKind === "procedure" || objectKind === "routine") &&
+    isKeyword(action[securityIndex], "security") &&
+    isKeyword(action[securityIndex + 1], "definer")
+  ) {
+    return [{ key: `security-definer-${objectKind}:${objectName}`, line }];
+  }
+
+  if (isKeyword(action[0], "disable") && isKeyword(action[1], "trigger")) {
+    const trigger = actionName(action, 2);
+    return [{ key: `disable-trigger:${objectName}.${trigger}`, line }];
   }
 
   if (
@@ -733,9 +823,19 @@ function parseAlterStatement(tokens: readonly Token[]): UnsafeOperation[] {
     if (tokens[index]?.value === ")") depth -= 1;
     if (
       depth === 0 &&
-      ["add", "alter", "disable", "drop", "no", "rename", "set", "to", "using", "with"].some(
-        (keyword) => isKeyword(tokens[index], keyword),
-      )
+      [
+        "add",
+        "alter",
+        "disable",
+        "drop",
+        "no",
+        "rename",
+        "security",
+        "set",
+        "to",
+        "using",
+        "with",
+      ].some((keyword) => isKeyword(tokens[index], keyword))
     ) {
       actionStart = index;
       break;
