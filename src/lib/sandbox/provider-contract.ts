@@ -83,6 +83,13 @@ const DEFAULT_DEADLINES = {
   validate: 15_000,
 } as const satisfies Record<SandboxProviderOperation, number>;
 
+const DAYTONA_DEADLINES = {
+  ...DEFAULT_DEADLINES,
+  // Daytona's delete call has its own 60-second timeout. Keep the provider
+  // contract outside that window so the SDK can finish or fail first.
+  stopById: 65_000,
+} as const satisfies Record<SandboxProviderOperation, number>;
+
 const ENABLEMENT_POLICY = {
   defaultEnabled: true,
   environmentVariable: "WALLIE_ENABLED_SANDBOX_PROVIDERS",
@@ -122,7 +129,7 @@ export const SANDBOX_PROVIDER_CONTRACTS = {
       fields: ["apiKey", "apiUrl", "target"],
       secretFields: ["apiKey"],
     },
-    deadlines: DEFAULT_DEADLINES,
+    deadlines: DAYTONA_DEADLINES,
     driver: {
       load: async () => (await import("./daytona")).daytonaSandboxDriver,
     },

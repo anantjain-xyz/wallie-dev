@@ -7,7 +7,7 @@ import type {
   SandboxProviderDriver,
 } from "./types";
 import { redactSecrets } from "./command";
-import { runBoundedSandboxProviderOperation } from "./lifecycle";
+import { runBoundedSandboxProviderOperation, SandboxProviderDeadlineError } from "./lifecycle";
 import {
   getSandboxProviderContract,
   loadSandboxProviderDriver,
@@ -104,14 +104,21 @@ export async function createSessionSandbox(
 }
 
 export async function validateSandboxConnection(connection: SandboxConnection) {
-  const result = await runBoundedSandboxProviderOperation({
-    operation: "validate",
-    provider: connection.provider,
-    run: async () => (await loadProviderDriver(connection)).validate(connection),
-  });
-  return result.error
-    ? { ...result, error: redactSecrets(result.error, connectionSecrets(connection)) }
-    : result;
+  try {
+    const result = await runBoundedSandboxProviderOperation({
+      operation: "validate",
+      provider: connection.provider,
+      run: async () => (await loadProviderDriver(connection)).validate(connection),
+    });
+    return result.error
+      ? { ...result, error: redactSecrets(result.error, connectionSecrets(connection)) }
+      : result;
+  } catch (error) {
+    if (error instanceof SandboxProviderDeadlineError) {
+      return { error: error.message, ok: false as const };
+    }
+    throw error;
+  }
 }
 
 export async function stopSandboxById(

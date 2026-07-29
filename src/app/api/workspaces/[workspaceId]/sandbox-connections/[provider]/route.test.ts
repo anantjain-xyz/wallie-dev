@@ -11,6 +11,7 @@ const mocked = vi.hoisted(() => ({
   stopWorkspaceOwnedSandboxes: vi.fn(),
   stopVercelWorkspaceOwnedSandboxes: vi.fn(),
   validateDaytonaSandboxCredentials: vi.fn(),
+  validateE2BSandboxCredentials: vi.fn(),
   validateVercelSandboxCredentials: vi.fn(),
 }));
 
@@ -38,6 +39,7 @@ vi.mock("@/lib/sandbox-connections/server", async () => {
     saveDaytonaSandboxConnection: mocked.saveDaytonaSandboxConnection,
     stopWorkspaceOwnedSandboxes: mocked.stopWorkspaceOwnedSandboxes,
     validateDaytonaSandboxCredentials: mocked.validateDaytonaSandboxCredentials,
+    validateE2BSandboxCredentials: mocked.validateE2BSandboxCredentials,
     validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentials,
   };
 });
@@ -107,6 +109,7 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
       },
       ok: true,
     });
+    mocked.validateE2BSandboxCredentials.mockResolvedValue({ ok: true });
     mocked.validateVercelSandboxCredentials.mockResolvedValue({
       ok: true,
       projectName: vercelPreview.projectName,
@@ -177,6 +180,30 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
         workspaceId,
       }),
     );
+  });
+
+  it("returns an E2B validation timeout as an invalid-connection response", async () => {
+    mocked.validateE2BSandboxCredentials.mockResolvedValueOnce({
+      error:
+        "E2B validate exceeded its 15000ms provider-contract deadline (semantic owner: bounded provider remote operations).",
+      ok: false,
+    });
+
+    const response = await PUT(
+      new Request("http://localhost", {
+        body: JSON.stringify({ apiKey: "e2b-secret" }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
+      }),
+      context("e2b"),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "E2B validate exceeded its 15000ms provider-contract deadline (semantic owner: bounded provider remote operations).",
+    });
+    expect(mocked.stopWorkspaceOwnedSandboxes).not.toHaveBeenCalled();
   });
 
   it("allows replacing a Daytona connection rejected by the current URL policy", async () => {

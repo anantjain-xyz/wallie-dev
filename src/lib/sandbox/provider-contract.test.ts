@@ -74,6 +74,10 @@ describe("sandbox provider contract verifier", () => {
       }),
     );
   });
+
+  it("keeps Daytona deletion inside its provider-contract deadline", () => {
+    expect(SANDBOX_PROVIDER_CONTRACTS.daytona.deadlines.stopById).toBeGreaterThan(60_000);
+  });
 });
 
 describe("sandbox provider lifecycle contract", () => {

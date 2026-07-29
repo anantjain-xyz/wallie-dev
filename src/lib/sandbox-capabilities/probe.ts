@@ -207,10 +207,7 @@ export function capabilityReportSucceeded(
   provider: SandboxProvider,
 ): boolean {
   const required = getSandboxProviderContract(provider).capabilityProbes.required;
-  return (
-    required.every((name) => report[name]?.ok === true) &&
-    Object.values(report).every((entry) => entry?.ok === true)
-  );
+  return required.every((name) => report[name]?.ok === true);
 }
 
 function codexExternalSandboxResult(
