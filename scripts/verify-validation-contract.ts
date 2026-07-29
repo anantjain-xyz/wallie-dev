@@ -12,16 +12,25 @@ type WorkflowStep = {
   "continue-on-error"?: unknown;
   if?: unknown;
   run?: unknown;
+  "working-directory"?: unknown;
+};
+
+type WorkflowDefaults = {
+  run?: {
+    "working-directory"?: unknown;
+  };
 };
 
 type WorkflowJob = {
   "continue-on-error"?: unknown;
+  defaults?: WorkflowDefaults;
   if?: unknown;
   needs?: unknown;
   steps?: WorkflowStep[];
 };
 
 type Workflow = {
+  defaults?: WorkflowDefaults;
   jobs?: Record<string, WorkflowJob>;
   on?: unknown;
 };
@@ -198,9 +207,28 @@ function composedPackageScriptReferences(command: string) {
   return references;
 }
 
-function verifyRequiredExecutionControls(profile: Profile, job: WorkflowJob, errors: string[]) {
+function usesRepositoryRoot(workingDirectory: unknown) {
+  return workingDirectory === undefined || workingDirectory === "." || workingDirectory === "./";
+}
+
+function verifyRequiredExecutionControls(
+  profile: Profile,
+  workflow: Workflow,
+  job: WorkflowJob,
+  errors: string[],
+) {
   const context = `${profile.workflow} job "${profile.job}"`;
 
+  if (!usesRepositoryRoot(workflow.defaults?.run?.["working-directory"])) {
+    errors.push(
+      `${profile.workflow} must run required package scripts from the repository root. Remove workflow-level "defaults.run.working-directory" or set it to ".".`,
+    );
+  }
+  if (!usesRepositoryRoot(job.defaults?.run?.["working-directory"])) {
+    errors.push(
+      `${context} must run "pnpm ${profile.script}" from the repository root. Remove job-level "defaults.run.working-directory" or set it to ".".`,
+    );
+  }
   if (job.if !== undefined) {
     errors.push(
       `${context} must run unconditionally for pull requests. Remove the job-level "if" condition so "pnpm ${profile.script}" cannot be skipped.`,
@@ -219,6 +247,11 @@ function verifyRequiredExecutionControls(profile: Profile, job: WorkflowJob, err
 
   const delegationSteps = packageScriptCalls(job).filter(({ script }) => script === profile.script);
   for (const { step } of delegationSteps) {
+    if (!usesRepositoryRoot(step["working-directory"])) {
+      errors.push(
+        `${context} must run "pnpm ${profile.script}" from the repository root. Remove the validation step's "working-directory" or set it to ".".`,
+      );
+    }
     if (step.if !== undefined) {
       errors.push(
         `${context} must run "pnpm ${profile.script}" unconditionally. Remove the validation step's "if" condition so the canonical profile cannot be skipped.`,
@@ -234,11 +267,22 @@ function verifyRequiredExecutionControls(profile: Profile, job: WorkflowJob, err
 
 function verifyClassifiedExecutionControls(
   check: ClassifiedCheck,
+  workflow: Workflow,
   job: WorkflowJob,
   errors: string[],
 ) {
   const context = `${check.workflow} job "${check.job}"`;
 
+  if (!usesRepositoryRoot(workflow.defaults?.run?.["working-directory"])) {
+    errors.push(
+      `${check.workflow} must run classified package scripts from the repository root. Remove workflow-level "defaults.run.working-directory" or set it to ".".`,
+    );
+  }
+  if (!usesRepositoryRoot(job.defaults?.run?.["working-directory"])) {
+    errors.push(
+      `${context} must run classified package scripts from the repository root. Remove job-level "defaults.run.working-directory" or set it to ".".`,
+    );
+  }
   if (job.if !== undefined) {
     errors.push(
       `${context} must run unconditionally for pull requests while classified as ${check.classification}. Remove the job-level "if" condition.`,
@@ -259,6 +303,11 @@ function verifyClassifiedExecutionControls(
     check.scripts.includes(script),
   );
   for (const { script, step } of classifiedSteps) {
+    if (!usesRepositoryRoot(step["working-directory"])) {
+      errors.push(
+        `${context} must run "pnpm ${script}" from the repository root. Remove the check step's "working-directory" or set it to ".".`,
+      );
+    }
     if (step.if !== undefined) {
       errors.push(
         `${context} must run "pnpm ${script}" unconditionally while classified as ${check.classification}. Remove the check step's "if" condition.`,
@@ -291,7 +340,7 @@ function verifyWorkflowDelegation(
     return;
   }
 
-  verifyRequiredExecutionControls(profile, job, errors);
+  verifyRequiredExecutionControls(profile, workflow, job, errors);
 
   const references = packageScriptReferences(job);
   if (references.length !== 1 || references[0] !== profile.script) {
@@ -331,7 +380,7 @@ function verifyClassifiedCheck(
     return;
   }
 
-  verifyClassifiedExecutionControls(check, job, errors);
+  verifyClassifiedExecutionControls(check, workflow, job, errors);
 
   const references = packageScriptReferences(job);
   if (

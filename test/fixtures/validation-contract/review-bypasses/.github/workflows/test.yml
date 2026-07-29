@@ -5,6 +5,7 @@ jobs:
   test:
     steps:
       - run: pnpm check
+        working-directory: packages/nested
 
   route-budgets:
     if: false
@@ -12,5 +13,6 @@ jobs:
     steps:
       - if: false
         run: pnpm build
+        working-directory: packages/nested
       - continue-on-error: true
         run: pnpm check:route-budgets

@@ -7,12 +7,19 @@ on:
     paths:
       - docs/**
 
+defaults:
+  run:
+    working-directory: packages/nested
+
 jobs:
   prepare:
     steps:
       - run: echo prepare
 
   lint-and-format:
+    defaults:
+      run:
+        working-directory: packages/nested
     needs: prepare
     steps:
       - run: pnpm check:fast
