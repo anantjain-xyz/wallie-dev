@@ -12,7 +12,11 @@ import type {
 } from "@/lib/sandbox-connections/contracts";
 import type { SandboxProvider } from "@/lib/sandbox";
 
-const PROVIDERS: Array<{ description: string; id: SandboxProvider; label: string }> = [
+export const SANDBOX_PROVIDER_OPTIONS: Array<{
+  description: string;
+  id: SandboxProvider;
+  label: string;
+}> = [
   {
     description: "Vercel-managed microVMs connected to a team and project.",
     id: "vercel",
@@ -165,7 +169,7 @@ export function SandboxProviderSection({
     }
   }
 
-  const enabledProviders = PROVIDERS.filter((provider) =>
+  const enabledProviders = SANDBOX_PROVIDER_OPTIONS.filter((provider) =>
     settings.enabledProviders.includes(provider.id),
   );
 
@@ -393,7 +397,7 @@ function SaveButton({ disabled, onClick }: { disabled: boolean; onClick: () => v
 }
 
 function providerLabel(provider: SandboxProvider) {
-  return PROVIDERS.find((candidate) => candidate.id === provider)?.label ?? provider;
+  return SANDBOX_PROVIDER_OPTIONS.find((candidate) => candidate.id === provider)?.label ?? provider;
 }
 
 function legacySettings(

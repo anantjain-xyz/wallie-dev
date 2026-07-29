@@ -1,0 +1,75 @@
+{
+  "adaptations": [
+    {
+      "expected": "symphony-pull",
+      "field": "name",
+      "id": "symphony-runner:pull:name",
+      "owner": "generated skill \"pull\"",
+      "projection": ".agents/skills/symphony-pull/SKILL.md",
+      "reason": "The runner-prefixed manifest is an intentional name adaptation."
+    }
+  ],
+  "agentsInstructions": [
+    {
+      "content": "The default workflow skills are `pull`.",
+      "path": "WALLIE_AGENTS_INSTRUCTIONS"
+    }
+  ],
+  "claudeSkillLinks": [
+    {
+      "path": ".claude/skills/pull",
+      "target": ".agents/skills/pull"
+    },
+    {
+      "path": ".claude/skills/symphony-pull",
+      "target": ".agents/skills/symphony-pull"
+    }
+  ],
+  "generatedSkills": [
+    {
+      "body": "# Pull\n\nRun `pnpm check` before shipping.",
+      "content": "---\nname: pull\ndescription: Pull safely.\n---\n\n# Pull\n\nRun `pnpm check` before shipping.\n",
+      "declaredName": "pull",
+      "description": "Pull safely.",
+      "frontmatterKeys": ["description", "name"],
+      "metadataAuthor": null,
+      "name": "pull",
+      "path": ".agents/skills/pull/SKILL.md",
+      "source": "generated-current"
+    }
+  ],
+  "packageScripts": ["check"],
+  "promptVariables": {
+    "owner": ["session.title"],
+    "projection": ["session.title"]
+  },
+  "providerInventories": [
+    {
+      "path": "SANDBOX_PROVIDER_OPTIONS",
+      "values": ["vercel"]
+    }
+  ],
+  "providerOwner": ["vercel"],
+  "repositorySkills": [
+    {
+      "body": "# Pull\n\nRun `pnpm check` before shipping.",
+      "content": "---\nname: pull\ndescription: Pull safely.\n---\n\n# Pull\n\nRun `pnpm check` before shipping.\n",
+      "description": "Pull safely.",
+      "frontmatterKeys": ["description", "name"],
+      "metadataAuthor": null,
+      "name": "pull",
+      "path": ".agents/skills/pull/SKILL.md",
+      "source": "repository"
+    },
+    {
+      "body": "# Pull\n\nRun `pnpm check` before shipping.",
+      "content": "---\nname: symphony-pull\ndescription: Pull safely.\n---\n\n# Pull\n\nRun `pnpm check` before shipping.\n",
+      "description": "Pull safely.",
+      "frontmatterKeys": ["description", "name"],
+      "metadataAuthor": null,
+      "name": "symphony-pull",
+      "path": ".agents/skills/symphony-pull/SKILL.md",
+      "source": "repository"
+    }
+  ]
+}

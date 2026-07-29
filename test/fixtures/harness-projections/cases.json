@@ -1,0 +1,98 @@
+[
+  {
+    "expectedDiagnostics": [],
+    "mutations": [],
+    "name": "accepts the positive discovered projection fixture"
+  },
+  {
+    "expectedDiagnostics": [],
+    "mutations": [
+      {
+        "op": "patchRepositorySkill",
+        "patch": {
+          "body": "# Pull\n\nRun `pnpm check` with repository-specific orchestration.",
+          "content": "---\nname: pull\ndescription: Pull safely.\n---\n\n# Pull\n\nRun `pnpm check` with repository-specific orchestration.\n"
+        },
+        "path": ".agents/skills/pull/SKILL.md"
+      },
+      {
+        "adaptation": {
+          "field": "body",
+          "id": "repository-detail:pull:body",
+          "owner": "generated skill \"pull\"",
+          "projection": ".agents/skills/pull/SKILL.md",
+          "reason": "The repository projection intentionally adds orchestration detail."
+        },
+        "op": "addAdaptation"
+      }
+    ],
+    "name": "accepts an explicit owned body adaptation without byte identity"
+  },
+  {
+    "expectedDiagnostics": [
+      "generated skill \"pull\" is missing repository projection \".agents/skills/pull/SKILL.md\" (semantic owner: generated skill \"pull\")."
+    ],
+    "mutations": [
+      {
+        "op": "removeRepositorySkill",
+        "path": ".agents/skills/pull/SKILL.md"
+      }
+    ],
+    "name": "rejects a missing projection with its semantic owner"
+  },
+  {
+    "expectedDiagnostics": [
+      "Repository manifest \".agents/skills/orphan/SKILL.md\" has no generated skill owner named \"orphan\" (semantic owner: generated skill \"orphan\")."
+    ],
+    "mutations": [
+      {
+        "op": "addRepositorySkill",
+        "skill": {
+          "body": "# Orphan\n\nUnowned.",
+          "content": "---\nname: orphan\ndescription: Unowned skill.\n---\n\n# Orphan\n\nUnowned.\n",
+          "description": "Unowned skill.",
+          "frontmatterKeys": ["description", "name"],
+          "metadataAuthor": null,
+          "name": "orphan",
+          "path": ".agents/skills/orphan/SKILL.md",
+          "source": "repository"
+        }
+      }
+    ],
+    "name": "rejects an unknown repository projection"
+  },
+  {
+    "expectedDiagnostics": [
+      "Skill projection \".agents/skills/pull/SKILL.md\" references missing package script \"pnpm check:stale\" (semantic owner: generated skill \"pull\")."
+    ],
+    "mutations": [
+      {
+        "op": "patchRepositorySkill",
+        "patch": {
+          "body": "# Pull\n\nRun `pnpm check:stale` before shipping.",
+          "content": "---\nname: pull\ndescription: Pull safely.\n---\n\n# Pull\n\nRun `pnpm check:stale` before shipping.\n"
+        },
+        "path": ".agents/skills/pull/SKILL.md"
+      }
+    ],
+    "name": "rejects a stale referenced validation command"
+  },
+  {
+    "expectedDiagnostics": [
+      "Harness projection adaptation \"repository-detail:pull:body\" is unused; remove the stale allowance or restore its intentional variant (semantic owner: generated skill \"pull\")."
+    ],
+    "mutations": [
+      {
+        "adaptation": {
+          "field": "body",
+          "id": "repository-detail:pull:body",
+          "owner": "generated skill \"pull\"",
+          "projection": ".agents/skills/pull/SKILL.md",
+          "reason": "The repository projection intentionally adds orchestration detail."
+        },
+        "op": "addAdaptation"
+      }
+    ],
+    "name": "rejects an unused adaptation"
+  }
+]

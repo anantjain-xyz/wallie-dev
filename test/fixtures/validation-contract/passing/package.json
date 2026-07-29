@@ -3,7 +3,7 @@
     "analyze:authenticated-bundle": "fixture",
     "build": "fixture",
     "check": "pnpm check:fast && pnpm test",
-    "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
+    "check:fast": "pnpm verify:validation && pnpm verify:harness-projections && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
     "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
     "check:route-budgets": "fixture",
     "db:types": "fixture",
@@ -16,6 +16,7 @@
     "test:e2e:responsive": "fixture",
     "test:e2e:session-prefetch": "fixture",
     "typecheck": "tsc --noEmit",
+    "verify:harness-projections": "node --import ./scripts/register-server-only.mjs --import tsx scripts/verify-harness-projections.ts",
     "verify:validation": "tsx scripts/verify-validation-contract.ts"
   }
 }

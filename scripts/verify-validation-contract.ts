@@ -17,13 +17,15 @@ type ExpectedWorkflow = {
 
 const expectedScripts = {
   "verify:validation": "tsx scripts/verify-validation-contract.ts",
+  "verify:harness-projections":
+    "node --import ./scripts/register-server-only.mjs --import tsx scripts/verify-harness-projections.ts",
   "format:check": "prettier --check .",
   lint: "eslint . --max-warnings=0",
   typecheck: "tsc --noEmit",
   "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
   test: "vitest run",
   "check:fast":
-    "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
+    "pnpm verify:validation && pnpm verify:harness-projections && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
   check: "pnpm check:fast && pnpm test",
 } as const;
 
