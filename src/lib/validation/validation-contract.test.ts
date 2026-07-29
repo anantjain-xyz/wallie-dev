@@ -67,6 +67,7 @@ describe("validation contract verifier", () => {
         '.github/workflows/lint-and-format.yml job "lint-and-format" must run "pnpm check:fast" from the repository root. Remove job-level "defaults.run.working-directory" or set it to ".".',
         '.github/workflows/lint-and-format.yml job "lint-and-format" must not depend on another job because a skipped dependency can suppress required validation. Remove the job-level "needs" dependency.',
         'Package script "check:fast" must not include classified environment-dependent command "pnpm db:types". Remove it from the fast validation profile or remove its explicit classification.',
+        'Canonical validation profiles contain a dependency cycle: "check:fast" -> "check" -> "check:fast". Remove the recursive reference so each profile terminates; the intended hierarchy is "check" -> "check:fast", never the reverse.',
         '.github/workflows/test.yml job "test" must run "pnpm check" from the repository root. Remove the validation step\'s "working-directory" or set it to ".".',
         '.github/workflows/test.yml job "route-budgets" must run "pnpm build" from the repository root. Remove the check step\'s "working-directory" or set it to ".".',
         '.github/workflows/test.yml job "route-budgets" must run unconditionally for pull requests while classified as route-budget. Remove the job-level "if" condition.',

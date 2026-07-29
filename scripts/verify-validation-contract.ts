@@ -207,6 +207,36 @@ function composedPackageScriptReferences(command: string) {
   return references;
 }
 
+function findProfileCycle(referencesByProfile: ReadonlyMap<string, readonly string[]>) {
+  const completed = new Set<string>();
+  const activeIndexes = new Map<string, number>();
+  const path: string[] = [];
+
+  function visit(profile: string): string[] | null {
+    const activeIndex = activeIndexes.get(profile);
+    if (activeIndex !== undefined) return [...path.slice(activeIndex), profile];
+    if (completed.has(profile)) return null;
+
+    activeIndexes.set(profile, path.length);
+    path.push(profile);
+    for (const reference of referencesByProfile.get(profile) ?? []) {
+      if (!referencesByProfile.has(reference)) continue;
+      const cycle = visit(reference);
+      if (cycle) return cycle;
+    }
+    path.pop();
+    activeIndexes.delete(profile);
+    completed.add(profile);
+    return null;
+  }
+
+  for (const profile of referencesByProfile.keys()) {
+    const cycle = visit(profile);
+    if (cycle) return cycle;
+  }
+  return null;
+}
+
 function usesRepositoryRoot(workingDirectory: unknown) {
   return workingDirectory === undefined || workingDirectory === "." || workingDirectory === "./";
 }
@@ -397,6 +427,7 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
   const errors: string[] = [];
   const packageJson = readJson(projectDirectory, errors);
   const scripts = packageJson.scripts ?? {};
+  const referencesByProfile = new Map<string, readonly string[]>();
   const classifiedScripts = new Map(
     classifiedChecks.flatMap((check) =>
       check.scripts.map((script) => [script, check.classification] as const),
@@ -413,6 +444,7 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
           `Package script "${profile.script}" owns the ${profile.name} validation profile and must compose declared package scripts as "pnpm <script>" commands joined by "&&". Move inline commands into named scripts so the verifier can reconcile them with CI.`,
         );
       } else {
+        referencesByProfile.set(profile.script, references);
         for (const reference of references) {
           if (!(reference in scripts)) {
             errors.push(repairMissingScript(reference, `Package script "${profile.script}"`));
@@ -435,6 +467,13 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
     }
 
     verifyWorkflowDelegation(projectDirectory, profile, scripts, errors);
+  }
+
+  const profileCycle = findProfileCycle(referencesByProfile);
+  if (profileCycle) {
+    errors.push(
+      `Canonical validation profiles contain a dependency cycle: ${profileCycle.map((profile) => `"${profile}"`).join(" -> ")}. Remove the recursive reference so each profile terminates; the intended hierarchy is "check" -> "check:fast", never the reverse.`,
+    );
   }
 
   for (const check of classifiedChecks) {
