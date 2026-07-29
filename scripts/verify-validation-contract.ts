@@ -50,6 +50,7 @@ const setupSteps = [
   {
     name: "Check out repository",
     uses: "actions/checkout@v4",
+    with: { "fetch-depth": 0 },
   },
   {
     name: "Set up pnpm",
