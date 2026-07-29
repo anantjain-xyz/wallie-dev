@@ -5,5 +5,6 @@ export async function processPipelineJob(admin: any) {
   await query
     .update(patch)
     .eq("id", "session-1")
-    .eq("phase_status", "rejected");
+    .eq("phase_status", "rejected")
+    .is("archived_at", null);
 }

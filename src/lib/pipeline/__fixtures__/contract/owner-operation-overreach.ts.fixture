@@ -1,0 +1,8 @@
+export async function runStage(admin: any) {
+  await admin
+    .from("sessions")
+    .delete()
+    .eq("id", "session-1")
+    .eq("phase_status", "agent_generating")
+    .is("archived_at", null);
+}

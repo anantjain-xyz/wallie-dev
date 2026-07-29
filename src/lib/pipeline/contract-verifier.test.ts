@@ -47,10 +47,17 @@ describe("pipeline contract verifier", () => {
         ordinaryOwners: [
           {
             canonicalApi: "Use processPipelineJob().",
-            functions: ["processPipelineJob"],
             id: "fixture-session-owner",
             path: "src/lib/pipeline/processor.ts",
-            tables: ["sessions"],
+            transitions: [
+              {
+                fields: ["phase_status"],
+                functionName: "processPipelineJob",
+                operation: "update",
+                requiredPredicates: ["archived_at", "phase_status"],
+                table: "sessions",
+              },
+            ],
           },
         ],
       }),
@@ -83,10 +90,17 @@ describe("pipeline contract verifier", () => {
         ordinaryOwners: [
           {
             canonicalApi: "Use processPipelineJob().",
-            functions: ["bypassPipelineContract"],
             id: "fixture-session-owner",
             path: "src/lib/pipeline/processor.ts",
-            tables: ["sessions"],
+            transitions: [
+              {
+                fields: ["phase_status"],
+                functionName: "bypassPipelineContract",
+                operation: "update",
+                requiredPredicates: ["phase_status"],
+                table: "sessions",
+              },
+            ],
           },
         ],
       }),
@@ -123,6 +137,57 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it("protects rejection_count as rejection transition state", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("direct-rejection-count", "src/features/unsafe-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("handleRejection"),
+      }),
+    ]);
+  });
+
+  it("requires every transition-specific expected-state predicate", () => {
+    const sessionOwner = PIPELINE_TRANSITION_CONTRACT.ordinaryOwners.find(
+      (owner) => owner.id === "pipeline-session-transitions",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [fixture("incomplete-transition-cas", "src/lib/pipeline/processor.ts")],
+      fixtureContract({ ordinaryOwners: [sessionOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        message: expect.stringContaining("phase_status"),
+      }),
+    ]);
+  });
+
+  it.each(["owner-field-overreach", "owner-operation-overreach"])(
+    "rejects a named owner that exceeds its field or operation permission: %s",
+    (name) => {
+      const sessionOwner = PIPELINE_TRANSITION_CONTRACT.ordinaryOwners.find(
+        (owner) => owner.id === "pipeline-session-transitions",
+      )!;
+      const diagnostics = verifyPipelineContract(
+        [fixture(name, "src/lib/pipeline/processor.ts")],
+        fixtureContract({ ordinaryOwners: [sessionOwner] }),
+      );
+
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          code: "pipeline-owner",
+          message: expect.stringContaining("does not permit"),
+        }),
+      ]);
+    },
+  );
+
   it.each(["conditional-alias-cas", "late-alias-cas"])(
     "rejects a CAS predicate that is not guaranteed before execution: %s",
     (name) => {
@@ -136,10 +201,17 @@ describe("pipeline contract verifier", () => {
           ordinaryOwners: [
             {
               canonicalApi: "Use processPipelineJob().",
-              functions: [functionName],
               id: "fixture-session-owner",
               path: "src/lib/pipeline/processor.ts",
-              tables: ["sessions"],
+              transitions: [
+                {
+                  fields: ["phase_status"],
+                  functionName,
+                  operation: "update",
+                  requiredPredicates: ["phase_status"],
+                  table: "sessions",
+                },
+              ],
             },
           ],
         }),
@@ -161,10 +233,17 @@ describe("pipeline contract verifier", () => {
         ordinaryOwners: [
           {
             canonicalApi: "Use cleanupQueuedJob().",
-            functions: ["cleanupQueuedJob"],
             id: "fixture-job-cleanup-owner",
             path: "src/lib/pipeline/processor.ts",
-            tables: ["agent_jobs"],
+            transitions: [
+              {
+                fields: [],
+                functionName: "cleanupQueuedJob",
+                operation: "delete",
+                requiredPredicates: ["status"],
+                table: "agent_jobs",
+              },
+            ],
           },
         ],
       }),
@@ -193,10 +272,17 @@ describe("pipeline contract verifier", () => {
         {
           canonicalApi: "Use cancelSessionWork().",
           category: "cancellation",
-          functions: ["cancelSessionWork"],
           id: "fixture-cancellation",
           path: "src/lib/pipeline/cancel.ts",
-          tables: ["agent_jobs"],
+          transitions: [
+            {
+              fields: ["finished_at", "status"],
+              functionName: "cancelSessionWork",
+              operation: "update",
+              requiredPredicates: ["status"],
+              table: "agent_jobs",
+            },
+          ],
         },
       ],
     });
@@ -213,10 +299,17 @@ describe("pipeline contract verifier", () => {
         {
           canonicalApi: "Use sweepStalledRuns().",
           category: "stall-detector",
-          functions: ["sweepStalledRuns"],
           id: "fixture-stall-owner",
           path: "src/worker/stall-detector.ts",
-          tables: ["agent_runs"],
+          transitions: [
+            {
+              fields: ["finished_at", "status"],
+              functionName: "sweepStalledRuns",
+              operation: "update",
+              requiredPredicates: ["status"],
+              table: "agent_runs",
+            },
+          ],
         },
       ],
     });
@@ -316,6 +409,33 @@ describe("pipeline contract verifier", () => {
       verifyPipelineContract(
         [sqlFixture("sql-comments", "supabase/migrations/fixture.sql")],
         fixtureContract(),
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects a protected transition hidden in executable dynamic SQL", () => {
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("dynamic-sql", "supabase/migrations/fixture.sql")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
+  it("accepts executable SQL when its transactional RPC owns the exact mutation", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+
+    expect(
+      verifyPipelineContract(
+        [sqlFixture("owned-dynamic-sql", "supabase/migrations/fixture.sql")],
+        fixtureContract({ sqlOwners: [approvalOwner] }),
       ),
     ).toEqual([]);
   });

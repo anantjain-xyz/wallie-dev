@@ -20,14 +20,22 @@ export type PipelineContractDiagnostic = {
 
 type TransitionOwner = {
   canonicalApi: string;
-  functions: readonly string[];
   id: string;
   path: string;
-  tables: readonly ProtectedTable[];
+  transitions: readonly TransitionPermission[];
+};
+
+type TransitionPermission = {
+  fields: readonly string[];
+  functionName: string;
+  operation: MutationOperation;
+  requiredPredicates: readonly string[];
+  table: ProtectedTable;
 };
 
 type RecoveryOwner = TransitionOwner & {
   category: "cancellation" | "reaper" | "reconciler" | "repair" | "stall-detector";
+  requiredFunctions?: readonly string[];
   requiredMarkers?: readonly string[];
 };
 
@@ -35,7 +43,13 @@ type SqlTransitionOwner = {
   canonicalApi: string;
   functionName: string;
   id: string;
-  tables: readonly ProtectedTable[];
+  transitions: readonly SqlTransitionPermission[];
+};
+
+type SqlTransitionPermission = {
+  fields: readonly string[];
+  operation: MutationOperation;
+  table: ProtectedTable;
 };
 
 export type PipelineTransitionContract = {
@@ -55,146 +69,309 @@ const CANONICAL_JOB_API =
 const CANONICAL_RUN_API =
   "Use the processor run lifecycle helpers or cancelSessionWork()/sweepStalledRuns().";
 
+function transition(
+  functionName: string,
+  table: ProtectedTable,
+  operation: MutationOperation,
+  fields: readonly string[],
+  requiredPredicates: readonly string[] = [],
+): TransitionPermission {
+  return { fields, functionName, operation, requiredPredicates, table };
+}
+
+function sqlTransition(
+  table: ProtectedTable,
+  operation: MutationOperation,
+  fields: readonly string[],
+): SqlTransitionPermission {
+  return { fields, operation, table };
+}
+
 export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
   protectedFields: {
     agent_jobs: ["attempt_count", "finished_at", "scheduled_at", "started_at", "status"],
     agent_runs: ["finished_at", "last_activity_at", "sandbox_id", "started_at", "status"],
-    sessions: ["archived_at", "current_artifact_version", "current_stage_id", "phase_status"],
+    sessions: [
+      "archived_at",
+      "current_artifact_version",
+      "current_stage_id",
+      "phase_status",
+      "rejection_count",
+    ],
   },
   ordinaryOwners: [
     {
       canonicalApi: CANONICAL_SESSION_API,
-      functions: [
-        "processPipelineJob",
-        "runStage",
-        "handleRejection",
-        "updateSessionStatus",
-        "updateSessionStatusAfterStageFailure",
-      ],
       id: "pipeline-session-transitions",
       path: "src/lib/pipeline/processor.ts",
-      tables: ["sessions"],
+      transitions: [
+        transition(
+          "processPipelineJob",
+          "sessions",
+          "update",
+          ["phase_status"],
+          ["archived_at", "phase_status"],
+        ),
+        transition(
+          "runStage",
+          "sessions",
+          "update",
+          ["current_artifact_version", "phase_status"],
+          ["archived_at", "phase_status"],
+        ),
+        transition(
+          "handleRejection",
+          "sessions",
+          "update",
+          ["rejection_count"],
+          ["archived_at", "current_artifact_version", "phase_status", "rejection_count"],
+        ),
+        transition(
+          "handleRejection",
+          "sessions",
+          "update",
+          ["phase_status"],
+          ["archived_at", "current_artifact_version", "phase_status", "rejection_count"],
+        ),
+        transition("updateSessionStatus", "sessions", "update", ["phase_status"], ["phase_status"]),
+        transition(
+          "updateSessionStatusAfterStageFailure",
+          "sessions",
+          "update",
+          ["current_artifact_version", "phase_status"],
+          ["phase_status"],
+        ),
+      ],
     },
     {
       canonicalApi: CANONICAL_JOB_API,
-      functions: [
-        "cleanupQueuedJob",
-        "enqueueSessionJobWithRun",
-        "markPipelineJobSuccess",
-        "markPipelineJobError",
-      ],
       id: "pipeline-job-transitions",
       path: "src/lib/pipeline/processor.ts",
-      tables: ["agent_jobs"],
+      transitions: [
+        transition("cleanupQueuedJob", "agent_jobs", "delete", [], ["status"]),
+        transition("enqueueSessionJobWithRun", "agent_jobs", "insert", []),
+        transition(
+          "markPipelineJobSuccess",
+          "agent_jobs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+        transition(
+          "markPipelineJobError",
+          "agent_jobs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+      ],
     },
     {
       canonicalApi: CANONICAL_RUN_API,
-      functions: [
-        "enqueueSessionJobWithRun",
-        "startAgentRun",
-        "updateRunSandbox",
-        "markRunSuccess",
-        "markRunError",
-        "touchRunActivity",
-      ],
       id: "pipeline-run-transitions",
       path: "src/lib/pipeline/processor.ts",
-      tables: ["agent_runs"],
+      transitions: [
+        transition("enqueueSessionJobWithRun", "agent_runs", "insert", []),
+        transition("startAgentRun", "agent_runs", "update", ["started_at", "status"], ["status"]),
+        transition("startAgentRun", "agent_runs", "insert", ["started_at", "status"]),
+        transition("updateRunSandbox", "agent_runs", "update", ["sandbox_id"], ["status"]),
+        transition("markRunSuccess", "agent_runs", "update", ["finished_at", "status"], ["status"]),
+        transition("markRunError", "agent_runs", "update", ["finished_at", "status"], ["status"]),
+        transition("touchRunActivity", "agent_runs", "update", ["last_activity_at"], ["status"]),
+      ],
     },
     {
       canonicalApi: "Use archiveSession()/unarchiveSession().",
-      functions: ["archiveSession", "unarchiveSession"],
       id: "session-archive-transitions",
       path: "src/lib/pipeline/archive.ts",
-      tables: ["sessions"],
+      transitions: [
+        transition("archiveSession", "sessions", "update", ["archived_at"], ["archived_at"]),
+        transition("unarchiveSession", "sessions", "update", ["archived_at"], ["archived_at"]),
+      ],
     },
     {
       canonicalApi: CANONICAL_JOB_API,
-      functions: ["claimJobIfQueued", "cleanupQueuedJob", "createQueuedRun"],
       id: "wallie-job-transitions",
       path: "src/lib/wallie/service.ts",
-      tables: ["agent_jobs"],
+      transitions: [
+        transition(
+          "claimJobIfQueued",
+          "agent_jobs",
+          "update",
+          ["attempt_count", "started_at", "status"],
+          ["status"],
+        ),
+        transition("cleanupQueuedJob", "agent_jobs", "delete", [], ["status"]),
+        transition("createQueuedRun", "agent_jobs", "insert", []),
+      ],
     },
     {
       canonicalApi: CANONICAL_RUN_API,
-      functions: ["createQueuedRun"],
       id: "wallie-run-transitions",
       path: "src/lib/wallie/service.ts",
-      tables: ["agent_runs"],
+      transitions: [transition("createQueuedRun", "agent_runs", "insert", [])],
     },
     {
       canonicalApi: CANONICAL_JOB_API,
-      functions: ["markJobError"],
       id: "worker-job-result-transition",
       path: "src/worker/loop.ts",
-      tables: ["agent_jobs"],
+      transitions: [
+        transition("markJobError", "agent_jobs", "update", ["finished_at", "status"], ["status"]),
+      ],
     },
     {
       canonicalApi: CANONICAL_RUN_API,
-      functions: ["runClaimedJob"],
       id: "worker-run-activity-transition",
       path: "src/worker/loop.ts",
-      tables: ["agent_runs"],
+      transitions: [
+        transition("runClaimedJob", "agent_runs", "update", ["last_activity_at"], ["status"]),
+      ],
     },
   ],
   recoveryOwners: [
     {
       canonicalApi: "Use cancelSessionWork()/cancelWorkspaceWork().",
       category: "cancellation",
-      functions: ["cancelSessionWork", "cancelWorkspaceWork"],
       id: "cancellation-transitions",
       path: "src/lib/pipeline/cancel.ts",
-      tables: ["agent_jobs", "agent_runs", "sessions"],
+      transitions: [
+        transition(
+          "cancelSessionWork",
+          "agent_jobs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+        transition(
+          "cancelSessionWork",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+        transition("cancelSessionWork", "sessions", "update", ["phase_status"], ["phase_status"]),
+        transition(
+          "cancelWorkspaceWork",
+          "agent_jobs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+        transition(
+          "cancelWorkspaceWork",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+      ],
     },
     {
       canonicalApi: "Use reconcileLinearState() and its owned routing helpers.",
       category: "reconciler",
-      functions: ["archiveSessionForLinearRoute", "routeSessionToStage", "ensurePipelineJobQueued"],
       id: "linear-reconciler-transitions",
       path: "src/worker/reconciler.ts",
-      tables: ["agent_jobs", "sessions"],
+      transitions: [
+        transition(
+          "archiveSessionForLinearRoute",
+          "sessions",
+          "update",
+          ["archived_at", "phase_status"],
+          ["phase_status"],
+        ),
+        transition(
+          "routeSessionToStage",
+          "sessions",
+          "update",
+          [
+            "archived_at",
+            "current_artifact_version",
+            "current_stage_id",
+            "phase_status",
+            "rejection_count",
+          ],
+          ["phase_status"],
+        ),
+        transition("ensurePipelineJobQueued", "agent_jobs", "insert", []),
+      ],
     },
     {
       canonicalApi: "Use sweepStalledRuns() and resolveStalledJob().",
       category: "stall-detector",
-      functions: ["sweepStalledRuns", "resolveStalledJob"],
       id: "stall-detector-transitions",
       path: "src/worker/stall-detector.ts",
-      tables: ["agent_jobs", "agent_runs", "sessions"],
+      transitions: [
+        transition(
+          "sweepStalledRuns",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+        transition("sweepStalledRuns", "sessions", "update", ["phase_status"], ["phase_status"]),
+        transition(
+          "resolveStalledJob",
+          "agent_jobs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+      ],
     },
     {
       canonicalApi: "Use the processor's guarded cleanup helpers.",
       category: "repair",
-      functions: ["cancelQueuedRunsForJob", "markActiveRunsForJobError"],
       id: "processor-repair-transitions",
       path: "src/lib/pipeline/processor.ts",
-      tables: ["agent_runs"],
+      transitions: [
+        transition(
+          "cancelQueuedRunsForJob",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+        transition(
+          "markActiveRunsForJobError",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          ["status"],
+        ),
+      ],
     },
     {
       canonicalApi: "Use the workspace-delete compensating parkGeneratingSessions() helper.",
       category: "repair",
-      functions: ["parkGeneratingSessions"],
       id: "workspace-delete-repair-transition",
       path: "src/app/api/workspaces/[workspaceId]/route.ts",
-      tables: ["sessions"],
+      transitions: [
+        transition(
+          "parkGeneratingSessions",
+          "sessions",
+          "update",
+          ["phase_status"],
+          ["phase_status"],
+        ),
+      ],
     },
     {
       canonicalApi: "Use runMaintenanceTick() to compose named recovery owners.",
       category: "repair",
-      functions: ["runMaintenanceTick"],
       id: "manual-repair-orchestrator",
       path: "src/lib/maintenance/service.ts",
+      requiredFunctions: ["runMaintenanceTick"],
       requiredMarkers: ["sweepStalledRuns(", "reapOrphanSandboxes(", "reconcileLinearState("],
-      tables: [],
+      transitions: [],
     },
     {
       canonicalApi: "Use reapOrphanSandboxes() for provider cleanup.",
       category: "reaper",
-      functions: ["reapOrphanSandboxes"],
       id: "sandbox-reaper",
       path: "src/worker/sandbox-reaper.ts",
+      requiredFunctions: ["reapOrphanSandboxes"],
       requiredMarkers: ['.from("agent_runs")', '.from("agent_jobs")', "status"],
-      tables: [],
+      transitions: [],
     },
   ],
   sqlOwners: [
@@ -202,31 +379,60 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: "Use the approve_session_stage transactional RPC.",
       functionName: "public.approve_session_stage",
       id: "stage-approval-rpc",
-      tables: ["sessions"],
+      transitions: [
+        sqlTransition("sessions", "update", ["phase_status"]),
+        sqlTransition("sessions", "update", ["archived_at"]),
+        sqlTransition("sessions", "update", [
+          "current_artifact_version",
+          "current_stage_id",
+          "phase_status",
+          "rejection_count",
+        ]),
+      ],
     },
     {
       canonicalApi: "Use the claim_agent_job transactional RPC.",
       functionName: "public.claim_agent_job",
       id: "legacy-job-claim-rpc",
-      tables: ["agent_jobs"],
+      transitions: [
+        sqlTransition("agent_jobs", "update", [
+          "attempt_count",
+          "scheduled_at",
+          "started_at",
+          "status",
+        ]),
+      ],
     },
     {
       canonicalApi: "Use the claim_next_agent_job transactional RPC.",
       functionName: "public.claim_next_agent_job",
       id: "worker-job-claim-rpc",
-      tables: ["agent_jobs"],
+      transitions: [
+        sqlTransition("agent_jobs", "update", [
+          "attempt_count",
+          "scheduled_at",
+          "started_at",
+          "status",
+        ]),
+      ],
     },
     {
       canonicalApi: "Use the schedule_job_retry transactional RPC.",
       functionName: "public.schedule_job_retry",
       id: "job-retry-rpc",
-      tables: ["agent_jobs"],
+      transitions: [
+        sqlTransition("agent_jobs", "update", ["finished_at", "scheduled_at", "status"]),
+      ],
     },
     {
       canonicalApi: "Use the create_session_with_first_job transactional RPC.",
       functionName: "public.create_session_with_first_job",
       id: "session-create-rpc",
-      tables: ["agent_jobs", "agent_runs", "sessions"],
+      transitions: [
+        sqlTransition("sessions", "insert", ["current_stage_id", "phase_status"]),
+        sqlTransition("agent_jobs", "insert", ["status"]),
+        sqlTransition("agent_runs", "insert", ["status"]),
+      ],
     },
   ],
   seededStageSlugs: ["build", "land", "plan"],
@@ -243,11 +449,6 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
 };
 
 const MUTATION_OPERATIONS = new Set<MutationOperation>(["delete", "insert", "update", "upsert"]);
-const EXPECTED_STATE_FIELDS: Readonly<Record<ProtectedTable, readonly string[]>> = {
-  agent_jobs: ["attempt_count", "status"],
-  agent_runs: ["status"],
-  sessions: ["archived_at", "current_artifact_version", "current_stage_id", "phase_status"],
-};
 const PREDICATE_METHODS = new Set(["eq", "in", "is", "neq", "not"]);
 
 type Initializer = {
@@ -262,6 +463,7 @@ type BindingSource = Initializer & {
 type SourceContext = {
   bindingSources: Map<string, BindingSource[]>;
   initializers: Map<string, Initializer[]>;
+  objectFactories: Map<string, ts.Expression>;
   sourceFile: ts.SourceFile;
 };
 
@@ -292,7 +494,7 @@ export function verifyPipelineContract(
   contract: PipelineTransitionContract = PIPELINE_TRANSITION_CONTRACT,
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
-  const usedRecoveryFunctions = new Set<string>();
+  const usedRecoveryTransitions = new Set<string>();
 
   for (const file of files) {
     const normalizedPath = normalizePath(file.path);
@@ -314,6 +516,7 @@ export function verifyPipelineContract(
     const context: SourceContext = {
       bindingSources: collectBindingSources(sourceFile),
       initializers: collectInitializers(sourceFile),
+      objectFactories: collectObjectFactories(sourceFile),
       sourceFile,
     };
 
@@ -321,21 +524,20 @@ export function verifyPipelineContract(
       if (ts.isCallExpression(node)) {
         const mutation = readMutation(node, context);
         if (mutation) {
+          const protectedFields = readProtectedMutationFields(mutation, contract);
           const writesProtectedState =
             mutation.operation === "delete" ||
             mutation.operation === "insert" ||
             mutation.operation === "upsert" ||
-            !mutation.fieldsKnown ||
-            [...mutation.fields].some((field) =>
-              contract.protectedFields[mutation.table].includes(field),
-            );
+            protectedFields === null ||
+            protectedFields.length > 0;
           if (writesProtectedState) {
-            const recoveryOwner = findTransitionOwner(
+            const recoveryOwner = findDeclaringOwner(
               contract.recoveryOwners,
               normalizedPath,
               mutation,
             );
-            const ordinaryOwner = findTransitionOwner(
+            const ordinaryOwner = findDeclaringOwner(
               contract.ordinaryOwners,
               normalizedPath,
               mutation,
@@ -354,22 +556,43 @@ export function verifyPipelineContract(
                 ),
               );
             } else {
-              if (recoveryOwner && mutation.functionName) {
-                usedRecoveryFunctions.add(
-                  recoveryUsageKey(recoveryOwner.id, mutation.functionName),
+              const permission = findTransitionPermission(owner, mutation, protectedFields);
+              if (!permission) {
+                const fieldDescription =
+                  protectedFields === null
+                    ? "an unresolved payload"
+                    : protectedFields.length > 0
+                      ? `protected fields ${protectedFields.join(", ")}`
+                      : "the protected row lifecycle";
+                diagnostics.push(
+                  diagnostic(
+                    context.sourceFile,
+                    mutation.call,
+                    "pipeline-owner",
+                    `${owner.id} does not permit ${mutation.functionName ?? "this function"} to ${mutation.operation} ${mutation.table} with ${fieldDescription}. ${owner.canonicalApi}`,
+                  ),
+                );
+                return;
+              }
+              if (recoveryOwner) {
+                usedRecoveryTransitions.add(
+                  recoveryTransitionUsageKey(recoveryOwner.id, permission.index),
                 );
               }
-              if (
-                mutation.operation !== "insert" &&
-                mutation.operation !== "upsert" &&
-                !hasExpectedStatePredicate(mutation, context)
-              ) {
+              const missingPredicates = findMissingPredicates(
+                mutation,
+                context,
+                permission.transition.requiredPredicates,
+              );
+              if (missingPredicates.length > 0) {
                 diagnostics.push(
                   diagnostic(
                     context.sourceFile,
                     mutation.call,
                     "pipeline-cas",
-                    `${owner.id} writes protected ${mutation.table} state without an expected-state predicate. ${owner.canonicalApi}`,
+                    `${owner.id} writes protected ${mutation.table} state without required expected-state predicate${
+                      missingPredicates.length === 1 ? "" : "s"
+                    }: ${missingPredicates.join(", ")}. ${owner.canonicalApi}`,
                   ),
                 );
               }
@@ -396,16 +619,24 @@ export function verifyPipelineContract(
 
   for (const recoveryOwner of contract.recoveryOwners) {
     const file = files.find((candidate) => normalizePath(candidate.path) === recoveryOwner.path);
-    for (const functionName of recoveryOwner.functions) {
-      const used =
-        recoveryOwner.tables.length > 0
-          ? usedRecoveryFunctions.has(recoveryUsageKey(recoveryOwner.id, functionName))
-          : Boolean(file && sourceDeclaresFunction(file.source, functionName));
-      if (!used) {
+    for (const [index, permission] of recoveryOwner.transitions.entries()) {
+      if (!usedRecoveryTransitions.has(recoveryTransitionUsageKey(recoveryOwner.id, index))) {
         diagnostics.push({
           code: "recovery-owner-unused",
           line: 1,
-          message: `${recoveryOwner.category} exception ${recoveryOwner.id} declares ${functionName} but no matching owned path uses it. Remove the stale exception or restore the canonical recovery path.`,
+          message: `${recoveryOwner.category} exception ${recoveryOwner.id} declares ${formatTransitionPermission(
+            permission,
+          )} but no matching owned path uses it. Remove the stale exception or restore the canonical recovery path.`,
+          path: recoveryOwner.path,
+        });
+      }
+    }
+    for (const functionName of recoveryOwner.requiredFunctions ?? []) {
+      if (!file || !sourceDeclaresFunction(file.source, functionName)) {
+        diagnostics.push({
+          code: "recovery-owner-unused",
+          line: 1,
+          message: `${recoveryOwner.category} exception ${recoveryOwner.id} requires ${functionName}, but no matching owned path declares it. Remove the stale exception or restore the canonical recovery path.`,
           path: recoveryOwner.path,
         });
       }
@@ -474,6 +705,33 @@ function collectInitializers(sourceFile: ts.SourceFile): Map<string, Initializer
     }
   });
   return initializers;
+}
+
+function collectObjectFactories(sourceFile: ts.SourceFile): Map<string, ts.Expression> {
+  const factories = new Map<string, ts.Expression>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isFunctionDeclaration(statement) || !statement.name || !statement.body) {
+      continue;
+    }
+    let returnedExpression: ts.Expression | null = null;
+    let returnCount = 0;
+    const visit = (node: ts.Node): void => {
+      if (node !== statement.body && ts.isFunctionLike(node)) {
+        return;
+      }
+      if (ts.isReturnStatement(node) && node.expression) {
+        returnCount += 1;
+        returnedExpression = node.expression;
+        return;
+      }
+      node.forEachChild(visit);
+    };
+    visit(statement.body);
+    if (returnCount === 1 && returnedExpression) {
+      factories.set(statement.name.text, returnedExpression);
+    }
+  }
+  return factories;
 }
 
 function collectBindingSources(sourceFile: ts.SourceFile): Map<string, BindingSource[]> {
@@ -611,10 +869,27 @@ function readObjectFields(
 ): { fields: Set<string>; known: boolean } {
   if (!expression) return { fields: new Set(), known: false };
   const resolved = resolveExpression(expression, position, context);
-  if (seen.has(resolved) || !ts.isObjectLiteralExpression(resolved)) {
+  if (seen.has(resolved)) {
     return { fields: new Set(), known: false };
   }
   seen.add(resolved);
+  if (ts.isConditionalExpression(resolved)) {
+    const whenTrue = readObjectFields(resolved.whenTrue, position, context, seen);
+    const whenFalse = readObjectFields(resolved.whenFalse, position, context, seen);
+    return {
+      fields: new Set([...whenTrue.fields, ...whenFalse.fields]),
+      known: whenTrue.known && whenFalse.known,
+    };
+  }
+  if (ts.isCallExpression(resolved) && ts.isIdentifier(resolved.expression)) {
+    const returnedExpression = context.objectFactories.get(resolved.expression.text);
+    return returnedExpression
+      ? readObjectFields(returnedExpression, position, context, seen)
+      : { fields: new Set(), known: false };
+  }
+  if (!ts.isObjectLiteralExpression(resolved)) {
+    return { fields: new Set(), known: false };
+  }
   const fields = new Set<string>();
   let known = true;
   for (const property of resolved.properties) {
@@ -666,7 +941,7 @@ function enclosingFunctionName(node: ts.Node): string | null {
   return null;
 }
 
-function findTransitionOwner<T extends TransitionOwner>(
+function findDeclaringOwner<T extends TransitionOwner>(
   owners: readonly T[],
   path: string,
   mutation: Mutation,
@@ -675,17 +950,56 @@ function findTransitionOwner<T extends TransitionOwner>(
     owners.find(
       (owner) =>
         owner.path === path &&
-        owner.tables.includes(mutation.table) &&
-        Boolean(mutation.functionName && owner.functions.includes(mutation.functionName)),
+        Boolean(
+          mutation.functionName &&
+          owner.transitions.some(
+            (permission) =>
+              permission.functionName === mutation.functionName &&
+              permission.table === mutation.table,
+          ),
+        ),
     ) ?? null
   );
 }
 
-function hasExpectedStatePredicate(mutation: Mutation, context: SourceContext): boolean {
+function readProtectedMutationFields(
+  mutation: Mutation,
+  contract: PipelineTransitionContract,
+): string[] | null {
+  if (!mutation.fieldsKnown) {
+    return null;
+  }
+  const protectedFields = new Set(contract.protectedFields[mutation.table]);
+  return [...mutation.fields].filter((field) => protectedFields.has(field)).sort();
+}
+
+function findTransitionPermission(
+  owner: TransitionOwner,
+  mutation: Mutation,
+  protectedFields: readonly string[] | null,
+): { index: number; transition: TransitionPermission } | null {
+  if (protectedFields === null || !mutation.functionName) {
+    return null;
+  }
+  const index = owner.transitions.findIndex(
+    (permission) =>
+      permission.functionName === mutation.functionName &&
+      permission.table === mutation.table &&
+      permission.operation === mutation.operation &&
+      sameFields(permission.fields, protectedFields),
+  );
+  return index < 0 ? null : { index, transition: owner.transitions[index]! };
+}
+
+function findMissingPredicates(
+  mutation: Mutation,
+  context: SourceContext,
+  requiredPredicates: readonly string[],
+): string[] {
   const predicateFields = new Set<string>();
   collectOuterPredicates(mutation.call, mutation.call.getStart(), context, predicateFields);
 
-  return EXPECTED_STATE_FIELDS[mutation.table].some((field) => predicateFields.has(field));
+  return requiredPredicates.filter((field) => !predicateFields.has(field));
 }
 
 function collectOuterPredicates(
@@ -710,6 +1024,19 @@ function collectOuterPredicates(
     }
     expression = outerCall;
   }
+}
+
+function sameFields(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((field, index) => field === sortedRight[index]);
+}
+
+function formatTransitionPermission(permission: TransitionPermission): string {
+  const fields =
+    permission.fields.length > 0 ? ` fields ${permission.fields.join(", ")}` : " row lifecycle";
+  return `${permission.functionName} ${permission.operation} ${permission.table}${fields}`;
 }
 
 function isSeededStageBranch(
@@ -851,23 +1178,35 @@ function verifySqlFile(
     const owner = contract.sqlOwners.find(
       (candidate) => candidate.functionName === sqlFunction.name,
     );
-    for (const mutation of readSqlMutations(
-      maskSqlStringLiterals(sqlFunction.body),
-      sqlFunction.bodyStart,
-    )) {
-      const protectedFields = contract.protectedFields[mutation.table];
+    const mutations = [
+      ...readSqlMutations(maskSqlStringLiterals(sqlFunction.body), sqlFunction.bodyStart),
+      ...readExecutedSqlMutations(sqlFunction.body, sqlFunction.bodyStart),
+    ];
+    for (const mutation of mutations) {
+      const protectedFields = readProtectedSqlFields(mutation, contract);
       const writesProtectedState =
         mutation.operation === "delete" ||
         mutation.operation === "insert" ||
-        mutation.fields.some((field) => protectedFields.includes(field));
+        protectedFields.length > 0;
       if (!writesProtectedState) continue;
-      if (!owner || !owner.tables.includes(mutation.table)) {
+      const permission = owner?.transitions.find(
+        (candidate) =>
+          candidate.table === mutation.table &&
+          candidate.operation === mutation.operation &&
+          sameFields(candidate.fields, protectedFields),
+      );
+      if (!permission) {
+        const ownerMessage = owner
+          ? `${owner.id} does not permit ${mutation.operation} ${mutation.table} fields ${
+              protectedFields.join(", ") || "(row lifecycle)"
+            }. ${owner.canonicalApi}`
+          : `SQL function ${sqlFunction.name} writes protected ${
+              mutation.table
+            } state without owning that transition. ${canonicalApiForTable(mutation.table)}`;
         diagnostics.push({
           code: "pipeline-owner",
           line: lineAt(file.source, mutation.position),
-          message: `SQL function ${sqlFunction.name} writes protected ${mutation.table} state without owning that transition. ${canonicalApiForTable(
-            mutation.table,
-          )}`,
+          message: ownerMessage,
           path: file.path,
         });
       }
@@ -888,11 +1227,11 @@ function verifySqlFile(
 
   const maskedSource = maskSpans(commentMaskedSource, functionSpans);
   for (const mutation of readSqlMutations(maskSqlStringLiterals(maskedSource), 0)) {
-    const protectedFields = contract.protectedFields[mutation.table];
+    const protectedFields = readProtectedSqlFields(mutation, contract);
     const writesProtectedState =
       mutation.operation === "delete" ||
       mutation.operation === "insert" ||
-      mutation.fields.some((field) => protectedFields.includes(field));
+      protectedFields.length > 0;
     if (writesProtectedState) {
       diagnostics.push({
         code: "pipeline-owner",
@@ -986,6 +1325,86 @@ function readSqlMutations(source: string, offset: number): SqlMutation[] {
     });
   }
   return mutations;
+}
+
+function readExecutedSqlMutations(source: string, offset: number): SqlMutation[] {
+  const mutations: SqlMutation[] = [];
+  for (const statement of readSqlExecuteStatements(source)) {
+    const literalSql = readSqlStringValues(statement.expression).join(" ");
+    for (const mutation of readSqlMutations(literalSql, 0)) {
+      mutations.push({ ...mutation, position: offset + statement.position });
+    }
+  }
+  return mutations;
+}
+
+function readSqlExecuteStatements(source: string): Array<{ expression: string; position: number }> {
+  const statements: Array<{ expression: string; position: number }> = [];
+  const executePattern = /\bexecute\b/gi;
+  for (const match of maskSqlStringLiterals(source).matchAll(executePattern)) {
+    const position = match.index ?? 0;
+    const expressionStart = position + match[0].length;
+    if (/^\s+function\b/i.test(source.slice(expressionStart))) {
+      continue;
+    }
+    let inSingleQuote = false;
+    let end = expressionStart;
+    for (; end < source.length; end += 1) {
+      const character = source[end]!;
+      const next = source[end + 1];
+      if (inSingleQuote) {
+        if (character === "'" && next === "'") {
+          end += 1;
+        } else if (character === "'") {
+          inSingleQuote = false;
+        }
+      } else if (character === "'") {
+        inSingleQuote = true;
+      } else if (character === ";") {
+        break;
+      }
+    }
+    statements.push({
+      expression: source.slice(expressionStart, end),
+      position,
+    });
+  }
+  return statements;
+}
+
+function readSqlStringValues(source: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let inSingleQuote = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (!inSingleQuote) {
+      if (character === "'") {
+        current = "";
+        inSingleQuote = true;
+      }
+      continue;
+    }
+    if (character === "'" && next === "'") {
+      current += "'";
+      index += 1;
+    } else if (character === "'") {
+      values.push(current);
+      inSingleQuote = false;
+    } else {
+      current += character;
+    }
+  }
+  return values;
+}
+
+function readProtectedSqlFields(
+  mutation: SqlMutation,
+  contract: PipelineTransitionContract,
+): string[] {
+  const protectedFields = new Set(contract.protectedFields[mutation.table]);
+  return mutation.fields.filter((field) => protectedFields.has(field)).sort();
 }
 
 function readSqlAssignedFields(setClause: string): string[] {
@@ -1153,8 +1572,8 @@ function isProtectedTable(value: string | null): value is ProtectedTable {
   return value === "agent_jobs" || value === "agent_runs" || value === "sessions";
 }
 
-function recoveryUsageKey(ownerId: string, functionName: string): string {
-  return `${ownerId}:${functionName}`;
+function recoveryTransitionUsageKey(ownerId: string, transitionIndex: number): string {
+  return `${ownerId}:${transitionIndex}`;
 }
 
 function sourceDeclaresFunction(source: string, functionName: string): boolean {

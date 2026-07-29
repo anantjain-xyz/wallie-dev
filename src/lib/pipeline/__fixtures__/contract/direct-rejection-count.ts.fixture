@@ -1,0 +1,6 @@
+export async function bypassRejectionTransition(admin: any) {
+  await admin
+    .from("sessions")
+    .update({ rejection_count: 99 })
+    .eq("id", "session-1");
+}

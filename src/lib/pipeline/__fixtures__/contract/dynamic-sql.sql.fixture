@@ -1,0 +1,8 @@
+create or replace function public.bypass_transition()
+returns void
+language plpgsql
+as $$
+begin
+  execute 'update public.sessions set phase_status = ''approved'' where id = gen_random_uuid()';
+end;
+$$;
