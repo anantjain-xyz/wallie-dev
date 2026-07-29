@@ -19,14 +19,12 @@ import {
   stopWorkspaceOwnedSandboxes,
   validateDaytonaSandboxCredentials,
   validateE2BSandboxCredentials,
+  validateVercelSandboxCredentials,
 } from "@/lib/sandbox-connections/server";
 import { stopVercelWorkspaceOwnedSandboxes } from "@/lib/sandbox-connections/cleanup";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { upsertVercelSandboxConnectionSchema } from "@/lib/vercel-sandbox/contracts";
-import {
-  saveVercelSandboxConnection,
-  validateVercelSandboxCredentials,
-} from "@/lib/vercel-sandbox/server";
+import { saveVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type RouteContext = { params: Promise<{ provider: string; workspaceId: string }> };

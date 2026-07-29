@@ -22,6 +22,7 @@ vi.mock("@/lib/workspaces/access", () => ({
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
   loadWorkspaceSandboxSettings: mocked.loadWorkspaceSandboxSettings,
+  validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentials,
 }));
 
 vi.mock("@/lib/vercel-sandbox/server", async () => {
@@ -34,7 +35,6 @@ vi.mock("@/lib/vercel-sandbox/server", async () => {
     loadVercelSandboxConnection: mocked.loadVercelSandboxConnection,
     loadVercelSandboxConnectionPreview: mocked.loadVercelSandboxConnectionPreview,
     saveVercelSandboxConnection: mocked.saveVercelSandboxConnection,
-    validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentials,
   };
 });
 

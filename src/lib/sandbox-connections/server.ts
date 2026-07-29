@@ -18,7 +18,12 @@ import {
   type E2BSandboxCredentials,
   type SandboxConnection,
   type SandboxProvider,
+  type VercelSandboxCredentials,
 } from "@/lib/sandbox";
+import {
+  runBoundedSandboxProviderOperation,
+  SandboxProviderDeadlineError,
+} from "@/lib/sandbox/lifecycle";
 import {
   getSandboxProviderContract,
   listSandboxProviders,
@@ -29,6 +34,7 @@ import {
   loadConnectedVercelSandboxConnections,
   loadVercelSandboxConnection,
   loadVercelSandboxConnectionPreview,
+  validateVercelSandboxCredentials as validateVercelSandboxCredentialsUnbounded,
 } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
@@ -353,6 +359,21 @@ export async function validateDaytonaSandboxCredentials(credentials: DaytonaSand
     revision: "validation",
   });
   return { ...validation, credentials: normalized };
+}
+
+export async function validateVercelSandboxCredentials(credentials: VercelSandboxCredentials) {
+  try {
+    return await runBoundedSandboxProviderOperation({
+      operation: "validate",
+      provider: "vercel",
+      run: () => validateVercelSandboxCredentialsUnbounded(credentials),
+    });
+  } catch (error) {
+    if (error instanceof SandboxProviderDeadlineError) {
+      return { error: error.message, ok: false as const };
+    }
+    throw error;
+  }
 }
 
 export async function saveE2BSandboxConnection(input: {
