@@ -93,6 +93,7 @@ describe("validation contract verifier", () => {
         '.github/workflows/test.yml job "test" must validate the triggering repository. Remove "repository" from the actions/checkout step so GitHub checks out this pull request\'s repository.',
         'Canonical validation profiles contain a dependency cycle: "check:fast" -> "helper" -> "check:fast". Remove the recursive reference so each profile terminates; the intended hierarchy is "check" -> "check:fast", never the reverse.',
         'Package script "check:fast" must not reach classified environment-dependent command "pnpm db:types" through "check:fast" -> "classified-helper" -> "db:types". Remove the classified command from the fast validation dependency chain or remove its explicit classification.',
+        'Package script "check:fast" references missing package script "constructor". Declare "constructor" in package.json#scripts or update the validation contract reference.',
         '.github/workflows/test.yml job "route-budgets" must use GitHub\'s default executing shell for classified package scripts. Remove job-level "defaults.run.shell" so the route-budget check executes.',
         '.github/workflows/test.yml job "route-budgets" must use GitHub\'s default executing shell for "pnpm build". Remove the check step\'s "shell" override so the route-budget check executes.',
         '.github/workflows/test.yml job "route-budgets" must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.',

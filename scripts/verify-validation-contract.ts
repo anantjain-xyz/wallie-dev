@@ -214,14 +214,21 @@ function packageScriptReferences(job: WorkflowJob) {
   return packageScriptCalls(job).map(({ script }) => script);
 }
 
-function composedPackageScriptReferences(command: string) {
-  const references: string[] = [];
-  for (const component of command.split("&&")) {
+function packageScriptReferencesInCommand(command: string) {
+  return command.split("&&").flatMap((component) => {
     const match = component.trim().match(/^pnpm(?:\s+run)?\s+([A-Za-z0-9:_-]+)$/);
-    if (!match?.[1]) return null;
-    references.push(match[1]);
-  }
-  return references;
+    return match?.[1] ? [match[1]] : [];
+  });
+}
+
+function composedPackageScriptReferences(command: string) {
+  const components = command.split("&&");
+  const references = packageScriptReferencesInCommand(command);
+  return references.length === components.length ? references : null;
+}
+
+function hasOwnPackageScript(scripts: Readonly<Record<string, string>>, script: string) {
+  return Object.prototype.hasOwnProperty.call(scripts, script);
 }
 
 function findProfileCycle(
@@ -273,7 +280,7 @@ function verifyReachablePackageScriptReferences(
       visited.add(script);
 
       for (const reference of referencesByScript.get(script) ?? []) {
-        if (!(reference in scripts)) {
+        if (!hasOwnPackageScript(scripts, reference)) {
           errors.push(repairMissingScript(reference, `Package script "${script}"`));
           continue;
         }
@@ -501,7 +508,7 @@ function verifyWorkflowDelegation(
   }
 
   for (const reference of references) {
-    if (!(reference in scripts)) {
+    if (!hasOwnPackageScript(scripts, reference)) {
       errors.push(repairMissingScript(reference, `${profile.workflow} job "${profile.job}"`));
     }
   }
@@ -515,7 +522,7 @@ function verifyClassifiedCheck(
 ) {
   const context = `${check.classification} classification`;
   for (const script of check.scripts) {
-    if (!(script in scripts)) errors.push(repairMissingScript(script, context));
+    if (!hasOwnPackageScript(scripts, script)) errors.push(repairMissingScript(script, context));
   }
 
   if (!check.workflow || !check.job) return;
@@ -547,10 +554,9 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
   const packageJson = readJson(projectDirectory, errors);
   const scripts = packageJson.scripts ?? {};
   const referencesByScript = new Map(
-    Object.entries(scripts).flatMap(([script, command]) => {
-      const references = composedPackageScriptReferences(command);
-      return references ? ([[script, references]] as const) : [];
-    }),
+    Object.entries(scripts).map(
+      ([script, command]) => [script, packageScriptReferencesInCommand(command)] as const,
+    ),
   );
   const profileScripts = profiles.map((profile) => profile.script);
   const classifiedScripts = new Map(
@@ -560,7 +566,7 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
   );
 
   for (const profile of profiles) {
-    if (!(profile.script in scripts)) {
+    if (!hasOwnPackageScript(scripts, profile.script)) {
       errors.push(repairMissingScript(profile.script, `${profile.name} validation profile`));
     } else {
       const references = composedPackageScriptReferences(scripts[profile.script]);
