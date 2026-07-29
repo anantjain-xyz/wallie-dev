@@ -111,7 +111,15 @@ const eslintConfig = defineConfig([
     "build/**",
     "coverage/**",
     ".codex/**",
+    ".omo/**",
+    ".playwright-cli/**",
+    ".playwright-mcp/**",
+    ".pnpm-store/**",
+    ".symphony/screenshots/**",
+    "src/app/preview/**",
+    "supabase/.temp/**",
     "test/eslint-fixtures/**",
+    "test-results/**",
   ]),
 ]);
 

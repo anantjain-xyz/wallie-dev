@@ -7,9 +7,15 @@ AGENTS.md
 .vercel
 build
 coverage
-test-results
+/test-results/
 out
 pnpm-lock.yaml
-.pnpm-store
+/.omo/
+/.playwright-cli/
+/.playwright-mcp/
+/.pnpm-store/
+/.symphony/screenshots/
+/src/app/preview/
+/supabase/.temp/
 .github/CODEOWNERS
 src/lib/supabase/database.types.ts

@@ -1,0 +1,7 @@
+/.omo/
+/.playwright-cli/
+/.playwright-mcp/
+/.pnpm-store/
+/.symphony/screenshots/
+/src/app/preview/
+/test-results/

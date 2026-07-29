@@ -1,0 +1,6 @@
+[
+  ".pnpm-store/store.json",
+  "src/app/preview/page.tsx",
+  "test-results/results.json",
+  ".symphony/screenshots/01-happy-path.png"
+]

@@ -10,8 +10,10 @@
 !.yarn/versions
 
 # testing
-/coverage
-/test-results
+/coverage/
+/test-results/
+/.playwright-cli/
+/.playwright-mcp/
 
 # next.js
 /.next/
@@ -41,5 +43,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 .gstack/
-.omo/
-.playwright-mcp/
+/.omo/
+/.symphony/screenshots/
+/src/app/preview/

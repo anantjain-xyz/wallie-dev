@@ -16,6 +16,7 @@ type ExpectedWorkflow = {
 };
 
 const expectedScripts = {
+  "verify:hygiene": "tsx scripts/verify-workspace-hygiene.ts",
   "verify:validation": "tsx scripts/verify-validation-contract.ts",
   "format:check": "prettier --check .",
   lint: "eslint . --max-warnings=0",
@@ -23,7 +24,7 @@ const expectedScripts = {
   "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
   test: "vitest run",
   "check:fast":
-    "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
+    "pnpm verify:validation && pnpm verify:hygiene && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
   check: "pnpm check:fast && pnpm test",
 } as const;
 
