@@ -42,6 +42,7 @@ import {
   deleteSessionArtifactVersion,
   errorActiveRunsForJob,
   insertSessionArtifact,
+  insertSessionArtifactFeedback,
   publishGeneratedArtifact,
   publishRejectedSession,
   recordAgentJobError,
@@ -808,7 +809,7 @@ export async function handleRejection(input: {
   // makes the row a first-write-wins record of "why was this version
   // rejected" — the loser of a truly concurrent rejection is caught by the
   // CAS guard above; this insert is a defense-in-depth check.
-  const { error: feedbackInsertError } = await admin.from("session_artifact_feedback").insert({
+  const { error: feedbackInsertError } = await insertSessionArtifactFeedback(admin, {
     feedback_text: input.feedbackText,
     session_id: input.sessionId,
     stage_id: stage.id,

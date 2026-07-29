@@ -274,6 +274,35 @@ export async function deleteSessionArtifactsForStages(
     .in("stage_slug", [...input.stageSlugs]);
 }
 
+export function insertSessionArtifactFeedback(
+  admin: AdminClient,
+  input: TablesInsert<"session_artifact_feedback">,
+) {
+  return admin.from("session_artifact_feedback").insert(input);
+}
+
+export function deleteSessionArtifactFeedbackForStages(
+  admin: AdminClient,
+  input: { sessionId: string; stageIds: readonly string[] },
+) {
+  return admin
+    .from("session_artifact_feedback")
+    .delete()
+    .eq("session_id", input.sessionId)
+    .in("stage_id", [...input.stageIds]);
+}
+
+export function deleteSessionPhaseCompletionsForStages(
+  admin: AdminClient,
+  input: { sessionId: string; stageIds: readonly string[] },
+) {
+  return admin
+    .from("session_phase_completions")
+    .delete()
+    .eq("session_id", input.sessionId)
+    .in("stage_id", [...input.stageIds]);
+}
+
 export async function createQueuedAgentJob(
   admin: AdminClient,
   input: Omit<TablesInsert<"agent_jobs">, "status">,

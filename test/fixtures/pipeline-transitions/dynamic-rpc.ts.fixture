@@ -1,0 +1,4 @@
+export async function bypassRpcOwner(admin: any) {
+  const rpcName = "approve_session_stage";
+  return admin.rpc(rpcName, {});
+}

@@ -5,7 +5,9 @@ import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import {
   archiveSessionForReconciler,
+  deleteSessionArtifactFeedbackForStages,
   deleteSessionArtifactsForStages,
+  deleteSessionPhaseCompletionsForStages,
   enqueueQueuedAgentJob,
   rerouteSessionForReconciler,
 } from "@/lib/pipeline/transitions";
@@ -296,17 +298,14 @@ async function routeSessionToStage(
   );
 
   if (resetStageIds.length > 0) {
-    await admin
-      .from("session_artifact_feedback")
-      .delete()
-      .eq("session_id", session.id)
-      .in("stage_id", resetStageIds);
-
-    await admin
-      .from("session_phase_completions")
-      .delete()
-      .eq("session_id", session.id)
-      .in("stage_id", resetStageIds);
+    await deleteSessionArtifactFeedbackForStages(admin, {
+      sessionId: session.id,
+      stageIds: resetStageIds,
+    });
+    await deleteSessionPhaseCompletionsForStages(admin, {
+      sessionId: session.id,
+      stageIds: resetStageIds,
+    });
   }
 
   if (resetStageSlugs.length > 0) {

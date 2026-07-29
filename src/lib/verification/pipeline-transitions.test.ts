@@ -26,7 +26,14 @@ function fixtureConfig(
     genericStageSourceRoots: [""],
     importPermissions: [],
     mutationOwners: [],
-    protectedTables: ["agent_jobs", "agent_runs", "session_artifacts", "sessions"],
+    protectedTables: [
+      "agent_jobs",
+      "agent_runs",
+      "session_artifact_feedback",
+      "session_artifacts",
+      "session_phase_completions",
+      "sessions",
+    ],
     recoveryReadOwners: [],
     rpcOwners: [],
     seededStageAdapters: [],
@@ -106,6 +113,20 @@ describe("pipeline transition boundary verifier", () => {
     );
   });
 
+  it("protects rejection feedback records as lifecycle state", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("direct-feedback-write.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        path: "direct-feedback-write.ts",
+      }),
+    ]);
+  });
+
   it("rejects a protected table hidden behind aliases without data-flow interpretation", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig(),
@@ -130,6 +151,20 @@ describe("pipeline transition boundary verifier", () => {
       expect.objectContaining({
         code: "dynamic-table-access",
         path: "aliased-client.ts",
+      }),
+    ]);
+  });
+
+  it("rejects dynamically named RPC calls fail-closed", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("dynamic-rpc.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "dynamic-rpc-access",
+        path: "dynamic-rpc.ts",
       }),
     ]);
   });
@@ -305,5 +340,38 @@ describe("pipeline transition boundary verifier", () => {
       }),
     ]);
     expect(diagnostics[0]?.message).toContain("Use approveSessionStage()");
+  });
+
+  it("recognizes plain CREATE FUNCTION as the effective RPC definition", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          name: "approveSessionStage",
+        },
+      ],
+      rpcOwners: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          canonicalApi: "Use approveSessionStage().",
+          functionName: "approveSessionStage",
+          latestMigration: "valid/approve-plain.sql",
+          path: "valid/rpc-owner.ts",
+          rpc: "approve_session_stage",
+        },
+      ],
+      transitionModule: "./rpc-owner",
+    });
+
+    expect(
+      verifyPipelineTransitions({
+        config,
+        files: [
+          fixture("valid/rpc-owner.ts"),
+          fixture("valid/rpc-caller.ts"),
+          fixture("valid/approve-plain.sql"),
+        ],
+      }),
+    ).toEqual([]);
   });
 });

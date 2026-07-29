@@ -6,7 +6,13 @@ import ts from "typescript";
 
 import { pipelineTransitionBoundaryConfig } from "./pipeline-transition-boundaries.config";
 
-export type PipelineTable = "agent_jobs" | "agent_runs" | "session_artifacts" | "sessions";
+export type PipelineTable =
+  | "agent_jobs"
+  | "agent_runs"
+  | "session_artifact_feedback"
+  | "session_artifacts"
+  | "session_phase_completions"
+  | "sessions";
 export type PipelineOperation = "delete" | "insert" | "select" | "update" | "upsert";
 export type RecoveryCategory =
   | "cancellation"
@@ -84,6 +90,7 @@ export type PipelineTransitionBoundaryConfig = Readonly<{
 }>;
 
 export type PipelineTransitionDiagnosticCode =
+  | "dynamic-rpc-access"
   | "dynamic-table-access"
   | "invalid-config"
   | "pipeline-owner"
@@ -112,7 +119,7 @@ type VerifyInput = Readonly<{
 }>;
 
 const MUTATION_OPERATIONS = new Set<PipelineOperation>(["delete", "insert", "update", "upsert"]);
-const TEST_FILE_PATTERN = /\.(?:fixture|spec|test)\.[cm]?[jt]sx?$/;
+const TEST_FILE_PATTERN = /\.(?:fixture|spec|test|typecheck)\.[cm]?[jt]sx?$/;
 
 function normalizePath(path: string) {
   return path.split(sep).join("/");
@@ -343,7 +350,7 @@ type SqlFunctionDefinition = Readonly<{
 
 function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
   const pattern =
-    /\bcreate\s+or\s+replace\s+function\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\(/gi;
+    /\bcreate\s+(?:or\s+replace\s+)?function\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\(/gi;
   const headers = [...source.matchAll(pattern)];
   return headers.map((header, index) => {
     const start = header.index;
@@ -642,24 +649,29 @@ export function verifyPipelineTransitions({
           }
         }
 
-        if (
-          method === "rpc" &&
-          node.arguments[0] &&
-          ts.isStringLiteralLike(node.arguments[0]) &&
-          rpcOwnerByName.has(node.arguments[0].text)
-        ) {
-          const rpc = node.arguments[0].text;
-          const owner = rpcOwnerByName.get(rpc)!;
-          const functionName = enclosingFunctionName(node) ?? "<module>";
-          if (file.path === owner.path && functionName === owner.functionName) {
-            usedOwners.add(`rpc\0${rpc}`);
-          } else {
+        if (method === "rpc" && node.arguments[0]) {
+          if (!ts.isStringLiteralLike(node.arguments[0])) {
             diagnostics.push({
-              code: "pipeline-owner",
+              code: "dynamic-rpc-access",
               line: lineOf(sourceFile, node),
-              message: `Transactional RPC ${rpc} may only be called by ${owner.functionName}. ${owner.canonicalApi}`,
+              message:
+                "Dynamic RPC access is fail-closed because it can hide a protected lifecycle transition. Use a literal RPC name through its exact typed owner.",
               path: file.path,
             });
+          } else if (rpcOwnerByName.has(node.arguments[0].text)) {
+            const rpc = node.arguments[0].text;
+            const owner = rpcOwnerByName.get(rpc)!;
+            const functionName = enclosingFunctionName(node) ?? "<module>";
+            if (file.path === owner.path && functionName === owner.functionName) {
+              usedOwners.add(`rpc\0${rpc}`);
+            } else {
+              diagnostics.push({
+                code: "pipeline-owner",
+                line: lineOf(sourceFile, node),
+                message: `Transactional RPC ${rpc} may only be called by ${owner.functionName}. ${owner.canonicalApi}`,
+                path: file.path,
+              });
+            }
           }
         }
       }
