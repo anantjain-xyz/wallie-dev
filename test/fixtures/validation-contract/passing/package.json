@@ -1,0 +1,22 @@
+{
+  "scripts": {
+    "analyze:authenticated-bundle": "fixture",
+    "build": "fixture",
+    "check": "pnpm check:fast && pnpm test",
+    "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:migration-safety && pnpm check:privileged-imports",
+    "check:migration-safety": "tsx scripts/check-migration-safety.ts",
+    "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
+    "check:route-budgets": "fixture",
+    "db:types": "fixture",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "test:benchmark:content-visibility": "fixture",
+    "test:benchmark:interaction": "fixture",
+    "test:e2e:onboarding": "fixture",
+    "test:e2e:responsive": "fixture",
+    "test:e2e:session-prefetch": "fixture",
+    "typecheck": "tsc --noEmit",
+    "verify:validation": "tsx scripts/verify-validation-contract.ts"
+  }
+}
