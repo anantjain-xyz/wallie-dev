@@ -75,6 +75,12 @@ Pipeline `operating_rules_md` is trimmed and prepended to
 planes. The renderer supports variable substitution and non-nested conditional
 blocks. Unknown variables become empty strings.
 
+Template variable paths currently match only letters, digits, underscores, and
+dots. Stage slugs permit hyphens, so a reference such as
+`artifact.previousStages.code-review` is not recognized by either substitution
+or conditional parsing and remains verbatim in the rendered prompt. Only stage
+slugs without hyphens currently resolve through this dot-path syntax.
+
 Despite its name, `loadCompletedStageArtifacts()` currently chooses the latest
 artifact version for every slug on the session. It does not require a matching
 completion row or filter by stage position. On a retry after rejection,
@@ -170,6 +176,8 @@ These are current limitations, not desired contracts:
   combined prompt.
 - Repository variables are declared but not supplied by the processor because
   prompt rendering occurs before GitHub context is loaded.
+- Artifact variables for valid hyphenated stage slugs are not recognized and
+  remain verbatim in rendered prompts.
 - Workspace `maxTurns` is loaded but not used by the generic processor;
   continuation IDs and `maxTokens` are also not supplied.
 - `.wallie-prompt.txt` and repository-local `.codex/auth.json` are sensitive

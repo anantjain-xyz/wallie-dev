@@ -63,12 +63,19 @@ capacity, mutation locks, attempt accounting, and heartbeat ownership.
 
 - Registration upserts worker start time, heartbeat time, and an empty active
   job list.
-- Periodic and immediate heartbeats publish the complete in-flight set.
+- Periodic, claim, and completion paths each publish a snapshot of the
+  scheduler's in-flight set. Those writes are not serialized, so an older
+  snapshot can commit after a newer one and temporarily omit a live job.
 - Heartbeat failure is logged but does not crash the worker.
 - Before processing, the worker touches activity on linked active runs.
 - Persisting an agent event refreshes the run's `last_activity_at`.
 - The stall detector protects jobs advertised by a heartbeat newer than its
   freshness window.
+
+During an out-of-order heartbeat window, freshness alone does not prove that
+every live job appears in the stored snapshot. A long-running setup or runner
+that emits no activity can therefore be treated as unowned and recovered once
+its activity exceeds the stall timeout.
 
 There is currently no public worker health endpoint. Service-role-only
 `worker_heartbeats`, worker logs, and durable job/run activity are the health
@@ -99,9 +106,13 @@ transition is not currently a successful compare-and-swap boundary.
 
 ### Linear reconciler
 
-The reconciler scans nonarchived, Linear-linked sessions in active phases,
+The reconciler pages nonarchived, Linear-linked sessions in active phases,
 batches issue-state reads by workspace, and applies the workspace's routing
-configuration. It may:
+configuration. Pagination orders only by `created_at`, limits each page to 50
+rows, and advances with `created_at > previous_cursor`. If more than 50 eligible
+sessions share the boundary timestamp, the remaining tied rows are skipped;
+subsequent sweeps repeat the same ordering and may never reach them. For rows
+that are reached, the reconciler may:
 
 - Ensure the current stage has work queued.
 - Cancel work and reroute to a configured stage.
@@ -220,8 +231,12 @@ A healthy deployment should provide:
   marker exists.
 - Shutdown does not drain.
 - Periodic recovery sweeps can overlap.
+- Heartbeat writes are not serialized, so a stale snapshot can overwrite a
+  newer in-flight job set.
 - The stall detector does not verify that its status-filtered run update won
   before performing the remaining recovery actions.
+- Linear reconciliation uses a `created_at`-only cursor and can skip sessions
+  tied at a 50-row page boundary.
 - Manager-triggered maintenance invokes the sandbox reaper without a workspace
   filter.
 - The reaper cannot discover a sandbox whose provider ID was never recorded on

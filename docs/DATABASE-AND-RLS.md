@@ -69,9 +69,13 @@ boundaries.
 - Tenant-owned rows carry `workspace_id`.
 - User-global exceptions include profiles and personal agent credentials.
 - Active workspace membership is the reusable authorization relationship.
-- Denormalized workspace IDs on child rows are checked against their referenced
-  parents by constraints or triggers; callers do not get to assert that
-  relationship unchecked.
+- Tenant-owned references should enforce that a child and its parent belong to
+  the same workspace. Most such relationships are checked by constraints or
+  triggers, but `repository_onboarding_status.github_repository_id` and
+  `sandbox_capability_checks.github_repository_id` currently are not. An
+  authenticated manager who knows another workspace's repository UUID can
+  write either kind of row in their own workspace with that cross-workspace
+  reference.
 - RLS policy and SQL privilege are separate gates. A policy cannot compensate
   for an accidentally broad grant, and a revoke cannot express row-level
   identity.
@@ -205,6 +209,9 @@ substitute for applying the migration or exercising Postgres identities.
 - A temporary loose Supabase client remains in production call paths.
 - Personal agent credential tables grant authenticated users table-wide
   self-`SELECT`, exposing ciphertext and non-preview columns to browser clients.
+- `repository_onboarding_status.github_repository_id` and
+  `sandbox_capability_checks.github_repository_id` lack database-enforced
+  workspace consistency with their referenced repositories.
 - Manager-triggered maintenance scopes stall and Linear work to one workspace
   but runs sandbox reaping globally.
 - Generated-type freshness and a global applied-schema RLS/grant inventory are
