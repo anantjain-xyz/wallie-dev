@@ -10,6 +10,7 @@ import type {
   SessionMutationErrorResponse,
   SessionTitleMutationResult,
 } from "@/features/sessions/mutation-contracts";
+import { updateSessionTitleMetadata } from "@/lib/pipeline/transitions";
 import { withServerTiming } from "@/lib/server-timing";
 import { getSupabaseUserOrNull } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -77,13 +78,11 @@ export async function PATCH(request: Request, { params }: Params) {
     }
 
     const { data: updatedRow, error: updateError } = await timing.segment("mutation", () =>
-      supabase
-        .from("sessions")
-        .update({ title: normalized.title })
-        .eq("id", sessionRow.id)
-        .eq("workspace_id", sessionRow.workspace_id)
-        .select("id, title, updated_at")
-        .single(),
+      updateSessionTitleMetadata(supabase, {
+        sessionId: sessionRow.id,
+        title: normalized.title,
+        workspaceId: sessionRow.workspace_id,
+      }),
     );
 
     if (updateError || !updatedRow) {

@@ -2,6 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import { processPipelineJob } from "@/lib/pipeline/processor";
+import {
+  claimNextAgentJob,
+  completeAgentJob,
+  touchActiveRunsForJob,
+} from "@/lib/pipeline/transitions";
 
 import type { WorkerConfig } from "./config";
 
@@ -24,9 +29,7 @@ export async function claimNextJob(
   admin: AdminClient,
   config: WorkerConfig,
 ): Promise<ClaimNextResult> {
-  const { data, error } = await admin.rpc("claim_next_agent_job", {
-    default_concurrency_limit: config.defaultConcurrencyLimit,
-  });
+  const { data, error } = await claimNextAgentJob(admin, config.defaultConcurrencyLimit);
 
   if (error) {
     console.error("[worker] atomic claim failed", { error: error.message });
@@ -51,11 +54,7 @@ export async function claimNextJob(
 export async function runClaimedJob(admin: AdminClient, job: AgentJobRow): Promise<void> {
   // Touch last_activity_at on any linked agent_runs so the stall detector has
   // a fresh baseline even if the processor crashes immediately.
-  await admin
-    .from("agent_runs")
-    .update({ last_activity_at: new Date().toISOString() })
-    .eq("agent_job_id", job.id)
-    .in("status", ["queued", "started", "running"]);
+  await touchActiveRunsForJob(admin, job.id);
 
   try {
     await processPipelineJob({ admin, job });
@@ -71,14 +70,5 @@ async function markJobError(
   job: AgentJobRow,
   errorMessage: string,
 ): Promise<void> {
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: errorMessage,
-      status: "error",
-    })
-    .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to error.
-    .neq("status", "canceled");
+  await completeAgentJob(admin, { errorMessage, jobId: job.id, status: "error" });
 }

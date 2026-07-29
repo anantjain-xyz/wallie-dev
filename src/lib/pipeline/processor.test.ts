@@ -1767,8 +1767,11 @@ describe("handleApproval", () => {
 
 interface RejectionMockOptions {
   session: Tables<"sessions"> | null;
+  postPhaseSession?: Tables<"sessions"> | null;
   rejectionClaim?: { id: string } | null;
   rejectionClaimError?: { message: string } | null;
+  phaseClaim?: { id: string } | null;
+  phaseClaimError?: { message: string } | null;
   enqueueError?: { code?: string; message: string } | null;
   workspaceMember?: { id: string } | null;
   feedbackInsertError?: { message: string; code?: string } | null;
@@ -1779,17 +1782,26 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   const artifactUpdates: Array<{ patch: Record<string, unknown> }> = [];
   const insertedFeedback: Array<Record<string, unknown>> = [];
   const enqueuedJobs: Array<Record<string, unknown>> = [];
+  let sessionSelectCount = 0;
 
   const sessionsTable = {
     select: () => {
+      sessionSelectCount += 1;
       const builder = {
         eq: () => builder,
-        maybeSingle: async () => ({ data: opts.session, error: null }),
+        maybeSingle: async () => ({
+          data:
+            sessionSelectCount >= 3 && opts.postPhaseSession !== undefined
+              ? opts.postPhaseSession
+              : opts.session,
+          error: null,
+        }),
       };
       return builder;
     },
     update: (patch: Record<string, unknown>) => {
       sessionUpdates.push(patch);
+      const isPhaseClaim = sessionUpdates.length > 1;
       const eqChain = {
         eq() {
           return eqChain;
@@ -1800,8 +1812,16 @@ function buildRejectionMock(opts: RejectionMockOptions) {
         select() {
           return {
             maybeSingle: async () => ({
-              data: opts.rejectionClaim === undefined ? { id: "sess-1" } : opts.rejectionClaim,
-              error: opts.rejectionClaimError ?? null,
+              data: isPhaseClaim
+                ? opts.phaseClaim === undefined
+                  ? { id: "sess-1" }
+                  : opts.phaseClaim
+                : opts.rejectionClaim === undefined
+                  ? { id: "sess-1" }
+                  : opts.rejectionClaim,
+              error: isPhaseClaim
+                ? (opts.phaseClaimError ?? null)
+                : (opts.rejectionClaimError ?? null),
             }),
           };
         },
@@ -2074,6 +2094,144 @@ describe("handleRejection", () => {
     expect(enqueuedJobs[0]!.trigger_type).toBe("comment_retry");
     expect(sessionUpdates[0]).toEqual({ rejection_count: 1 });
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
+  });
+
+  it("accepts the final phase CAS when the rerun worker claims first", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin, sessionUpdates } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 1,
+        phase_status: "agent_generating",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toMatchObject({
+      session: {
+        currentArtifactVersion: 1,
+        phaseStatus: "agent_generating",
+        rejectionCount: 1,
+      },
+      success: true,
+    });
+    expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
+  });
+
+  it("accepts the final phase CAS when the same-stage rerun finishes first", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 2,
+        phase_status: "awaiting_review",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toMatchObject({
+      session: {
+        currentArtifactVersion: 2,
+        phaseStatus: "awaiting_review",
+        rejectionCount: 1,
+      },
+      success: true,
+    });
+  });
+
+  it("accepts the final phase CAS when the same-stage rerun fails first", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 1,
+        phase_status: "rejected",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toMatchObject({
+      session: {
+        currentArtifactVersion: 1,
+        phaseStatus: "rejected",
+        rejectionCount: 1,
+      },
+      success: true,
+    });
+  });
+
+  it("rejects the final phase CAS when approval advances the stage first", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 0,
+        current_stage_id: "stage-build",
+        phase_status: "approved",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    });
   });
 
   it("treats a unique_violation on enqueue (23505) as silent success — the existing queued job will pick up the feedback", async () => {

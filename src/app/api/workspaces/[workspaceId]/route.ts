@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthenticatedHomePath } from "@/lib/auth";
+import { parkWorkspaceSessionsAfterDeleteFailure } from "@/lib/pipeline/transitions";
 import { workspaceAvatarBucket } from "@/lib/storage/workspace-avatar";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { stopWorkspaceProviderSandboxes } from "@/lib/vercel-sandbox/teardown";
@@ -162,11 +163,7 @@ async function parkGeneratingSessions(
   // canceled the workspace's jobs/runs. Mirrors cancelSessionWork's park: a
   // session mid-generation with no active job is moved to `rejected` so the user
   // can re-run it instead of seeing a permanently-stuck "Drafting" state.
-  const { error } = await admin
-    .from("sessions")
-    .update({ phase_status: "rejected" })
-    .eq("workspace_id", workspaceId)
-    .eq("phase_status", "agent_generating");
+  const { error } = await parkWorkspaceSessionsAfterDeleteFailure(admin, workspaceId);
 
   if (error) {
     console.error("[workspace-delete] failed to park sessions after delete error", {

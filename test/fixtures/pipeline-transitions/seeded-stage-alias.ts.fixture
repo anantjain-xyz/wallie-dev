@@ -1,0 +1,4 @@
+export function instructionsFor(stage: { slug: string }) {
+  const seededStage = "plan";
+  return stage.slug === seededStage ? "special" : "generic";
+}

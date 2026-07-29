@@ -4,11 +4,20 @@ import type { Database } from "@/lib/supabase/database.types";
 import { stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
+import {
+  ACTIVE_AGENT_JOB_STATUSES as TRANSITION_ACTIVE_AGENT_JOB_STATUSES,
+  ACTIVE_AGENT_RUN_STATUSES as TRANSITION_ACTIVE_AGENT_RUN_STATUSES,
+  cancelSessionAgentJobs,
+  cancelSessionAgentRuns,
+  cancelWorkspaceAgentJobs,
+  cancelWorkspaceAgentRuns,
+  parkCanceledSession,
+} from "@/lib/pipeline/transitions";
 
 type AdminClient = SupabaseClient<Database>;
 
-export const ACTIVE_AGENT_JOB_STATUSES = ["queued", "started", "running"] as const;
-export const ACTIVE_AGENT_RUN_STATUSES = ["queued", "started", "running"] as const;
+export const ACTIVE_AGENT_JOB_STATUSES = TRANSITION_ACTIVE_AGENT_JOB_STATUSES;
+export const ACTIVE_AGENT_RUN_STATUSES = TRANSITION_ACTIVE_AGENT_RUN_STATUSES;
 
 /**
  * The subset of an agent_run row needed to stop its sandbox. Both the stall
@@ -117,16 +126,11 @@ export async function cancelSessionWork(
     stoppedSandboxIds: [],
   };
 
-  const { data: canceledJobs, error: jobsError } = await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: nowIso,
-      last_error: input.reason,
-      status: "canceled",
-    })
-    .eq("session_id", input.sessionId)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .select("id");
+  const { data: canceledJobs, error: jobsError } = await cancelSessionAgentJobs(admin, {
+    finishedAt: nowIso,
+    reason: input.reason,
+    sessionId: input.sessionId,
+  });
 
   if (jobsError) {
     throw jobsError;
@@ -137,17 +141,10 @@ export async function cancelSessionWork(
   // the moment it was canceled — including a sandbox id persisted in the race
   // window just before this flip. A sandbox attached *after* the flip is caught
   // instead by the active-status guard in updateRunSandbox, which stops it.
-  const { data: canceledRuns, error: runsError } = await admin
-    .from("agent_runs")
-    .update({
-      finished_at: nowIso,
-      status: "canceled",
-    })
-    .eq("session_id", input.sessionId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES)
-    .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    );
+  const { data: canceledRuns, error: runsError } = await cancelSessionAgentRuns(admin, {
+    finishedAt: nowIso,
+    sessionId: input.sessionId,
+  });
 
   if (runsError) {
     throw runsError;
@@ -189,15 +186,7 @@ export async function cancelSessionWork(
     // Only move a session that is mid-generation; awaiting_review / approved /
     // already-rejected sessions are left as-is. No new job is enqueued — the
     // session simply parks in `rejected` until the user re-runs or reroutes.
-    const { error: sessionError } = await admin
-      .from("sessions")
-      .update({ phase_status: "rejected" })
-      .eq("id", input.sessionId)
-      .eq("phase_status", "agent_generating");
-
-    if (sessionError) {
-      throw sessionError;
-    }
+    await parkCanceledSession(admin, input.sessionId);
   }
 
   return result;
@@ -245,16 +234,11 @@ export async function cancelWorkspaceWork(
     stoppedSandboxIds: [],
   };
 
-  const { data: canceledJobs, error: jobsError } = await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: nowIso,
-      last_error: input.reason,
-      status: "canceled",
-    })
-    .eq("workspace_id", input.workspaceId)
-    .in("status", ACTIVE_AGENT_JOB_STATUSES)
-    .select("id");
+  const { data: canceledJobs, error: jobsError } = await cancelWorkspaceAgentJobs(admin, {
+    finishedAt: nowIso,
+    reason: input.reason,
+    workspaceId: input.workspaceId,
+  });
 
   if (jobsError) {
     console.error("[cancel] failed to cancel workspace jobs", {
@@ -269,17 +253,10 @@ export async function cancelWorkspaceWork(
   // the flip — including a sandbox id persisted in the race window just before
   // it. A sandbox attached *after* the flip is caught instead by the
   // active-status guard in updateRunSandbox, which stops it.
-  const { data: canceledRuns, error: runsError } = await admin
-    .from("agent_runs")
-    .update({
-      finished_at: nowIso,
-      status: "canceled",
-    })
-    .eq("workspace_id", input.workspaceId)
-    .in("status", ACTIVE_AGENT_RUN_STATUSES)
-    .select(
-      "id, workspace_id, sandbox_id, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
-    );
+  const { data: canceledRuns, error: runsError } = await cancelWorkspaceAgentRuns(admin, {
+    finishedAt: nowIso,
+    workspaceId: input.workspaceId,
+  });
 
   if (runsError) {
     console.error("[cancel] failed to cancel workspace runs", {

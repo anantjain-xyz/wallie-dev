@@ -9,6 +9,13 @@ import { resolveEffectiveSessionRepository } from "@/features/sessions/effective
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import {
+  claimQueuedAgentJob,
+  createQueuedAgentJobRecord,
+  createQueuedAgentRun,
+  createSessionWithFirstJobTransition,
+  deleteQueuedAgentJob,
+} from "@/lib/pipeline/transitions";
+import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
   parseWallieRunMode,
@@ -332,20 +339,7 @@ export async function createSessionWithFirstJob(input: {
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const { data, error } = await admin
-    .rpc("create_session_with_first_job", {
-      agent_model_name: input.modelName,
-      agent_model_provider: input.modelProvider,
-      creator_member_id: input.creatorMemberId,
-      selected_pipeline_id: input.pipelineId ?? undefined,
-      session_github_repository_id: input.githubRepositoryId ?? undefined,
-      session_linear_issue_id: input.linearIssueId ?? undefined,
-      session_linear_issue_url: input.linearIssueUrl ?? undefined,
-      session_prompt_md: input.promptMd,
-      session_title: input.title,
-      target_workspace_id: input.workspaceId,
-    })
-    .single();
+  const { data, error } = await createSessionWithFirstJobTransition(admin, input);
 
   if (error || !data) {
     throw error ?? new Error("Wallie could not create that session.");
@@ -793,7 +787,7 @@ async function validateQueuedRunRequest(input: {
 }
 
 async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
-  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
+  const { error } = await deleteQueuedAgentJob(admin, jobId);
 
   if (error) {
     console.error("Failed to clean up orphaned Wallie job", {
@@ -828,11 +822,7 @@ async function createQueuedRun(input: {
     triggerType: input.triggerType,
     workspaceId: input.workspace.id,
   });
-  const { data: job, error: jobError } = await input.admin
-    .from("agent_jobs")
-    .insert(jobInsert)
-    .select(jobSelect)
-    .single();
+  const { data: job, error: jobError } = await createQueuedAgentJobRecord(input.admin, jobInsert);
 
   if (isUniqueViolation(jobError)) {
     const activeJob = await loadActiveJobByDedupeKey(
@@ -858,22 +848,19 @@ async function createQueuedRun(input: {
     throw jobError;
   }
 
-  const { data: run, error: runError } = await input.admin
-    .from("agent_runs")
-    .insert(
-      createRunInsert({
-        sessionId: input.session.id,
-        jobId: job.id,
-        modelName: agentConfig.model,
-        modelProvider: agentConfig.provider,
-        requestedByMemberId: input.requestedByMemberId,
-        runType: input.runType,
-        stage,
-        workspaceId: input.workspace.id,
-      }),
-    )
-    .select(runSelect)
-    .single();
+  const { data: run, error: runError } = await createQueuedAgentRun(
+    input.admin,
+    createRunInsert({
+      sessionId: input.session.id,
+      jobId: job.id,
+      modelName: agentConfig.model,
+      modelProvider: agentConfig.provider,
+      requestedByMemberId: input.requestedByMemberId,
+      runType: input.runType,
+      stage,
+      workspaceId: input.workspace.id,
+    }),
+  );
 
   if (runError) {
     await cleanupQueuedJob(input.admin, job.id);
@@ -1027,18 +1014,11 @@ async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
     return job;
   }
 
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .update({
-      attempt_count: job.attempt_count + 1,
-      last_error: null,
-      started_at: job.started_at ?? new Date().toISOString(),
-      status: "running",
-    })
-    .eq("id", job.id)
-    .eq("status", "queued")
-    .select(jobSelect)
-    .maybeSingle();
+  const { data, error } = await claimQueuedAgentJob(admin, {
+    attemptCount: job.attempt_count,
+    jobId: job.id,
+    startedAt: job.started_at,
+  });
 
   if (error) {
     throw error;

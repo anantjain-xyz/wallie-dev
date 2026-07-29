@@ -23,11 +23,34 @@ import {
   getCodexCredentialForSession,
 } from "@/lib/codex/tokens";
 import { createSessionSandbox, resolveSandboxImplementation, stopSandboxById } from "@/lib/sandbox";
-import type { AgentProvider, SandboxConnection, SandboxHandle } from "@/lib/sandbox/types";
+import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/readiness";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
+import {
+  approveSessionStage,
+  attachRunSandbox,
+  cancelActiveRunsForJob,
+  claimSessionForGeneration,
+  claimSessionRejection,
+  completeAgentJob,
+  completeAgentRun,
+  createQueuedAgentJob,
+  enqueueQueuedAgentRun,
+  deleteQueuedAgentJob,
+  deleteSessionArtifactVersion,
+  errorActiveRunsForJob,
+  insertSessionArtifact,
+  publishGeneratedArtifact,
+  publishRejectedSession,
+  recordAgentJobError,
+  restoreGeneratingSessionPhase,
+  restorePublishedSessionAfterFailure,
+  scheduleAgentJobRetry,
+  startAgentRun,
+  touchActiveRun,
+} from "@/lib/pipeline/transitions";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest } from "./pull-request";
@@ -107,14 +130,7 @@ export async function processPipelineJob(input: {
     // from regenerating an artifact that has already been approved, and closes
     // the archive race — a job enqueued in the narrow window before archive's
     // marker landed cannot execute against an archived session.
-    const { data: claimed, error: claimError } = await admin
-      .from("sessions")
-      .update({ phase_status: "agent_generating" })
-      .eq("id", session.id)
-      .in("phase_status", ["agent_generating", "awaiting_review", "rejected"])
-      .is("archived_at", null)
-      .select("id")
-      .maybeSingle();
+    const { claimed, error: claimError } = await claimSessionForGeneration(admin, session.id);
 
     if (claimError) {
       await markPipelineJobError(admin, job, claimError.message);
@@ -295,7 +311,11 @@ async function runStage(input: {
         onSandboxCreated: async ({ provider: sandboxProvider, sandboxId }) => {
           if (!runId) return;
           if (sandboxProvider === "fake") {
-            const attached = await updateRunSandbox(admin, runId, sandboxId, { provider: "fake" });
+            const attached = await attachRunSandbox(admin, {
+              metadata: { provider: "fake" },
+              runId,
+              sandboxId,
+            });
             if (!attached) {
               await stopSandboxById(sandboxId);
             }
@@ -304,9 +324,13 @@ async function runStage(input: {
           if (!sandboxSelection || sandboxSelection.provider !== sandboxProvider) {
             throw new Error(`Workspace ${sandboxProvider} Sandbox connection is required.`);
           }
-          const attached = await updateRunSandbox(admin, runId, sandboxId, {
-            connection: sandboxSelection.connection,
-            provider: sandboxSelection.provider,
+          const attached = await attachRunSandbox(admin, {
+            metadata: {
+              connection: sandboxSelection.connection,
+              provider: sandboxSelection.provider,
+            },
+            runId,
+            sandboxId,
           });
           if (!attached) {
             // The run was canceled before its sandbox id landed; stop the
@@ -402,34 +426,22 @@ async function runStage(input: {
       }
     }
 
-    const { data: pointerRows, error: pointerError } = await admin
-      .from("sessions")
-      .update({
-        current_artifact_version: newVersion,
-        phase_status: "awaiting_review",
-      })
-      .eq("id", session.id)
-      // Only advance a session that is still generating AND not archived. If it
-      // was parked (canceled or stalled) or archived while this run produced its
-      // artifact, this CAS affects zero rows and we must not un-park/un-freeze
-      // it or surface the draft.
-      .eq("phase_status", "agent_generating")
-      .is("archived_at", null)
-      .select("id");
-    if (pointerError) throw pointerError;
+    const pointerAdvanced = await publishGeneratedArtifact(admin, {
+      sessionId: session.id,
+      version: newVersion,
+    });
 
-    if (!pointerRows || pointerRows.length === 0) {
+    if (!pointerAdvanced) {
       // Cancellation won the race. Drop the just-inserted artifact so a later
       // rerun can reuse this version — the unique (session_id, stage_slug,
       // version) constraint would otherwise reject the next draft — and finish
       // without marking success (the run and job are already canceled).
       if (artifactInserted) {
-        await admin
-          .from("session_artifacts")
-          .delete()
-          .eq("session_id", session.id)
-          .eq("stage_slug", stage.slug)
-          .eq("version", newVersion);
+        await deleteSessionArtifactVersion(admin, {
+          sessionId: session.id,
+          stageSlug: stage.slug,
+          version: newVersion,
+        });
       }
       return { jobId: job.id, processed: true, result: "idle", runId };
     }
@@ -466,12 +478,11 @@ async function runStage(input: {
     if (artifactInserted) {
       // Compensate: drop the orphan so the next retry doesn't hit the
       // (session_id, stage_slug, version) unique constraint.
-      await admin
-        .from("session_artifacts")
-        .delete()
-        .eq("session_id", session.id)
-        .eq("stage_slug", stage.slug)
-        .eq("version", newVersion);
+      await deleteSessionArtifactVersion(admin, {
+        sessionId: session.id,
+        stageSlug: stage.slug,
+        version: newVersion,
+      });
     }
 
     if (sessionPointerAdvanced) {
@@ -562,7 +573,7 @@ async function loadActiveSessionJob(
 }
 
 async function cleanupQueuedJob(admin: AdminClient, jobId: string) {
-  const { error } = await admin.from("agent_jobs").delete().eq("id", jobId).eq("status", "queued");
+  const { error } = await deleteQueuedAgentJob(admin, jobId);
 
   if (error) {
     console.error("Failed to clean up orphaned pipeline job", {
@@ -590,21 +601,17 @@ async function enqueueSessionJobWithRun(input: {
     loadSessionById(input.admin, input.sessionId),
   ]);
   const stage = session ? await loadStageById(input.admin, session.current_stage_id) : null;
-  const { data: job, error: jobError } = await input.admin
-    .from("agent_jobs")
-    .insert({
-      dedupe_key: dedupeKey,
-      job_type: PIPELINE_JOB_TYPE,
-      requested_by_member_id: input.requestedByMemberId,
-      session_id: input.sessionId,
-      stage_id: stage?.id ?? null,
-      stage_name: stage?.name ?? null,
-      stage_slug: stage?.slug ?? null,
-      trigger_type: input.triggerType,
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
+  const { data: job, error: jobError } = await createQueuedAgentJob(input.admin, {
+    dedupe_key: dedupeKey,
+    job_type: PIPELINE_JOB_TYPE,
+    requested_by_member_id: input.requestedByMemberId,
+    session_id: input.sessionId,
+    stage_id: stage?.id ?? null,
+    stage_name: stage?.name ?? null,
+    stage_slug: stage?.slug ?? null,
+    trigger_type: input.triggerType,
+    workspace_id: input.workspaceId,
+  });
 
   if (isUniqueViolation(jobError)) {
     return {
@@ -621,7 +628,7 @@ async function enqueueSessionJobWithRun(input: {
   }
 
   const runType = inferWallieRunMode(repositoryResolution.repositoryId);
-  const { error: runError } = await input.admin.from("agent_runs").insert({
+  const { error: runError } = await enqueueQueuedAgentRun(input.admin, {
     agent_job_id: job.id,
     model_name: agentConfig.model,
     model_provider: agentConfig.provider,
@@ -657,11 +664,11 @@ export async function handleApproval(input: {
   // The RPC enforces the approver gate (per-stage approver list, with
   // owner/admin fallback), records the completion, and advances to the next
   // stage by `position` in one transaction.
-  const { data, error } = await admin.rpc("approve_session_stage", {
-    approver_member_id: input.approverMemberId ?? undefined,
-    expected_version: input.version,
-    expected_workspace_id: input.expectedWorkspaceId,
-    target_session_id: input.sessionId,
+  const { data, error } = await approveSessionStage(admin, {
+    approverMemberId: input.approverMemberId,
+    expectedVersion: input.version,
+    expectedWorkspaceId: input.expectedWorkspaceId,
+    sessionId: input.sessionId,
   });
 
   if (error) {
@@ -771,25 +778,18 @@ export async function handleRejection(input: {
     };
   }
 
-  const newRejectionCount = session.rejection_count + 1;
-
-  // Atomic CAS on rejection_count: only the first rejection that observed
-  // the current count can advance it. A concurrent second rejection sees
-  // rows-updated=0 and exits without double-counting. The `archived_at is null`
-  // predicate also makes this atomic with archive — an archive that lands
-  // between the load above and this CAS turns the rejection into a no-op rather
-  // than enqueueing fresh work on an archived session.
-  const { data: claimedRejection, error: claimRejectionError } = await admin
-    .from("sessions")
-    .update({ rejection_count: newRejectionCount })
-    .eq("id", input.sessionId)
-    .eq("workspace_id", input.expectedWorkspaceId)
-    .eq("rejection_count", session.rejection_count)
-    .eq("phase_status", "awaiting_review")
-    .eq("current_artifact_version", input.version)
-    .is("archived_at", null)
-    .select("id")
-    .maybeSingle();
+  // The transition owner keeps the complete rejection CAS together: workspace,
+  // version, count, phase, and archive state must all still match.
+  const {
+    claimed: claimedRejection,
+    error: claimRejectionError,
+    nextRejectionCount: newRejectionCount,
+  } = await claimSessionRejection(admin, {
+    currentRejectionCount: session.rejection_count,
+    expectedVersion: input.version,
+    expectedWorkspaceId: input.expectedWorkspaceId,
+    sessionId: input.sessionId,
+  });
 
   if (claimRejectionError) {
     return { error: claimRejectionError.message, success: false };
@@ -846,15 +846,60 @@ export async function handleRejection(input: {
     };
   }
 
-  await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
+  const { error: rejectSessionError, published: rejectedSession } = await publishRejectedSession(
+    admin,
+    {
+      expectedRejectionCount: newRejectionCount,
+      expectedVersion: input.version,
+      expectedWorkspaceId: input.expectedWorkspaceId,
+      sessionId: input.sessionId,
+    },
+  );
+
+  if (rejectSessionError) {
+    return { error: rejectSessionError.message, success: false };
+  }
+
+  let resultArtifactVersion = session.current_artifact_version;
+  let resultPhaseStatus: SessionRow["phase_status"] = "rejected";
+  if (!rejectedSession) {
+    // The retry job is enqueued first, so its worker may claim, fail, or finish
+    // before this publication CAS. Accept only those same-stage outcomes with
+    // every rejection-owned pointer intact; approval/archive races still fail.
+    const workerResult = await loadSessionById(admin, input.sessionId);
+    const workerClaimed =
+      workerResult?.current_artifact_version === input.version &&
+      workerResult.phase_status === "agent_generating";
+    const workerCompleted =
+      workerResult?.current_artifact_version === input.version + 1 &&
+      workerResult.phase_status === "awaiting_review";
+    const workerFailed =
+      workerResult?.current_artifact_version === input.version &&
+      workerResult.phase_status === "rejected";
+    if (
+      !workerResult ||
+      workerResult.workspace_id !== input.expectedWorkspaceId ||
+      workerResult.archived_at ||
+      workerResult.current_stage_id !== session.current_stage_id ||
+      workerResult.rejection_count !== newRejectionCount ||
+      (!workerClaimed && !workerCompleted && !workerFailed)
+    ) {
+      return {
+        error: "Rejection raced with another update — please refresh and try again.",
+        success: false,
+      };
+    }
+    resultArtifactVersion = workerResult.current_artifact_version;
+    resultPhaseStatus = workerResult.phase_status;
+  }
 
   return {
     jobId: queued.jobId,
     session: {
       archivedAt: session.archived_at,
-      currentArtifactVersion: session.current_artifact_version,
+      currentArtifactVersion: resultArtifactVersion,
       currentStageId: session.current_stage_id,
-      phaseStatus: "rejected",
+      phaseStatus: resultPhaseStatus,
       rejectionCount: newRejectionCount,
     },
     success: true,
@@ -891,16 +936,7 @@ async function updateSessionStatus(
   sessionId: string,
   status: SessionRow["phase_status"],
 ): Promise<void> {
-  const { error } = await admin
-    .from("sessions")
-    .update({ phase_status: status })
-    .eq("id", sessionId)
-    // Every caller runs after the stage was CAS-claimed to `agent_generating`,
-    // so this guard is a no-op on the normal path. Its job is to keep a session
-    // that was canceled mid-run parked in `rejected` instead of being moved
-    // back to a live phase by a late-finishing worker.
-    .eq("phase_status", "agent_generating");
-  if (error) throw error;
+  await restoreGeneratingSessionPhase(admin, { phaseStatus: status, sessionId });
 }
 
 async function updateSessionStatusAfterStageFailure(
@@ -911,18 +947,11 @@ async function updateSessionStatusAfterStageFailure(
     phaseStatus: SessionRow["phase_status"];
   },
 ): Promise<void> {
-  const { error } = await admin
-    .from("sessions")
-    .update({
-      current_artifact_version: input.currentArtifactVersion,
-      phase_status: input.phaseStatus,
-    })
-    .eq("id", sessionId)
-    // Reached only after the pointer advanced to `awaiting_review`; the guard
-    // keeps a session canceled in that window parked in `rejected` rather than
-    // rolling its version/phase back.
-    .eq("phase_status", "awaiting_review");
-  if (error) throw error;
+  await restorePublishedSessionAfterFailure(admin, {
+    currentArtifactVersion: input.currentArtifactVersion,
+    phaseStatus: input.phaseStatus,
+    sessionId,
+  });
 }
 
 async function insertArtifact(
@@ -936,15 +965,7 @@ async function insertArtifact(
     workspaceId: string;
   },
 ): Promise<void> {
-  const { error } = await admin.from("session_artifacts").insert({
-    artifact_json: input.artifactJson,
-    session_id: input.sessionId,
-    stage_id: input.stageId,
-    stage_slug: input.stageSlug,
-    version: input.version,
-    workspace_id: input.workspaceId,
-  });
-  if (error) throw error;
+  await insertSessionArtifact(admin, input);
 }
 
 async function resolveAgentRunner(input: {
@@ -1048,144 +1069,16 @@ async function mintInstallationToken(installationId: number): Promise<string> {
   return data.token;
 }
 
-async function startAgentRun(
-  admin: AdminClient,
-  input: {
-    jobId: string;
-    sessionId: string;
-    model: string;
-    provider: AgentProvider;
-    requestedByMemberId: string | null;
-    runType: string;
-    workspaceId: string;
-    stage: Pick<PipelineStage, "id" | "name" | "slug"> | null;
-  },
-): Promise<string | null> {
-  const startedAt = new Date().toISOString();
-  const { data: existingRun, error: updateError } = await admin
-    .from("agent_runs")
-    .update({
-      model_name: input.model,
-      model_provider: input.provider,
-      stage_id: input.stage?.id ?? null,
-      stage_name: input.stage?.name ?? null,
-      stage_slug: input.stage?.slug ?? null,
-      started_at: startedAt,
-      status: "running" as const,
-      triggered_by_member_id: input.requestedByMemberId,
-    })
-    .eq("agent_job_id", input.jobId)
-    .in("status", ["queued", "started", "running"])
-    .select("id")
-    .maybeSingle();
-
-  if (updateError) {
-    throw updateError;
-  }
-
-  if (existingRun) {
-    return existingRun.id;
-  }
-
-  const { data, error } = await admin
-    .from("agent_runs")
-    .insert({
-      agent_job_id: input.jobId,
-      model_name: input.model,
-      model_provider: input.provider,
-      run_type: input.runType,
-      session_id: input.sessionId,
-      stage_id: input.stage?.id ?? null,
-      stage_name: input.stage?.name ?? null,
-      stage_slug: input.stage?.slug ?? null,
-      started_at: startedAt,
-      status: "running" as const,
-      triggered_by_member_id: input.requestedByMemberId,
-      workspace_id: input.workspaceId,
-    })
-    .select("id")
-    .single();
-  if (error || !data) return null;
-  return data.id;
-}
-
-async function updateRunSandbox(
-  admin: AdminClient,
-  runId: string,
-  sandboxId: string,
-  metadata:
-    | {
-        provider: "fake";
-      }
-    | {
-        connection: SandboxConnection;
-        provider: "daytona" | "e2b" | "vercel";
-      },
-): Promise<boolean> {
-  const vercelMetadata =
-    metadata.provider === "vercel" && metadata.connection.provider === "vercel"
-      ? {
-          sandbox_vercel_project_id: metadata.connection.credentials.projectId,
-          sandbox_vercel_team_id: metadata.connection.credentials.teamId,
-        }
-      : {
-          sandbox_vercel_project_id: null,
-          sandbox_vercel_team_id: null,
-        };
-  const { data, error } = await admin
-    .from("agent_runs")
-    .update({
-      sandbox_id: sandboxId,
-      sandbox_provider: metadata.provider,
-      sandbox_connection_revision:
-        metadata.provider === "fake" ? null : metadata.connection.revision,
-      ...vercelMetadata,
-    })
-    .eq("id", runId)
-    // Only attach the sandbox to a run that is still active. If the run was
-    // canceled in the race before its sandbox id landed, this affects zero
-    // rows and the caller stops the orphaned sandbox.
-    .in("status", ["queued", "started", "running"])
-    .select("id");
-  if (error) {
-    throw error;
-  }
-  return (data?.length ?? 0) > 0;
-}
-
 async function markRunSuccess(
   admin: AdminClient,
   runId: string,
   usage?: { inputTokens: number; outputTokens: number },
 ): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "success" as const,
-      ...(usage
-        ? {
-            input_tokens: usage.inputTokens,
-            output_tokens: usage.outputTokens,
-          }
-        : {}),
-    })
-    .eq("id", runId)
-    // Don't resurrect a run that was canceled while this worker was still
-    // processing it.
-    .in("status", ["queued", "started", "running"]);
+  await completeAgentRun(admin, { runId, status: "success", usage });
 }
 
 async function markRunError(admin: AdminClient, runId: string): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "error" as const,
-    })
-    .eq("id", runId)
-    // Don't flip a canceled run back to error.
-    .in("status", ["queued", "started", "running"]);
+  await completeAgentRun(admin, { runId, status: "error" });
 }
 
 // Best-effort cleanup for a job whose session is no longer claimable (terminal
@@ -1193,11 +1086,7 @@ async function markRunError(admin: AdminClient, runId: string): Promise<void> {
 // `canceled` so it cannot linger as a permanently-active run. Logs and swallows
 // errors — failing to tidy a run must not wedge the job-close path.
 async function cancelQueuedRunsForJob(admin: AdminClient, jobId: string): Promise<void> {
-  const { error } = await admin
-    .from("agent_runs")
-    .update({ finished_at: new Date().toISOString(), status: "canceled" })
-    .eq("agent_job_id", jobId)
-    .in("status", ["queued", "started", "running"]);
+  const { error } = await cancelActiveRunsForJob(admin, jobId);
 
   if (error) {
     console.error("Failed to cancel runs for an unclaimable job", {
@@ -1259,14 +1148,7 @@ async function loadActiveRunIdForJob(admin: AdminClient, jobId: string): Promise
 }
 
 async function markActiveRunsForJobError(admin: AdminClient, jobId: string): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "error" as const,
-    })
-    .eq("agent_job_id", jobId)
-    .in("status", ["queued", "started", "running"]);
+  await errorActiveRunsForJob(admin, jobId);
 }
 
 async function persistEvent(
@@ -1492,26 +1374,14 @@ function isGenericRunnerCompletionSummary(summary: string) {
 }
 
 async function touchRunActivity(admin: AdminClient, runId: string): Promise<void> {
-  await admin
-    .from("agent_runs")
-    .update({ last_activity_at: new Date().toISOString() })
-    .eq("id", runId)
-    .in("status", ["queued", "started", "running"]);
+  await touchActiveRun(admin, runId);
 }
 
 async function markPipelineJobSuccess(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
 ): Promise<void> {
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: "success",
-    })
-    .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to success.
-    .neq("status", "canceled");
+  await completeAgentJob(admin, { jobId: job.id, status: "success" });
 }
 
 async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<number> {
@@ -1537,28 +1407,19 @@ async function markPipelineJobError(
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
   if (options.retry !== false && job.attempt_count < maxRetries) {
-    const { error: retryError } = await admin.rpc("schedule_job_retry", {
-      target_job_id: job.id,
-      base_delay_ms: 5000,
-      max_backoff_ms: 300000,
+    const { error: retryError } = await scheduleAgentJobRetry(admin, {
+      baseDelayMs: 5000,
+      jobId: job.id,
+      maxBackoffMs: 300000,
     });
 
     if (!retryError) {
-      await admin.from("agent_jobs").update({ last_error: errorMessage }).eq("id", job.id);
+      await recordAgentJobError(admin, { errorMessage, jobId: job.id });
       return;
     }
   }
 
-  await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: errorMessage,
-      status: "error",
-    })
-    .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to error.
-    .neq("status", "canceled");
+  await completeAgentJob(admin, { errorMessage, jobId: job.id, status: "error" });
   await markActiveRunsForJobError(admin, job.id);
 }
 
@@ -1567,14 +1428,14 @@ async function deferPipelineJob(
   job: Tables<"agent_jobs">,
   message: string,
 ): Promise<void> {
-  const { error: retryError } = await admin.rpc("schedule_job_retry", {
-    target_job_id: job.id,
-    base_delay_ms: 15000,
-    max_backoff_ms: 120000,
+  const { error: retryError } = await scheduleAgentJobRetry(admin, {
+    baseDelayMs: 15000,
+    jobId: job.id,
+    maxBackoffMs: 120000,
   });
 
   if (!retryError) {
-    await admin.from("agent_jobs").update({ last_error: message }).eq("id", job.id);
+    await recordAgentJobError(admin, { errorMessage: message, jobId: job.id });
     return;
   }
 

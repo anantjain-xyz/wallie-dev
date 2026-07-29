@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import { archiveSessionMarker, unarchiveSessionMarker } from "@/lib/pipeline/transitions";
 import type { PipelinePhaseStatus } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -37,17 +38,7 @@ export async function archiveSession(
   // request that already passed validation can still insert after this
   // cancellation pass. The work cannot execute while archived, and re-running
   // archive runs cancellation again to converge on any rows this pass missed.
-  const { error } = await admin
-    .from("sessions")
-    .update({ archived_at: new Date().toISOString() })
-    .eq("id", input.sessionId)
-    .is("archived_at", null)
-    .select("id")
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
+  await archiveSessionMarker(admin, input.sessionId);
 
   // Always run cancellation, even when the session was already archived (no row
   // matched). cancelSessionWork is idempotent — it only touches still-active
@@ -78,15 +69,7 @@ export async function unarchiveSession(
   admin: AdminClient,
   input: { expectedArchivedAt?: string; sessionId: string },
 ): Promise<SessionArchiveState> {
-  let update = admin.from("sessions").update({ archived_at: null }).eq("id", input.sessionId);
-  update = input.expectedArchivedAt
-    ? update.eq("archived_at", input.expectedArchivedAt)
-    : update.not("archived_at", "is", null);
-  const { error } = await update.select("id").maybeSingle();
-
-  if (error) {
-    throw error;
-  }
+  await unarchiveSessionMarker(admin, input);
 
   return readSessionArchiveState(admin, input.sessionId);
 }

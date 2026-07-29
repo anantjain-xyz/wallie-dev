@@ -1,0 +1,5 @@
+import { approveSessionStage } from "./rpc-owner";
+
+export async function approve(admin: any) {
+  return approveSessionStage(admin);
+}

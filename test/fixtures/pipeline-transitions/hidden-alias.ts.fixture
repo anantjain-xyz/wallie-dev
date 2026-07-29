@@ -1,0 +1,5 @@
+export async function hidePipelineWrite(admin: any) {
+  const target = "sessions";
+  const query = admin.from(target);
+  return query.update({ phase_status: "approved" }).eq("id", "session-1");
+}

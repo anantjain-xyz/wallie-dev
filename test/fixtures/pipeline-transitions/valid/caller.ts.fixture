@@ -1,0 +1,5 @@
+import { cancelSessionAgentJobs } from "./transitions";
+
+export async function cancel(admin: any) {
+  return cancelSessionAgentJobs(admin, "session-1");
+}

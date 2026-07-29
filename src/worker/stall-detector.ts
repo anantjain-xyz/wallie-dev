@@ -2,6 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { stopRunSandbox } from "@/lib/pipeline/cancel";
+import {
+  errorRunningAgentJob,
+  errorStalledRun,
+  parkStalledSession,
+  recordAgentJobError,
+  scheduleAgentJobRetry,
+} from "@/lib/pipeline/transitions";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -100,14 +107,7 @@ export async function sweepStalledRuns(
     }
 
     // This run is stalled — mark it as errored.
-    const { error: updateError } = await admin
-      .from("agent_runs")
-      .update({
-        finished_at: new Date().toISOString(),
-        status: "error" as const,
-      })
-      .eq("id", run.id)
-      .in("status", ["queued", "started", "running"]);
+    const { error: updateError } = await errorStalledRun(admin, run.id);
 
     if (updateError) {
       console.error("[stall-detector] failed to error stalled run", {
@@ -154,11 +154,7 @@ export async function sweepStalledRuns(
         .maybeSingle();
 
       if (jobRow?.session_id) {
-        await admin
-          .from("sessions")
-          .update({ phase_status: "rejected" })
-          .eq("id", jobRow.session_id)
-          .eq("phase_status", "agent_generating");
+        await parkStalledSession(admin, jobRow.session_id);
       }
     }
 
@@ -303,16 +299,16 @@ async function resolveStalledJob(input: {
   const attemptCount = jobRow?.attempt_count ?? 0;
 
   if (attemptCount < maxRetries) {
-    const { error: retryError } = await admin.rpc("schedule_job_retry", {
-      target_job_id: jobId,
-      base_delay_ms: 5000,
-      max_backoff_ms: 300000,
+    const { error: retryError } = await scheduleAgentJobRetry(admin, {
+      baseDelayMs: 5000,
+      jobId,
+      maxBackoffMs: 300000,
     });
 
     if (!retryError) {
       // Record the stall reason on the row so operators see why it was
       // rescheduled. schedule_job_retry leaves last_error untouched.
-      await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
+      await recordAgentJobError(admin, { errorMessage: stallReason, jobId });
       result.retriedJobIds.push(jobId);
       return;
     }
@@ -323,15 +319,10 @@ async function resolveStalledJob(input: {
     });
   }
 
-  const { error: jobError } = await admin
-    .from("agent_jobs")
-    .update({
-      finished_at: new Date().toISOString(),
-      last_error: stallReason,
-      status: "error",
-    })
-    .eq("id", jobId)
-    .eq("status", "running");
+  const { error: jobError } = await errorRunningAgentJob(admin, {
+    errorMessage: stallReason,
+    jobId,
+  });
 
   if (!jobError) {
     result.stalledJobIds.push(jobId);

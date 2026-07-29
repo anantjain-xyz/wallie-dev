@@ -1,0 +1,7 @@
+export async function cancelSessionAgentJobs(admin: any, sessionId: string) {
+  return admin
+    .from("agent_jobs")
+    .update({ status: "canceled" })
+    .eq("session_id", sessionId)
+    .in("status", ["queued", "started", "running"]);
+}

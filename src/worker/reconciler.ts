@@ -3,6 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
+import {
+  archiveSessionForReconciler,
+  deleteSessionArtifactsForStages,
+  enqueueQueuedAgentJob,
+  rerouteSessionForReconciler,
+} from "@/lib/pipeline/transitions";
 import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
@@ -230,11 +236,7 @@ async function archiveSessionForLinearRoute(
     `Linear issue moved to "${statusName}" — session archived by reconciler.`,
   );
 
-  await admin
-    .from("sessions")
-    .update({ archived_at: new Date().toISOString(), phase_status: "rejected" })
-    .eq("id", session.id)
-    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
+  await archiveSessionForReconciler(admin, session.id);
 }
 
 async function cancelActiveWorkForSession(
@@ -308,24 +310,16 @@ async function routeSessionToStage(
   }
 
   if (resetStageSlugs.length > 0) {
-    await admin
-      .from("session_artifacts")
-      .delete()
-      .eq("session_id", session.id)
-      .in("stage_slug", resetStageSlugs);
+    await deleteSessionArtifactsForStages(admin, {
+      sessionId: session.id,
+      stageSlugs: resetStageSlugs,
+    });
   }
 
-  await admin
-    .from("sessions")
-    .update({
-      archived_at: null,
-      current_artifact_version: 0,
-      current_stage_id: targetStage.id,
-      phase_status: "rejected",
-      rejection_count: 0,
-    })
-    .eq("id", session.id)
-    .in("phase_status", RECONCILABLE_PHASE_STATUSES);
+  await rerouteSessionForReconciler(admin, {
+    sessionId: session.id,
+    stageId: targetStage.id,
+  });
 
   await ensurePipelineJobQueued(admin, session, route.statusName);
   return "routed";
@@ -430,7 +424,7 @@ async function ensurePipelineJobQueued(
   session: SessionRow,
   statusName: string,
 ): Promise<void> {
-  const { error } = await admin.from("agent_jobs").insert({
+  const { error } = await enqueueQueuedAgentJob(admin, {
     dedupe_key: session.linear_issue_id
       ? `pipeline:${session.linear_issue_id}:active`
       : `pipeline:session:${session.id}:active`,
