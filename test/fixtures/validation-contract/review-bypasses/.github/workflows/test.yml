@@ -1,0 +1,16 @@
+on:
+  pull_request:
+
+jobs:
+  test:
+    steps:
+      - run: pnpm check
+
+  route-budgets:
+    if: false
+    continue-on-error: true
+    steps:
+      - if: false
+        run: pnpm build
+      - continue-on-error: true
+        run: pnpm check:route-budgets

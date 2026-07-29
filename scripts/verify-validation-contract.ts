@@ -17,6 +17,7 @@ type WorkflowStep = {
 type WorkflowJob = {
   "continue-on-error"?: unknown;
   if?: unknown;
+  needs?: unknown;
   steps?: WorkflowStep[];
 };
 
@@ -106,10 +107,73 @@ function readWorkflow(projectDirectory: string, path: string, errors: string[]):
   }
 }
 
-function hasPullRequestTrigger(trigger: unknown) {
-  if (trigger === "pull_request") return true;
-  if (Array.isArray(trigger)) return trigger.includes("pull_request");
-  return typeof trigger === "object" && trigger !== null && "pull_request" in trigger;
+function verifyPullRequestTrigger(
+  trigger: unknown,
+  workflowPath: string,
+  profileName: string,
+  errors: string[],
+) {
+  if (trigger === "pull_request") return;
+  if (Array.isArray(trigger)) {
+    if (trigger.includes("pull_request")) return;
+  } else if (typeof trigger === "object" && trigger !== null && "pull_request" in trigger) {
+    const pullRequest = (trigger as Record<string, unknown>).pull_request;
+    if (pullRequest === null || pullRequest === undefined) return;
+
+    if (typeof pullRequest !== "object" || Array.isArray(pullRequest)) {
+      errors.push(
+        `${workflowPath} has an invalid pull_request trigger. Use an unfiltered pull_request trigger or a mapping that preserves ordinary PR updates.`,
+      );
+      return;
+    }
+
+    const configuration = pullRequest as Record<string, unknown>;
+    if ("branches-ignore" in configuration) {
+      errors.push(
+        `${workflowPath} must not ignore pull_request target branches because main could skip the ${profileName} validation profile. Remove "branches-ignore" and use an explicit "branches: [main]" filter if needed.`,
+      );
+    }
+    if ("branches" in configuration) {
+      const configuredBranches =
+        typeof configuration.branches === "string"
+          ? [configuration.branches]
+          : Array.isArray(configuration.branches)
+            ? configuration.branches
+            : [];
+      if (!configuredBranches.includes("main")) {
+        errors.push(
+          `${workflowPath} pull_request branches must include "main" so the ${profileName} validation profile protects the repository's default branch. Add "main" or remove the branch filter.`,
+        );
+      }
+    }
+    if ("paths" in configuration || "paths-ignore" in configuration) {
+      errors.push(
+        `${workflowPath} must not filter pull_request paths because relevant changes could skip the ${profileName} validation profile. Remove "paths" and "paths-ignore" from the pull_request trigger.`,
+      );
+    }
+
+    if ("types" in configuration) {
+      const configuredTypes =
+        typeof configuration.types === "string"
+          ? [configuration.types]
+          : Array.isArray(configuration.types)
+            ? configuration.types
+            : [];
+      const requiredTypes = ["opened", "synchronize", "reopened"];
+      const missingTypes = requiredTypes.filter((type) => !configuredTypes.includes(type));
+      if (missingTypes.length > 0) {
+        errors.push(
+          `${workflowPath} pull_request types must include "opened", "synchronize", and "reopened" so the ${profileName} validation profile runs on ordinary PR updates. Remove the "types" filter or add the missing event types.`,
+        );
+      }
+    }
+
+    return;
+  }
+
+  errors.push(
+    `${workflowPath} must run on pull_request so the ${profileName} validation profile is enforced for PRs.`,
+  );
 }
 
 function packageScriptCalls(job: WorkflowJob) {
@@ -147,6 +211,11 @@ function verifyRequiredExecutionControls(profile: Profile, job: WorkflowJob, err
       `${context} must block pull requests when validation fails. Remove job-level "continue-on-error" or set it to false.`,
     );
   }
+  if (job.needs !== undefined && (!Array.isArray(job.needs) || job.needs.length > 0)) {
+    errors.push(
+      `${context} must not depend on another job because a skipped dependency can suppress required validation. Remove the job-level "needs" dependency.`,
+    );
+  }
 
   const delegationSteps = packageScriptCalls(job).filter(({ script }) => script === profile.script);
   for (const { step } of delegationSteps) {
@@ -163,6 +232,46 @@ function verifyRequiredExecutionControls(profile: Profile, job: WorkflowJob, err
   }
 }
 
+function verifyClassifiedExecutionControls(
+  check: ClassifiedCheck,
+  job: WorkflowJob,
+  errors: string[],
+) {
+  const context = `${check.workflow} job "${check.job}"`;
+
+  if (job.if !== undefined) {
+    errors.push(
+      `${context} must run unconditionally for pull requests while classified as ${check.classification}. Remove the job-level "if" condition.`,
+    );
+  }
+  if (job["continue-on-error"] !== undefined && job["continue-on-error"] !== false) {
+    errors.push(
+      `${context} must block pull requests while classified as ${check.classification}. Remove job-level "continue-on-error" or set it to false.`,
+    );
+  }
+  if (job.needs !== undefined && (!Array.isArray(job.needs) || job.needs.length > 0)) {
+    errors.push(
+      `${context} must not depend on another job because a skipped dependency can suppress the classified check. Remove the job-level "needs" dependency.`,
+    );
+  }
+
+  const classifiedSteps = packageScriptCalls(job).filter(({ script }) =>
+    check.scripts.includes(script),
+  );
+  for (const { script, step } of classifiedSteps) {
+    if (step.if !== undefined) {
+      errors.push(
+        `${context} must run "pnpm ${script}" unconditionally while classified as ${check.classification}. Remove the check step's "if" condition.`,
+      );
+    }
+    if (step["continue-on-error"] !== undefined && step["continue-on-error"] !== false) {
+      errors.push(
+        `${context} must treat "pnpm ${script}" failures as blocking while classified as ${check.classification}. Remove the check step's "continue-on-error" or set it to false.`,
+      );
+    }
+  }
+}
+
 function verifyWorkflowDelegation(
   projectDirectory: string,
   profile: Profile,
@@ -172,11 +281,7 @@ function verifyWorkflowDelegation(
   const workflow = readWorkflow(projectDirectory, profile.workflow, errors);
   if (!workflow) return;
 
-  if (!hasPullRequestTrigger(workflow.on)) {
-    errors.push(
-      `${profile.workflow} must run on pull_request so the ${profile.name} validation profile is enforced for PRs.`,
-    );
-  }
+  verifyPullRequestTrigger(workflow.on, profile.workflow, profile.name, errors);
 
   const job = workflow.jobs?.[profile.job];
   if (!job) {
@@ -226,6 +331,8 @@ function verifyClassifiedCheck(
     return;
   }
 
+  verifyClassifiedExecutionControls(check, job, errors);
+
   const references = packageScriptReferences(job);
   if (
     references.length !== check.scripts.length ||
@@ -241,6 +348,11 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
   const errors: string[] = [];
   const packageJson = readJson(projectDirectory, errors);
   const scripts = packageJson.scripts ?? {};
+  const classifiedScripts = new Map(
+    classifiedChecks.flatMap((check) =>
+      check.scripts.map((script) => [script, check.classification] as const),
+    ),
+  );
 
   for (const profile of profiles) {
     if (!(profile.script in scripts)) {
@@ -255,6 +367,12 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
         for (const reference of references) {
           if (!(reference in scripts)) {
             errors.push(repairMissingScript(reference, `Package script "${profile.script}"`));
+          }
+          const classification = classifiedScripts.get(reference);
+          if (classification) {
+            errors.push(
+              `Package script "${profile.script}" must not include classified ${classification} command "pnpm ${reference}". Remove it from the ${profile.name} validation profile or remove its explicit classification.`,
+            );
           }
         }
         for (const requiredReference of profile.requiredReferences) {

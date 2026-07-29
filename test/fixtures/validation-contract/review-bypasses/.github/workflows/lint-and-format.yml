@@ -1,0 +1,18 @@
+on:
+  pull_request:
+    branches:
+      - docs
+    types:
+      - closed
+    paths:
+      - docs/**
+
+jobs:
+  prepare:
+    steps:
+      - run: echo prepare
+
+  lint-and-format:
+    needs: prepare
+    steps:
+      - run: pnpm check:fast

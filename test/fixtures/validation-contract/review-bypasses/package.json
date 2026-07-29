@@ -1,0 +1,20 @@
+{
+  "scripts": {
+    "analyze:authenticated-bundle": "fixture",
+    "build": "fixture",
+    "check": "pnpm check:fast && pnpm test",
+    "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm db:types",
+    "check:route-budgets": "fixture",
+    "db:types": "fixture",
+    "format:check": "fixture",
+    "lint": "fixture",
+    "test": "fixture",
+    "test:benchmark:content-visibility": "fixture",
+    "test:benchmark:interaction": "fixture",
+    "test:e2e:onboarding": "fixture",
+    "test:e2e:responsive": "fixture",
+    "test:e2e:session-prefetch": "fixture",
+    "typecheck": "fixture",
+    "verify:validation": "fixture"
+  }
+}
