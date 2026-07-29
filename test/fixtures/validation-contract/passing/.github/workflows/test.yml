@@ -1,0 +1,12 @@
+on:
+  pull_request:
+
+jobs:
+  test:
+    steps:
+      - run: pnpm check
+
+  route-budgets:
+    steps:
+      - run: pnpm build
+      - run: pnpm check:route-budgets

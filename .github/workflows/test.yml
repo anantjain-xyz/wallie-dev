@@ -34,8 +34,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        run: pnpm test
+      - name: Run full validation
+        run: pnpm check
 
   route-budgets:
     runs-on: ubuntu-latest
