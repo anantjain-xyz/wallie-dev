@@ -120,6 +120,20 @@ describe("pipeline transition boundary verifier", () => {
     expect(diagnostics[0]?.message).toContain("fail-closed");
   });
 
+  it("rejects dynamic table access through an aliased database client", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("aliased-client.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "dynamic-table-access",
+        path: "aliased-client.ts",
+      }),
+    ]);
+  });
+
   it("rejects detached protected table handles before a hidden mutation can occur", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig(),
@@ -161,6 +175,36 @@ describe("pipeline transition boundary verifier", () => {
     ]);
   });
 
+  it("rejects direct and exported-alias re-exports of imported transition APIs", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["transition-reexport.ts", "transition-export-alias.ts"],
+          name: "cancelSessionAgentJobs",
+        },
+      ],
+    });
+
+    const diagnostics = verifyPipelineTransitions({
+      config,
+      files: [fixture("transition-reexport.ts"), fixture("transition-export-alias.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-alias.ts",
+      }),
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-reexport.ts",
+      }),
+    ]);
+    expect(
+      diagnostics.every((diagnostic) => diagnostic.message.includes("cannot be re-exported")),
+    ).toBe(true);
+  });
+
   it("rejects seeded-stage aliases in generic production code", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig(),
@@ -188,6 +232,41 @@ describe("pipeline transition boundary verifier", () => {
       }),
     ]);
     expect(diagnostics[0]?.message).toContain("named transactional RPC");
+  });
+
+  it("rejects seeded-stage branches inside SQL functions", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("seeded-stage.sql")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "seeded-stage-branch",
+        path: "seeded-stage.sql",
+      }),
+    ]);
+  });
+
+  it("accepts an exact SQL default-stage adapter exception", () => {
+    const config = fixtureConfig({
+      seededStageLiteralExceptions: [
+        {
+          functionName: "default_pipeline_stages",
+          owner: "pipeline-defaults@example.com",
+          path: "valid/default-stage.sql",
+          reason: "Defines the workspace default only.",
+          value: "build",
+        },
+      ],
+    });
+
+    expect(
+      verifyPipelineTransitions({
+        config,
+        files: [fixture("valid/default-stage.sql")],
+      }),
+    ).toEqual([]);
   });
 
   it("rejects a transactional RPC call outside its exact typed wrapper", () => {

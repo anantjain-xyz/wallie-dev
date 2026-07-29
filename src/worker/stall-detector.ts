@@ -154,7 +154,13 @@ export async function sweepStalledRuns(
         .maybeSingle();
 
       if (jobRow?.session_id) {
-        await parkStalledSession(admin, jobRow.session_id);
+        const { error: parkError } = await parkStalledSession(admin, jobRow.session_id);
+        if (parkError) {
+          console.error("[stall-detector] failed to park stalled session", {
+            error: parkError.message,
+            sessionId: jobRow.session_id,
+          });
+        }
       }
     }
 

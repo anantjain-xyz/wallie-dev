@@ -5,8 +5,6 @@ import { stopSandboxById } from "@/lib/sandbox";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
 import { loadWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import {
-  ACTIVE_AGENT_JOB_STATUSES as TRANSITION_ACTIVE_AGENT_JOB_STATUSES,
-  ACTIVE_AGENT_RUN_STATUSES as TRANSITION_ACTIVE_AGENT_RUN_STATUSES,
   cancelSessionAgentJobs,
   cancelSessionAgentRuns,
   cancelWorkspaceAgentJobs,
@@ -15,9 +13,6 @@ import {
 } from "@/lib/pipeline/transitions";
 
 type AdminClient = SupabaseClient<Database>;
-
-export const ACTIVE_AGENT_JOB_STATUSES = TRANSITION_ACTIVE_AGENT_JOB_STATUSES;
-export const ACTIVE_AGENT_RUN_STATUSES = TRANSITION_ACTIVE_AGENT_RUN_STATUSES;
 
 /**
  * The subset of an agent_run row needed to stop its sandbox. Both the stall

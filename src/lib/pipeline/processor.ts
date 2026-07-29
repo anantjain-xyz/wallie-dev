@@ -876,13 +876,25 @@ export async function handleRejection(input: {
     const workerFailed =
       workerResult?.current_artifact_version === input.version &&
       workerResult.phase_status === "rejected";
+    let workerDeferred = false;
+    if (
+      workerResult?.current_artifact_version === input.version &&
+      workerResult.phase_status === "awaiting_review" &&
+      queued.jobId
+    ) {
+      const activeJobId = await loadActiveSessionJob(admin, {
+        dedupeKey: buildWallieJobDedupeKey(input.sessionId),
+        workspaceId: input.expectedWorkspaceId,
+      });
+      workerDeferred = activeJobId === queued.jobId;
+    }
     if (
       !workerResult ||
       workerResult.workspace_id !== input.expectedWorkspaceId ||
       workerResult.archived_at ||
       workerResult.current_stage_id !== session.current_stage_id ||
       workerResult.rejection_count !== newRejectionCount ||
-      (!workerClaimed && !workerCompleted && !workerFailed)
+      (!workerClaimed && !workerCompleted && !workerFailed && !workerDeferred)
     ) {
       return {
         error: "Rejection raced with another update — please refresh and try again.",

@@ -1,0 +1,6 @@
+create or replace function public.route_seeded_stage(stage_slug text)
+returns boolean
+language sql
+as $$
+  select stage_slug = 'build';
+$$;

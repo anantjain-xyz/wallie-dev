@@ -196,14 +196,12 @@ export async function rerouteSessionForReconciler(
   if (error) throw error;
 }
 
-export async function parkStalledSession(admin: AdminClient, sessionId: string): Promise<void> {
-  const { error } = await admin
+export function parkStalledSession(admin: AdminClient, sessionId: string) {
+  return admin
     .from("sessions")
     .update({ phase_status: "rejected" })
     .eq("id", sessionId)
     .eq("phase_status", "agent_generating");
-
-  if (error) throw error;
 }
 
 export async function parkWorkspaceSessionsAfterDeleteFailure(

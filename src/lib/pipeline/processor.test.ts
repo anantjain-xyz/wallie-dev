@@ -1766,6 +1766,7 @@ describe("handleApproval", () => {
 // ---- handleRejection ----------------------------------------------------
 
 interface RejectionMockOptions {
+  activeRetryJobId?: string | null;
   session: Tables<"sessions"> | null;
   postPhaseSession?: Tables<"sessions"> | null;
   rejectionClaim?: { id: string } | null;
@@ -1782,6 +1783,12 @@ function buildRejectionMock(opts: RejectionMockOptions) {
   const artifactUpdates: Array<{ patch: Record<string, unknown> }> = [];
   const insertedFeedback: Array<Record<string, unknown>> = [];
   const enqueuedJobs: Array<Record<string, unknown>> = [];
+  const activeRetryJobId =
+    opts.activeRetryJobId !== undefined
+      ? opts.activeRetryJobId
+      : opts.enqueueError?.code === "23505"
+        ? "job-retry-existing"
+        : "job-retry";
   let sessionSelectCount = 0;
 
   const sessionsTable = {
@@ -1883,7 +1890,10 @@ function buildRejectionMock(opts: RejectionMockOptions) {
           in: () => ({
             order: () => ({
               limit: () => ({
-                maybeSingle: async () => ({ data: { id: "job-retry-existing" }, error: null }),
+                maybeSingle: async () => ({
+                  data: activeRetryJobId ? { id: activeRetryJobId } : null,
+                  error: null,
+                }),
               }),
             }),
           }),
@@ -2130,6 +2140,74 @@ describe("handleRejection", () => {
       success: true,
     });
     expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
+  });
+
+  it("accepts a deferred rerun that restores awaiting review while its job remains active", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 1,
+        phase_status: "awaiting_review",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toMatchObject({
+      jobId: "job-retry",
+      session: {
+        currentArtifactVersion: 1,
+        phaseStatus: "awaiting_review",
+        rejectionCount: 1,
+      },
+      success: true,
+    });
+  });
+
+  it("rejects restored awaiting review when the associated rerun is no longer active", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin } = buildRejectionMock({
+      activeRetryJobId: null,
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 1,
+        phase_status: "awaiting_review",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    });
   });
 
   it("accepts the final phase CAS when the same-stage rerun finishes first", async () => {

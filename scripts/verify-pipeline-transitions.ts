@@ -335,13 +335,48 @@ function sqlTouchesProtectedLifecycle(source: string, protectedTables: readonly 
   return mentionsTable && /\b(?:delete|execute|insert|merge|update)\b/i.test(normalized);
 }
 
-function sqlFunctionDefinitions(source: string) {
-  const definitions: string[] = [];
-  const pattern = /\bcreate\s+or\s+replace\s+function\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(/gi;
+type SqlFunctionDefinition = Readonly<{
+  name: string;
+  source: string;
+  start: number;
+}>;
+
+function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
+  const pattern =
+    /\bcreate\s+or\s+replace\s+function\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\(/gi;
+  const headers = [...source.matchAll(pattern)];
+  return headers.map((header, index) => {
+    const start = header.index;
+    const nextStart = headers[index + 1]?.index ?? source.length;
+    const candidate = source.slice(start, nextStart);
+    const bodyStartMatch = /\bas\s+(\$[a-z0-9_]*\$)/i.exec(candidate);
+    let end = nextStart;
+    if (bodyStartMatch?.index !== undefined) {
+      const delimiter = bodyStartMatch[1]!;
+      const bodyStart = bodyStartMatch.index + bodyStartMatch[0].length;
+      const closingDelimiter = candidate.indexOf(delimiter, bodyStart);
+      if (closingDelimiter >= 0) {
+        end = start + closingDelimiter + delimiter.length;
+      }
+    }
+    return {
+      name: header[1]!.toLowerCase(),
+      source: source.slice(start, end),
+      start,
+    };
+  });
+}
+
+function sqlStringLiterals(source: string) {
+  const literals: Array<{ index: number; value: string }> = [];
+  const pattern = /'((?:''|[^'])*)'/g;
   for (const match of source.matchAll(pattern)) {
-    definitions.push(match[1]!.toLowerCase());
+    literals.push({
+      index: match.index,
+      value: match[1]!.replaceAll("''", "'"),
+    });
   }
-  return definitions;
+  return literals;
 }
 
 function isTransitionModuleSpecifier(specifier: string, configuredSpecifier: string) {
@@ -408,8 +443,31 @@ export function verifyPipelineTransitions({
           });
         }
       }
-      for (const rpc of sqlFunctionDefinitions(file.source)) {
-        if (rpcOwnerByName.has(rpc)) latestRpcDefinition.set(rpc, file.path);
+      for (const definition of sqlFunctionDefinitions(file.source)) {
+        if (rpcOwnerByName.has(definition.name)) {
+          latestRpcDefinition.set(definition.name, file.path);
+        }
+        for (const literal of sqlStringLiterals(definition.source)) {
+          if (!config.seededStageSlugs.includes(literal.value)) continue;
+          const exceptionKey = `${file.path}\0${definition.name}\0${literal.value}`;
+          const exception = config.seededStageLiteralExceptions.find(
+            (candidate) =>
+              candidate.path === file.path &&
+              candidate.functionName === definition.name &&
+              candidate.value === literal.value,
+          );
+          if (exception) {
+            usedSeededStageExceptions.add(exceptionKey);
+          } else {
+            diagnostics.push({
+              code: "seeded-stage-branch",
+              line: file.source.slice(0, definition.start + literal.index).split("\n").length,
+              message:
+                "Generic pipeline SQL functions cannot name a seeded stage slug. Resolve stages by id/position; seeded defaults belong in an exact designated adapter.",
+              path: file.path,
+            });
+          }
+        }
       }
       continue;
     }
@@ -536,7 +594,7 @@ export function verifyPipelineTransitions({
           ) {
             if (
               !receiverText.endsWith(".storage") &&
-              /(?:^|\.)(?:admin|client|supabase)$/.test(receiverText)
+              !["Array", "Buffer", "Readable"].includes(receiverText)
             ) {
               const functionName = enclosingFunctionName(node) ?? "<module>";
               const key = `${file.path}\0${functionName}`;
@@ -610,6 +668,42 @@ export function verifyPipelineTransitions({
     }
 
     visit(sourceFile);
+
+    for (const statement of sourceFile.statements) {
+      let reexportedTransition: string | undefined;
+      if (
+        ts.isExportDeclaration(statement) &&
+        !statement.moduleSpecifier &&
+        statement.exportClause &&
+        ts.isNamedExports(statement.exportClause)
+      ) {
+        for (const element of statement.exportClause.elements) {
+          const localName = element.propertyName?.text ?? element.name.text;
+          reexportedTransition = importLocalNames.get(localName);
+          if (reexportedTransition) break;
+        }
+      } else if (ts.isExportAssignment(statement) && ts.isIdentifier(statement.expression)) {
+        reexportedTransition = importLocalNames.get(statement.expression.text);
+      } else if (
+        ts.isVariableStatement(statement) &&
+        statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (declaration.initializer && ts.isIdentifier(declaration.initializer)) {
+            reexportedTransition = importLocalNames.get(declaration.initializer.text);
+            if (reexportedTransition) break;
+          }
+        }
+      }
+      if (reexportedTransition) {
+        diagnostics.push({
+          code: "unauthorized-transition-import",
+          line: lineOf(sourceFile, statement),
+          message: `Imported transition ${reexportedTransition} cannot be re-exported or aliased through an exported binding; callers must import their exact owned API directly.`,
+          path: file.path,
+        });
+      }
+    }
 
     for (const [localName, importedName] of importLocalNames) {
       let references = 0;

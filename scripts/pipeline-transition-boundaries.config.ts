@@ -233,14 +233,38 @@ const sqlFileOwners = [
   ),
 ] as const;
 
+const seededStageLiteralExceptions = [
+  {
+    functionName: "reconcileLinearState",
+    owner: "linear-routing@wallie.dev",
+    path: "src/worker/reconciler.ts",
+    reason:
+      'The "land" literal is a Linear route action discriminant; the target stage remains route.stageSlug data.',
+    value: "land",
+  },
+  ...[
+    "supabase/migrations/20260422000000_init.sql",
+    "supabase/migrations/20260606000000_pipeline_symphony_alignment.sql",
+    "supabase/migrations/20260606000002_no_screenshot_commits.sql",
+    "supabase/migrations/20260607000003_screenshot_proof_commit_links.sql",
+  ].flatMap((path) =>
+    ["plan", "build", "land"].map((value) => ({
+      functionName: "default_pipeline_stages",
+      owner: "pipeline-defaults@wallie.dev",
+      path,
+      reason:
+        "The historical default-stage adapter defines seeded workspace defaults; runtime stage transitions remain data-driven.",
+      value,
+    })),
+  ),
+];
+
 const importCallers = new Map<string, Set<string>>();
 for (const owner of [...mutationOwners, ...rpcOwners]) {
   const callers = importCallers.get(owner.functionName) ?? new Set<string>();
   owner.callers.forEach((caller) => callers.add(caller));
   importCallers.set(owner.functionName, callers);
 }
-importCallers.set("ACTIVE_AGENT_JOB_STATUSES", new Set([CANCEL]));
-importCallers.set("ACTIVE_AGENT_RUN_STATUSES", new Set([CANCEL]));
 
 export const pipelineTransitionBoundaryConfig = {
   dynamicTableExceptions: [
@@ -277,16 +301,7 @@ export const pipelineTransitionBoundaryConfig = {
     "src/lib/linear-routing/contracts.ts",
     "src/lib/pipeline/defaults.ts",
   ],
-  seededStageLiteralExceptions: [
-    {
-      functionName: "reconcileLinearState",
-      owner: "linear-routing@wallie.dev",
-      path: "src/worker/reconciler.ts",
-      reason:
-        'The "land" literal is a Linear route action discriminant; the target stage remains route.stageSlug data.',
-      value: "land",
-    },
-  ],
+  seededStageLiteralExceptions,
   seededStageSlugs: ["build", "land", "plan"],
   sourceRoots: ["src", "supabase/migrations"],
   sqlFileOwners,

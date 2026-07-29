@@ -66,6 +66,7 @@ interface MockState {
   sessions: Map<string, { phase_status: string }>;
   rpcCalls: Array<{ name: string; args: unknown }>;
   retryRpcShouldFail?: boolean;
+  sessionParkFailureIds?: string[];
 }
 
 function buildAdminMock(state: MockState) {
@@ -210,6 +211,9 @@ function buildAdminMock(state: MockState) {
       eq: (_col: string, sessionId: string) => ({
         eq: async (_col2: string, expected: string) => {
           sessionUpdates.push({ id: sessionId, patch, expected });
+          if (state.sessionParkFailureIds?.includes(sessionId)) {
+            return { error: { message: "session park failed" } };
+          }
           const row = state.sessions.get(sessionId);
           if (row && row.phase_status === expected) {
             Object.assign(row, patch);
@@ -421,6 +425,41 @@ describe("sweepStalledRuns", () => {
     expect(mocked.stopSandboxById).not.toHaveBeenCalledWith("sandbox-2");
     expect(state.runs.find((run) => run.id === "run-1")?.status).toBe("error");
     expect(state.runs.find((run) => run.id === "run-2")?.status).toBe("running");
+  });
+
+  it("continues the batch when parking one stalled session fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const state: MockState = {
+      configs: [],
+      jobs: [
+        job({ id: "job-1", session_id: "sess-1" }),
+        job({ id: "job-2", session_id: "sess-2" }),
+      ],
+      runs: [
+        activeRun({ id: "run-1", agent_job_id: "job-1" }),
+        activeRun({ id: "run-2", agent_job_id: "job-2", sandbox_id: "sandbox-2" }),
+      ],
+      rpcCalls: [],
+      sessionParkFailureIds: ["sess-1"],
+      sessions: new Map([
+        ["sess-1", { phase_status: "agent_generating" }],
+        ["sess-2", { phase_status: "agent_generating" }],
+      ]),
+    };
+    const { admin, sessionUpdates } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual(["run-1", "run-2"]);
+    expect(result.retriedJobIds).toEqual(["job-1", "job-2"]);
+    expect(sessionUpdates.map((update) => update.id)).toEqual(["sess-1", "sess-2"]);
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("agent_generating");
+    expect(state.sessions.get("sess-2")?.phase_status).toBe("rejected");
+    expect(consoleError).toHaveBeenCalledWith("[stall-detector] failed to park stalled session", {
+      error: "session park failed",
+      sessionId: "sess-1",
+    });
+    consoleError.mockRestore();
   });
 
   it("does not kill a stale run when a fresh worker heartbeat owns the job", async () => {

@@ -1,0 +1,6 @@
+create or replace function internal.default_pipeline_stages()
+returns text
+language sql
+as $$
+  select 'build';
+$$;
