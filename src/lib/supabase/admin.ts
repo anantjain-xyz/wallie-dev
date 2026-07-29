@@ -1,7 +1,9 @@
+import "server-only";
+
 import { createClient } from "@supabase/supabase-js";
 
+import { resolveSupabaseAdminConfig } from "@/lib/supabase/admin-config";
 import type { Database } from "@/lib/supabase/database.types";
-import { resolveSupabaseAdminConfig } from "@/lib/supabase/config";
 
 export function createSupabaseAdminClient(input: Record<string, string | undefined> = process.env) {
   const { secretKey, url } = resolveSupabaseAdminConfig(input);
