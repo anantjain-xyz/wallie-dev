@@ -1,3 +1,5 @@
+import "server-only";
+
 import { parseServerEnv } from "@/env/server";
 
 export const githubAppEnvKeys = ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY"] as const;

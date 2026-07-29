@@ -29,6 +29,7 @@
     "analyze:authenticated-bundle": "node scripts/analyze-authenticated-bundle.mjs",
     "dev": "next dev",
     "build": "next build",
+    "check:privileged-imports": "tsx scripts/verify-privileged-imports.ts",
     "check:route-budgets": "tsx scripts/check-route-budgets.ts",
     "start": "next start",
     "format": "prettier --write .",
@@ -45,7 +46,7 @@
     "test:watch": "vitest",
     "db:types": "SUPABASE_TELEMETRY_DISABLED=1 supabase gen types typescript --local > src/lib/supabase/database.types.ts && prettier --write src/lib/supabase/database.types.ts",
     "verify:validation": "tsx scripts/verify-validation-contract.ts",
-    "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck",
+    "check:fast": "pnpm verify:validation && pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:privileged-imports",
     "check": "pnpm check:fast && pnpm test",
     "worker": "node --env-file-if-exists=.env.local --import ./scripts/install-crash-handlers.mjs --import ./scripts/register-server-only.mjs --import tsx src/worker/index.ts"
   },
