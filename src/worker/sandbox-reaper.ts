@@ -5,6 +5,7 @@ import { listRunningSandboxes, stopSandboxById } from "@/lib/sandbox";
 import { STALE_SANDBOX_CAPABILITY_CHECK_MS } from "@/lib/sandbox-capabilities/constants";
 import { loadAllConnectedSandboxConnections } from "@/lib/sandbox-connections/server";
 import type { SandboxConnection } from "@/lib/sandbox/types";
+import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
 
 type AdminClient = SupabaseClient<Database>;
 type AgentRunSandboxRow = Pick<Tables<"agent_runs">, "agent_job_id" | "sandbox_id" | "status">;
@@ -58,6 +59,9 @@ export async function reapOrphanSandboxes(
   const ageCutoff = Date.now() - graceMs;
 
   for (const connection of connections) {
+    if (getSandboxProviderContract(connection.connection.provider).reaper.state === "unsupported") {
+      continue;
+    }
     const providerSandboxes = await listRunningSandboxes({
       connection: connection.connection,
       workspaceId: connection.workspaceId,

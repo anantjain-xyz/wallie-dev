@@ -3,7 +3,6 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  SANDBOX_PROVIDERS,
   type DaytonaSandboxConnectionPreview,
   type E2BSandboxConnectionPreview,
   type SandboxConnectionPreviews,
@@ -20,6 +19,11 @@ import {
   type SandboxConnection,
   type SandboxProvider,
 } from "@/lib/sandbox";
+import {
+  getSandboxProviderContract,
+  listSandboxProviders,
+  providerLabel,
+} from "@/lib/sandbox/provider-contract";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import {
   loadConnectedVercelSandboxConnections,
@@ -70,17 +74,20 @@ export class SandboxConnectionActiveWorkError extends Error {
   }
 }
 
-export function providerLabel(provider: SandboxProvider): string {
-  if (provider === "e2b") return "E2B";
-  if (provider === "daytona") return "Daytona";
-  return "Vercel Sandbox";
-}
+export { providerLabel };
 
 export function getEnabledSandboxProviders(): SandboxProvider[] {
-  const raw = process.env.WALLIE_ENABLED_SANDBOX_PROVIDERS;
-  if (!raw) return [...SANDBOX_PROVIDERS];
+  const providers = listSandboxProviders();
+  const environmentVariable = getSandboxProviderContract(providers[0]).enablementPolicy
+    .environmentVariable;
+  const raw = process.env[environmentVariable];
+  if (!raw) {
+    return providers.filter(
+      (provider) => getSandboxProviderContract(provider).enablementPolicy.defaultEnabled,
+    );
+  }
   const selected = new Set(raw.split(",").map((value) => value.trim().toLowerCase()));
-  return SANDBOX_PROVIDERS.filter((provider) => selected.has(provider));
+  return providers.filter((provider) => selected.has(provider));
 }
 
 export function normalizeDaytonaApiUrl(value?: string): string {

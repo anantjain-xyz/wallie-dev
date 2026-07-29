@@ -75,7 +75,8 @@ export interface SandboxHandle {
 // ---------------------------------------------------------------------------
 
 export type AgentProvider = "codex" | "claude-code";
-export type SandboxProvider = "vercel" | "e2b" | "daytona";
+export const SANDBOX_PROVIDER_IDS = ["vercel", "e2b", "daytona"] as const;
+export type SandboxProvider = (typeof SANDBOX_PROVIDER_IDS)[number];
 export type SandboxImplementation = SandboxProvider | "fake";
 
 export type VercelSandboxCredentials = {

@@ -4,10 +4,15 @@ import type {
   SandboxConnection,
   SandboxHandle,
   SandboxImplementation,
-  SandboxProvider,
   SandboxProviderDriver,
 } from "./types";
 import { redactSecrets } from "./command";
+import { runBoundedSandboxProviderOperation } from "./lifecycle";
+import {
+  getSandboxProviderContract,
+  loadSandboxProviderDriver,
+  listSandboxProviders,
+} from "./provider-contract";
 
 export type {
   AgentProvider,
@@ -28,18 +33,14 @@ export type {
 } from "./types";
 export { FakeSandbox } from "./fake";
 
-const IMPLEMENTATIONS = ["vercel", "e2b", "daytona", "fake"] as const;
-const DRIVER_LOADERS = {
-  daytona: async () => (await import("./daytona")).daytonaSandboxDriver,
-  e2b: async () => (await import("./e2b")).e2bSandboxDriver,
-  vercel: async () => (await import("./vercel")).vercelSandboxDriver,
-} satisfies Record<SandboxProvider, () => Promise<unknown>>;
+const IMPLEMENTATIONS = [...listSandboxProviders(), "fake"] as const;
 
 async function loadProviderDriver<Connection extends SandboxConnection>(
   connection: Connection,
 ): Promise<SandboxProviderDriver<Connection>> {
-  const driver = await DRIVER_LOADERS[connection.provider]();
-  return driver as SandboxProviderDriver<Connection>;
+  return (await loadSandboxProviderDriver(
+    connection.provider,
+  )) as SandboxProviderDriver<Connection>;
 }
 
 export function resolveSandboxImplementation(
@@ -89,14 +90,25 @@ export async function createSessionSandbox(
   }
 
   try {
-    return await (await loadProviderDriver(connection)).create(input, connection);
+    return await runBoundedSandboxProviderOperation({
+      onLateSuccess: (handle) => handle.stop(),
+      operation: "acquire",
+      provider: connection.provider,
+      run: async (signal) =>
+        (await loadProviderDriver(connection)).create({ ...input, signal }, connection),
+      signal: input.signal,
+    });
   } catch (error) {
     throw sanitizedSandboxError(error, connection, [input.installationToken]);
   }
 }
 
 export async function validateSandboxConnection(connection: SandboxConnection) {
-  const result = await (await loadProviderDriver(connection)).validate(connection);
+  const result = await runBoundedSandboxProviderOperation({
+    operation: "validate",
+    provider: connection.provider,
+    run: async () => (await loadProviderDriver(connection)).validate(connection),
+  });
   return result.error
     ? { ...result, error: redactSecrets(result.error, connectionSecrets(connection)) }
     : result;
@@ -132,7 +144,11 @@ export async function stopSandboxById(
   }
 
   try {
-    await (await loadProviderDriver(connection)).stopById(sandboxId, connection);
+    await runBoundedSandboxProviderOperation({
+      operation: "stopById",
+      provider: connection.provider,
+      run: async () => (await loadProviderDriver(connection)).stopById(sandboxId, connection),
+    });
   } catch (error) {
     if (options.throwOnError) throw error;
     console.error("[sandbox] failed to stop sandbox", {
@@ -174,10 +190,13 @@ export async function listRunningSandboxes(
   }
 
   try {
-    return await (
-      await loadProviderDriver(connection)
-    ).listRunning(connection, {
-      workspaceId: options.workspaceId,
+    return await runBoundedSandboxProviderOperation({
+      operation: "listRunning",
+      provider: connection.provider,
+      run: async () =>
+        (await loadProviderDriver(connection)).listRunning(connection, {
+          workspaceId: options.workspaceId,
+        }),
     });
   } catch (error) {
     if (options.throwOnError) throw error;
@@ -193,9 +212,11 @@ export async function listRunningSandboxes(
 }
 
 function connectionSecrets(connection: SandboxConnection): string[] {
-  return connection.provider === "vercel"
-    ? [connection.credentials.token]
-    : [connection.credentials.apiKey];
+  const secretFields = getSandboxProviderContract(connection.provider).credentials.secretFields;
+  const credentials = connection.credentials as unknown as Record<string, unknown>;
+  return secretFields.flatMap((field) =>
+    typeof credentials[field] === "string" ? [credentials[field]] : [],
+  );
 }
 
 function sanitizedSandboxError(

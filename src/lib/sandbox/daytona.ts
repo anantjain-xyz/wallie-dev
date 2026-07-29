@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Daytona, DaytonaNotFoundError } from "@daytona/sdk";
 
 import { SandboxLogBuffer, shellEnvPrefix, shellJoin, shellQuote } from "./command";
-import { prepareSessionSandbox } from "./setup";
+import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
@@ -181,19 +181,12 @@ export async function createDaytonaSessionSandbox(
   }
 
   const handle = new DaytonaSandboxHandle(client, sandbox);
-  try {
-    await input.onSandboxCreated?.({ provider: "daytona", sandboxId: handle.id });
-    await prepareSessionSandbox({
-      handle,
-      provider: "daytona",
-      repoAlreadyCloned: false,
-      request: input,
-    });
-  } catch (error) {
-    await handle.stop();
-    throw error;
-  }
-  return handle;
+  return finalizeSandboxAcquisition({
+    handle,
+    provider: "daytona",
+    repoAlreadyCloned: false,
+    request: input,
+  });
 }
 
 export async function validateDaytonaConnection(connection: DaytonaConnection) {

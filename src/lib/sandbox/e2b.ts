@@ -1,7 +1,7 @@
 import { CommandExitError, FileNotFoundError, Sandbox } from "e2b";
 
 import { SandboxLogBuffer, shellJoin, shellQuote } from "./command";
-import { prepareSessionSandbox } from "./setup";
+import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
@@ -137,21 +137,12 @@ export async function createE2BSessionSandbox(
     timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   });
   const handle = new E2BSandboxHandle(sandbox);
-
-  try {
-    await input.onSandboxCreated?.({ provider: "e2b", sandboxId: handle.id });
-    await prepareSessionSandbox({
-      handle,
-      provider: "e2b",
-      repoAlreadyCloned: false,
-      request: input,
-    });
-  } catch (error) {
-    await handle.stop();
-    throw error;
-  }
-
-  return handle;
+  return finalizeSandboxAcquisition({
+    handle,
+    provider: "e2b",
+    repoAlreadyCloned: false,
+    request: input,
+  });
 }
 
 export async function validateE2BConnection(connection: E2BConnection) {

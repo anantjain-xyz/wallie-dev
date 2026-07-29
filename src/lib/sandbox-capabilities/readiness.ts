@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SandboxCapabilityReport } from "./contracts";
 import { capabilityReportSucceeded } from "./probe";
 import type { SandboxConnection, SandboxProvider } from "@/lib/sandbox/types";
+import { providerLabel } from "@/lib/sandbox/provider-contract";
 import type { Database } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -52,13 +53,7 @@ export async function assertCurrentSandboxCapabilityCheck(input: {
     data.sandbox_provider === input.connection.provider &&
     data.sandbox_connection_revision === input.connection.revision &&
     agentMatch &&
-    capabilityReportSucceeded(capabilities);
+    capabilityReportSucceeded(capabilities, input.connection.provider);
 
   if (!ready) throw new SandboxCapabilityCheckStaleError(input.connection.provider);
-}
-
-function providerLabel(provider: SandboxProvider): string {
-  if (provider === "e2b") return "E2B";
-  if (provider === "daytona") return "Daytona";
-  return "Vercel Sandbox";
 }

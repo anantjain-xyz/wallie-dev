@@ -1,7 +1,7 @@
 import { Sandbox } from "@vercel/sandbox";
 
 import { redactSecrets } from "./command";
-import { prepareSessionSandbox } from "./setup";
+import { finalizeSandboxAcquisition } from "./lifecycle";
 import type {
   CreateSessionSandboxInput,
   RunningSandboxSummary,
@@ -126,21 +126,12 @@ export async function createVercelSessionSandbox(
   });
 
   const handle = new VercelSandboxHandle(sandbox);
-
-  try {
-    await input.onSandboxCreated?.({ provider: "vercel", sandboxId: handle.id });
-    await prepareSessionSandbox({
-      handle,
-      provider: "vercel",
-      repoAlreadyCloned: true,
-      request: input,
-    });
-  } catch (err) {
-    await handle.stop();
-    throw err;
-  }
-
-  return handle;
+  return finalizeSandboxAcquisition({
+    handle,
+    provider: "vercel",
+    repoAlreadyCloned: true,
+    request: input,
+  });
 }
 
 /**
