@@ -8,10 +8,16 @@ type PackageJson = {
   scripts?: Record<string, string>;
 };
 
+type WorkflowStep = {
+  "continue-on-error"?: unknown;
+  if?: unknown;
+  run?: unknown;
+};
+
 type WorkflowJob = {
-  steps?: Array<{
-    run?: unknown;
-  }>;
+  "continue-on-error"?: unknown;
+  if?: unknown;
+  steps?: WorkflowStep[];
 };
 
 type Workflow = {
@@ -38,14 +44,14 @@ const profiles: readonly Profile[] = [
   {
     job: "lint-and-format",
     name: "fast",
-    requiredReferences: ["verify:validation", "typecheck"],
+    requiredReferences: ["verify:validation", "format:check", "lint", "typecheck"],
     script: "check:fast",
     workflow: ".github/workflows/lint-and-format.yml",
   },
   {
     job: "test",
     name: "full",
-    requiredReferences: ["check:fast"],
+    requiredReferences: ["check:fast", "test"],
     script: "check",
     workflow: ".github/workflows/test.yml",
   },
@@ -106,12 +112,16 @@ function hasPullRequestTrigger(trigger: unknown) {
   return typeof trigger === "object" && trigger !== null && "pull_request" in trigger;
 }
 
-function packageScriptReferences(job: WorkflowJob) {
+function packageScriptCalls(job: WorkflowJob) {
   return (job.steps ?? []).flatMap((step) => {
     if (typeof step.run !== "string") return [];
     const match = step.run.trim().match(/^pnpm(?:\s+run)?\s+([A-Za-z0-9:_-]+)$/);
-    return match?.[1] ? [match[1]] : [];
+    return match?.[1] ? [{ script: match[1], step }] : [];
   });
+}
+
+function packageScriptReferences(job: WorkflowJob) {
+  return packageScriptCalls(job).map(({ script }) => script);
 }
 
 function composedPackageScriptReferences(command: string) {
@@ -122,6 +132,35 @@ function composedPackageScriptReferences(command: string) {
     references.push(match[1]);
   }
   return references;
+}
+
+function verifyRequiredExecutionControls(profile: Profile, job: WorkflowJob, errors: string[]) {
+  const context = `${profile.workflow} job "${profile.job}"`;
+
+  if (job.if !== undefined) {
+    errors.push(
+      `${context} must run unconditionally for pull requests. Remove the job-level "if" condition so "pnpm ${profile.script}" cannot be skipped.`,
+    );
+  }
+  if (job["continue-on-error"] !== undefined && job["continue-on-error"] !== false) {
+    errors.push(
+      `${context} must block pull requests when validation fails. Remove job-level "continue-on-error" or set it to false.`,
+    );
+  }
+
+  const delegationSteps = packageScriptCalls(job).filter(({ script }) => script === profile.script);
+  for (const { step } of delegationSteps) {
+    if (step.if !== undefined) {
+      errors.push(
+        `${context} must run "pnpm ${profile.script}" unconditionally. Remove the validation step's "if" condition so the canonical profile cannot be skipped.`,
+      );
+    }
+    if (step["continue-on-error"] !== undefined && step["continue-on-error"] !== false) {
+      errors.push(
+        `${context} must treat "pnpm ${profile.script}" failures as blocking. Remove the validation step's "continue-on-error" or set it to false.`,
+      );
+    }
+  }
 }
 
 function verifyWorkflowDelegation(
@@ -146,6 +185,8 @@ function verifyWorkflowDelegation(
     );
     return;
   }
+
+  verifyRequiredExecutionControls(profile, job, errors);
 
   const references = packageScriptReferences(job);
   if (references.length !== 1 || references[0] !== profile.script) {

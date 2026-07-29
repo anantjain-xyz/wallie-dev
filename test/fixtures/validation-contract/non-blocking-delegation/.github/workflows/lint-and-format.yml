@@ -1,0 +1,9 @@
+on:
+  pull_request:
+
+jobs:
+  lint-and-format:
+    if: false
+    continue-on-error: true
+    steps:
+      - run: pnpm check:fast
