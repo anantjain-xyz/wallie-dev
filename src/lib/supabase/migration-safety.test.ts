@@ -166,10 +166,15 @@ drop table public.jobs;`;
     ["alter table public.jobs alter id type bigint;", "replace-column-type:public.jobs.id"],
     ["alter table only public.jobs * rename id to job_id;", "rename-column:public.jobs.id"],
     [
+      "alter table public.jobs add column workspace_id uuid not null;",
+      "add-not-null-column:public.jobs.workspace_id",
+    ],
+    [
       "alter type public.job_result alter attribute status type bigint;",
       "replace-attribute-type:public.job_result.status",
     ],
     ["drop index concurrently if exists public.jobs_idx;", "drop-index:public.jobs_idx"],
+    ["truncate table public.jobs;", "truncate-table:public.jobs"],
     ["alter index public.jobs_pkey rename to jobs_id_idx;", "rename-index:public.jobs_pkey"],
     [
       "drop trigger if exists touch_updated_at on public.jobs;",
@@ -183,6 +188,18 @@ drop table public.jobs;`;
     [
       "alter table public.jobs alter column workspace_id set not null;",
       "set-not-null:public.jobs.workspace_id",
+    ],
+    [
+      "alter table public.jobs alter column id set generated always;",
+      "set-generated-always:public.jobs.id",
+    ],
+    [
+      "alter table public.jobs disable row level security;",
+      "disable-row-level-security:public.jobs",
+    ],
+    [
+      "alter table public.jobs no force row level security;",
+      "no-force-row-level-security:public.jobs",
     ],
   ])("classifies additional incompatible DDL: %s", (sql, operationKey) => {
     expect(verifyNew(sql)).toEqual([
@@ -231,15 +248,158 @@ drop trigger touch_updated_at on public.sessions;`;
 
   it.each([
     ["drop-trigger:public.jobs.touch_updated_at", "drop trigger touch_updated_at on public.jobs;"],
+    ["truncate-table:public.jobs", "truncate table public.jobs;"],
     [
       "set-not-null:public.jobs.workspace_id",
       "alter table public.jobs alter column workspace_id set not null;",
     ],
+    [
+      "add-not-null-column:public.jobs.workspace_id",
+      "alter table public.jobs add column workspace_id uuid not null;",
+    ],
+    [
+      "disable-row-level-security:public.jobs",
+      "alter table public.jobs disable row level security;",
+    ],
+    [
+      "no-force-row-level-security:public.jobs",
+      "alter table public.jobs no force row level security;",
+    ],
+    [
+      "set-generated-always:public.jobs.id",
+      "alter table public.jobs alter column id set generated always;",
+    ],
+    [
+      "rename-value:public.status.open",
+      "alter type public.status rename value 'open' to 'active';",
+    ],
+    [
+      "replace-policy-using:public.jobs.member_read",
+      "alter policy member_read on public.jobs using (true);",
+    ],
+    ["drop-routine:public.lookup(uuid)", "drop routine public.lookup(uuid);"],
+    ["drop-table:public%2Ejobs", 'drop table "public.jobs";'],
   ])("accepts an exact waiver for %s", (operationKey, statement) => {
     const sql = `-- wallie-migration-safety: allow ${operationKey} owner=@anantjain-xyz issue=OP-387
 ${statement}`;
 
     expect(verifyNew(sql)).toEqual([]);
+  });
+
+  it("keeps multiword return types distinct from underscored identifiers", () => {
+    const baseSql = `create function public.lookup_job(job_id uuid)
+returns double precision language sql as 'select 1';`;
+    const newSql = `drop function public.lookup_job(uuid);
+create function public.lookup_job(job_id uuid)
+returns double_precision language sql as 'select 1';`;
+
+    expect(verifyWithBase(baseSql, newSql)).toEqual([
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "drop-function:public.lookup_job(uuid)",
+      }),
+    ]);
+  });
+
+  it("keys enum value renames by the source literal", () => {
+    const sql = `-- wallie-migration-safety: allow rename-value:public.status.open owner=@anantjain-xyz issue=OP-387
+alter type public.status rename value 'closed' to 'archived';`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "rename-value:public.status.open",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "rename-value:public.status.closed",
+      }),
+    ]);
+  });
+
+  it("classifies each ALTER POLICY role and predicate replacement separately", () => {
+    const sql = `alter policy member_read on public.jobs
+to authenticated, service_role
+using (true)
+with check (true);`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "replace-policy-roles:public.jobs.member_read",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "replace-policy-using:public.jobs.member_read",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "replace-policy-with-check:public.jobs.member_read",
+      }),
+    ]);
+  });
+
+  it("does not let one ALTER POLICY waiver authorize a different replacement", () => {
+    const sql = `-- wallie-migration-safety: allow replace-policy-using:public.jobs.member_read owner=@anantjain-xyz issue=OP-387
+alter policy member_read on public.jobs with check (true);`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "replace-policy-using:public.jobs.member_read",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "replace-policy-with-check:public.jobs.member_read",
+      }),
+    ]);
+  });
+
+  it("retains overload signatures in DROP ROUTINE waiver keys", () => {
+    const sql = `-- wallie-migration-safety: allow drop-routine:public.lookup(uuid) owner=@anantjain-xyz issue=OP-387
+drop routine public.lookup(text);`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "drop-routine:public.lookup(uuid)",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "drop-routine:public.lookup(text)",
+      }),
+    ]);
+  });
+
+  it("classifies each relation in a multi-table TRUNCATE", () => {
+    expect(
+      verifyNew("truncate table only public.jobs, public.sessions restart identity cascade;"),
+    ).toEqual([
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "truncate-table:public.jobs",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "truncate-table:public.sessions",
+      }),
+    ]);
+  });
+
+  it("keeps quoted dotted identifiers distinct from qualified names", () => {
+    const sql = `-- wallie-migration-safety: allow drop-table:public.jobs owner=@anantjain-xyz issue=OP-387
+drop table "public.jobs";`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "drop-table:public.jobs",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "drop-table:public%2Ejobs",
+      }),
+    ]);
   });
 
   it.each([
@@ -274,6 +434,14 @@ begin
 end
 $block$;`,
       "drop-table:public.jobs",
+    ],
+    [
+      `do $block$
+begin
+  execute 'TRUNCATE TABLE public.jobs';
+end
+$block$;`,
+      "truncate-table:public.jobs",
     ],
   ])("detects destructive SQL executed inside a DO block", (sql, operationKey) => {
     expect(verifyNew(sql)).toEqual([

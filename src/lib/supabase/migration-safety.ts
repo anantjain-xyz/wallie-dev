@@ -255,9 +255,13 @@ function isNameToken(
   return token?.kind === "identifier" || token?.kind === "quoted-identifier";
 }
 
+function encodeOperationComponent(value: string): string {
+  return encodeURIComponent(value).replaceAll(".", "%2E");
+}
+
 function canonicalNameToken(token: Token): string {
   return token.kind === "quoted-identifier"
-    ? encodeURIComponent(token.value)
+    ? encodeOperationComponent(token.value)
     : token.value.toLowerCase();
 }
 
@@ -317,7 +321,7 @@ function normalizedTokens(tokens: readonly Token[]): string {
 
   for (const token of tokens) {
     const isName = isNameToken(token);
-    if (isName && previousWasName) result += "_";
+    if (isName && previousWasName) result += "+";
     result += isName ? canonicalNameToken(token) : token.value.toLowerCase();
     previousWasName = isName;
   }
@@ -497,7 +501,7 @@ function parseDropStatement(tokens: readonly Token[]): UnsafeOperation[] {
   const operations: UnsafeOperation[] = [];
 
   for (const item of splitTopLevel(tokens.slice(index), ",")) {
-    if (kind === "function" || kind === "procedure") {
+    if (kind === "function" || kind === "procedure" || kind === "routine") {
       const parsed = readFunctionIdentity(item, 0, true);
       const identity = parsed.identity ?? readQualifiedName(item, 0).name;
       operations.push({
@@ -557,6 +561,10 @@ function alterObject(tokens: readonly Token[]) {
 }
 
 function actionName(tokens: readonly Token[], start: number): string {
+  const literalIndex = isKeyword(tokens[start], "e") ? start + 1 : start;
+  const literal = tokens[literalIndex] ? stringContents(tokens[literalIndex]!) : undefined;
+  if (literal !== undefined) return encodeOperationComponent(literal);
+
   return readQualifiedName(tokens, start).name;
 }
 
@@ -567,6 +575,36 @@ function parseAlterAction(
 ): UnsafeOperation[] {
   if (action.length === 0) return [];
   const line = action[0]!.line;
+
+  if (objectKind === "policy" && !isKeyword(action[0], "rename")) {
+    const operations: UnsafeOperation[] = [];
+    let depth = 0;
+
+    for (let index = 0; index < action.length; index += 1) {
+      if (action[index]?.value === "(" || action[index]?.value === "[") depth += 1;
+      if (action[index]?.value === ")" || action[index]?.value === "]") depth -= 1;
+      if (depth !== 0) continue;
+
+      if (isKeyword(action[index], "to")) {
+        operations.push({
+          key: `replace-policy-roles:${objectName}`,
+          line: action[index]!.line,
+        });
+      } else if (isKeyword(action[index], "using")) {
+        operations.push({
+          key: `replace-policy-using:${objectName}`,
+          line: action[index]!.line,
+        });
+      } else if (isKeyword(action[index], "with") && isKeyword(action[index + 1], "check")) {
+        operations.push({
+          key: `replace-policy-with-check:${objectName}`,
+          line: action[index]!.line,
+        });
+      }
+    }
+
+    return operations;
+  }
 
   if (isKeyword(action[0], "drop")) {
     let index = 1;
@@ -598,6 +636,30 @@ function parseAlterAction(
     return [{ key: `rename-${targetKind}:${objectName}.${target}`, line }];
   }
 
+  if (isKeyword(action[0], "add")) {
+    let index = isKeyword(action[1], "column") ? 2 : 1;
+    if (isKeyword(action[index], "if") && isKeyword(action[index + 1], "not")) {
+      index += isKeyword(action[index + 2], "exists") ? 3 : 0;
+    }
+
+    const target = readQualifiedName(action, index);
+    let depth = 0;
+    for (let tokenIndex = target.next; tokenIndex < action.length - 1; tokenIndex += 1) {
+      if (action[tokenIndex]?.value === "(" || action[tokenIndex]?.value === "[") depth += 1;
+      if (action[tokenIndex]?.value === ")" || action[tokenIndex]?.value === "]") depth -= 1;
+      if (
+        depth === 0 &&
+        isKeyword(action[tokenIndex], "not") &&
+        isKeyword(action[tokenIndex + 1], "null") &&
+        !isKeyword(action[tokenIndex - 1], "is")
+      ) {
+        return [{ key: `add-not-null-column:${objectName}.${target.name}`, line }];
+      }
+    }
+
+    return [];
+  }
+
   if (isKeyword(action[0], "alter")) {
     const targetKind =
       objectKind === "type" && isKeyword(action[1], "attribute") ? "attribute" : "column";
@@ -622,6 +684,13 @@ function parseAlterAction(
     ) {
       return [{ key: `set-not-null:${objectName}.${target}`, line }];
     }
+    if (
+      isKeyword(action[operationIndex], "set") &&
+      isKeyword(action[operationIndex + 1], "generated") &&
+      isKeyword(action[operationIndex + 2], "always")
+    ) {
+      return [{ key: `set-generated-always:${objectName}.${target}`, line }];
+    }
     if (isKeyword(action[operationIndex], "drop")) {
       const property = normalizedTokens(action.slice(operationIndex + 1)) || "property";
       return [{ key: `drop-${targetKind}-${property}:${objectName}.${target}`, line }];
@@ -630,6 +699,25 @@ function parseAlterAction(
 
   if (isKeyword(action[0], "set") && isKeyword(action[1], "schema")) {
     return [{ key: `rename-${objectKind}-schema:${objectName}`, line }];
+  }
+
+  if (
+    isKeyword(action[0], "disable") &&
+    isKeyword(action[1], "row") &&
+    isKeyword(action[2], "level") &&
+    isKeyword(action[3], "security")
+  ) {
+    return [{ key: `disable-row-level-security:${objectName}`, line }];
+  }
+
+  if (
+    isKeyword(action[0], "no") &&
+    isKeyword(action[1], "force") &&
+    isKeyword(action[2], "row") &&
+    isKeyword(action[3], "level") &&
+    isKeyword(action[4], "security")
+  ) {
+    return [{ key: `no-force-row-level-security:${objectName}`, line }];
   }
 
   return [];
@@ -645,16 +733,32 @@ function parseAlterStatement(tokens: readonly Token[]): UnsafeOperation[] {
     if (tokens[index]?.value === ")") depth -= 1;
     if (
       depth === 0 &&
-      ["alter", "drop", "rename", "set"].some((keyword) => isKeyword(tokens[index], keyword))
+      ["add", "alter", "disable", "drop", "no", "rename", "set", "to", "using", "with"].some(
+        (keyword) => isKeyword(tokens[index], keyword),
+      )
     ) {
       actionStart = index;
       break;
     }
   }
 
+  if (object.kind === "policy") {
+    return parseAlterAction(object.kind, object.name, tokens.slice(actionStart));
+  }
+
   return splitTopLevel(tokens.slice(actionStart), ",").flatMap((action) =>
     parseAlterAction(object.kind, object.name, action),
   );
+}
+
+function parseTruncateStatement(tokens: readonly Token[]): UnsafeOperation[] {
+  const index = isKeyword(tokens[1], "table") ? 2 : 1;
+
+  return splitTopLevel(tokens.slice(index), ",").map((item) => {
+    const nameStart = isKeyword(item[0], "only") ? 1 : 0;
+    const name = readQualifiedName(item, nameStart).name;
+    return { key: `truncate-table:${name}`, line: tokens[0]!.line };
+  });
 }
 
 function parseReplacement(tokens: readonly Token[]): UnsafeOperation[] {
@@ -676,6 +780,7 @@ function parseReplacement(tokens: readonly Token[]): UnsafeOperation[] {
 function parseStatementOperations(tokens: readonly Token[]): UnsafeOperation[] {
   if (isKeyword(tokens[0], "drop")) return parseDropStatement(tokens);
   if (isKeyword(tokens[0], "alter")) return parseAlterStatement(tokens);
+  if (isKeyword(tokens[0], "truncate")) return parseTruncateStatement(tokens);
   return parseReplacement(tokens);
 }
 
@@ -822,7 +927,8 @@ function parseDoStatement(
       if (
         isKeyword(statement[index], "drop") ||
         isKeyword(statement[index], "alter") ||
-        isKeyword(statement[index], "create")
+        isKeyword(statement[index], "create") ||
+        isKeyword(statement[index], "truncate")
       ) {
         const embedded = parseStatementOperations(statement.slice(index));
         if (embedded.length > 0) {
