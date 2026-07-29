@@ -3,5 +3,6 @@
 /scripts/check-route-budgets.ts @anantjain-xyz
 
 # Migration-safety policy and its approved waiver-owner list require repository-owner review.
+/supabase/migrations/ @anantjain-xyz
 /scripts/check-migration-safety.ts @anantjain-xyz
 /src/lib/supabase/migration-safety.ts @anantjain-xyz

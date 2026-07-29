@@ -27,7 +27,6 @@ type Token = {
 type UnsafeOperation = {
   key: string;
   line: number;
-  pairedFunctionIdentity?: string;
 };
 
 type Waiver = {
@@ -320,7 +319,11 @@ function functionArgumentType(tokens: readonly Token[], declaration: boolean): s
       (type) => words === type || words.startsWith(`${type} `),
     );
     const schemaQualifiedType = argument[1]?.value === ".";
-    if (!startsWithKnownType && !schemaQualifiedType) argument = argument.slice(1);
+    const decoratedType =
+      ["[", "(", "%"].includes(argument[1]?.value ?? "") || isKeyword(argument[1], "array");
+    if (!startsWithKnownType && !schemaQualifiedType && !decoratedType) {
+      argument = argument.slice(1);
+    }
   }
 
   return normalizedTokens(argument);
@@ -418,8 +421,9 @@ function skipIfExists(tokens: readonly Token[], start: number): number {
 
 function parseDropStatement(tokens: readonly Token[]): UnsafeOperation[] {
   const { kind, next: afterKind } = dropKind(tokens, 1);
-  let index = skipIfExists(tokens, afterKind);
-  if (isKeyword(tokens[index], "concurrently")) index += 1;
+  let index = afterKind;
+  if (kind === "index" && isKeyword(tokens[index], "concurrently")) index += 1;
+  index = skipIfExists(tokens, index);
   const operations: UnsafeOperation[] = [];
 
   for (const item of splitTopLevel(tokens.slice(index), ",")) {
@@ -429,7 +433,6 @@ function parseDropStatement(tokens: readonly Token[]): UnsafeOperation[] {
       operations.push({
         key: `drop-${kind}:${identity}`,
         line: tokens[0]!.line,
-        pairedFunctionIdentity: identity,
       });
     } else {
       const name = readQualifiedName(item, 0).name;
@@ -505,23 +508,25 @@ function parseAlterAction(
   }
 
   if (isKeyword(action[0], "alter")) {
-    const columnIndex = isKeyword(action[1], "column") ? 2 : 1;
-    const column = actionName(action, columnIndex);
-    const operationIndex = columnIndex + 1;
+    const targetKind =
+      objectKind === "type" && isKeyword(action[1], "attribute") ? "attribute" : "column";
+    const targetIndex = isKeyword(action[1], "column") || isKeyword(action[1], "attribute") ? 2 : 1;
+    const target = actionName(action, targetIndex);
+    const operationIndex = targetIndex + 1;
 
     if (isKeyword(action[operationIndex], "type")) {
-      return [{ key: `replace-column-type:${objectName}.${column}`, line }];
+      return [{ key: `replace-${targetKind}-type:${objectName}.${target}`, line }];
     }
     if (
       isKeyword(action[operationIndex], "set") &&
       isKeyword(action[operationIndex + 1], "data") &&
       isKeyword(action[operationIndex + 2], "type")
     ) {
-      return [{ key: `replace-column-type:${objectName}.${column}`, line }];
+      return [{ key: `replace-${targetKind}-type:${objectName}.${target}`, line }];
     }
     if (isKeyword(action[operationIndex], "drop")) {
       const property = normalizedTokens(action.slice(operationIndex + 1)) || "property";
-      return [{ key: `drop-column-${property}:${objectName}.${column}`, line }];
+      return [{ key: `drop-${targetKind}-${property}:${objectName}.${target}`, line }];
     }
   }
 
@@ -554,14 +559,6 @@ function parseAlterStatement(tokens: readonly Token[]): UnsafeOperation[] {
   );
 }
 
-function createFunctionIdentity(tokens: readonly Token[]): string | undefined {
-  const kindIndex = isKeyword(tokens[1], "or") && isKeyword(tokens[2], "replace") ? 3 : 1;
-  if (!isKeyword(tokens[kindIndex], "function") && !isKeyword(tokens[kindIndex], "procedure")) {
-    return undefined;
-  }
-  return readFunctionIdentity(tokens, kindIndex + 1, true).identity;
-}
-
 function parseReplacement(tokens: readonly Token[]): UnsafeOperation[] {
   if (
     !isKeyword(tokens[0], "create") ||
@@ -579,53 +576,18 @@ function parseReplacement(tokens: readonly Token[]): UnsafeOperation[] {
 }
 
 function parseOperations(tokens: readonly Token[]): UnsafeOperation[] {
-  const statements = splitStatements(tokens);
-  const parsedStatements: Array<{
-    createdFunction?: string;
-    operations: UnsafeOperation[];
-  }> = [];
-
-  for (const statementWithComments of statements) {
+  return splitStatements(tokens).flatMap((statementWithComments) => {
     const statement = statementWithComments.filter((token) => token.kind !== "comment");
-    if (statement.length === 0) continue;
-
-    const createdFunction = isKeyword(statement[0], "create")
-      ? createFunctionIdentity(statement)
-      : undefined;
+    if (statement.length === 0) return [];
 
     if (isKeyword(statement[0], "drop")) {
-      parsedStatements.push({ createdFunction, operations: parseDropStatement(statement) });
-    } else if (isKeyword(statement[0], "alter")) {
-      parsedStatements.push({ createdFunction, operations: parseAlterStatement(statement) });
-    } else {
-      parsedStatements.push({ createdFunction, operations: parseReplacement(statement) });
+      return parseDropStatement(statement);
     }
-  }
-
-  const laterFunctions = new Map<string, number>();
-  const unsafeOperations: UnsafeOperation[] = [];
-
-  for (const statement of parsedStatements.toReversed()) {
-    if (statement.createdFunction) {
-      laterFunctions.set(
-        statement.createdFunction,
-        (laterFunctions.get(statement.createdFunction) ?? 0) + 1,
-      );
+    if (isKeyword(statement[0], "alter")) {
+      return parseAlterStatement(statement);
     }
-
-    for (const operation of statement.operations.toReversed()) {
-      if (operation.pairedFunctionIdentity) {
-        const availableReplacements = laterFunctions.get(operation.pairedFunctionIdentity) ?? 0;
-        if (availableReplacements > 0) {
-          laterFunctions.set(operation.pairedFunctionIdentity, availableReplacements - 1);
-          continue;
-        }
-      }
-      unsafeOperations.push(operation);
-    }
-  }
-
-  return unsafeOperations.reverse();
+    return parseReplacement(statement);
+  });
 }
 
 function verifyNewMigration(

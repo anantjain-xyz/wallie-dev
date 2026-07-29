@@ -64,18 +64,26 @@ describe("migration safety", () => {
     expect(verifyNew(fixture("valid", "approved-retirement.sql"))).toEqual([]);
   });
 
-  it("accepts an exact function-overload drop and recreation in the same migration", () => {
+  it("accepts a compatible function-overload replacement without an exemption", () => {
     expect(verifyNew(fixture("valid", "function-overload-replacement.sql"))).toEqual([]);
   });
 
-  it("does not accept a function creation followed by a drop as a replacement", () => {
-    const sql = `create function public.lookup_job(uuid) returns text language sql as 'select 1';
-drop function public.lookup_job(uuid);`;
-
+  it.each([
+    [
+      `drop function public.lookup_job(uuid);
+create function public.lookup_job(uuid) returns bigint language sql as 'select 1';`,
+      "drop-function:public.lookup_job(uuid)",
+    ],
+    [
+      `drop function public.lookup_job(integer[]);
+create function public.lookup_job(text[]) returns text language sql as 'select 1';`,
+      "drop-function:public.lookup_job(integer[])",
+    ],
+  ])("requires an exact waiver for incompatible function recreation", (sql, operationKey) => {
     expect(verifyNew(sql)).toEqual([
       expect.objectContaining({
         code: "unsafe-operation",
-        operationKey: "drop-function:public.lookup_job(uuid)",
+        operationKey,
       }),
     ]);
   });
@@ -120,6 +128,11 @@ drop table public.jobs;`;
   it.each([
     ["alter table public.jobs alter id type bigint;", "replace-column-type:public.jobs.id"],
     ["alter table only public.jobs * rename id to job_id;", "rename-column:public.jobs.id"],
+    [
+      "alter type public.job_result alter attribute status type bigint;",
+      "replace-attribute-type:public.job_result.status",
+    ],
+    ["drop index concurrently if exists public.jobs_idx;", "drop-index:public.jobs_idx"],
     ["alter index public.jobs_pkey rename to jobs_id_idx;", "rename-index:public.jobs_pkey"],
     [
       "alter policy member_read on public.jobs rename to workspace_member_read;",
@@ -134,5 +147,11 @@ drop table public.jobs;`;
   it("fails closed on unterminated PostgreSQL strings and comments", () => {
     expect(issueCodes("select $body$ DROP TABLE public.jobs;")).toEqual(["invalid-sql"]);
     expect(issueCodes("/* DROP TABLE public.jobs;")).toEqual(["invalid-sql"]);
+  });
+
+  it("requires repository-owner review for migration changes", () => {
+    const codeowners = readFileSync(join(currentDir, "../../../.github/CODEOWNERS"), "utf8");
+
+    expect(codeowners).toMatch(/^\/supabase\/migrations\/\s+@anantjain-xyz$/mu);
   });
 });
