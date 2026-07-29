@@ -77,4 +77,25 @@ describe("validation contract verifier", () => {
       ]),
     );
   });
+
+  it("rejects revision, shell, negative-trigger, and indirect profile-cycle bypasses", () => {
+    const errors = verifyValidationContract(
+      resolve(fixturesDirectory, "revision-execution-bypasses"),
+    );
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        '.github/workflows/lint-and-format.yml pull_request branches must not use negative patterns because an ordered exclusion can override the required "main" match. Remove negative branch patterns or remove the branch filter.',
+        '.github/workflows/lint-and-format.yml must use GitHub\'s default executing shell for required package scripts. Remove workflow-level "defaults.run.shell" so "pnpm check:fast" executes.',
+        '.github/workflows/lint-and-format.yml job "lint-and-format" must use GitHub\'s default executing shell for "pnpm check:fast". Remove job-level "defaults.run.shell" so validation executes.',
+        '.github/workflows/lint-and-format.yml job "lint-and-format" must use GitHub\'s default executing shell for "pnpm check:fast". Remove the validation step\'s "shell" override so validation executes.',
+        '.github/workflows/lint-and-format.yml job "lint-and-format" must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.',
+        '.github/workflows/test.yml job "test" must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.',
+        'Canonical validation profiles contain a dependency cycle: "check:fast" -> "helper" -> "check:fast". Remove the recursive reference so each profile terminates; the intended hierarchy is "check" -> "check:fast", never the reverse.',
+        '.github/workflows/test.yml job "route-budgets" must use GitHub\'s default executing shell for classified package scripts. Remove job-level "defaults.run.shell" so the route-budget check executes.',
+        '.github/workflows/test.yml job "route-budgets" must use GitHub\'s default executing shell for "pnpm build". Remove the check step\'s "shell" override so the route-budget check executes.',
+        '.github/workflows/test.yml job "route-budgets" must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.',
+      ]),
+    );
+  });
 });

@@ -12,11 +12,15 @@ type WorkflowStep = {
   "continue-on-error"?: unknown;
   if?: unknown;
   run?: unknown;
+  shell?: unknown;
+  uses?: unknown;
+  with?: unknown;
   "working-directory"?: unknown;
 };
 
 type WorkflowDefaults = {
   run?: {
+    shell?: unknown;
     "working-directory"?: unknown;
   };
 };
@@ -54,7 +58,13 @@ const profiles: readonly Profile[] = [
   {
     job: "lint-and-format",
     name: "fast",
-    requiredReferences: ["verify:validation", "format:check", "lint", "typecheck"],
+    requiredReferences: [
+      "verify:validation",
+      "format:check",
+      "lint",
+      "typecheck",
+      "check:privileged-imports",
+    ],
     script: "check:fast",
     workflow: ".github/workflows/lint-and-format.yml",
   },
@@ -154,6 +164,13 @@ function verifyPullRequestTrigger(
           `${workflowPath} pull_request branches must include "main" so the ${profileName} validation profile protects the repository's default branch. Add "main" or remove the branch filter.`,
         );
       }
+      if (
+        configuredBranches.some((branch) => typeof branch === "string" && branch.startsWith("!"))
+      ) {
+        errors.push(
+          `${workflowPath} pull_request branches must not use negative patterns because an ordered exclusion can override the required "main" match. Remove negative branch patterns or remove the branch filter.`,
+        );
+      }
     }
     if ("paths" in configuration || "paths-ignore" in configuration) {
       errors.push(
@@ -207,7 +224,10 @@ function composedPackageScriptReferences(command: string) {
   return references;
 }
 
-function findProfileCycle(referencesByProfile: ReadonlyMap<string, readonly string[]>) {
+function findProfileCycle(
+  referencesByScript: ReadonlyMap<string, readonly string[]>,
+  profileScripts: readonly string[],
+) {
   const completed = new Set<string>();
   const activeIndexes = new Map<string, number>();
   const path: string[] = [];
@@ -219,8 +239,8 @@ function findProfileCycle(referencesByProfile: ReadonlyMap<string, readonly stri
 
     activeIndexes.set(profile, path.length);
     path.push(profile);
-    for (const reference of referencesByProfile.get(profile) ?? []) {
-      if (!referencesByProfile.has(reference)) continue;
+    for (const reference of referencesByScript.get(profile) ?? []) {
+      if (!referencesByScript.has(reference)) continue;
       const cycle = visit(reference);
       if (cycle) return cycle;
     }
@@ -230,15 +250,57 @@ function findProfileCycle(referencesByProfile: ReadonlyMap<string, readonly stri
     return null;
   }
 
-  for (const profile of referencesByProfile.keys()) {
+  for (const profile of profileScripts) {
     const cycle = visit(profile);
     if (cycle) return cycle;
   }
   return null;
 }
 
+function verifyReachablePackageScriptReferences(
+  scripts: Readonly<Record<string, string>>,
+  referencesByScript: ReadonlyMap<string, readonly string[]>,
+  profileScripts: readonly string[],
+  errors: string[],
+) {
+  const visited = new Set<string>();
+
+  function visit(script: string) {
+    if (visited.has(script)) return;
+    visited.add(script);
+
+    for (const reference of referencesByScript.get(script) ?? []) {
+      if (!(reference in scripts)) {
+        errors.push(repairMissingScript(reference, `Package script "${script}"`));
+        continue;
+      }
+      visit(reference);
+    }
+  }
+
+  for (const profile of profileScripts) visit(profile);
+}
+
 function usesRepositoryRoot(workingDirectory: unknown) {
   return workingDirectory === undefined || workingDirectory === "." || workingDirectory === "./";
+}
+
+function verifyCheckoutRevision(job: WorkflowJob, context: string, errors: string[]) {
+  for (const step of job.steps ?? []) {
+    if (
+      typeof step.uses !== "string" ||
+      !step.uses.toLowerCase().startsWith("actions/checkout@") ||
+      typeof step.with !== "object" ||
+      step.with === null ||
+      !("ref" in step.with)
+    ) {
+      continue;
+    }
+
+    errors.push(
+      `${context} must validate the pull-request revision. Remove "ref" from the actions/checkout step so GitHub checks out the pull-request merge commit.`,
+    );
+  }
 }
 
 function verifyRequiredExecutionControls(
@@ -254,9 +316,19 @@ function verifyRequiredExecutionControls(
       `${profile.workflow} must run required package scripts from the repository root. Remove workflow-level "defaults.run.working-directory" or set it to ".".`,
     );
   }
+  if (workflow.defaults?.run?.shell !== undefined) {
+    errors.push(
+      `${profile.workflow} must use GitHub's default executing shell for required package scripts. Remove workflow-level "defaults.run.shell" so "pnpm ${profile.script}" executes.`,
+    );
+  }
   if (!usesRepositoryRoot(job.defaults?.run?.["working-directory"])) {
     errors.push(
       `${context} must run "pnpm ${profile.script}" from the repository root. Remove job-level "defaults.run.working-directory" or set it to ".".`,
+    );
+  }
+  if (job.defaults?.run?.shell !== undefined) {
+    errors.push(
+      `${context} must use GitHub's default executing shell for "pnpm ${profile.script}". Remove job-level "defaults.run.shell" so validation executes.`,
     );
   }
   if (job.if !== undefined) {
@@ -282,6 +354,11 @@ function verifyRequiredExecutionControls(
         `${context} must run "pnpm ${profile.script}" from the repository root. Remove the validation step's "working-directory" or set it to ".".`,
       );
     }
+    if (step.shell !== undefined) {
+      errors.push(
+        `${context} must use GitHub's default executing shell for "pnpm ${profile.script}". Remove the validation step's "shell" override so validation executes.`,
+      );
+    }
     if (step.if !== undefined) {
       errors.push(
         `${context} must run "pnpm ${profile.script}" unconditionally. Remove the validation step's "if" condition so the canonical profile cannot be skipped.`,
@@ -293,6 +370,8 @@ function verifyRequiredExecutionControls(
       );
     }
   }
+
+  verifyCheckoutRevision(job, context, errors);
 }
 
 function verifyClassifiedExecutionControls(
@@ -308,9 +387,19 @@ function verifyClassifiedExecutionControls(
       `${check.workflow} must run classified package scripts from the repository root. Remove workflow-level "defaults.run.working-directory" or set it to ".".`,
     );
   }
+  if (workflow.defaults?.run?.shell !== undefined) {
+    errors.push(
+      `${check.workflow} must use GitHub's default executing shell for classified package scripts. Remove workflow-level "defaults.run.shell" so the ${check.classification} check executes.`,
+    );
+  }
   if (!usesRepositoryRoot(job.defaults?.run?.["working-directory"])) {
     errors.push(
       `${context} must run classified package scripts from the repository root. Remove job-level "defaults.run.working-directory" or set it to ".".`,
+    );
+  }
+  if (job.defaults?.run?.shell !== undefined) {
+    errors.push(
+      `${context} must use GitHub's default executing shell for classified package scripts. Remove job-level "defaults.run.shell" so the ${check.classification} check executes.`,
     );
   }
   if (job.if !== undefined) {
@@ -338,6 +427,11 @@ function verifyClassifiedExecutionControls(
         `${context} must run "pnpm ${script}" from the repository root. Remove the check step's "working-directory" or set it to ".".`,
       );
     }
+    if (step.shell !== undefined) {
+      errors.push(
+        `${context} must use GitHub's default executing shell for "pnpm ${script}". Remove the check step's "shell" override so the ${check.classification} check executes.`,
+      );
+    }
     if (step.if !== undefined) {
       errors.push(
         `${context} must run "pnpm ${script}" unconditionally while classified as ${check.classification}. Remove the check step's "if" condition.`,
@@ -349,6 +443,8 @@ function verifyClassifiedExecutionControls(
       );
     }
   }
+
+  verifyCheckoutRevision(job, context, errors);
 }
 
 function verifyWorkflowDelegation(
@@ -427,7 +523,13 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
   const errors: string[] = [];
   const packageJson = readJson(projectDirectory, errors);
   const scripts = packageJson.scripts ?? {};
-  const referencesByProfile = new Map<string, readonly string[]>();
+  const referencesByScript = new Map(
+    Object.entries(scripts).flatMap(([script, command]) => {
+      const references = composedPackageScriptReferences(command);
+      return references ? ([[script, references]] as const) : [];
+    }),
+  );
+  const profileScripts = profiles.map((profile) => profile.script);
   const classifiedScripts = new Map(
     classifiedChecks.flatMap((check) =>
       check.scripts.map((script) => [script, check.classification] as const),
@@ -444,11 +546,7 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
           `Package script "${profile.script}" owns the ${profile.name} validation profile and must compose declared package scripts as "pnpm <script>" commands joined by "&&". Move inline commands into named scripts so the verifier can reconcile them with CI.`,
         );
       } else {
-        referencesByProfile.set(profile.script, references);
         for (const reference of references) {
-          if (!(reference in scripts)) {
-            errors.push(repairMissingScript(reference, `Package script "${profile.script}"`));
-          }
           const classification = classifiedScripts.get(reference);
           if (classification) {
             errors.push(
@@ -469,7 +567,9 @@ export function verifyValidationContract(projectDirectory = process.cwd()) {
     verifyWorkflowDelegation(projectDirectory, profile, scripts, errors);
   }
 
-  const profileCycle = findProfileCycle(referencesByProfile);
+  verifyReachablePackageScriptReferences(scripts, referencesByScript, profileScripts, errors);
+
+  const profileCycle = findProfileCycle(referencesByScript, profileScripts);
   if (profileCycle) {
     errors.push(
       `Canonical validation profiles contain a dependency cycle: ${profileCycle.map((profile) => `"${profile}"`).join(" -> ")}. Remove the recursive reference so each profile terminates; the intended hierarchy is "check" -> "check:fast", never the reverse.`,

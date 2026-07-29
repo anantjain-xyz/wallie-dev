@@ -1,0 +1,22 @@
+on:
+  pull_request:
+
+jobs:
+  test:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - run: pnpm check
+
+  route-budgets:
+    defaults:
+      run:
+        shell: echo {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - run: pnpm build
+        shell: echo {0}
+      - run: pnpm check:route-budgets

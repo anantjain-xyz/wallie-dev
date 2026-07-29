@@ -1,0 +1,21 @@
+on:
+  pull_request:
+    branches:
+      - main
+      - "!main"
+
+defaults:
+  run:
+    shell: echo {0}
+
+jobs:
+  lint-and-format:
+    defaults:
+      run:
+        shell: echo {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - run: pnpm check:fast
+        shell: echo {0}
