@@ -40,7 +40,7 @@ export function untrustedPromptValue(
 /**
  * The single crossing point between classified prompt values and renderer
  * strings. Trusted control text keeps its template syntax. Untrusted data is
- * placed inside a delimiter that cannot occur in its body.
+ * placed inside boundary markers that cannot occur in its body.
  */
 export function verifyPromptBoundary(value: PromptValue): string {
   assertClassifiedPromptValue(value);
@@ -98,13 +98,18 @@ function assertClassifiedPromptValue(value: PromptValue): void {
 function collisionFreeDelimiter(source: string, value: string): string {
   const sourceToken = source.replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase();
   const prefix = `WALLIE_UNTRUSTED_${sourceToken}`;
-  let suffix = 0;
-  let delimiter = `${prefix}_${suffix}`;
+  const markerPattern = new RegExp(`<<<${prefix}_(\\d+)_(?:BEGIN|END)>>>`, "g");
+  const usedSuffixes = new Set<string>();
 
-  while (value.includes(delimiter)) {
-    suffix += 1;
-    delimiter = `${prefix}_${suffix}`;
+  for (const match of value.matchAll(markerPattern)) {
+    usedSuffixes.add(match[1]);
   }
 
-  return delimiter;
+  let suffix = 0;
+
+  while (usedSuffixes.has(String(suffix))) {
+    suffix += 1;
+  }
+
+  return `${prefix}_${suffix}`;
 }
