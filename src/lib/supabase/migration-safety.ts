@@ -233,7 +233,7 @@ function tokenizeSql(sql: string): Token[] {
     }
 
     const twoCharacterSymbol = sql.slice(index, index + 2);
-    if (["::", "=>", ">=", "<=", "<>", "!="].includes(twoCharacterSymbol)) {
+    if (["::", "=>", ">=", "<=", "<>", "!=", "||"].includes(twoCharacterSymbol)) {
       tokens.push({ kind: "symbol", line, value: twoCharacterSymbol });
       index += 2;
     } else {
@@ -504,13 +504,13 @@ function parseDropStatement(tokens: readonly Token[]): UnsafeOperation[] {
         key: `drop-${kind}:${identity}`,
         line: tokens[0]!.line,
       });
-    } else if (kind === "policy") {
-      const policy = readQualifiedName(item, 0);
-      const relation = isKeyword(item[policy.next], "on")
-        ? readQualifiedName(item, policy.next + 1).name
+    } else if (kind === "policy" || kind === "trigger") {
+      const object = readQualifiedName(item, 0);
+      const relation = isKeyword(item[object.next], "on")
+        ? readQualifiedName(item, object.next + 1).name
         : "unknown";
       operations.push({
-        key: `drop-policy:${relation}.${policy.name}`,
+        key: `drop-${kind}:${relation}.${object.name}`,
         line: tokens[0]!.line,
       });
     } else {
@@ -615,6 +615,13 @@ function parseAlterAction(
     ) {
       return [{ key: `replace-${targetKind}-type:${objectName}.${target}`, line }];
     }
+    if (
+      isKeyword(action[operationIndex], "set") &&
+      isKeyword(action[operationIndex + 1], "not") &&
+      isKeyword(action[operationIndex + 2], "null")
+    ) {
+      return [{ key: `set-not-null:${objectName}.${target}`, line }];
+    }
     if (isKeyword(action[operationIndex], "drop")) {
       const property = normalizedTokens(action.slice(operationIndex + 1)) || "property";
       return [{ key: `drop-${targetKind}-${property}:${objectName}.${target}`, line }];
@@ -695,6 +702,88 @@ function operationLine(operation: UnsafeOperation, baseLine: number): UnsafeOper
   return { ...operation, line: baseLine + operation.line - 1 };
 }
 
+function evaluateFormatCall(tokens: readonly Token[]): string | undefined {
+  if (!isKeyword(tokens[0], "format") || tokens[1]?.value !== "(") return undefined;
+
+  const closeIndex = matchingParenthesis(tokens, 1);
+  if (closeIndex !== tokens.length - 1) return undefined;
+
+  const argumentsList = splitTopLevel(tokens.slice(2, closeIndex), ",");
+  const format = evaluateConstantSql(argumentsList[0] ?? []);
+  if (format === undefined) return undefined;
+
+  const values = argumentsList.slice(1).map((argument) => {
+    const stringValue = evaluateConstantSql(argument);
+    if (stringValue !== undefined) return stringValue;
+    return argument.length === 1 && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(argument[0]!.value)
+      ? argument[0]!.value
+      : undefined;
+  });
+  if (values.some((value) => value === undefined)) return undefined;
+
+  let result = "";
+  let cursor = 0;
+  let nextArgument = 0;
+  const placeholderPattern = /%(?:(\d+)\$)?([sIL%])/gu;
+
+  for (const match of format.matchAll(placeholderPattern)) {
+    const matchIndex = match.index;
+    const literal = format.slice(cursor, matchIndex);
+    if (literal.includes("%")) return undefined;
+    result += literal;
+    cursor = matchIndex + match[0].length;
+
+    const conversion = match[2]!;
+    if (conversion === "%") {
+      result += "%";
+      continue;
+    }
+
+    const position = match[1] ? Number.parseInt(match[1], 10) - 1 : nextArgument++;
+    const value = values[position];
+    if (value === undefined) return undefined;
+
+    if (conversion === "I") {
+      result += `"${value.replaceAll('"', '""')}"`;
+    } else if (conversion === "L") {
+      result += `'${value.replaceAll("'", "''")}'`;
+    } else {
+      result += value;
+    }
+  }
+
+  const trailing = format.slice(cursor);
+  if (trailing.includes("%")) return undefined;
+  return result + trailing;
+}
+
+function evaluateConstantSql(tokens: readonly Token[]): string | undefined {
+  const concatenated = splitTopLevel(tokens, "||");
+  if (concatenated.length > 1) {
+    const values = concatenated.map((part) => evaluateConstantSql(part));
+    return values.some((value) => value === undefined) ? undefined : (values as string[]).join("");
+  }
+
+  const expression = concatenated[0] ?? [];
+  const stringIndex = isKeyword(expression[0], "e") ? 1 : 0;
+  const literal = expression[stringIndex] ? stringContents(expression[stringIndex]!) : undefined;
+  if (literal !== undefined && stringIndex === expression.length - 1) return literal;
+
+  return evaluateFormatCall(expression);
+}
+
+function topLevelKeywordIndex(tokens: readonly Token[], keyword: string, start: number): number {
+  let depth = 0;
+
+  for (let index = start; index < tokens.length; index += 1) {
+    if (tokens[index]?.value === "(" || tokens[index]?.value === "[") depth += 1;
+    if (tokens[index]?.value === ")" || tokens[index]?.value === "]") depth -= 1;
+    if (depth === 0 && isKeyword(tokens[index], keyword)) return index;
+  }
+
+  return tokens.length;
+}
+
 function parseDoStatement(
   tokens: readonly Token[],
   knownFunctionContracts: ReadonlyMap<string, string>,
@@ -713,21 +802,17 @@ function parseDoStatement(
 
     for (let index = 0; index < statement.length; index += 1) {
       if (isKeyword(statement[index], "execute")) {
-        let sqlIndex = index + 1;
-        if (isKeyword(statement[sqlIndex], "e")) sqlIndex += 1;
-        const sqlToken = statement[sqlIndex];
-        const dynamicSql = sqlToken ? stringContents(sqlToken) : undefined;
-        const isConstant =
-          dynamicSql !== undefined &&
-          statement[sqlIndex + 1]?.value !== "||" &&
-          !isKeyword(statement[sqlIndex + 1], "format");
-        if (isConstant) {
+        const expressionStart = index + 1;
+        const expressionEnd = topLevelKeywordIndex(statement, "using", expressionStart);
+        const dynamicSql = evaluateConstantSql(statement.slice(expressionStart, expressionEnd));
+        const line = bodyToken.line + statement[index]!.line - 1;
+
+        if (dynamicSql === undefined) {
+          operations.push({ key: "execute-dynamic-sql:do", line });
+        } else {
           operations.push(
             ...parseOperations(tokenizeSql(dynamicSql), knownFunctionContracts).map(
-              (operation) => ({
-                ...operation,
-                line: bodyToken.line + statement[index]!.line - 1,
-              }),
+              (operation) => ({ ...operation, line }),
             ),
           );
         }

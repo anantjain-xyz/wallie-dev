@@ -171,10 +171,18 @@ drop table public.jobs;`;
     ],
     ["drop index concurrently if exists public.jobs_idx;", "drop-index:public.jobs_idx"],
     ["alter index public.jobs_pkey rename to jobs_id_idx;", "rename-index:public.jobs_pkey"],
+    [
+      "drop trigger if exists touch_updated_at on public.jobs;",
+      "drop-trigger:public.jobs.touch_updated_at",
+    ],
     ["drop policy if exists member_read on public.jobs;", "drop-policy:public.jobs.member_read"],
     [
       "alter policy member_read on public.jobs rename to workspace_member_read;",
       "rename-policy:public.jobs.member_read",
+    ],
+    [
+      "alter table public.jobs alter column workspace_id set not null;",
+      "set-not-null:public.jobs.workspace_id",
     ],
   ])("classifies additional incompatible DDL: %s", (sql, operationKey) => {
     expect(verifyNew(sql)).toEqual([
@@ -205,6 +213,35 @@ drop policy member_read on public.jobs;`;
     expect(verifyNew(sql)).toEqual([]);
   });
 
+  it("does not let a trigger waiver authorize the same trigger name on another relation", () => {
+    const sql = `-- wallie-migration-safety: allow drop-trigger:public.jobs.touch_updated_at owner=@anantjain-xyz issue=OP-387
+drop trigger touch_updated_at on public.sessions;`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "drop-trigger:public.jobs.touch_updated_at",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "drop-trigger:public.sessions.touch_updated_at",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["drop-trigger:public.jobs.touch_updated_at", "drop trigger touch_updated_at on public.jobs;"],
+    [
+      "set-not-null:public.jobs.workspace_id",
+      "alter table public.jobs alter column workspace_id set not null;",
+    ],
+  ])("accepts an exact waiver for %s", (operationKey, statement) => {
+    const sql = `-- wallie-migration-safety: allow ${operationKey} owner=@anantjain-xyz issue=OP-387
+${statement}`;
+
+    expect(verifyNew(sql)).toEqual([]);
+  });
+
   it.each([
     [
       `do $block$
@@ -222,6 +259,22 @@ end
 $block$;`,
       "rename-column:public.jobs.id",
     ],
+    [
+      `do $block$
+begin
+  execute format('DROP TABLE %I.%I', 'public', 'jobs');
+end
+$block$;`,
+      "drop-table:public.jobs",
+    ],
+    [
+      `do $block$
+begin
+  execute 'select 1; ' || 'DROP TABLE public.jobs';
+end
+$block$;`,
+      "drop-table:public.jobs",
+    ],
   ])("detects destructive SQL executed inside a DO block", (sql, operationKey) => {
     expect(verifyNew(sql)).toEqual([
       expect.objectContaining({ code: "unsafe-operation", line: 3, operationKey }),
@@ -233,6 +286,33 @@ $block$;`,
 do $block$
 begin
   execute 'DROP TABLE public.jobs';
+end
+$block$;`;
+
+    expect(verifyNew(sql)).toEqual([]);
+  });
+
+  it("fails closed when a DO block executes SQL that cannot be evaluated statically", () => {
+    const sql = `do $block$
+begin
+  execute generated_ddl;
+end
+$block$;`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unsafe-operation",
+        line: 3,
+        operationKey: "execute-dynamic-sql:do",
+      }),
+    ]);
+  });
+
+  it("allows one exact waiver for a non-static DO EXECUTE expression", () => {
+    const sql = `-- wallie-migration-safety: allow execute-dynamic-sql:do owner=@anantjain-xyz issue=OP-387
+do $block$
+begin
+  execute generated_ddl;
 end
 $block$;`;
 
