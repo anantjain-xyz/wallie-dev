@@ -32,13 +32,11 @@ export async function archiveSession(
   admin: AdminClient,
   input: { reason: string; sessionId: string },
 ): Promise<SessionArchiveState> {
-  // Set the archived marker FIRST, before canceling any work. Order matters:
-  // the run-enqueue/retry path rejects archived sessions, so landing the marker
-  // up front blocks new work before cleanup begins. If we canceled first, a
-  // concurrent request that passed the archived check could insert a fresh
-  // job/run in the window before the marker lands — work this call would never
-  // cancel. The processor's claim CAS is also archive-aware, so anything that
-  // still slips in before the marker cannot execute.
+  // Set the archived marker before canceling work so later enqueue validations
+  // and processor claims reject the session. This is not atomic with enqueue: a
+  // request that already passed validation can still insert after this
+  // cancellation pass. The work cannot execute while archived, and re-running
+  // archive runs cancellation again to converge on any rows this pass missed.
   const { error } = await admin
     .from("sessions")
     .update({ archived_at: new Date().toISOString() })

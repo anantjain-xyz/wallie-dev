@@ -77,8 +77,10 @@ Approval is one transactional database operation:
 - The session must belong to the expected workspace.
 - It must still be `awaiting_review`.
 - `current_artifact_version` must match the reviewed version.
-- The member must satisfy the stage approver list, or the owner/admin fallback
-  when the list is empty.
+- The approver must be an active member of the session workspace. Authorization
+  then follows this precedence: `anyone_can_approve = true` allows any active
+  member; otherwise a nonempty approver list allows only its active members;
+  otherwise only active owners and admins may approve.
 - Completion recording and stage-pointer advancement occur in the same
   transaction.
 
@@ -98,6 +100,13 @@ Rejection is deliberately a compensated multi-step workflow:
 
 Do not describe rejection as one database transaction. Changes to this path
 must test failures between every step.
+
+Current limitation: approval can land after step 1 while the rejection remains
+in progress. Approval does not check `rejection_count`, and the rejection's
+final `phase_status = rejected` write is unguarded. The rejection can therefore
+enqueue work and overwrite an approved or terminally archived result. Treat
+approval versus an in-flight rejection as an unresolved concurrency bug, not a
+safe losing-race outcome.
 
 ## Deduplication
 
@@ -135,10 +144,13 @@ Terminal job/run writes are guarded so a late worker cannot overwrite
 `canceled` with `success` or `error`. Sandbox attachment also checks active run
 status so a sandbox acquired after cancellation is stopped instead of leaked.
 
-User-facing archive writes `archived_at` before cancellation. That order blocks
-new enqueue and processor claims before cleanup starts. Repeating archive
-retries cancellation, so partial cleanup can converge. Unarchive only clears
-the marker; it does not enqueue work.
+User-facing archive writes `archived_at` before cancellation. Subsequent
+enqueue validation and processor claims reject the archived session, but the
+marker is not atomic with enqueue: a request that passed validation first can
+insert a job and run after this cancellation pass. That work cannot execute
+while the session remains archived, but its rows may require a later
+archive/cancellation pass to converge. Unarchive only clears the marker; it
+does not enqueue work.
 
 ## Worker scheduling and recovery
 
@@ -153,8 +165,11 @@ the marker; it does not enqueue work.
   `agent_generating` when claimed.
 - Linear reconciliation may keep a current stage queued, reroute a session to a
   configured stage, or archive it. It cancels active work before rerouting.
-- The sandbox reaper handles resources whose run is absent or already terminal,
-  covering crashes before normal `finally` cleanup.
+- The sandbox reaper stops only provider resources whose IDs Wallie already
+  recorded for the exact connection revision and whose run, job, or capability
+  check is no longer active. It skips unknown provider sandboxes, including one
+  created before a crash that prevented ownership from being recorded; those
+  rely on provider TTLs or operator cleanup.
 - Graceful worker shutdown deregisters immediately. Any abandoned work is
   recovered after its heartbeat becomes stale.
 
@@ -171,8 +186,9 @@ corruption:
   sandbox ID.
 - A retry collides with an existing active dedupe key.
 
-Each losing path must close or preserve its own job, run, artifact, and sandbox
-state without resurrecting work.
+Except for the approval-versus-rejection gap documented above, each losing path
+must close or preserve its own job, run, artifact, and sandbox state without
+resurrecting work.
 
 ## Change checklist
 

@@ -19,7 +19,8 @@ flowchart LR
   worker["Always-on worker"] --> db
   db --> worker
   worker --> sandbox["Ephemeral sandbox provider"]
-  sandbox --> github["GitHub repository and pull request"]
+  worker -- "Installation token and pull-request API" --> github["GitHub repository and pull request"]
+  sandbox -- "Clone and push" --> github
   worker --> linear["Linear API"]
   worker --> agent["Codex or Claude Code"]
   db -. "Realtime changes" .-> user
@@ -106,9 +107,12 @@ Use these rules when placing code:
 - Sessions are pinned to a pipeline ID when created. Editing that pipeline's
   existing stage rows can still change prompts or ordering observed by pinned
   sessions; pinning does not snapshot the stage rows.
-- Review and claim paths are compare-and-swap based. A stale artifact version,
-  terminal session, archive marker, or lost status race must produce a no-op or
-  conflict rather than resurrecting work.
+- Job claims, artifact publication, approval, and cancellation use scoped
+  status, version, or archive guards. Callers must treat a guard miss as a
+  normal race outcome.
+- Rejection only CAS-claims its first step and is not yet atomic with approval.
+  The resulting concurrency gap is documented in
+  [Pipeline and worker lifecycle](PIPELINE-WORKER-LIFECYCLE.md#review-concurrency).
 - The schema is forward-only. The consolidated baseline is frozen; subsequent
   changes use uniquely versioned migrations.
 - Workspace and user credentials are encrypted in the database. They are not
