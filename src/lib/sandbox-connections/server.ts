@@ -3,7 +3,6 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  SANDBOX_PROVIDERS,
   type DaytonaSandboxConnectionPreview,
   type E2BSandboxConnectionPreview,
   type SandboxConnectionPreviews,
@@ -19,12 +18,23 @@ import {
   type E2BSandboxCredentials,
   type SandboxConnection,
   type SandboxProvider,
+  type VercelSandboxCredentials,
 } from "@/lib/sandbox";
+import {
+  runBoundedSandboxProviderOperation,
+  SandboxProviderDeadlineError,
+} from "@/lib/sandbox/lifecycle";
+import {
+  getSandboxProviderContract,
+  listSandboxProviders,
+  providerLabel,
+} from "@/lib/sandbox/provider-contract";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import {
   loadConnectedVercelSandboxConnections,
   loadVercelSandboxConnection,
   loadVercelSandboxConnectionPreview,
+  validateVercelSandboxCredentials as validateVercelSandboxCredentialsUnbounded,
 } from "@/lib/vercel-sandbox/server";
 
 type AdminClient = SupabaseClient<Database>;
@@ -70,17 +80,20 @@ export class SandboxConnectionActiveWorkError extends Error {
   }
 }
 
-export function providerLabel(provider: SandboxProvider): string {
-  if (provider === "e2b") return "E2B";
-  if (provider === "daytona") return "Daytona";
-  return "Vercel Sandbox";
-}
+export { providerLabel };
 
 export function getEnabledSandboxProviders(): SandboxProvider[] {
-  const raw = process.env.WALLIE_ENABLED_SANDBOX_PROVIDERS;
-  if (!raw) return [...SANDBOX_PROVIDERS];
+  const providers = listSandboxProviders();
+  const environmentVariable = getSandboxProviderContract(providers[0]).enablementPolicy
+    .environmentVariable;
+  const raw = process.env[environmentVariable];
+  if (!raw) {
+    return providers.filter(
+      (provider) => getSandboxProviderContract(provider).enablementPolicy.defaultEnabled,
+    );
+  }
   const selected = new Set(raw.split(",").map((value) => value.trim().toLowerCase()));
-  return SANDBOX_PROVIDERS.filter((provider) => selected.has(provider));
+  return providers.filter((provider) => selected.has(provider));
 }
 
 export function normalizeDaytonaApiUrl(value?: string): string {
@@ -346,6 +359,21 @@ export async function validateDaytonaSandboxCredentials(credentials: DaytonaSand
     revision: "validation",
   });
   return { ...validation, credentials: normalized };
+}
+
+export async function validateVercelSandboxCredentials(credentials: VercelSandboxCredentials) {
+  try {
+    return await runBoundedSandboxProviderOperation({
+      operation: "validate",
+      provider: "vercel",
+      run: () => validateVercelSandboxCredentialsUnbounded(credentials),
+    });
+  } catch (error) {
+    if (error instanceof SandboxProviderDeadlineError) {
+      return { error: error.message, ok: false as const };
+    }
+    throw error;
+  }
 }
 
 export async function saveE2BSandboxConnection(input: {

@@ -5,13 +5,15 @@ import {
   type VercelSandboxConnectionResponse,
 } from "@/lib/vercel-sandbox/contracts";
 import { stopVercelWorkspaceOwnedSandboxes } from "@/lib/sandbox-connections/cleanup";
-import { loadWorkspaceSandboxSettings } from "@/lib/sandbox-connections/server";
+import {
+  loadWorkspaceSandboxSettings,
+  validateVercelSandboxCredentials,
+} from "@/lib/sandbox-connections/server";
 import {
   acquireVercelSandboxConnectionMutationLock,
   loadVercelSandboxConnection,
   loadVercelSandboxConnectionPreview,
   saveVercelSandboxConnection,
-  validateVercelSandboxCredentials,
   VercelSandboxConnectionActiveWorkError,
   VercelSandboxConnectionMutationInProgressError,
 } from "@/lib/vercel-sandbox/server";

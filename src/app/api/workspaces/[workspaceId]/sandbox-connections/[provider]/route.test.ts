@@ -7,9 +7,12 @@ const mocked = vi.hoisted(() => ({
   loadWorkspaceSandboxSettings: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   saveDaytonaSandboxConnection: vi.fn(),
+  saveVercelSandboxConnection: vi.fn(),
   stopWorkspaceOwnedSandboxes: vi.fn(),
   stopVercelWorkspaceOwnedSandboxes: vi.fn(),
   validateDaytonaSandboxCredentials: vi.fn(),
+  validateE2BSandboxCredentials: vi.fn(),
+  validateVercelSandboxCredentials: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -36,6 +39,18 @@ vi.mock("@/lib/sandbox-connections/server", async () => {
     saveDaytonaSandboxConnection: mocked.saveDaytonaSandboxConnection,
     stopWorkspaceOwnedSandboxes: mocked.stopWorkspaceOwnedSandboxes,
     validateDaytonaSandboxCredentials: mocked.validateDaytonaSandboxCredentials,
+    validateE2BSandboxCredentials: mocked.validateE2BSandboxCredentials,
+    validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentials,
+  };
+});
+
+vi.mock("@/lib/vercel-sandbox/server", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/vercel-sandbox/server")>(
+    "@/lib/vercel-sandbox/server",
+  );
+  return {
+    ...actual,
+    saveVercelSandboxConnection: mocked.saveVercelSandboxConnection,
   };
 });
 
@@ -47,6 +62,18 @@ const connection = {
   credentials: { projectId: "project-1", teamId: "team-1", token: "secret" },
   provider: "vercel" as const,
   revision: "revision-1",
+};
+const vercelPreview = {
+  connectionRevision: "revision-2",
+  lastValidatedAt: "2026-07-28T00:00:00.000Z",
+  lastValidationError: null,
+  projectId: connection.credentials.projectId,
+  projectName: "wallie-sandboxes",
+  status: "connected" as const,
+  teamId: connection.credentials.teamId,
+  tokenPreview: "secr…cret",
+  updatedAt: "2026-07-28T00:00:00.000Z",
+  workspaceId,
 };
 
 function context(provider: string) {
@@ -82,6 +109,11 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
       },
       ok: true,
     });
+    mocked.validateE2BSandboxCredentials.mockResolvedValue({ ok: true });
+    mocked.validateVercelSandboxCredentials.mockResolvedValue({
+      ok: true,
+      projectName: vercelPreview.projectName,
+    });
     mocked.saveDaytonaSandboxConnection.mockResolvedValue({
       apiKeyPreview: "daytona_…cret",
       apiUrl: "https://app.daytona.io/api",
@@ -93,6 +125,7 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
       updatedAt: "2026-07-22T00:00:00.000Z",
       workspaceId,
     });
+    mocked.saveVercelSandboxConnection.mockResolvedValue(vercelPreview);
   });
 
   it("rejects deleting the active provider before loading or deleting its connection", async () => {
@@ -125,6 +158,52 @@ describe("DELETE /api/workspaces/[workspaceId]/sandbox-connections/[provider]", 
       workspaceId,
     });
     expect(admin.from).toHaveBeenCalledWith("workspace_vercel_sandbox_connections");
+  });
+
+  it("routes Vercel saves through the bounded connection validator", async () => {
+    const response = await PUT(
+      new Request("http://localhost", {
+        body: JSON.stringify(connection.credentials),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
+      }),
+      context("vercel"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ connection: vercelPreview });
+    expect(mocked.validateVercelSandboxCredentials).toHaveBeenCalledWith(connection.credentials);
+    expect(mocked.saveVercelSandboxConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: connection.credentials,
+        projectName: vercelPreview.projectName,
+        workspaceId,
+      }),
+    );
+  });
+
+  it("returns an E2B validation timeout as an invalid-connection response", async () => {
+    mocked.validateE2BSandboxCredentials.mockResolvedValueOnce({
+      error:
+        "E2B validate exceeded its 15000ms provider-contract deadline (semantic owner: bounded provider remote operations).",
+      ok: false,
+    });
+
+    const response = await PUT(
+      new Request("http://localhost", {
+        body: JSON.stringify({ apiKey: "e2b-secret" }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
+      }),
+      context("e2b"),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "E2B validate exceeded its 15000ms provider-contract deadline (semantic owner: bounded provider remote operations).",
+    });
+    expect(mocked.stopWorkspaceOwnedSandboxes).not.toHaveBeenCalled();
   });
 
   it("allows replacing a Daytona connection rejected by the current URL policy", async () => {

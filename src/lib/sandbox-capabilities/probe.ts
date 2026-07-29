@@ -6,6 +6,7 @@ import {
   codexExecArgs,
 } from "@/lib/agent-runner/codex";
 import type { AgentProvider, SandboxHandle, SandboxProvider } from "@/lib/sandbox/types";
+import { getSandboxProviderContract, providerLabel } from "@/lib/sandbox/provider-contract";
 import type {
   SandboxCapabilityName,
   SandboxCapabilityReport,
@@ -201,20 +202,17 @@ export async function probeSandboxCapabilities(input: {
   return report as SandboxCapabilityReport;
 }
 
-export function capabilityReportSucceeded(report: Partial<SandboxCapabilityReport>): boolean {
-  const required: SandboxCapabilityName[] = [
-    "git",
-    "node",
-    "packageManager",
-    "agentCli",
-    "playwrightPackage",
-    "chromium",
-    "screenshotSmoke",
+export function capabilityReportSucceeded(
+  report: Partial<SandboxCapabilityReport>,
+  provider: SandboxProvider,
+  agentProvider: AgentProvider,
+): boolean {
+  const capabilityProbes = getSandboxProviderContract(provider).capabilityProbes;
+  const required = [
+    ...capabilityProbes.required,
+    ...capabilityProbes.requiredByAgent[agentProvider],
   ];
-  return (
-    required.every((name) => report[name]?.ok === true) &&
-    Object.values(report).every((entry) => entry?.ok === true)
-  );
+  return required.every((name) => report[name]?.ok === true);
 }
 
 function codexExternalSandboxResult(
@@ -231,7 +229,7 @@ function codexExternalSandboxResult(
   );
   if (usesExternalSandbox && disablesInnerSandbox && usesSandboxRepo) {
     return {
-      detail: `Codex command uses ${providerDisplayName(provider ?? "vercel")} as the execution boundary.`,
+      detail: `Codex command uses ${providerLabel(provider ?? "vercel")} as the execution boundary.`,
       ok: true,
     };
   }
@@ -240,12 +238,6 @@ function codexExternalSandboxResult(
     detail: `Codex command is missing external sandbox configuration: ${CODEX_EXTERNAL_SANDBOX_FLAG}, --sandbox ${CODEX_SANDBOX_MODE}, or --cd ${sandboxRepoPath}.`,
     ok: false,
   };
-}
-
-function providerDisplayName(provider: SandboxProvider) {
-  if (provider === "e2b") return "E2B";
-  if (provider === "daytona") return "Daytona";
-  return "Vercel Sandbox";
 }
 
 function shellQuote(s: string): string {

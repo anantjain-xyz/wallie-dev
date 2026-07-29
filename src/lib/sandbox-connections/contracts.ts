@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 import type { VercelSandboxConnectionPreview } from "@/lib/vercel-sandbox/contracts";
-import type { SandboxProvider } from "@/lib/sandbox";
+import { SANDBOX_PROVIDER_IDS, type SandboxProvider } from "@/lib/sandbox/types";
 
-export const SANDBOX_PROVIDERS = ["vercel", "e2b", "daytona"] as const;
+export const SANDBOX_PROVIDERS = SANDBOX_PROVIDER_IDS;
 export const sandboxProviderSchema = z.enum(SANDBOX_PROVIDERS);
 export const sandboxConnectionStatusSchema = z.enum(["connected", "error"]);
 

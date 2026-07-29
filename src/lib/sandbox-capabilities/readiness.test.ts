@@ -9,6 +9,7 @@ const completeCapabilities = Object.fromEntries(
     "node",
     "packageManager",
     "agentCli",
+    "codexExternalSandbox",
     "playwrightPackage",
     "chromium",
     "screenshotSmoke",
@@ -88,6 +89,22 @@ describe("assertCurrentSandboxCapabilityCheck", () => {
         agent_model: "gpt-5.5",
         agent_provider: "codex",
         capabilities: { git: { detail: "ok", ok: true } },
+        sandbox_connection_revision: "revision-1",
+        sandbox_provider: "e2b",
+        status: "success",
+      }),
+    ).rejects.toBeInstanceOf(SandboxCapabilityCheckStaleError);
+  });
+
+  it("rejects a Codex check whose external-sandbox boundary probe failed", async () => {
+    await expect(
+      assertReady({
+        agent_model: "gpt-5.5",
+        agent_provider: "codex",
+        capabilities: {
+          ...completeCapabilities,
+          codexExternalSandbox: { detail: "boundary missing", ok: false },
+        },
         sandbox_connection_revision: "revision-1",
         sandbox_provider: "e2b",
         status: "success",

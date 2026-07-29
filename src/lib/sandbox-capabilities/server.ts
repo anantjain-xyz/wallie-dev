@@ -317,7 +317,7 @@ export async function completeSandboxCapabilityCheck(input: {
       sandbox,
       sandboxProvider: sandboxSelection.provider,
     });
-    const success = capabilityReportSucceeded(capabilities);
+    const success = capabilityReportSucceeded(capabilities, sandboxSelection.provider, provider);
     return await updateCheck({
       admin: input.admin,
       capabilities,

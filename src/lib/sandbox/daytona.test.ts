@@ -140,6 +140,20 @@ describe("Daytona sandbox driver", () => {
     });
   });
 
+  it("caps provisioning below the acquire deadline without shortening runtime TTL", async () => {
+    const { client } = fixture();
+    const handle = await createDaytonaSessionSandbox(
+      request({ timeoutMs: 2 * 60 * 60_000 }),
+      connection,
+    );
+
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ ttlMinutes: 130 }), {
+      timeout: 30 * 60,
+    });
+
+    await handle.stop();
+  });
+
   it("streams and caches asynchronous session output with safe command joining", async () => {
     const { deleteSession, executeSessionCommand } = fixture();
     const handle = await createDaytonaSessionSandbox(request(), connection);

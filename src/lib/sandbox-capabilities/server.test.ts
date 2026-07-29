@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  capabilityReportSucceeded: vi.fn(() => true),
   createSessionSandbox: vi.fn(),
   getCodexCredentialForUser: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
@@ -44,7 +45,7 @@ vi.mock("@/lib/sandbox-connections/server", () => ({
 }));
 
 vi.mock("@/lib/sandbox-capabilities/probe", () => ({
-  capabilityReportSucceeded: vi.fn(() => true),
+  capabilityReportSucceeded: mocked.capabilityReportSucceeded,
   probeSandboxCapabilities: mocked.probeSandboxCapabilities,
 }));
 
@@ -214,6 +215,11 @@ describe("completeSandboxCapabilityCheck", () => {
       expect.objectContaining({
         connection: { credentials, provider: "vercel", revision: "revision-1" },
       }),
+    );
+    expect(mocked.capabilityReportSucceeded).toHaveBeenCalledWith(
+      { git: { detail: "ok", ok: true } },
+      "vercel",
+      "codex",
     );
     expect(updates).toContainEqual(
       expect.objectContaining({

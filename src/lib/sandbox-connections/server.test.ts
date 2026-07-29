@@ -1,20 +1,63 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mocked = vi.hoisted(() => ({
+  validateVercelSandboxCredentialsUnbounded: vi.fn(),
+}));
+
+vi.mock("@/lib/vercel-sandbox/server", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/vercel-sandbox/server")>(
+    "@/lib/vercel-sandbox/server",
+  );
+  return {
+    ...actual,
+    validateVercelSandboxCredentials: mocked.validateVercelSandboxCredentialsUnbounded,
+  };
+});
+
+import { getSandboxProviderContract } from "@/lib/sandbox/provider-contract";
+
 import {
   getEnabledSandboxProviders,
   loadDaytonaSandboxConnectionPreview,
   loadWorkspaceSandboxConnection,
   normalizeDaytonaApiUrl,
+  validateVercelSandboxCredentials,
 } from "./server";
 
 const previousAllowlist = process.env.WALLIE_DAYTONA_API_URL_ALLOWLIST;
 const previousEnabled = process.env.WALLIE_ENABLED_SANDBOX_PROVIDERS;
 
 afterEach(() => {
+  vi.clearAllMocks();
+  vi.useRealTimers();
   if (previousAllowlist === undefined) delete process.env.WALLIE_DAYTONA_API_URL_ALLOWLIST;
   else process.env.WALLIE_DAYTONA_API_URL_ALLOWLIST = previousAllowlist;
   if (previousEnabled === undefined) delete process.env.WALLIE_ENABLED_SANDBOX_PROVIDERS;
   else process.env.WALLIE_ENABLED_SANDBOX_PROVIDERS = previousEnabled;
+});
+
+describe("sandbox connection validation deadlines", () => {
+  it("bounds the complete Vercel credential validation path with the provider contract", async () => {
+    vi.useFakeTimers();
+    const credentials = {
+      projectId: "prj_123",
+      teamId: "team_123",
+      token: "vca_secret",
+    };
+    mocked.validateVercelSandboxCredentialsUnbounded.mockImplementation(
+      () => new Promise<never>(() => undefined),
+    );
+
+    const validation = validateVercelSandboxCredentials(credentials);
+    await vi.advanceTimersByTimeAsync(getSandboxProviderContract("vercel").deadlines.validate);
+
+    await expect(validation).resolves.toEqual({
+      error:
+        "Vercel Sandbox validate exceeded its 15000ms provider-contract deadline (semantic owner: bounded provider remote operations).",
+      ok: false,
+    });
+    expect(mocked.validateVercelSandboxCredentialsUnbounded).toHaveBeenCalledWith(credentials);
+  });
 });
 
 describe("Daytona control-plane policy", () => {

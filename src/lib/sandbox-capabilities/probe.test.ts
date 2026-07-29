@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
-import { probeSandboxCapabilities } from "@/lib/sandbox-capabilities/probe";
+import {
+  capabilityReportSucceeded,
+  probeSandboxCapabilities,
+} from "@/lib/sandbox-capabilities/probe";
 
 type CapturedOutput = {
   exitCode?: number;
@@ -66,6 +69,40 @@ function scriptCapturedOutput(sandbox: FakeSandbox, matcher: string, output: Cap
 }
 
 describe("probeSandboxCapabilities", () => {
+  it("ignores failed probes that the provider contract does not require", () => {
+    expect(
+      capabilityReportSucceeded(
+        {
+          agentCli: { detail: "ready", ok: true },
+          chromium: { detail: "ready", ok: true },
+          codexExternalSandbox: { detail: "optional failure", ok: false },
+          git: { detail: "ready", ok: true },
+          node: { detail: "ready", ok: true },
+          packageManager: { detail: "ready", ok: true },
+          playwrightPackage: { detail: "ready", ok: true },
+          screenshotSmoke: { detail: "ready", ok: true },
+        },
+        "e2b",
+        "claude-code",
+      ),
+    ).toBe(true);
+  });
+
+  it("requires the external-sandbox boundary probe for Codex", () => {
+    const capabilities = {
+      agentCli: { detail: "ready", ok: true },
+      chromium: { detail: "ready", ok: true },
+      codexExternalSandbox: { detail: "boundary missing", ok: false },
+      git: { detail: "ready", ok: true },
+      node: { detail: "ready", ok: true },
+      packageManager: { detail: "ready", ok: true },
+      playwrightPackage: { detail: "ready", ok: true },
+      screenshotSmoke: { detail: "ready", ok: true },
+    };
+
+    expect(capabilityReportSucceeded(capabilities, "e2b", "codex")).toBe(false);
+  });
+
   it("reports a fully screenshot-capable sandbox", async () => {
     const sandbox = new FakeSandbox();
     scriptBaseSuccess(sandbox);
