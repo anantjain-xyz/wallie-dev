@@ -205,8 +205,13 @@ export async function probeSandboxCapabilities(input: {
 export function capabilityReportSucceeded(
   report: Partial<SandboxCapabilityReport>,
   provider: SandboxProvider,
+  agentProvider: AgentProvider,
 ): boolean {
-  const required = getSandboxProviderContract(provider).capabilityProbes.required;
+  const capabilityProbes = getSandboxProviderContract(provider).capabilityProbes;
+  const required = [
+    ...capabilityProbes.required,
+    ...capabilityProbes.requiredByAgent[agentProvider],
+  ];
   return required.every((name) => report[name]?.ok === true);
 }
 

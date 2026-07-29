@@ -9,6 +9,7 @@ import { upsertVercelSandboxConnectionSchema } from "@/lib/vercel-sandbox/contra
 
 import {
   SANDBOX_PROVIDER_IDS,
+  type AgentProvider,
   type SandboxConnection,
   type SandboxProvider,
   type SandboxProviderDriver,
@@ -29,6 +30,7 @@ export interface ProviderContract {
   };
   capabilityProbes: {
     required: readonly SandboxCapabilityName[];
+    requiredByAgent: Record<AgentProvider, readonly SandboxCapabilityName[]>;
     workspaceFilter: ExplicitCapability<{ metadataKey: string }>;
   };
   cleanup: {
@@ -76,6 +78,11 @@ const REQUIRED_CAPABILITY_PROBES = [
   "screenshotSmoke",
 ] as const satisfies readonly SandboxCapabilityName[];
 
+const REQUIRED_AGENT_CAPABILITY_PROBES = {
+  "claude-code": [],
+  codex: ["codexExternalSandbox"],
+} as const satisfies Record<AgentProvider, readonly SandboxCapabilityName[]>;
+
 const DEFAULT_DEADLINES = {
   acquire: 30 * 60_000,
   listRunning: 30_000,
@@ -107,6 +114,7 @@ export const SANDBOX_PROVIDER_CONTRACTS = {
     },
     capabilityProbes: {
       required: REQUIRED_CAPABILITY_PROBES,
+      requiredByAgent: REQUIRED_AGENT_CAPABILITY_PROBES,
       workspaceFilter: {
         state: "supported",
         value: { metadataKey: "wallie_workspace_id" },
@@ -158,6 +166,7 @@ export const SANDBOX_PROVIDER_CONTRACTS = {
     },
     capabilityProbes: {
       required: REQUIRED_CAPABILITY_PROBES,
+      requiredByAgent: REQUIRED_AGENT_CAPABILITY_PROBES,
       workspaceFilter: {
         state: "supported",
         value: { metadataKey: "wallie_workspace_id" },
@@ -210,6 +219,7 @@ export const SANDBOX_PROVIDER_CONTRACTS = {
     },
     capabilityProbes: {
       required: REQUIRED_CAPABILITY_PROBES,
+      requiredByAgent: REQUIRED_AGENT_CAPABILITY_PROBES,
       workspaceFilter: {
         reason: "Vercel lists at project scope, so Wallie cross-references recorded ownership.",
         state: "unsupported",
@@ -256,6 +266,7 @@ export const SANDBOX_PROVIDER_CONTRACTS = {
 export const PROVIDER_CONTRACT_SEMANTIC_OWNERS = {
   authStrategy: "sandbox connection authentication",
   capabilityProbes: "sandbox runtime capability verification",
+  "capabilityProbes.requiredByAgent": "agent-specific sandbox capability verification",
   "capabilityProbes.workspaceFilter": "provider-scoped capability discovery",
   cleanup: "sandbox lifecycle cleanup",
   "cleanup.acquisitionFailure": "sandbox acquisition failure cleanup",

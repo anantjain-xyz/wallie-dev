@@ -78,6 +78,16 @@ describe("sandbox provider contract verifier", () => {
   it("keeps Daytona deletion inside its provider-contract deadline", () => {
     expect(SANDBOX_PROVIDER_CONTRACTS.daytona.deadlines.stopById).toBeGreaterThan(60_000);
   });
+
+  it.each(SANDBOX_PROVIDER_IDS)(
+    "declares agent-specific capability requirements for %s",
+    (provider) => {
+      expect(SANDBOX_PROVIDER_CONTRACTS[provider].capabilityProbes.requiredByAgent).toEqual({
+        "claude-code": [],
+        codex: ["codexExternalSandbox"],
+      });
+    },
+  );
 });
 
 describe("sandbox provider lifecycle contract", () => {

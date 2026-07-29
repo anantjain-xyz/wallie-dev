@@ -83,8 +83,24 @@ describe("probeSandboxCapabilities", () => {
           screenshotSmoke: { detail: "ready", ok: true },
         },
         "e2b",
+        "claude-code",
       ),
     ).toBe(true);
+  });
+
+  it("requires the external-sandbox boundary probe for Codex", () => {
+    const capabilities = {
+      agentCli: { detail: "ready", ok: true },
+      chromium: { detail: "ready", ok: true },
+      codexExternalSandbox: { detail: "boundary missing", ok: false },
+      git: { detail: "ready", ok: true },
+      node: { detail: "ready", ok: true },
+      packageManager: { detail: "ready", ok: true },
+      playwrightPackage: { detail: "ready", ok: true },
+      screenshotSmoke: { detail: "ready", ok: true },
+    };
+
+    expect(capabilityReportSucceeded(capabilities, "e2b", "codex")).toBe(false);
   });
 
   it("reports a fully screenshot-capable sandbox", async () => {
