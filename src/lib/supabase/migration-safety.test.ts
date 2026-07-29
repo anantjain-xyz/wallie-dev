@@ -86,14 +86,14 @@ describe("migration safety", () => {
     await expect(inspect(fixture("valid/comments-strings-multiline.sql"))).resolves.toEqual([]);
   });
 
-  it("allows compatible CREATE OR REPLACE function overloads without an exemption", async () => {
+  it("allows same-migration overload replacements that preserve each security mode", async () => {
     await expect(inspect(fixture("valid/function-overload-replacement.sql"))).resolves.toEqual([]);
   });
 
   it("does not let a safe function replacement exempt a dropped overload", async () => {
     const issues = await inspect(`
       drop function public.lookup_job(text);
-      create or replace function public.lookup_job(job_id uuid)
+      create function public.lookup_job(job_id uuid)
       returns text language sql as $$ select 'replacement' $$;
     `);
 
@@ -107,6 +107,8 @@ describe("migration safety", () => {
 
   it("keeps SECURITY DEFINER replacement waivers overload-specific", async () => {
     const issues = await inspect(`
+      create function public.lookup_job(job_key text)
+      returns text language sql security invoker as $$ select 'initial overload' $$;
       create or replace function public.lookup_job(job_id uuid)
       returns text language sql security definer as $$ select 'replacement' $$;
       create or replace function public.lookup_job(job_key text)
@@ -118,6 +120,43 @@ describe("migration safety", () => {
         code: "unwaived-operation",
         message: expect.stringContaining(
           'replace-function-security-definer:"public"."lookup_job"("uuid")',
+        ),
+      }),
+    ]);
+  });
+
+  it("requires exact waivers when a replacement's prior security mode is unproven", async () => {
+    const issues = await inspect(`
+      -- wallie-migration-safety: allow replace-function-security-invoker:"public"."lookup_job"("uuid") owner=@anantjain-xyz issue=OP-387
+      create or replace function public.lookup_job(job_id uuid)
+      returns text language sql security invoker as $$ select 'waived overload' $$;
+      create or replace function public.lookup_job(job_key text)
+      returns text language sql as $$ select 'unproven implicit invoker overload' $$;
+    `);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unwaived-operation",
+        message: expect.stringContaining(
+          'replace-function-security-invoker:"public"."lookup_job"("text")',
+        ),
+      }),
+    ]);
+  });
+
+  it("requires a waiver when a same-migration replacement drops SECURITY DEFINER", async () => {
+    const issues = await inspect(`
+      create function public.elevated_job()
+      returns text language sql security definer as $$ select 'initial' $$;
+      create or replace function public.elevated_job()
+      returns text language sql as $$ select 'implicit invoker replacement' $$;
+    `);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unwaived-operation",
+        message: expect.stringContaining(
+          'replace-function-security-invoker:"public"."elevated_job"()',
         ),
       }),
     ]);
@@ -184,6 +223,17 @@ describe("migration safety", () => {
       expect.objectContaining({
         code: "unsupported-ddl",
         message: expect.stringContaining("DoStmt is outside the supported migration subset"),
+      }),
+    ]);
+  });
+
+  it("fails closed on opaque procedure calls", async () => {
+    const issues = await inspect("call public.retire_sessions();");
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unsupported-ddl",
+        message: expect.stringContaining("CallStmt is outside the supported migration subset"),
       }),
     ]);
   });
@@ -329,6 +379,20 @@ describe("migration safety", () => {
     ]);
   });
 
+  it("classifies an unqualified DELETE while allowing targeted cleanup", async () => {
+    const issues = await inspect(`
+      delete from public.sessions;
+      delete from public.sessions where id is null;
+    `);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unwaived-operation",
+        message: expect.stringContaining('delete-all-rows:"public"."sessions"'),
+      }),
+    ]);
+  });
+
   it("allows the explicit additive subset without a waiver", async () => {
     const issues = await inspect(`
       create table public.jobs (id uuid primary key, note text);
@@ -351,6 +415,29 @@ describe("migration safety", () => {
         code: "unwaived-operation",
         message: expect.stringContaining('add-not-null-column:"public"."jobs"."workspace_id"'),
       }),
+    ]);
+  });
+
+  it("treats a PRIMARY KEY column addition as an implicit NOT NULL contract", async () => {
+    const issues = await inspect("alter table public.jobs add column id uuid primary key;");
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unwaived-operation",
+        message: expect.stringContaining('add-not-null-column:"public"."jobs"."id"'),
+      }),
+    ]);
+  });
+
+  it("requires waivers before enabling RLS or making a table unlogged", async () => {
+    const issues = await inspect(`
+      alter table public.jobs enable row level security;
+      alter table public.sessions set unlogged;
+    `);
+
+    expect(issues.map((issue) => issue.message)).toEqual([
+      expect.stringContaining('alter-table-enable-row-security:"public"."jobs"'),
+      expect.stringContaining('alter-table-set-un-logged:"public"."sessions"'),
     ]);
   });
 

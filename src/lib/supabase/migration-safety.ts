@@ -47,6 +47,12 @@ interface StatementAnalysis {
   unsupported?: string;
 }
 
+type FunctionSecurityMode = "security-definer" | "security-invoker";
+
+interface MigrationAnalysisContext {
+  createdFunctionSecurityModes: Map<string, FunctionSecurityMode>;
+}
+
 type AstRecord = Record<string, unknown>;
 
 const require = createRequire(import.meta.url);
@@ -61,7 +67,6 @@ const WAIVER_PATTERN =
   /^-- wallie-migration-safety:\s+allow\s+(.+?)\s+owner=(@[A-Za-z0-9][A-Za-z0-9-]*)\s+issue=([A-Z][A-Z0-9]+-\d+)\s*$/;
 
 const SAFE_STATEMENTS = new Set([
-  "CallStmt",
   "CommentStmt",
   "CompositeTypeStmt",
   "CreateDomainStmt",
@@ -72,7 +77,6 @@ const SAFE_STATEMENTS = new Set([
   "CreateStatsStmt",
   "CreateStmt",
   "CreateTableAsStmt",
-  "DeleteStmt",
   "IndexStmt",
   "InsertStmt",
   "MergeStmt",
@@ -93,7 +97,6 @@ const SAFE_ALTER_TABLE_COMMANDS = new Set([
   "AT_CookedColumnDefault",
   "AT_DropCluster",
   "AT_DropNotNull",
-  "AT_EnableRowSecurity",
   "AT_EnableRule",
   "AT_EnableTrig",
   "AT_EnableTrigAll",
@@ -109,7 +112,6 @@ const SAFE_ALTER_TABLE_COMMANDS = new Set([
   "AT_SetStatistics",
   "AT_SetStorage",
   "AT_SetTableSpace",
-  "AT_SetUnLogged",
   "AT_ValidateConstraint",
 ]);
 
@@ -136,6 +138,7 @@ const CONTRACTING_ALTER_TABLE_COMMANDS = new Set([
   "AT_DropIdentity",
   "AT_DropInherit",
   "AT_DropOf",
+  "AT_EnableRowSecurity",
   "AT_EnableAlwaysRule",
   "AT_EnableAlwaysTrig",
   "AT_EnableReplicaRule",
@@ -146,6 +149,7 @@ const CONTRACTING_ALTER_TABLE_COMMANDS = new Set([
   "AT_SetExpression",
   "AT_SetIdentity",
   "AT_SetNotNull",
+  "AT_SetUnLogged",
 ]);
 
 function isRecord(value: unknown): value is AstRecord {
@@ -240,16 +244,19 @@ function canonicalFunctionIdentity(statement: AstRecord): string | undefined {
   return `${name}(${inputTypes.join(",")})`;
 }
 
-function hasSecurityDefinerOption(statement: AstRecord): boolean {
-  if (!Array.isArray(statement.options)) return false;
+function functionSecurityMode(statement: AstRecord): FunctionSecurityMode {
+  if (!Array.isArray(statement.options)) return "security-invoker";
 
-  return statement.options.some((node) => {
+  const securityOption = statement.options.find((node) => {
     const variant = nodeVariant(node);
-    if (variant?.[0] !== "DefElem" || variant[1].defname !== "security") return false;
-
-    const value = nodeVariant(variant[1].arg);
-    return value?.[0] === "Boolean" && value[1].boolval === true;
+    return variant?.[0] === "DefElem" && variant[1].defname === "security";
   });
+  const variant = nodeVariant(securityOption);
+  const value = variant?.[0] === "DefElem" ? nodeVariant(variant[1].arg) : undefined;
+
+  return value?.[0] === "Boolean" && value[1].boolval === true
+    ? "security-definer"
+    : "security-invoker";
 }
 
 function canonicalObject(node: unknown): string | undefined {
@@ -372,7 +379,10 @@ function columnIsNotNull(definition: AstRecord): boolean {
 
   return definition.constraints.some((constraint) => {
     const variant = nodeVariant(constraint);
-    return variant?.[0] === "Constraint" && variant[1].contype === "CONSTR_NOTNULL";
+    return (
+      variant?.[0] === "Constraint" &&
+      (variant[1].contype === "CONSTR_NOTNULL" || variant[1].contype === "CONSTR_PRIMARY")
+    );
   });
 }
 
@@ -517,7 +527,55 @@ function classifyTruncate(statement: AstRecord): StatementAnalysis {
   };
 }
 
-function classifyStatement(rawStatement: RawStmt): StatementAnalysis {
+function classifyDelete(statement: AstRecord): StatementAnalysis {
+  const relation = canonicalRangeVar(statement.relation);
+  if (!relation) {
+    return { operations: [], unsupported: "DELETE has an unsupported relation identity" };
+  }
+
+  return statement.whereClause === undefined
+    ? {
+        operations: [
+          operation(`delete-all-rows:${relation}`, `DELETE every row from table ${relation}`),
+        ],
+      }
+    : { operations: [] };
+}
+
+function classifyFunction(
+  statement: AstRecord,
+  context: MigrationAnalysisContext,
+): StatementAnalysis {
+  const identity = canonicalFunctionIdentity(statement);
+  if (!identity) {
+    return {
+      operations: [],
+      unsupported: "function or procedure has an unsupported identity",
+    };
+  }
+
+  const securityMode = functionSecurityMode(statement);
+  const label = statement.is_procedure ? "procedure" : "function";
+  const contextIdentity = `${label}:${identity}`;
+  const priorMode = context.createdFunctionSecurityModes.get(contextIdentity);
+  context.createdFunctionSecurityModes.set(contextIdentity, securityMode);
+
+  if (!statement.replace || priorMode === securityMode) return { operations: [] };
+
+  return {
+    operations: [
+      operation(
+        `replace-${label}-${securityMode}:${identity}`,
+        `replace ${label} ${identity} as ${securityMode.replace("-", " ").toUpperCase()}`,
+      ),
+    ],
+  };
+}
+
+function classifyStatement(
+  rawStatement: RawStmt,
+  context: MigrationAnalysisContext,
+): StatementAnalysis {
   const variant = nodeVariant(rawStatement.stmt);
   if (!variant) return { operations: [], unsupported: "statement has no recognized AST root" };
 
@@ -528,31 +586,8 @@ function classifyStatement(rawStatement: RawStmt): StatementAnalysis {
   if (kind === "RenameStmt") return classifyRename(statement);
   if (kind === "AlterTableStmt") return classifyAlterTable(statement);
   if (kind === "TruncateStmt") return classifyTruncate(statement);
-
-  if (kind === "CreateFunctionStmt") {
-    // PostgreSQL itself only permits CREATE OR REPLACE when the input identity and
-    // return contract remain compatible. Overloads therefore stay independently safe.
-    if (statement.replace && hasSecurityDefinerOption(statement)) {
-      const identity = canonicalFunctionIdentity(statement);
-      if (!identity) {
-        return {
-          operations: [],
-          unsupported: "SECURITY DEFINER replacement has an unsupported function identity",
-        };
-      }
-
-      const label = statement.is_procedure ? "procedure" : "function";
-      return {
-        operations: [
-          operation(
-            `replace-${label}-security-definer:${identity}`,
-            `replace ${label} ${identity} as SECURITY DEFINER`,
-          ),
-        ],
-      };
-    }
-    return { operations: [] };
-  }
+  if (kind === "DeleteStmt") return classifyDelete(statement);
+  if (kind === "CreateFunctionStmt") return classifyFunction(statement, context);
 
   if (kind === "ViewStmt") {
     if (!statement.replace) return { operations: [] };
@@ -838,11 +873,14 @@ async function inspectNewMigration(
   }
 
   const sqlBuffer = Buffer.from(sql, "utf8");
+  const analysisContext: MigrationAnalysisContext = {
+    createdFunctionSecurityModes: new Map(),
+  };
 
   for (const rawStatement of parsed.stmts ?? []) {
     const statementLine = lineAtByteOffset(sqlBuffer, rawStatement.stmt_location ?? 0);
     const waivers = leadingWaivers(file, sqlBuffer, rawStatement, waiverOwners, issues);
-    const analysis = classifyStatement(rawStatement);
+    const analysis = classifyStatement(rawStatement, analysisContext);
 
     if (analysis.unsupported) {
       issues.push({

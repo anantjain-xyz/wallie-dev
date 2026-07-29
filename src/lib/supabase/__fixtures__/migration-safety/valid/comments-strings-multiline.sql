@@ -4,7 +4,7 @@
 select 'DROP COLUMN active_job_id';
 select E'escaped quote: \'; DROP TABLE public.jobs;';
 
-create or replace function public.describe_job(job_id uuid)
+create function public.describe_job(job_id uuid)
 returns text
 language sql
 as $function$
