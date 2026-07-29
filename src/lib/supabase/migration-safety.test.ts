@@ -22,6 +22,18 @@ function verifyNew(sql: string) {
   });
 }
 
+function verifyWithBase(baseSql: string, newSql: string) {
+  const baseMigrations = { "20260728000000_existing.sql": baseSql };
+  return verifyMigrationSafety({
+    baseMigrations,
+    currentMigrations: {
+      ...baseMigrations,
+      "20260729000000_fixture.sql": newSql,
+    },
+    waiverOwners,
+  });
+}
+
 function issueCodes(sql: string): MigrationSafetyIssueCode[] {
   return verifyNew(sql).map((issue) => issue.code);
 }
@@ -68,25 +80,50 @@ describe("migration safety", () => {
     expect(verifyNew(fixture("valid", "function-overload-replacement.sql"))).toEqual([]);
   });
 
+  it("accepts an ordered function recreation only when its deployed contract is unchanged", () => {
+    const baseSql = `create function public.lookup_job(job_id uuid)
+returns text language sql as 'select job_id::text';`;
+    const newSql = `drop function public.lookup_job(uuid);
+create function public.lookup_job(target_id uuid)
+returns text language sql as 'select target_id::text';`;
+
+    expect(verifyWithBase(baseSql, newSql)).toEqual([]);
+  });
+
   it.each([
     [
+      `create function public.lookup_job(job_id uuid)
+returns text language sql as 'select job_id::text';`,
+      `create function public.lookup_job(target_id uuid)
+returns text language sql as 'select target_id::text';
+drop function public.lookup_job(uuid);`,
+      "drop-function:public.lookup_job(uuid)",
+    ],
+    [
+      `create function public.lookup_job(job_id uuid)
+returns text language sql as 'select job_id::text';`,
       `drop function public.lookup_job(uuid);
 create function public.lookup_job(uuid) returns bigint language sql as 'select 1';`,
       "drop-function:public.lookup_job(uuid)",
     ],
     [
+      `create function public.lookup_job(ids integer[])
+returns text language sql as 'select ids::text';`,
       `drop function public.lookup_job(integer[]);
 create function public.lookup_job(text[]) returns text language sql as 'select 1';`,
       "drop-function:public.lookup_job(integer[])",
     ],
-  ])("requires an exact waiver for incompatible function recreation", (sql, operationKey) => {
-    expect(verifyNew(sql)).toEqual([
-      expect.objectContaining({
-        code: "unsafe-operation",
-        operationKey,
-      }),
-    ]);
-  });
+  ])(
+    "requires an exact waiver for incompatible function recreation",
+    (baseSql, newSql, operationKey) => {
+      expect(verifyWithBase(baseSql, newSql)).toEqual([
+        expect.objectContaining({
+          code: "unsafe-operation",
+          operationKey,
+        }),
+      ]);
+    },
+  );
 
   it.each([
     ["drop-column.sql", "drop-column:public.agent_jobs.active_job_id"],
@@ -134,14 +171,83 @@ drop table public.jobs;`;
     ],
     ["drop index concurrently if exists public.jobs_idx;", "drop-index:public.jobs_idx"],
     ["alter index public.jobs_pkey rename to jobs_id_idx;", "rename-index:public.jobs_pkey"],
+    ["drop policy if exists member_read on public.jobs;", "drop-policy:public.jobs.member_read"],
     [
       "alter policy member_read on public.jobs rename to workspace_member_read;",
-      "rename-policy:member_read",
+      "rename-policy:public.jobs.member_read",
     ],
   ])("classifies additional incompatible DDL: %s", (sql, operationKey) => {
     expect(verifyNew(sql)).toEqual([
       expect.objectContaining({ code: "unsafe-operation", operationKey }),
     ]);
+  });
+
+  it("does not let a policy waiver authorize the same policy name on another relation", () => {
+    const sql = `-- wallie-migration-safety: allow drop-policy:public.jobs.member_read owner=@anantjain-xyz issue=OP-387
+drop policy member_read on public.sessions;`;
+
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({
+        code: "unused-waiver",
+        operationKey: "drop-policy:public.jobs.member_read",
+      }),
+      expect.objectContaining({
+        code: "unsafe-operation",
+        operationKey: "drop-policy:public.sessions.member_read",
+      }),
+    ]);
+  });
+
+  it("accepts a policy waiver only for its exact relation and policy", () => {
+    const sql = `-- wallie-migration-safety: allow drop-policy:public.jobs.member_read owner=@anantjain-xyz issue=OP-387
+drop policy member_read on public.jobs;`;
+
+    expect(verifyNew(sql)).toEqual([]);
+  });
+
+  it.each([
+    [
+      `do $block$
+begin
+  execute 'DROP TABLE public.jobs';
+end
+$block$;`,
+      "drop-table:public.jobs",
+    ],
+    [
+      `do $block$
+begin
+  alter table public.jobs rename column id to job_id;
+end
+$block$;`,
+      "rename-column:public.jobs.id",
+    ],
+  ])("detects destructive SQL executed inside a DO block", (sql, operationKey) => {
+    expect(verifyNew(sql)).toEqual([
+      expect.objectContaining({ code: "unsafe-operation", line: 3, operationKey }),
+    ]);
+  });
+
+  it("allows an exact waiver for constant destructive SQL executed inside a DO block", () => {
+    const sql = `-- wallie-migration-safety: allow drop-table:public.jobs owner=@anantjain-xyz issue=OP-387
+do $block$
+begin
+  execute 'DROP TABLE public.jobs';
+end
+$block$;`;
+
+    expect(verifyNew(sql)).toEqual([]);
+  });
+
+  it("keeps comments and non-executed strings inside DO blocks opaque", () => {
+    const sql = `do $block$
+begin
+  -- execute 'DROP TABLE public.jobs';
+  raise notice 'DROP TABLE public.jobs';
+end
+$block$;`;
+
+    expect(verifyNew(sql)).toEqual([]);
   });
 
   it("fails closed on unterminated PostgreSQL strings and comments", () => {

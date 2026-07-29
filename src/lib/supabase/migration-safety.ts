@@ -29,6 +29,12 @@ type UnsafeOperation = {
   line: number;
 };
 
+type FunctionContract = {
+  identity: string;
+  kind: "function" | "procedure";
+  result: string;
+};
+
 type Waiver = {
   issue: string;
   key: string;
@@ -55,6 +61,28 @@ const MULTIWORD_TYPES = new Set([
   "time without time zone",
   "timestamp with time zone",
   "timestamp without time zone",
+]);
+
+const FUNCTION_OPTION_KEYWORDS = new Set([
+  "as",
+  "begin",
+  "called",
+  "cost",
+  "immutable",
+  "language",
+  "leakproof",
+  "not",
+  "parallel",
+  "return",
+  "rows",
+  "security",
+  "set",
+  "stable",
+  "strict",
+  "support",
+  "transform",
+  "volatile",
+  "window",
 ]);
 
 function isIdentifierStart(character: string): boolean {
@@ -350,6 +378,48 @@ function readFunctionIdentity(
   };
 }
 
+function readCreatedFunction(tokens: readonly Token[]): FunctionContract | undefined {
+  if (!isKeyword(tokens[0], "create")) return undefined;
+
+  const kindIndex = isKeyword(tokens[1], "or") && isKeyword(tokens[2], "replace") ? 3 : 1;
+  const kind = isKeyword(tokens[kindIndex], "function")
+    ? "function"
+    : isKeyword(tokens[kindIndex], "procedure")
+      ? "procedure"
+      : undefined;
+  if (!kind) return undefined;
+
+  const parsed = readFunctionIdentity(tokens, kindIndex + 1, true);
+  if (!parsed.identity) return undefined;
+  if (kind === "procedure") {
+    return { identity: parsed.identity, kind, result: "procedure" };
+  }
+
+  const returnsIndex = tokens.findIndex(
+    (token, index) => index >= parsed.next && isKeyword(token, "returns"),
+  );
+  if (returnsIndex === -1) return undefined;
+
+  let depth = 0;
+  let resultEnd = returnsIndex + 1;
+  for (; resultEnd < tokens.length; resultEnd += 1) {
+    const token = tokens[resultEnd]!;
+    if (token.value === "(" || token.value === "[") depth += 1;
+    if (token.value === ")" || token.value === "]") depth -= 1;
+    if (
+      resultEnd > returnsIndex + 1 &&
+      depth === 0 &&
+      token.kind === "identifier" &&
+      FUNCTION_OPTION_KEYWORDS.has(token.value.toLowerCase())
+    ) {
+      break;
+    }
+  }
+
+  const result = normalizedTokens(tokens.slice(returnsIndex + 1, resultEnd));
+  return result ? { identity: parsed.identity, kind, result } : undefined;
+}
+
 function splitStatements(tokens: readonly Token[]): Token[][] {
   return splitTopLevel(tokens, ";").filter((statement) =>
     statement.some((token) => token.kind !== "comment"),
@@ -434,6 +504,15 @@ function parseDropStatement(tokens: readonly Token[]): UnsafeOperation[] {
         key: `drop-${kind}:${identity}`,
         line: tokens[0]!.line,
       });
+    } else if (kind === "policy") {
+      const policy = readQualifiedName(item, 0);
+      const relation = isKeyword(item[policy.next], "on")
+        ? readQualifiedName(item, policy.next + 1).name
+        : "unknown";
+      operations.push({
+        key: `drop-policy:${relation}.${policy.name}`,
+        line: tokens[0]!.line,
+      });
     } else {
       const name = readQualifiedName(item, 0).name;
       operations.push({ key: `drop-${kind}:${name}`, line: tokens[0]!.line });
@@ -454,6 +533,18 @@ function alterObject(tokens: readonly Token[]) {
       kind,
       name: parsed.identity ?? readQualifiedName(tokens, index).name,
       next: parsed.next,
+    };
+  }
+
+  if (kind === "policy") {
+    const policy = readQualifiedName(tokens, index);
+    const relation = isKeyword(tokens[policy.next], "on")
+      ? readQualifiedName(tokens, policy.next + 1)
+      : { name: "unknown", next: policy.next };
+    return {
+      kind,
+      name: `${relation.name}.${policy.name}`,
+      next: relation.next,
     };
   }
 
@@ -575,29 +666,186 @@ function parseReplacement(tokens: readonly Token[]): UnsafeOperation[] {
   return [{ key: `replace-${kind}:${name}`, line: tokens[0]!.line }];
 }
 
-function parseOperations(tokens: readonly Token[]): UnsafeOperation[] {
-  return splitStatements(tokens).flatMap((statementWithComments) => {
+function parseStatementOperations(tokens: readonly Token[]): UnsafeOperation[] {
+  if (isKeyword(tokens[0], "drop")) return parseDropStatement(tokens);
+  if (isKeyword(tokens[0], "alter")) return parseAlterStatement(tokens);
+  return parseReplacement(tokens);
+}
+
+function stringContents(token: Token): string | undefined {
+  if (token.kind !== "string") return undefined;
+
+  if (token.value.startsWith("$")) {
+    const tag = token.value.match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/u)?.[0];
+    if (!tag || !token.value.endsWith(tag)) return undefined;
+    return token.value.slice(tag.length, -tag.length);
+  }
+
+  if (token.value.startsWith("'") && token.value.endsWith("'")) {
+    return token.value
+      .slice(1, -1)
+      .replaceAll("''", "'")
+      .replace(/\\([\s\S])/gu, "$1");
+  }
+
+  return undefined;
+}
+
+function operationLine(operation: UnsafeOperation, baseLine: number): UnsafeOperation {
+  return { ...operation, line: baseLine + operation.line - 1 };
+}
+
+function parseDoStatement(
+  tokens: readonly Token[],
+  knownFunctionContracts: ReadonlyMap<string, string>,
+): UnsafeOperation[] {
+  if (!isKeyword(tokens[0], "do")) return [];
+
+  const bodyToken = tokens.find((token) => token.kind === "string");
+  const body = bodyToken ? stringContents(bodyToken) : undefined;
+  if (!bodyToken || body === undefined) return [];
+
+  const bodyTokens = tokenizeSql(body);
+  const operations: UnsafeOperation[] = [];
+
+  for (const statementWithComments of splitStatements(bodyTokens)) {
     const statement = statementWithComments.filter((token) => token.kind !== "comment");
-    if (statement.length === 0) return [];
+
+    for (let index = 0; index < statement.length; index += 1) {
+      if (isKeyword(statement[index], "execute")) {
+        let sqlIndex = index + 1;
+        if (isKeyword(statement[sqlIndex], "e")) sqlIndex += 1;
+        const sqlToken = statement[sqlIndex];
+        const dynamicSql = sqlToken ? stringContents(sqlToken) : undefined;
+        const isConstant =
+          dynamicSql !== undefined &&
+          statement[sqlIndex + 1]?.value !== "||" &&
+          !isKeyword(statement[sqlIndex + 1], "format");
+        if (isConstant) {
+          operations.push(
+            ...parseOperations(tokenizeSql(dynamicSql), knownFunctionContracts).map(
+              (operation) => ({
+                ...operation,
+                line: bodyToken.line + statement[index]!.line - 1,
+              }),
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (
+        isKeyword(statement[index], "drop") ||
+        isKeyword(statement[index], "alter") ||
+        isKeyword(statement[index], "create")
+      ) {
+        const embedded = parseStatementOperations(statement.slice(index));
+        if (embedded.length > 0) {
+          operations.push(...embedded.map((operation) => operationLine(operation, bodyToken.line)));
+          break;
+        }
+      }
+    }
+  }
+
+  return operations;
+}
+
+function functionContractKey(contract: Pick<FunctionContract, "identity" | "kind">): string {
+  return `${contract.kind}:${contract.identity}`;
+}
+
+function droppedFunction(operation: UnsafeOperation):
+  | {
+      identity: string;
+      kind: "function" | "procedure";
+    }
+  | undefined {
+  const match = operation.key.match(/^drop-(function|procedure):(.+)$/u);
+  return match ? { identity: match[2]!, kind: match[1] as "function" | "procedure" } : undefined;
+}
+
+function parseOperations(
+  tokens: readonly Token[],
+  knownFunctionContracts: ReadonlyMap<string, string>,
+): UnsafeOperation[] {
+  const parsedStatements = splitStatements(tokens).map((statementWithComments) => {
+    const statement = statementWithComments.filter((token) => token.kind !== "comment");
+    return {
+      createdFunction: readCreatedFunction(statement),
+      operations: [
+        ...parseStatementOperations(statement),
+        ...parseDoStatement(statement, knownFunctionContracts),
+      ],
+    };
+  });
+  const laterCompatibleFunctions = new Map<string, number>();
+  const unsafeOperations: UnsafeOperation[] = [];
+
+  for (const statement of parsedStatements.toReversed()) {
+    if (statement.createdFunction) {
+      const contract = statement.createdFunction;
+      const key = `${functionContractKey(contract)}->${contract.result}`;
+      laterCompatibleFunctions.set(key, (laterCompatibleFunctions.get(key) ?? 0) + 1);
+    }
+
+    for (const operation of statement.operations.toReversed()) {
+      const dropped = droppedFunction(operation);
+      const deployedResult = dropped
+        ? knownFunctionContracts.get(functionContractKey(dropped))
+        : undefined;
+      const replacementKey =
+        dropped && deployedResult
+          ? `${functionContractKey(dropped)}->${deployedResult}`
+          : undefined;
+      const availableReplacements = replacementKey
+        ? (laterCompatibleFunctions.get(replacementKey) ?? 0)
+        : 0;
+
+      if (replacementKey && availableReplacements > 0) {
+        laterCompatibleFunctions.set(replacementKey, availableReplacements - 1);
+      } else {
+        unsafeOperations.push(operation);
+      }
+    }
+  }
+
+  return unsafeOperations.reverse();
+}
+
+function updateFunctionContracts(contracts: Map<string, string>, sql: string): void {
+  let tokens: Token[];
+  try {
+    tokens = tokenizeSql(sql);
+  } catch {
+    return;
+  }
+
+  for (const statementWithComments of splitStatements(tokens)) {
+    const statement = statementWithComments.filter((token) => token.kind !== "comment");
+    const created = readCreatedFunction(statement);
+    if (created) contracts.set(functionContractKey(created), created.result);
 
     if (isKeyword(statement[0], "drop")) {
-      return parseDropStatement(statement);
+      for (const operation of parseDropStatement(statement)) {
+        const dropped = droppedFunction(operation);
+        if (dropped) contracts.delete(functionContractKey(dropped));
+      }
     }
-    if (isKeyword(statement[0], "alter")) {
-      return parseAlterStatement(statement);
-    }
-    return parseReplacement(statement);
-  });
+  }
 }
 
 function verifyNewMigration(
   file: string,
   sql: string,
   waiverOwners: readonly string[],
+  knownFunctionContracts: ReadonlyMap<string, string>,
 ): MigrationSafetyIssue[] {
   let tokens: Token[];
+  let operations: UnsafeOperation[];
   try {
     tokens = tokenizeSql(sql);
+    operations = parseOperations(tokens, knownFunctionContracts);
   } catch (error) {
     return [
       {
@@ -609,7 +857,6 @@ function verifyNewMigration(
   }
 
   const { issues, waivers } = extractWaivers(tokens, file, waiverOwners);
-  const operations = parseOperations(tokens);
 
   for (const operation of operations) {
     const waiver = waivers.find((candidate) => !candidate.used && candidate.key === operation.key);
@@ -642,8 +889,12 @@ function verifyNewMigration(
 
 export function verifyMigrationSafety(input: VerifyMigrationSafetyInput): MigrationSafetyIssue[] {
   const issues: MigrationSafetyIssue[] = [];
+  const functionContracts = new Map<string, string>();
 
-  for (const [file, baseSql] of Object.entries(input.baseMigrations)) {
+  for (const [file, baseSql] of Object.entries(input.baseMigrations).sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    updateFunctionContracts(functionContracts, baseSql);
     const currentSql = input.currentMigrations[file];
     if (currentSql === undefined) {
       issues.push({
@@ -660,9 +911,12 @@ export function verifyMigrationSafety(input: VerifyMigrationSafetyInput): Migrat
     }
   }
 
-  for (const [file, sql] of Object.entries(input.currentMigrations)) {
+  for (const [file, sql] of Object.entries(input.currentMigrations).sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
     if (input.baseMigrations[file] === undefined) {
-      issues.push(...verifyNewMigration(file, sql, input.waiverOwners));
+      issues.push(...verifyNewMigration(file, sql, input.waiverOwners, functionContracts));
+      updateFunctionContracts(functionContracts, sql);
     }
   }
 
