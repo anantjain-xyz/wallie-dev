@@ -1,0 +1,6 @@
+export async function rewriteJobIdentity(admin: any) {
+  await admin
+    .from("agent_jobs")
+    .update({ dedupe_key: "pipeline:other-session:active" })
+    .eq("id", "job-1");
+}

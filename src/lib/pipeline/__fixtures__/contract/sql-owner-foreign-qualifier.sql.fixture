@@ -1,0 +1,20 @@
+create or replace function public.approve_session_stage(
+  target_session_id uuid,
+  expected_workspace_id uuid,
+  expected_version integer,
+  approver_member_id uuid default null
+)
+returns void
+language plpgsql
+as $$
+begin
+  update public.sessions as target
+  set phase_status = 'approved'
+  from public.sessions as guard
+  where guard.id = target_session_id
+    and guard.workspace_id = expected_workspace_id
+    and guard.current_artifact_version = expected_version
+    and guard.phase_status = 'awaiting_review'
+    and guard.archived_at is null;
+end;
+$$;

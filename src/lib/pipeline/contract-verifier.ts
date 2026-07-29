@@ -53,6 +53,14 @@ type SqlTransitionOwner = {
   canonicalApi: string;
   functionName: string;
   id: string;
+  signature: string;
+  transitions: readonly SqlTransitionPermission[];
+};
+
+type SqlMigrationOwner = {
+  canonicalApi: string;
+  id: string;
+  path: string;
   transitions: readonly SqlTransitionPermission[];
 };
 
@@ -75,6 +83,7 @@ export type PipelineTransitionContract = {
   protectedFields: Readonly<Record<ProtectedTable, readonly string[]>>;
   recoveryOwners: readonly RecoveryOwner[];
   seededStageSlugs: readonly string[];
+  sqlMigrationOwners: readonly SqlMigrationOwner[];
   sqlOwners: readonly SqlTransitionOwner[];
   sqlSeedAdapterFunctions: readonly string[];
 };
@@ -140,8 +149,25 @@ function sqlPredicate(
 
 export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
   protectedFields: {
-    agent_jobs: ["attempt_count", "finished_at", "scheduled_at", "started_at", "status"],
-    agent_runs: ["finished_at", "last_activity_at", "sandbox_id", "started_at", "status"],
+    agent_jobs: [
+      "attempt_count",
+      "dedupe_key",
+      "finished_at",
+      "scheduled_at",
+      "started_at",
+      "status",
+    ],
+    agent_runs: [
+      "finished_at",
+      "last_activity_at",
+      "sandbox_connection_revision",
+      "sandbox_id",
+      "sandbox_provider",
+      "sandbox_vercel_project_id",
+      "sandbox_vercel_team_id",
+      "started_at",
+      "status",
+    ],
     sessions: [
       "archived_at",
       "current_artifact_version",
@@ -229,7 +255,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           [],
           predicates(predicate("status", "eq", "queued")),
         ),
-        transition("enqueueSessionJobWithRun", "agent_jobs", "insert", []),
+        transition("enqueueSessionJobWithRun", "agent_jobs", "insert", ["dedupe_key"]),
         transition(
           "markPipelineJobSuccess",
           "agent_jobs",
@@ -264,7 +290,13 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "updateRunSandbox",
           "agent_runs",
           "update",
-          ["sandbox_id"],
+          [
+            "sandbox_connection_revision",
+            "sandbox_id",
+            "sandbox_provider",
+            "sandbox_vercel_project_id",
+            "sandbox_vercel_team_id",
+          ],
           predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
         transition(
@@ -333,7 +365,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           [],
           predicates(predicate("status", "eq", "queued")),
         ),
-        transition("createQueuedRun", "agent_jobs", "insert", []),
+        transition("createQueuedRun", "agent_jobs", "insert", ["dedupe_key"]),
       ],
     },
     {
@@ -445,7 +477,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
             predicate("phase_status", "in", ["agent_generating", "awaiting_review", "rejected"]),
           ),
         ),
-        transition("ensurePipelineJobQueued", "agent_jobs", "insert", []),
+        transition("ensurePipelineJobQueued", "agent_jobs", "insert", ["dedupe_key"]),
       ],
     },
     {
@@ -538,6 +570,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: "Use the approve_session_stage transactional RPC.",
       functionName: "public.approve_session_stage",
       id: "stage-approval-rpc",
+      signature: "public.approve_session_stage(uuid,uuid,integer,uuid)",
       transitions: [
         sqlTransition(
           "sessions",
@@ -569,6 +602,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: "Use the claim_agent_job transactional RPC.",
       functionName: "public.claim_agent_job",
       id: "legacy-job-claim-rpc",
+      signature: "public.claim_agent_job(uuid,int)",
       transitions: [
         sqlTransition(
           "agent_jobs",
@@ -585,6 +619,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: "Use the claim_next_agent_job transactional RPC.",
       functionName: "public.claim_next_agent_job",
       id: "worker-job-claim-rpc",
+      signature: "public.claim_next_agent_job(int)",
       transitions: [
         sqlTransition(
           "agent_jobs",
@@ -601,6 +636,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: "Use the schedule_job_retry transactional RPC.",
       functionName: "public.schedule_job_retry",
       id: "job-retry-rpc",
+      signature: "public.schedule_job_retry(uuid,int,int)",
       transitions: [
         sqlTransition(
           "agent_jobs",
@@ -617,10 +653,33 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       canonicalApi: "Use the create_session_with_first_job transactional RPC.",
       functionName: "public.create_session_with_first_job",
       id: "session-create-rpc",
+      signature:
+        "public.create_session_with_first_job(uuid,uuid,text,text,text,text,text,text,uuid,uuid)",
       transitions: [
         sqlTransition("sessions", "insert", ["current_stage_id", "phase_status", "pipeline_id"]),
-        sqlTransition("agent_jobs", "insert", ["status"]),
+        sqlTransition("agent_jobs", "insert", ["dedupe_key", "status"]),
         sqlTransition("agent_runs", "insert", ["status"]),
+      ],
+    },
+  ],
+  sqlMigrationOwners: [
+    {
+      canonicalApi:
+        "Keep sandbox routing backfills in the provider migration; use updateRunSandbox() at runtime.",
+      id: "sandbox-provider-routing-backfill",
+      path: "supabase/migrations/20260721000001_add_e2b_daytona_sandbox_providers.sql",
+      transitions: [
+        sqlTransition(
+          "agent_runs",
+          "update",
+          ["sandbox_connection_revision"],
+          [
+            sqlPredicate("sandbox_provider", "=", "vercel"),
+            sqlPredicate("sandbox_vercel_team_id", "=", expression("connection.team_id")),
+            sqlPredicate("sandbox_vercel_project_id", "=", expression("connection.project_id")),
+            sqlPredicate("sandbox_connection_revision", "is", null),
+          ],
+        ),
       ],
     },
   ],
@@ -686,13 +745,19 @@ export function verifyPipelineContract(
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
   const usedRecoveryTransitions = new Set<string>();
+  const usedSqlMigrationTransitions = new Set<string>();
   const latestSqlDefinitions = findLatestSqlDefinitions(files, contract);
 
   for (const file of files) {
     const normalizedPath = normalizePath(file.path);
     if (normalizedPath.endsWith(".sql")) {
       diagnostics.push(
-        ...verifySqlFile({ ...file, path: normalizedPath }, contract, latestSqlDefinitions),
+        ...verifySqlFile(
+          { ...file, path: normalizedPath },
+          contract,
+          latestSqlDefinitions,
+          usedSqlMigrationTransitions,
+        ),
       );
       continue;
     }
@@ -850,6 +915,22 @@ export function verifyPipelineContract(
     }
   }
 
+  for (const owner of contract.sqlMigrationOwners) {
+    for (const [index, permission] of owner.transitions.entries()) {
+      if (usedSqlMigrationTransitions.has(sqlMigrationTransitionUsageKey(owner.id, index))) {
+        continue;
+      }
+      diagnostics.push({
+        code: "recovery-owner-unused",
+        line: 1,
+        message: `migration exception ${owner.id} declares ${formatSqlTransitionPermission(
+          permission,
+        )} but no matching owned path uses it. Remove the stale exception or restore the canonical migration path.`,
+        path: owner.path,
+      });
+    }
+  }
+
   return diagnostics.sort(
     (left, right) =>
       left.path.localeCompare(right.path) ||
@@ -867,7 +948,7 @@ function findLatestSqlDefinitions(
   files: readonly PipelineContractFile[],
   contract: PipelineTransitionContract,
 ): ReadonlyMap<string, SqlDefinitionLocation> {
-  const ownerNames = new Set(contract.sqlOwners.map((owner) => owner.functionName));
+  const ownerSignatures = new Set(contract.sqlOwners.map((owner) => owner.signature));
   const latestDefinitions = new Map<string, SqlDefinitionLocation>();
   const sqlFiles = files
     .map((file) => ({ ...file, path: normalizePath(file.path) }))
@@ -876,8 +957,8 @@ function findLatestSqlDefinitions(
 
   for (const file of sqlFiles) {
     for (const sqlFunction of readSqlFunctions(maskSqlComments(file.source))) {
-      if (ownerNames.has(sqlFunction.name)) {
-        latestDefinitions.set(sqlFunction.name, {
+      if (ownerSignatures.has(sqlFunction.signature)) {
+        latestDefinitions.set(sqlFunction.signature, {
           path: file.path,
           start: sqlFunction.start,
         });
@@ -1489,6 +1570,12 @@ function formatTransitionPermission(permission: TransitionPermission): string {
   return `${permission.functionName} ${permission.operation} ${permission.table}${fields}`;
 }
 
+function formatSqlTransitionPermission(permission: SqlTransitionPermission): string {
+  const fields =
+    permission.fields.length > 0 ? ` fields ${permission.fields.join(", ")}` : " row lifecycle";
+  return `${permission.operation} ${permission.table}${fields}`;
+}
+
 function isSeededStageBranch(
   node: ts.Node,
   context: SourceContext,
@@ -1669,6 +1756,7 @@ function verifySqlFile(
   file: PipelineContractFile,
   contract: PipelineTransitionContract,
   latestSqlDefinitions: ReadonlyMap<string, SqlDefinitionLocation>,
+  usedSqlMigrationTransitions: Set<string>,
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
   const commentMaskedSource = maskSqlComments(file.source);
@@ -1676,9 +1764,9 @@ function verifySqlFile(
 
   for (const sqlFunction of functionSpans) {
     const owner = contract.sqlOwners.find(
-      (candidate) => candidate.functionName === sqlFunction.name,
+      (candidate) => candidate.signature === sqlFunction.signature,
     );
-    const latestDefinition = latestSqlDefinitions.get(sqlFunction.name);
+    const latestDefinition = latestSqlDefinitions.get(sqlFunction.signature);
     const enforceOwnerPredicates = Boolean(
       owner && latestDefinition?.path === file.path && latestDefinition.start === sqlFunction.start,
     );
@@ -1722,10 +1810,7 @@ function verifySqlFile(
           path: file.path,
         });
       } else if (enforceOwnerPredicates) {
-        const missingPredicates = findMissingSqlPredicates(
-          mutation.predicateSource,
-          permission.requiredPredicates,
-        );
+        const missingPredicates = findMissingSqlPredicates(mutation, permission.requiredPredicates);
         if (missingPredicates.length > 0) {
           diagnostics.push({
             code: "pipeline-cas",
@@ -1761,12 +1846,42 @@ function verifySqlFile(
       protectedFields === null ||
       protectedFields.length > 0;
     if (writesProtectedState) {
+      const owner = contract.sqlMigrationOwners.find((candidate) => candidate.path === file.path);
+      const permissionIndex =
+        protectedFields === null
+          ? -1
+          : (owner?.transitions.findIndex(
+              (candidate) =>
+                candidate.table === mutation.table &&
+                candidate.operation === mutation.operation &&
+                sameFields(candidate.fields, protectedFields),
+            ) ?? -1);
+      if (owner && permissionIndex >= 0) {
+        usedSqlMigrationTransitions.add(sqlMigrationTransitionUsageKey(owner.id, permissionIndex));
+        const permission = owner.transitions[permissionIndex]!;
+        const missingPredicates = findMissingSqlPredicates(mutation, permission.requiredPredicates);
+        if (missingPredicates.length > 0) {
+          diagnostics.push({
+            code: "pipeline-cas",
+            line: lineAt(file.source, mutation.position),
+            message: `${owner.id} writes protected ${mutation.table} state without required SQL expected-state predicate${
+              missingPredicates.length === 1 ? "" : "s"
+            }: ${missingPredicates.join(", ")}. ${owner.canonicalApi}`,
+            path: file.path,
+          });
+        }
+        continue;
+      }
       diagnostics.push({
         code: "pipeline-owner",
         line: lineAt(file.source, mutation.position),
-        message: `Top-level SQL writes protected ${mutation.table} state outside a named transactional RPC. ${canonicalApiForTable(
-          mutation.table,
-        )}`,
+        message: owner
+          ? `${owner.id} does not permit top-level ${mutation.operation} ${mutation.table} fields ${
+              protectedFields?.join(", ") || "(unresolved row lifecycle)"
+            }. ${owner.canonicalApi}`
+          : `Top-level SQL writes protected ${mutation.table} state outside a named transactional RPC. ${canonicalApiForTable(
+              mutation.table,
+            )}`,
         path: file.path,
       });
     }
@@ -1780,6 +1895,7 @@ type SqlFunctionSpan = {
   bodyStart: number;
   end: number;
   name: string;
+  signature: string;
   start: number;
 };
 
@@ -1789,7 +1905,14 @@ function readSqlFunctions(source: string): SqlFunctionSpan[] {
     /\bcreate\s+(?:or\s+replace\s+)?function\s+([a-z_][\w]*\.[a-z_][\w]*|[a-z_][\w]*)\s*\(/gi;
   for (const match of source.matchAll(startPattern)) {
     const start = match.index ?? 0;
-    const afterStart = start + match[0].length;
+    const name = match[1]!.toLowerCase();
+    const parameterOpen = start + match[0].lastIndexOf("(");
+    const parameterClose = findMatchingSqlParenthesis(source, parameterOpen);
+    if (parameterClose < 0) continue;
+    const signature = `${name}(${readSqlIdentityArgumentTypes(
+      source.slice(parameterOpen + 1, parameterClose),
+    ).join(",")})`;
+    const afterStart = parameterClose + 1;
     const bodyOpenPattern = /\bas\s+(\$[a-z_0-9]*\$)/gi;
     bodyOpenPattern.lastIndex = afterStart;
     const bodyOpen = bodyOpenPattern.exec(source);
@@ -1802,11 +1925,106 @@ function readSqlFunctions(source: string): SqlFunctionSpan[] {
       body: source.slice(bodyStart, bodyEnd),
       bodyStart,
       end: bodyEnd + delimiter.length,
-      name: match[1]!.toLowerCase(),
+      name,
+      signature,
       start,
     });
   }
   return spans;
+}
+
+function findMatchingSqlParenthesis(source: string, open: number): number {
+  let depth = 0;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inSingleQuote) {
+      if (character === "'" && next === "'") {
+        index += 1;
+      } else if (character === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+    if (inDoubleQuote) {
+      if (character === '"' && next === '"') {
+        index += 1;
+      } else if (character === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      inSingleQuote = true;
+    } else if (character === '"') {
+      inDoubleQuote = true;
+    } else if (character === "(") {
+      depth += 1;
+    } else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function readSqlIdentityArgumentTypes(parameterSource: string): string[] {
+  return splitTopLevelSqlList(parameterSource).flatMap((parameter) => {
+    const withoutDefault = parameter.replace(/\s+(?:default\b|=)[\s\S]*$/i, "").trim();
+    if (!withoutDefault) return [];
+    const tokens = withoutDefault.split(/\s+/);
+    const mode = tokens[0]?.toLowerCase();
+    if (mode === "out") return [];
+    if (mode === "in" || mode === "inout" || mode === "variadic") {
+      tokens.shift();
+    }
+    const typeTokens = tokens.length > 1 ? tokens.slice(1) : tokens;
+    return [typeTokens.join(" ").toLowerCase()];
+  });
+}
+
+function splitTopLevelSqlList(source: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let start = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inSingleQuote) {
+      if (character === "'" && next === "'") {
+        index += 1;
+      } else if (character === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+    if (inDoubleQuote) {
+      if (character === '"' && next === '"') {
+        index += 1;
+      } else if (character === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      inSingleQuote = true;
+    } else if (character === '"') {
+      inDoubleQuote = true;
+    } else if (character === "(") {
+      depth += 1;
+    } else if (character === ")") {
+      depth = Math.max(0, depth - 1);
+    } else if (character === "," && depth === 0) {
+      parts.push(source.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(source.slice(start));
+  return parts;
 }
 
 type SqlMutation = {
@@ -1816,14 +2034,15 @@ type SqlMutation = {
   predicateSource: string;
   position: number;
   table: ProtectedTable;
+  targetAlias: string | null;
 };
 
 function readSqlMutations(source: string, offset: number, originalSource = source): SqlMutation[] {
   const mutations: SqlMutation[] = [];
   const updatePattern =
-    /\bupdate\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s+(?:as\s+)?[a-z_][\w]*)?\s+set\s+([\s\S]*?)(?=\breturning\b|;|$)/gi;
+    /\bupdate\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s+(?:as\s+)?([a-z_][\w]*))?\s+set\s+([\s\S]*?)(?=\breturning\b|;|$)/gi;
   for (const match of source.matchAll(updatePattern)) {
-    const maskedBody = match[2] ?? "";
+    const maskedBody = match[3] ?? "";
     const bodyStart = (match.index ?? 0) + match[0].length - maskedBody.length;
     const originalBody = originalSource.slice(bodyStart, bodyStart + maskedBody.length);
     const whereMatch = /\bwhere\b/i.exec(maskedBody);
@@ -1838,6 +2057,7 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
       predicateSource,
       position: offset + (match.index ?? 0),
       table: match[1]!.toLowerCase() as ProtectedTable,
+      targetAlias: match[2]?.toLowerCase() ?? null,
     });
   }
 
@@ -1845,6 +2065,8 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
     /\binsert\s+into\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s*\(([\s\S]*?)\))?/gi;
   for (const match of source.matchAll(insertPattern)) {
     const fieldList = match[2];
+    const table = match[1]!.toLowerCase() as ProtectedTable;
+    const position = match.index ?? 0;
     mutations.push({
       fields: (fieldList ?? "")
         .split(",")
@@ -1853,9 +2075,39 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
       fieldsKnown: fieldList !== undefined,
       operation: "insert",
       predicateSource: "",
-      position: offset + (match.index ?? 0),
-      table: match[1]!.toLowerCase() as ProtectedTable,
+      position: offset + position,
+      table,
+      targetAlias: null,
     });
+
+    const statementEnd = source.indexOf(";", position);
+    const maskedStatement = source.slice(position, statementEnd < 0 ? source.length : statementEnd);
+    const conflictUpdate = /\bon\s+conflict\b[\s\S]*?\bdo\s+update\s+set\b/i.exec(maskedStatement);
+    if (conflictUpdate) {
+      const updateBodyStart = position + conflictUpdate.index + conflictUpdate[0].length;
+      const maskedBody = source.slice(
+        updateBodyStart,
+        statementEnd < 0 ? source.length : statementEnd,
+      );
+      const originalBody = originalSource.slice(
+        updateBodyStart,
+        statementEnd < 0 ? originalSource.length : statementEnd,
+      );
+      const whereMatch = /\bwhere\b/i.exec(maskedBody);
+      mutations.push({
+        fields: readSqlAssignedFields(
+          whereMatch ? originalBody.slice(0, whereMatch.index) : originalBody,
+        ),
+        fieldsKnown: true,
+        operation: "update",
+        predicateSource: whereMatch
+          ? originalBody.slice(whereMatch.index + whereMatch[0].length)
+          : "",
+        position: offset + position + conflictUpdate.index,
+        table,
+        targetAlias: null,
+      });
+    }
   }
 
   const deletePattern = /\bdelete\s+from\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b/gi;
@@ -1867,6 +2119,7 @@ function readSqlMutations(source: string, offset: number, originalSource = sourc
       predicateSource: readSqlDeletePredicateSource(source, match.index ?? 0),
       position: offset + (match.index ?? 0),
       table: match[1]!.toLowerCase() as ProtectedTable,
+      targetAlias: null,
     });
   }
   return mutations;
@@ -1888,11 +2141,12 @@ function resolveExecutedSql(
   functionSource: string,
   position: number,
 ): string {
-  const directValues = readSqlStringValues(expressionSource);
+  const executableExpression = stripSqlExecuteClauses(expressionSource);
+  const directValues = readSqlStringValues(executableExpression);
   if (directValues.length > 0) {
     return directValues.join(" ");
   }
-  const identifier = /^\s*([a-z_][\w]*)\s*$/i.exec(expressionSource)?.[1];
+  const identifier = /^\s*([a-z_][\w]*)\s*$/i.exec(executableExpression)?.[1];
   if (!identifier) {
     return "";
   }
@@ -1905,6 +2159,60 @@ function resolveExecutedSql(
     latestAssignment = match;
   }
   return latestAssignment ? readSqlStringValues(latestAssignment[1] ?? "").join(" ") : "";
+}
+
+function stripSqlExecuteClauses(source: string): string {
+  let depth = 0;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (inSingleQuote) {
+      if (character === "'" && next === "'") {
+        index += 1;
+      } else if (character === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+    if (inDoubleQuote) {
+      if (character === '"' && next === '"') {
+        index += 1;
+      } else if (character === '"') {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (character === '"') {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (
+      depth === 0 &&
+      ["into", "using"].some(
+        (keyword) =>
+          source.slice(index, index + keyword.length).toLowerCase() === keyword &&
+          !/[a-z_0-9]/i.test(source[index - 1] ?? "") &&
+          !/[a-z_0-9]/i.test(source[index + keyword.length] ?? ""),
+      )
+    ) {
+      return source.slice(0, index).trim();
+    }
+  }
+  return source.trim();
 }
 
 function readSqlDeletePredicateSource(source: string, position: number): string {
@@ -2004,19 +2312,22 @@ function readSqlAssignedFields(setClause: string): string[] {
 type ObservedSqlPredicate = {
   field: string;
   operator: string;
+  qualifier: string | null;
   value: string;
 };
 
 function findMissingSqlPredicates(
-  predicateSource: string,
+  mutation: SqlMutation,
   requirements: readonly SqlPredicateRequirement[],
 ): string[] {
-  const observed = readConjunctiveSqlPredicates(predicateSource);
+  const observed = readConjunctiveSqlPredicates(mutation.predicateSource);
   return requirements
     .filter(
       (requirement) =>
         !observed.some(
           (candidate) =>
+            (candidate.qualifier === null ||
+              candidate.qualifier === (mutation.targetAlias ?? mutation.table)) &&
             candidate.field === requirement.field &&
             candidate.operator === requirement.operator &&
             candidate.value === canonicalExpectedSqlPredicateValue(requirement.value),
@@ -2110,12 +2421,13 @@ function sqlBooleanKeywordPositions(
 function readSqlPredicates(source: string): ObservedSqlPredicate[] {
   const predicates: ObservedSqlPredicate[] = [];
   const pattern =
-    /\b(?:[a-z_][\w]*\.)?([a-z_][\w]*)\s*(is\s+not|is|<>|!=|=)\s*('(?:''|[^'])*'|null|true|false|-?\d+(?:\.\d+)?|[a-z_][\w]*(?:\.[a-z_][\w]*)?)/gi;
+    /\b(?:([a-z_][\w]*)\.)?([a-z_][\w]*)\s*(is\s+not|is|<>|!=|=)\s*('(?:''|[^'])*'|null|true|false|-?\d+(?:\.\d+)?|[a-z_][\w]*(?:\.[a-z_][\w]*)?)/gi;
   for (const match of source.matchAll(pattern)) {
     predicates.push({
-      field: match[1]!.toLowerCase(),
-      operator: match[2]!.replace(/\s+/g, " ").toLowerCase(),
-      value: canonicalObservedSqlPredicateValue(match[3]!),
+      field: match[2]!.toLowerCase(),
+      operator: match[3]!.replace(/\s+/g, " ").toLowerCase(),
+      qualifier: match[1]?.toLowerCase() ?? null,
+      value: canonicalObservedSqlPredicateValue(match[4]!),
     });
   }
   return predicates;
@@ -2318,6 +2630,10 @@ function isProtectedTable(value: string | null): value is ProtectedTable {
 }
 
 function recoveryTransitionUsageKey(ownerId: string, transitionIndex: number): string {
+  return `${ownerId}:${transitionIndex}`;
+}
+
+function sqlMigrationTransitionUsageKey(ownerId: string, transitionIndex: number): string {
   return `${ownerId}:${transitionIndex}`;
 }
 

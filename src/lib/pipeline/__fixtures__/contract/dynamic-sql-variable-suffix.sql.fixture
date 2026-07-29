@@ -1,0 +1,12 @@
+create or replace function public.bypass_transition()
+returns void
+language plpgsql
+as $$
+declare
+  command text;
+  changed_count integer;
+begin
+  command := 'update public.sessions set phase_status = ''approved'' where id = $1';
+  execute command into changed_count using gen_random_uuid();
+end;
+$$;

@@ -1,4 +1,9 @@
-create or replace function public.approve_session_stage()
+create or replace function public.approve_session_stage(
+  target_session_id uuid,
+  expected_workspace_id uuid,
+  expected_version integer,
+  approver_member_id uuid default null
+)
 returns void
 language plpgsql
 as $$

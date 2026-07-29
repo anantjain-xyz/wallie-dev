@@ -1,0 +1,11 @@
+export async function rerouteSandboxDirectly(admin: any) {
+  await admin
+    .from("agent_runs")
+    .update({
+      sandbox_connection_revision: "revision-2",
+      sandbox_provider: "vercel",
+      sandbox_vercel_project_id: "project-2",
+      sandbox_vercel_team_id: "team-2",
+    })
+    .eq("id", "run-1");
+}

@@ -1,0 +1,8 @@
+create or replace function public.approve_session_stage(message text)
+returns void
+language plpgsql
+as $$
+begin
+  raise notice '%', message;
+end;
+$$;

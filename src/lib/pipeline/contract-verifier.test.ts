@@ -34,6 +34,7 @@ function fixtureContract(
     ...PIPELINE_TRANSITION_CONTRACT,
     ordinaryOwners: [],
     recoveryOwners: [],
+    sqlMigrationOwners: [],
     sqlOwners: [],
     ...overrides,
   };
@@ -168,6 +169,34 @@ describe("pipeline contract verifier", () => {
       expect.objectContaining({
         code: "pipeline-owner",
         message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
+  it("protects job dedupe identity from direct updates", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("direct-dedupe-key", "src/features/unsafe-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("claim_next_agent_job"),
+      }),
+    ]);
+  });
+
+  it("protects persisted sandbox routing metadata from direct updates", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("direct-sandbox-routing", "src/features/unsafe-transition.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("processor run lifecycle helpers"),
       }),
     ]);
   });
@@ -528,6 +557,20 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it("rejects a protected variable-held transition with EXECUTE INTO/USING clauses", () => {
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("dynamic-sql-variable-suffix", "supabase/migrations/fixture.sql")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
   it("rejects a columnless insert into a protected lifecycle table", () => {
     const diagnostics = verifyPipelineContract(
       [sqlFixture("columnless-insert", "supabase/migrations/fixture.sql")],
@@ -590,6 +633,23 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it("requires SQL CAS predicates to constrain the mutation target rather than a FROM alias", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("sql-owner-foreign-qualifier", "supabase/migrations/fixture.sql")],
+      fixtureContract({ sqlOwners: [approvalOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        message: expect.stringContaining("phase_status"),
+      }),
+    ]);
+  });
+
   it("enforces SQL CAS on the effective latest RPC redefinition", () => {
     const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
       (owner) => owner.id === "stage-approval-rpc",
@@ -609,6 +669,49 @@ describe("pipeline contract verifier", () => {
       expect.objectContaining({
         code: "pipeline-cas",
         path: "supabase/migrations/20260801000000_redefine_approval.sql",
+      }),
+    ]);
+  });
+
+  it("tracks the effective SQL owner definition by full function signature", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [
+        sqlFixture(
+          "sql-owner-latest-unsafe",
+          "supabase/migrations/20260801000000_redefine_approval.sql",
+        ),
+        sqlFixture(
+          "sql-owner-unrelated-overload",
+          "supabase/migrations/20260802000000_unrelated_overload.sql",
+        ),
+      ],
+      fixtureContract({ sqlOwners: [approvalOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        path: "supabase/migrations/20260801000000_redefine_approval.sql",
+      }),
+    ]);
+  });
+
+  it("treats ON CONFLICT DO UPDATE as its own protected mutation", () => {
+    const createOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "session-create-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("owned-insert-conflict-update", "supabase/migrations/fixture.sql")],
+      fixtureContract({ sqlOwners: [createOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("does not permit update sessions"),
       }),
     ]);
   });
