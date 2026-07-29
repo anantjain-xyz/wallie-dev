@@ -99,6 +99,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@pgsql/parser':
+        specifier: 1.5.0
+        version: 1.5.0
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
@@ -1171,6 +1174,9 @@ packages:
 
   '@oxc-project/types@0.122.0':
     resolution: {integrity: sha512-oLAl5kBpV4w69UtFZ9xqcmTi+GENWOcPF7FCrczTiBbmC0ibXxCwyvZGbO39rCVEuLGAZM84DH0pUIyyv/YJzA==}
+
+  '@pgsql/parser@1.5.0':
+    resolution: {integrity: sha512-a5Bn0eVj69g8ae9d0jGxfXpq9bhN6hx2DnU7uiQjoSZtpWLgq1aSA1y3qKkilb+Tm1EV9i56PbZBp5rclyeBAw==}
 
   '@playwright/test@1.61.1':
     resolution: {integrity: sha512-8nKv6+0RJSL9FE4jYOEGXnPeM/Hg12qZpmqzZjRh3qM0Y7c3z1mrOTfFLids72RDQYVh9WpLEfR5WdpNX4fkig==}
@@ -5631,6 +5637,8 @@ snapshots:
   '@opentelemetry/semantic-conventions@1.43.0': {}
 
   '@oxc-project/types@0.122.0': {}
+
+  '@pgsql/parser@1.5.0': {}
 
   '@playwright/test@1.61.1':
     dependencies:

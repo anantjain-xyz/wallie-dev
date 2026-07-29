@@ -1,3 +1,8 @@
 # Route ceiling changes require explicit repository-owner review.
 /config/route-budgets.json @anantjain-xyz
 /scripts/check-route-budgets.ts @anantjain-xyz
+
+# Migration changes and the narrow waiver policy require repository-owner review.
+/supabase/migrations/ @anantjain-xyz
+/scripts/check-migration-safety.ts @anantjain-xyz
+/src/lib/supabase/migration-safety.ts @anantjain-xyz
