@@ -78,6 +78,17 @@ describe("renderStagePrompt", () => {
     expect(result).toContain("<<<WALLIE_UNTRUSTED_SESSION_TITLE_1_END>>>");
   });
 
+  it("renders classified values only once inside conditional blocks", () => {
+    const injectedTemplateSyntax = "{{session.prompt}}".repeat(200);
+    const result = renderStagePrompt(stage, {
+      ...baseInput,
+      attemptFeedback: untrustedPromptValue("attempt.feedback", injectedTemplateSyntax),
+    });
+
+    expect(result).toContain(injectedTemplateSyntax);
+    expect(result.match(/Source: session\.prompt/g)).toHaveLength(1);
+  });
+
   it("omits the preamble when trusted operating rules are empty or whitespace", () => {
     expect(
       renderStagePrompt(stage, {

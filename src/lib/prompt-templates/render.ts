@@ -25,8 +25,10 @@ export function renderTemplate(template: string, variables: TemplateVariables): 
     (_match, key: string, body: string) => {
       const value = resolveVariable(key, variables);
       if (isTruthy(value)) {
-        // Recursively render the body so nested variables are resolved.
-        return renderTemplate(body, variables);
+        // Keep substitutions for the single variable pass below. Recursing
+        // here would let template syntax inside an inserted value be parsed
+        // again by the outer render.
+        return body;
       }
       return "";
     },
