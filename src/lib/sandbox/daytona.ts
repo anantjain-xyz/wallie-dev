@@ -16,6 +16,7 @@ import type {
 
 const REPO_PATH = "/home/daytona/wallie/repo";
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const MAX_CREATE_TIMEOUT_SECONDS = 30 * 60;
 const DAYTONA_CLOUD_API_URL = "https://app.daytona.io/api";
 
 type DaytonaConnection = Extract<SandboxConnection, { provider: "daytona" }>;
@@ -173,7 +174,9 @@ export async function createDaytonaSessionSandbox(
         resources: { cpu: 2, disk: 10, memory: 4 },
         ttlMinutes: Math.ceil(timeoutMs / 60_000) + 10,
       },
-      { timeout: Math.max(60, Math.ceil(timeoutMs / 1000)) },
+      {
+        timeout: Math.min(MAX_CREATE_TIMEOUT_SECONDS, Math.max(60, Math.ceil(timeoutMs / 1000))),
+      },
     );
   } catch (error) {
     await client[Symbol.asyncDispose]();

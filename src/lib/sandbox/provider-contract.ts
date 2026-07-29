@@ -92,6 +92,9 @@ const DEFAULT_DEADLINES = {
 
 const DAYTONA_DEADLINES = {
   ...DEFAULT_DEADLINES,
+  // Daytona provisioning is capped at 30 minutes in the driver. Reserve the
+  // remaining window for driver loading, ownership publication, and setup.
+  acquire: 45 * 60_000,
   // Daytona's delete call has its own 60-second timeout. Keep the provider
   // contract outside that window so the SDK can finish or fail first.
   stopById: 65_000,

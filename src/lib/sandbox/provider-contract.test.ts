@@ -79,6 +79,13 @@ describe("sandbox provider contract verifier", () => {
     expect(SANDBOX_PROVIDER_CONTRACTS.daytona.deadlines.stopById).toBeGreaterThan(60_000);
   });
 
+  it("reserves setup time after Daytona's maximum provisioning window", () => {
+    const acquireDeadline = SANDBOX_PROVIDER_CONTRACTS.daytona.deadlines.acquire;
+    const maximumProvisioningTime = 30 * 60_000;
+
+    expect(acquireDeadline - maximumProvisioningTime).toBeGreaterThanOrEqual(10 * 60_000);
+  });
+
   it.each(SANDBOX_PROVIDER_IDS)(
     "declares agent-specific capability requirements for %s",
     (provider) => {
