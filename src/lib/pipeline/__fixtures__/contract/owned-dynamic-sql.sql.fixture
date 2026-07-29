@@ -3,6 +3,6 @@ returns void
 language plpgsql
 as $$
 begin
-  execute 'update public.sessions set phase_status = ''approved'' where id = gen_random_uuid()';
+  execute 'update public.sessions set phase_status = ''approved'' where id = target_session_id and workspace_id = expected_workspace_id and current_artifact_version = expected_version and phase_status = ''awaiting_review'' and archived_at is null';
 end;
 $$;

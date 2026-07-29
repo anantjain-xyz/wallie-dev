@@ -54,7 +54,12 @@ describe("pipeline contract verifier", () => {
                 fields: ["phase_status"],
                 functionName: "processPipelineJob",
                 operation: "update",
-                requiredPredicates: ["archived_at", "phase_status"],
+                requiredPredicates: [
+                  [
+                    { field: "archived_at", method: "is", value: null },
+                    { field: "phase_status", method: "eq", value: "rejected" },
+                  ],
+                ],
                 table: "sessions",
               },
             ],
@@ -97,7 +102,9 @@ describe("pipeline contract verifier", () => {
                 fields: ["phase_status"],
                 functionName: "bypassPipelineContract",
                 operation: "update",
-                requiredPredicates: ["phase_status"],
+                requiredPredicates: [
+                  [{ field: "phase_status", method: "eq", value: "awaiting_review" }],
+                ],
                 table: "sessions",
               },
             ],
@@ -168,6 +175,26 @@ describe("pipeline contract verifier", () => {
     ]);
   });
 
+  it.each(["invalid-cas-operator", "invalid-cas-value"])(
+    "requires the exact expected-state predicate operator and value: %s",
+    (name) => {
+      const sessionOwner = PIPELINE_TRANSITION_CONTRACT.ordinaryOwners.find(
+        (owner) => owner.id === "pipeline-session-transitions",
+      )!;
+      const diagnostics = verifyPipelineContract(
+        [fixture(name, "src/lib/pipeline/processor.ts")],
+        fixtureContract({ ordinaryOwners: [sessionOwner] }),
+      );
+
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          code: "pipeline-cas",
+          message: expect.stringContaining('phase_status eq "agent_generating"'),
+        }),
+      ]);
+    },
+  );
+
   it.each(["owner-field-overreach", "owner-operation-overreach"])(
     "rejects a named owner that exceeds its field or operation permission: %s",
     (name) => {
@@ -208,7 +235,9 @@ describe("pipeline contract verifier", () => {
                   fields: ["phase_status"],
                   functionName,
                   operation: "update",
-                  requiredPredicates: ["phase_status"],
+                  requiredPredicates: [
+                    [{ field: "phase_status", method: "eq", value: "awaiting_review" }],
+                  ],
                   table: "sessions",
                 },
               ],
@@ -240,7 +269,7 @@ describe("pipeline contract verifier", () => {
                 fields: [],
                 functionName: "cleanupQueuedJob",
                 operation: "delete",
-                requiredPredicates: ["status"],
+                requiredPredicates: [[{ field: "status", method: "eq", value: "queued" }]],
                 table: "agent_jobs",
               },
             ],
@@ -279,7 +308,15 @@ describe("pipeline contract verifier", () => {
               fields: ["finished_at", "status"],
               functionName: "cancelSessionWork",
               operation: "update",
-              requiredPredicates: ["status"],
+              requiredPredicates: [
+                [
+                  {
+                    field: "status",
+                    method: "in",
+                    value: ["queued", "started", "running"],
+                  },
+                ],
+              ],
               table: "agent_jobs",
             },
           ],
@@ -306,7 +343,15 @@ describe("pipeline contract verifier", () => {
               fields: ["finished_at", "status"],
               functionName: "sweepStalledRuns",
               operation: "update",
-              requiredPredicates: ["status"],
+              requiredPredicates: [
+                [
+                  {
+                    field: "status",
+                    method: "in",
+                    value: ["queued", "started", "running"],
+                  },
+                ],
+              ],
               table: "agent_runs",
             },
           ],
@@ -339,6 +384,20 @@ describe("pipeline contract verifier", () => {
   it("rejects seeded-stage branching through object and destructured slug aliases", () => {
     const diagnostics = verifyPipelineContract(
       [fixture("seeded-stage-alias", "src/lib/pipeline/generic-runner.ts")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "seeded-stage-branch",
+        path: "src/lib/pipeline/generic-runner.ts",
+      }),
+    ]);
+  });
+
+  it("rejects membership-based seeded-stage branching", () => {
+    const diagnostics = verifyPipelineContract(
+      [fixture("seeded-stage-membership", "src/lib/pipeline/generic-runner.ts")],
       fixtureContract(),
     );
 
@@ -423,6 +482,65 @@ describe("pipeline contract verifier", () => {
       expect.objectContaining({
         code: "pipeline-owner",
         message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
+  it("rejects a protected transition held in a PL/pgSQL variable", () => {
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("dynamic-sql-variable", "supabase/migrations/fixture.sql")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
+  it("rejects a columnless insert into a protected lifecycle table", () => {
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("columnless-insert", "supabase/migrations/fixture.sql")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("claim_next_agent_job"),
+      }),
+    ]);
+  });
+
+  it("rejects protected fields written through a SQL tuple assignment", () => {
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("tuple-update", "supabase/migrations/fixture.sql")],
+      fixtureContract(),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-owner",
+        message: expect.stringContaining("approve_session_stage"),
+      }),
+    ]);
+  });
+
+  it("rejects a transactional SQL owner missing its exact expected-state predicates", () => {
+    const approvalOwner = PIPELINE_TRANSITION_CONTRACT.sqlOwners.find(
+      (owner) => owner.id === "stage-approval-rpc",
+    )!;
+    const diagnostics = verifyPipelineContract(
+      [sqlFixture("sql-owner-missing-cas", "supabase/migrations/fixture.sql")],
+      fixtureContract({ sqlOwners: [approvalOwner] }),
+    );
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pipeline-cas",
+        message: expect.stringContaining("phase_status"),
       }),
     ]);
   });

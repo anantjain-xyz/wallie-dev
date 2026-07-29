@@ -1,0 +1,7 @@
+export function instructionsFor(stage: { slug: string }) {
+  const seededStages = new Set(["plan", "build"]);
+  if (seededStages.has(stage.slug)) {
+    return "seed-specific behavior";
+  }
+  return "generic behavior";
+}

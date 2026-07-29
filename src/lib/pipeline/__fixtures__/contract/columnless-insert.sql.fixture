@@ -1,0 +1,11 @@
+create or replace function public.bypass_transition()
+returns void
+language plpgsql
+as $$
+begin
+  insert into public.agent_jobs
+  select source.*
+  from public.agent_jobs source
+  where source.id = gen_random_uuid();
+end;
+$$;

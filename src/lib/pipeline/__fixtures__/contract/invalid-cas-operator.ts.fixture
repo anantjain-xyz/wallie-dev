@@ -1,0 +1,11 @@
+export async function runStage(admin: any) {
+  await admin
+    .from("sessions")
+    .update({
+      current_artifact_version: 2,
+      phase_status: "awaiting_review",
+    })
+    .eq("id", "session-1")
+    .not("phase_status", "is", null)
+    .is("archived_at", null);
+}

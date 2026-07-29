@@ -2136,6 +2136,46 @@ describe("handleRejection", () => {
     expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
   });
 
+  it("treats the final phase-status CAS as successful when the same-stage rerun finished first", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin, enqueuedJobs, sessionUpdates } = buildRejectionMock({
+      phaseClaim: null,
+      postPhaseSession: baseSession({
+        current_artifact_version: 2,
+        phase_status: "awaiting_review",
+        rejection_count: 1,
+      }),
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      jobId: "job-retry",
+      session: {
+        archivedAt: null,
+        currentArtifactVersion: 2,
+        currentStageId: "stage-product",
+        phaseStatus: "awaiting_review",
+        rejectionCount: 1,
+      },
+      success: true,
+    });
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
+  });
+
   it("returns a race error when approval wins the final phase-status CAS after enqueue", async () => {
     const session = baseSession({
       current_artifact_version: 1,

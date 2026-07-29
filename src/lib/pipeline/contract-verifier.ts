@@ -5,6 +5,9 @@ import ts from "typescript";
 
 type ProtectedTable = "agent_jobs" | "agent_runs" | "sessions";
 type MutationOperation = "delete" | "insert" | "update" | "upsert";
+type PredicateMethod = "eq" | "in" | "is" | "neq" | "not";
+type PredicateScalar = boolean | null | number | string;
+type PredicateValue = PredicateScalar | readonly PredicateScalar[] | { expression: string };
 
 export type PipelineContractFile = {
   path: string;
@@ -29,8 +32,15 @@ type TransitionPermission = {
   fields: readonly string[];
   functionName: string;
   operation: MutationOperation;
-  requiredPredicates: readonly string[];
+  requiredPredicates: readonly (readonly PredicateRequirement[])[];
   table: ProtectedTable;
+};
+
+type PredicateRequirement = {
+  field: string;
+  method: PredicateMethod;
+  operator?: string;
+  value: PredicateValue;
 };
 
 type RecoveryOwner = TransitionOwner & {
@@ -40,6 +50,7 @@ type RecoveryOwner = TransitionOwner & {
 };
 
 type SqlTransitionOwner = {
+  activeDefinitionPath: string;
   canonicalApi: string;
   functionName: string;
   id: string;
@@ -49,7 +60,14 @@ type SqlTransitionOwner = {
 type SqlTransitionPermission = {
   fields: readonly string[];
   operation: MutationOperation;
+  requiredPredicates: readonly SqlPredicateRequirement[];
   table: ProtectedTable;
+};
+
+type SqlPredicateRequirement = {
+  field: string;
+  operator: "=" | "<>" | "!=" | "is" | "is not";
+  value: PredicateValue;
 };
 
 export type PipelineTransitionContract = {
@@ -74,7 +92,7 @@ function transition(
   table: ProtectedTable,
   operation: MutationOperation,
   fields: readonly string[],
-  requiredPredicates: readonly string[] = [],
+  requiredPredicates: readonly (readonly PredicateRequirement[])[] = [],
 ): TransitionPermission {
   return { fields, functionName, operation, requiredPredicates, table };
 }
@@ -83,8 +101,42 @@ function sqlTransition(
   table: ProtectedTable,
   operation: MutationOperation,
   fields: readonly string[],
+  requiredPredicates: readonly SqlPredicateRequirement[] = [],
 ): SqlTransitionPermission {
-  return { fields, operation, table };
+  return { fields, operation, requiredPredicates, table };
+}
+
+function predicate(
+  field: string,
+  method: PredicateMethod,
+  value: PredicateValue,
+  operator?: string,
+): PredicateRequirement {
+  return { field, method, ...(operator ? { operator } : {}), value };
+}
+
+function predicates(
+  ...requirements: readonly PredicateRequirement[]
+): readonly (readonly PredicateRequirement[])[] {
+  return [requirements];
+}
+
+function predicateAlternatives(
+  ...alternatives: readonly (readonly PredicateRequirement[])[]
+): readonly (readonly PredicateRequirement[])[] {
+  return alternatives;
+}
+
+function expression(value: string): PredicateValue {
+  return { expression: value };
+}
+
+function sqlPredicate(
+  field: string,
+  operator: SqlPredicateRequirement["operator"],
+  value: PredicateValue,
+): SqlPredicateRequirement {
+  return { field, operator, value };
 }
 
 export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
@@ -110,36 +162,58 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "sessions",
           "update",
           ["phase_status"],
-          ["archived_at", "phase_status"],
+          predicates(
+            predicate("archived_at", "is", null),
+            predicate("phase_status", "in", ["agent_generating", "awaiting_review", "rejected"]),
+          ),
         ),
         transition(
           "runStage",
           "sessions",
           "update",
           ["current_artifact_version", "phase_status"],
-          ["archived_at", "phase_status"],
+          predicates(
+            predicate("archived_at", "is", null),
+            predicate("phase_status", "eq", "agent_generating"),
+          ),
         ),
         transition(
           "handleRejection",
           "sessions",
           "update",
           ["rejection_count"],
-          ["archived_at", "current_artifact_version", "phase_status", "rejection_count"],
+          predicates(
+            predicate("archived_at", "is", null),
+            predicate("current_artifact_version", "eq", expression("input.version")),
+            predicate("phase_status", "eq", "awaiting_review"),
+            predicate("rejection_count", "eq", expression("session.rejection_count")),
+          ),
         ),
         transition(
           "handleRejection",
           "sessions",
           "update",
           ["phase_status"],
-          ["archived_at", "current_artifact_version", "phase_status", "rejection_count"],
+          predicates(
+            predicate("archived_at", "is", null),
+            predicate("current_artifact_version", "eq", expression("input.version")),
+            predicate("phase_status", "eq", "awaiting_review"),
+            predicate("rejection_count", "eq", expression("session.rejection_count + 1")),
+          ),
         ),
-        transition("updateSessionStatus", "sessions", "update", ["phase_status"], ["phase_status"]),
+        transition(
+          "updateSessionStatus",
+          "sessions",
+          "update",
+          ["phase_status"],
+          predicates(predicate("phase_status", "eq", "agent_generating")),
+        ),
         transition(
           "updateSessionStatusAfterStageFailure",
           "sessions",
           "update",
           ["current_artifact_version", "phase_status"],
-          ["phase_status"],
+          predicates(predicate("phase_status", "eq", "awaiting_review")),
         ),
       ],
     },
@@ -148,21 +222,27 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       id: "pipeline-job-transitions",
       path: "src/lib/pipeline/processor.ts",
       transitions: [
-        transition("cleanupQueuedJob", "agent_jobs", "delete", [], ["status"]),
+        transition(
+          "cleanupQueuedJob",
+          "agent_jobs",
+          "delete",
+          [],
+          predicates(predicate("status", "eq", "queued")),
+        ),
         transition("enqueueSessionJobWithRun", "agent_jobs", "insert", []),
         transition(
           "markPipelineJobSuccess",
           "agent_jobs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "neq", "canceled")),
         ),
         transition(
           "markPipelineJobError",
           "agent_jobs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "neq", "canceled")),
         ),
       ],
     },
@@ -172,12 +252,42 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       path: "src/lib/pipeline/processor.ts",
       transitions: [
         transition("enqueueSessionJobWithRun", "agent_runs", "insert", []),
-        transition("startAgentRun", "agent_runs", "update", ["started_at", "status"], ["status"]),
+        transition(
+          "startAgentRun",
+          "agent_runs",
+          "update",
+          ["started_at", "status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
+        ),
         transition("startAgentRun", "agent_runs", "insert", ["started_at", "status"]),
-        transition("updateRunSandbox", "agent_runs", "update", ["sandbox_id"], ["status"]),
-        transition("markRunSuccess", "agent_runs", "update", ["finished_at", "status"], ["status"]),
-        transition("markRunError", "agent_runs", "update", ["finished_at", "status"], ["status"]),
-        transition("touchRunActivity", "agent_runs", "update", ["last_activity_at"], ["status"]),
+        transition(
+          "updateRunSandbox",
+          "agent_runs",
+          "update",
+          ["sandbox_id"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
+        ),
+        transition(
+          "markRunSuccess",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
+        ),
+        transition(
+          "markRunError",
+          "agent_runs",
+          "update",
+          ["finished_at", "status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
+        ),
+        transition(
+          "touchRunActivity",
+          "agent_runs",
+          "update",
+          ["last_activity_at"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
+        ),
       ],
     },
     {
@@ -185,8 +295,23 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       id: "session-archive-transitions",
       path: "src/lib/pipeline/archive.ts",
       transitions: [
-        transition("archiveSession", "sessions", "update", ["archived_at"], ["archived_at"]),
-        transition("unarchiveSession", "sessions", "update", ["archived_at"], ["archived_at"]),
+        transition(
+          "archiveSession",
+          "sessions",
+          "update",
+          ["archived_at"],
+          predicates(predicate("archived_at", "is", null)),
+        ),
+        transition(
+          "unarchiveSession",
+          "sessions",
+          "update",
+          ["archived_at"],
+          predicateAlternatives(
+            [predicate("archived_at", "eq", expression("input.expectedArchivedAt"))],
+            [predicate("archived_at", "not", null, "is")],
+          ),
+        ),
       ],
     },
     {
@@ -199,9 +324,15 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "agent_jobs",
           "update",
           ["attempt_count", "started_at", "status"],
-          ["status"],
+          predicates(predicate("status", "eq", "queued")),
         ),
-        transition("cleanupQueuedJob", "agent_jobs", "delete", [], ["status"]),
+        transition(
+          "cleanupQueuedJob",
+          "agent_jobs",
+          "delete",
+          [],
+          predicates(predicate("status", "eq", "queued")),
+        ),
         transition("createQueuedRun", "agent_jobs", "insert", []),
       ],
     },
@@ -216,7 +347,13 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       id: "worker-job-result-transition",
       path: "src/worker/loop.ts",
       transitions: [
-        transition("markJobError", "agent_jobs", "update", ["finished_at", "status"], ["status"]),
+        transition(
+          "markJobError",
+          "agent_jobs",
+          "update",
+          ["finished_at", "status"],
+          predicates(predicate("status", "neq", "canceled")),
+        ),
       ],
     },
     {
@@ -224,7 +361,13 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
       id: "worker-run-activity-transition",
       path: "src/worker/loop.ts",
       transitions: [
-        transition("runClaimedJob", "agent_runs", "update", ["last_activity_at"], ["status"]),
+        transition(
+          "runClaimedJob",
+          "agent_runs",
+          "update",
+          ["last_activity_at"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
+        ),
       ],
     },
   ],
@@ -240,29 +383,35 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "agent_jobs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
         transition(
           "cancelSessionWork",
           "agent_runs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
-        transition("cancelSessionWork", "sessions", "update", ["phase_status"], ["phase_status"]),
+        transition(
+          "cancelSessionWork",
+          "sessions",
+          "update",
+          ["phase_status"],
+          predicates(predicate("phase_status", "eq", "agent_generating")),
+        ),
         transition(
           "cancelWorkspaceWork",
           "agent_jobs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
         transition(
           "cancelWorkspaceWork",
           "agent_runs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
       ],
     },
@@ -277,7 +426,9 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "sessions",
           "update",
           ["archived_at", "phase_status"],
-          ["phase_status"],
+          predicates(
+            predicate("phase_status", "in", ["agent_generating", "awaiting_review", "rejected"]),
+          ),
         ),
         transition(
           "routeSessionToStage",
@@ -290,7 +441,9 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
             "phase_status",
             "rejection_count",
           ],
-          ["phase_status"],
+          predicates(
+            predicate("phase_status", "in", ["agent_generating", "awaiting_review", "rejected"]),
+          ),
         ),
         transition("ensurePipelineJobQueued", "agent_jobs", "insert", []),
       ],
@@ -306,15 +459,21 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "agent_runs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
-        transition("sweepStalledRuns", "sessions", "update", ["phase_status"], ["phase_status"]),
+        transition(
+          "sweepStalledRuns",
+          "sessions",
+          "update",
+          ["phase_status"],
+          predicates(predicate("phase_status", "eq", "agent_generating")),
+        ),
         transition(
           "resolveStalledJob",
           "agent_jobs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "eq", "running")),
         ),
       ],
     },
@@ -329,14 +488,14 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "agent_runs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
         transition(
           "markActiveRunsForJobError",
           "agent_runs",
           "update",
           ["finished_at", "status"],
-          ["status"],
+          predicates(predicate("status", "in", ["queued", "started", "running"])),
         ),
       ],
     },
@@ -351,7 +510,7 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
           "sessions",
           "update",
           ["phase_status"],
-          ["phase_status"],
+          predicates(predicate("phase_status", "eq", "agent_generating")),
         ),
       ],
     },
@@ -376,55 +535,92 @@ export const PIPELINE_TRANSITION_CONTRACT: PipelineTransitionContract = {
   ],
   sqlOwners: [
     {
+      activeDefinitionPath:
+        "supabase/migrations/20260722000000_any_workspace_member_stage_approval.sql",
       canonicalApi: "Use the approve_session_stage transactional RPC.",
       functionName: "public.approve_session_stage",
       id: "stage-approval-rpc",
       transitions: [
-        sqlTransition("sessions", "update", ["phase_status"]),
-        sqlTransition("sessions", "update", ["archived_at"]),
-        sqlTransition("sessions", "update", [
-          "current_artifact_version",
-          "current_stage_id",
-          "phase_status",
-          "rejection_count",
-        ]),
+        sqlTransition(
+          "sessions",
+          "update",
+          ["phase_status"],
+          [
+            sqlPredicate("id", "=", expression("target_session_id")),
+            sqlPredicate("workspace_id", "=", expression("expected_workspace_id")),
+            sqlPredicate("current_artifact_version", "=", expression("expected_version")),
+            sqlPredicate("phase_status", "=", "awaiting_review"),
+            sqlPredicate("archived_at", "is", null),
+          ],
+        ),
+        sqlTransition(
+          "sessions",
+          "update",
+          ["archived_at"],
+          [sqlPredicate("id", "=", expression("target_session_id"))],
+        ),
+        sqlTransition(
+          "sessions",
+          "update",
+          ["current_artifact_version", "current_stage_id", "phase_status", "rejection_count"],
+          [sqlPredicate("id", "=", expression("target_session_id"))],
+        ),
       ],
     },
     {
+      activeDefinitionPath: "supabase/migrations/20260422000000_init.sql",
       canonicalApi: "Use the claim_agent_job transactional RPC.",
       functionName: "public.claim_agent_job",
       id: "legacy-job-claim-rpc",
       transitions: [
-        sqlTransition("agent_jobs", "update", [
-          "attempt_count",
-          "scheduled_at",
-          "started_at",
-          "status",
-        ]),
+        sqlTransition(
+          "agent_jobs",
+          "update",
+          ["attempt_count", "scheduled_at", "started_at", "status"],
+          [
+            sqlPredicate("id", "=", expression("target_job_id")),
+            sqlPredicate("status", "=", "queued"),
+          ],
+        ),
       ],
     },
     {
+      activeDefinitionPath:
+        "supabase/migrations/20260721000001_add_e2b_daytona_sandbox_providers.sql",
       canonicalApi: "Use the claim_next_agent_job transactional RPC.",
       functionName: "public.claim_next_agent_job",
       id: "worker-job-claim-rpc",
       transitions: [
-        sqlTransition("agent_jobs", "update", [
-          "attempt_count",
-          "scheduled_at",
-          "started_at",
-          "status",
-        ]),
+        sqlTransition(
+          "agent_jobs",
+          "update",
+          ["attempt_count", "scheduled_at", "started_at", "status"],
+          [
+            sqlPredicate("id", "=", expression("candidate.id")),
+            sqlPredicate("status", "=", "queued"),
+          ],
+        ),
       ],
     },
     {
+      activeDefinitionPath: "supabase/migrations/20260607000002_guard_schedule_job_retry.sql",
       canonicalApi: "Use the schedule_job_retry transactional RPC.",
       functionName: "public.schedule_job_retry",
       id: "job-retry-rpc",
       transitions: [
-        sqlTransition("agent_jobs", "update", ["finished_at", "scheduled_at", "status"]),
+        sqlTransition(
+          "agent_jobs",
+          "update",
+          ["finished_at", "scheduled_at", "status"],
+          [
+            sqlPredicate("id", "=", expression("target_job_id")),
+            sqlPredicate("status", "<>", "canceled"),
+          ],
+        ),
       ],
     },
     {
+      activeDefinitionPath: "supabase/migrations/20260718000003_create_session_with_first_job.sql",
       canonicalApi: "Use the create_session_with_first_job transactional RPC.",
       functionName: "public.create_session_with_first_job",
       id: "session-create-rpc",
@@ -495,11 +691,14 @@ export function verifyPipelineContract(
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
   const usedRecoveryTransitions = new Set<string>();
+  const availablePaths = new Set(files.map((file) => normalizePath(file.path)));
 
   for (const file of files) {
     const normalizedPath = normalizePath(file.path);
     if (normalizedPath.endsWith(".sql")) {
-      diagnostics.push(...verifySqlFile({ ...file, path: normalizedPath }, contract));
+      diagnostics.push(
+        ...verifySqlFile({ ...file, path: normalizedPath }, contract, availablePaths),
+      );
       continue;
     }
     if (!normalizedPath.endsWith(".ts") && !normalizedPath.endsWith(".tsx")) {
@@ -994,19 +1193,47 @@ function findTransitionPermission(
 function findMissingPredicates(
   mutation: Mutation,
   context: SourceContext,
-  requiredPredicates: readonly string[],
+  requiredPredicateAlternatives: readonly (readonly PredicateRequirement[])[],
 ): string[] {
-  const predicateFields = new Set<string>();
-  collectOuterPredicates(mutation.call, mutation.call.getStart(), context, predicateFields);
+  if (requiredPredicateAlternatives.length === 0) {
+    return [];
+  }
+  const observedPredicates: ObservedPredicate[] = [];
+  collectOuterPredicates(mutation.call, mutation.call.getStart(), context, observedPredicates);
+  const missingAlternatives = requiredPredicateAlternatives.map((requirements) =>
+    requirements.filter(
+      (requirement) =>
+        !observedPredicates.some((observed) => predicatesMatch(requirement, observed)),
+    ),
+  );
+  if (missingAlternatives.some((missing) => missing.length === 0)) {
+    return [];
+  }
+  const closest = [...missingAlternatives].sort((left, right) => left.length - right.length)[0]!;
+  return closest.map(formatPredicateRequirement);
+}
 
-  return requiredPredicates.filter((field) => !predicateFields.has(field));
+type ObservedPredicate = {
+  field: string;
+  method: PredicateMethod;
+  operator?: string;
+  value: string;
+};
+
+function predicatesMatch(requirement: PredicateRequirement, observed: ObservedPredicate): boolean {
+  return (
+    requirement.field === observed.field &&
+    requirement.method === observed.method &&
+    requirement.operator === observed.operator &&
+    canonicalExpectedPredicateValue(requirement.value) === observed.value
+  );
 }
 
 function collectOuterPredicates(
   mutationCall: ts.CallExpression,
   position: number,
   context: SourceContext,
-  fields: Set<string>,
+  predicates: ObservedPredicate[],
 ): void {
   let expression: ts.Expression = mutationCall;
   while (
@@ -1020,10 +1247,74 @@ function collectOuterPredicates(
     const method = expression.parent.name.text;
     if (PREDICATE_METHODS.has(method)) {
       const field = readString(outerCall.arguments[0], position, context);
-      if (field) fields.add(field);
+      const predicateMethod = method as PredicateMethod;
+      const operator =
+        predicateMethod === "not"
+          ? (readString(outerCall.arguments[1], position, context) ?? undefined)
+          : undefined;
+      const valueExpression =
+        predicateMethod === "not" ? outerCall.arguments[2] : outerCall.arguments[1];
+      if (field && valueExpression) {
+        predicates.push({
+          field,
+          method: predicateMethod,
+          ...(operator ? { operator } : {}),
+          value: canonicalObservedPredicateValue(valueExpression, position, context),
+        });
+      }
     }
     expression = outerCall;
   }
+}
+
+function canonicalObservedPredicateValue(
+  value: ts.Expression,
+  position: number,
+  context: SourceContext,
+): string {
+  const resolved = resolveExpression(value, position, context);
+  if (ts.isStringLiteralLike(resolved)) return canonicalScalar(resolved.text);
+  if (ts.isNumericLiteral(resolved)) return canonicalScalar(Number(resolved.text));
+  if (resolved.kind === ts.SyntaxKind.NullKeyword) return canonicalScalar(null);
+  if (resolved.kind === ts.SyntaxKind.TrueKeyword) return canonicalScalar(true);
+  if (resolved.kind === ts.SyntaxKind.FalseKeyword) return canonicalScalar(false);
+  if (ts.isArrayLiteralExpression(resolved)) {
+    const values = resolved.elements.map((element) =>
+      canonicalObservedPredicateValue(element as ts.Expression, position, context),
+    );
+    return `array:${JSON.stringify(values)}`;
+  }
+  return `expression:${normalizeExpressionText(resolved.getText(context.sourceFile))}`;
+}
+
+function canonicalExpectedPredicateValue(value: PredicateValue): string {
+  if (Array.isArray(value)) {
+    return `array:${JSON.stringify(value.map(canonicalScalar))}`;
+  }
+  if (typeof value === "object" && value !== null && "expression" in value) {
+    return `expression:${normalizeExpressionText(value.expression)}`;
+  }
+  return canonicalScalar(value as PredicateScalar);
+}
+
+function canonicalScalar(value: PredicateScalar): string {
+  return `scalar:${JSON.stringify(value)}`;
+}
+
+function normalizeExpressionText(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+function formatPredicateRequirement(requirement: PredicateRequirement): string {
+  const operator = requirement.operator ? ` ${requirement.operator}` : "";
+  const value =
+    typeof requirement.value === "object" &&
+    requirement.value !== null &&
+    !Array.isArray(requirement.value) &&
+    "expression" in requirement.value
+      ? requirement.value.expression
+      : JSON.stringify(requirement.value);
+  return `${requirement.field} ${requirement.method}${operator} ${value}`;
 }
 
 function sameFields(left: readonly string[], right: readonly string[]): boolean {
@@ -1044,6 +1335,16 @@ function isSeededStageBranch(
   context: SourceContext,
   seededSlugs: readonly string[],
 ): boolean {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    (node.expression.name.text === "includes" || node.expression.name.text === "has") &&
+    node.arguments[0] &&
+    isStageSlugExpression(node.arguments[0], node.getStart(), context) &&
+    isSeededSlugCollection(node.expression.expression, node.getStart(), context, seededSlugs)
+  ) {
+    return true;
+  }
   if (ts.isBinaryExpression(node) && isEqualityOperator(node.operatorToken.kind)) {
     return (
       (isStageSlugExpression(node.left, node.getStart(), context) &&
@@ -1061,6 +1362,27 @@ function isSeededStageBranch(
     );
   }
   return false;
+}
+
+function isSeededSlugCollection(
+  expressionNode: ts.Expression,
+  position: number,
+  context: SourceContext,
+  seededSlugs: readonly string[],
+): boolean {
+  const resolved = resolveExpression(expressionNode, position, context);
+  if (ts.isArrayLiteralExpression(resolved)) {
+    return resolved.elements.some((element) =>
+      isSeededSlugExpression(element as ts.Expression, position, context, seededSlugs),
+    );
+  }
+  return Boolean(
+    ts.isNewExpression(resolved) &&
+    ts.isIdentifier(resolved.expression) &&
+    resolved.expression.text === "Set" &&
+    resolved.arguments?.[0] &&
+    isSeededSlugCollection(resolved.arguments[0], position, context, seededSlugs),
+  );
 }
 
 function isEqualityOperator(kind: ts.SyntaxKind): boolean {
@@ -1169,6 +1491,7 @@ function isSeededSlugExpression(
 function verifySqlFile(
   file: PipelineContractFile,
   contract: PipelineTransitionContract,
+  availablePaths: ReadonlySet<string>,
 ): PipelineContractDiagnostic[] {
   const diagnostics: PipelineContractDiagnostic[] = [];
   const commentMaskedSource = maskSqlComments(file.source);
@@ -1178,8 +1501,16 @@ function verifySqlFile(
     const owner = contract.sqlOwners.find(
       (candidate) => candidate.functionName === sqlFunction.name,
     );
+    const enforceOwnerPredicates = Boolean(
+      owner &&
+      (!availablePaths.has(owner.activeDefinitionPath) || file.path === owner.activeDefinitionPath),
+    );
     const mutations = [
-      ...readSqlMutations(maskSqlStringLiterals(sqlFunction.body), sqlFunction.bodyStart),
+      ...readSqlMutations(
+        maskSqlStringLiterals(sqlFunction.body),
+        sqlFunction.bodyStart,
+        sqlFunction.body,
+      ),
       ...readExecutedSqlMutations(sqlFunction.body, sqlFunction.bodyStart),
     ];
     for (const mutation of mutations) {
@@ -1187,18 +1518,22 @@ function verifySqlFile(
       const writesProtectedState =
         mutation.operation === "delete" ||
         mutation.operation === "insert" ||
+        protectedFields === null ||
         protectedFields.length > 0;
       if (!writesProtectedState) continue;
-      const permission = owner?.transitions.find(
-        (candidate) =>
-          candidate.table === mutation.table &&
-          candidate.operation === mutation.operation &&
-          sameFields(candidate.fields, protectedFields),
-      );
+      const permission =
+        protectedFields === null
+          ? undefined
+          : owner?.transitions.find(
+              (candidate) =>
+                candidate.table === mutation.table &&
+                candidate.operation === mutation.operation &&
+                sameFields(candidate.fields, protectedFields),
+            );
       if (!permission) {
         const ownerMessage = owner
           ? `${owner.id} does not permit ${mutation.operation} ${mutation.table} fields ${
-              protectedFields.join(", ") || "(row lifecycle)"
+              protectedFields?.join(", ") || "(unresolved row lifecycle)"
             }. ${owner.canonicalApi}`
           : `SQL function ${sqlFunction.name} writes protected ${
               mutation.table
@@ -1209,6 +1544,21 @@ function verifySqlFile(
           message: ownerMessage,
           path: file.path,
         });
+      } else if (enforceOwnerPredicates) {
+        const missingPredicates = findMissingSqlPredicates(
+          mutation.predicateSource,
+          permission.requiredPredicates,
+        );
+        if (missingPredicates.length > 0) {
+          diagnostics.push({
+            code: "pipeline-cas",
+            line: lineAt(file.source, mutation.position),
+            message: `${owner!.id} writes protected ${mutation.table} state without required SQL expected-state predicate${
+              missingPredicates.length === 1 ? "" : "s"
+            }: ${missingPredicates.join(", ")}. ${owner!.canonicalApi}`,
+            path: file.path,
+          });
+        }
       }
     }
 
@@ -1226,11 +1576,12 @@ function verifySqlFile(
   }
 
   const maskedSource = maskSpans(commentMaskedSource, functionSpans);
-  for (const mutation of readSqlMutations(maskSqlStringLiterals(maskedSource), 0)) {
+  for (const mutation of readSqlMutations(maskSqlStringLiterals(maskedSource), 0, maskedSource)) {
     const protectedFields = readProtectedSqlFields(mutation, contract);
     const writesProtectedState =
       mutation.operation === "delete" ||
       mutation.operation === "insert" ||
+      protectedFields === null ||
       protectedFields.length > 0;
     if (writesProtectedState) {
       diagnostics.push({
@@ -1283,33 +1634,48 @@ function readSqlFunctions(source: string): SqlFunctionSpan[] {
 
 type SqlMutation = {
   fields: string[];
+  fieldsKnown: boolean;
   operation: MutationOperation;
+  predicateSource: string;
   position: number;
   table: ProtectedTable;
 };
 
-function readSqlMutations(source: string, offset: number): SqlMutation[] {
+function readSqlMutations(source: string, offset: number, originalSource = source): SqlMutation[] {
   const mutations: SqlMutation[] = [];
   const updatePattern =
-    /\bupdate\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s+(?:as\s+)?[a-z_][\w]*)?\s+set\s+([\s\S]*?)(?=\bwhere\b|\breturning\b|;)/gi;
+    /\bupdate\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s+(?:as\s+)?[a-z_][\w]*)?\s+set\s+([\s\S]*?)(?=\breturning\b|;|$)/gi;
   for (const match of source.matchAll(updatePattern)) {
+    const maskedBody = match[2] ?? "";
+    const bodyStart = (match.index ?? 0) + match[0].length - maskedBody.length;
+    const originalBody = originalSource.slice(bodyStart, bodyStart + maskedBody.length);
+    const whereMatch = /\bwhere\b/i.exec(maskedBody);
+    const setClause = whereMatch ? originalBody.slice(0, whereMatch.index) : originalBody;
+    const predicateSource = whereMatch
+      ? originalBody.slice(whereMatch.index + whereMatch[0].length)
+      : "";
     mutations.push({
-      fields: readSqlAssignedFields(match[2] ?? ""),
+      fields: readSqlAssignedFields(setClause),
+      fieldsKnown: true,
       operation: "update",
+      predicateSource,
       position: offset + (match.index ?? 0),
       table: match[1]!.toLowerCase() as ProtectedTable,
     });
   }
 
   const insertPattern =
-    /\binsert\s+into\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\s*\(([\s\S]*?)\)/gi;
+    /\binsert\s+into\s+(?:public\.)?(sessions|agent_jobs|agent_runs)\b(?:\s*\(([\s\S]*?)\))?/gi;
   for (const match of source.matchAll(insertPattern)) {
+    const fieldList = match[2];
     mutations.push({
-      fields: (match[2] ?? "")
+      fields: (fieldList ?? "")
         .split(",")
         .map((field) => field.trim().replaceAll('"', "").toLowerCase())
         .filter(Boolean),
+      fieldsKnown: fieldList !== undefined,
       operation: "insert",
+      predicateSource: "",
       position: offset + (match.index ?? 0),
       table: match[1]!.toLowerCase() as ProtectedTable,
     });
@@ -1319,7 +1685,9 @@ function readSqlMutations(source: string, offset: number): SqlMutation[] {
   for (const match of source.matchAll(deletePattern)) {
     mutations.push({
       fields: [],
+      fieldsKnown: true,
       operation: "delete",
+      predicateSource: readSqlDeletePredicateSource(source, match.index ?? 0),
       position: offset + (match.index ?? 0),
       table: match[1]!.toLowerCase() as ProtectedTable,
     });
@@ -1330,12 +1698,43 @@ function readSqlMutations(source: string, offset: number): SqlMutation[] {
 function readExecutedSqlMutations(source: string, offset: number): SqlMutation[] {
   const mutations: SqlMutation[] = [];
   for (const statement of readSqlExecuteStatements(source)) {
-    const literalSql = readSqlStringValues(statement.expression).join(" ");
+    const literalSql = resolveExecutedSql(statement.expression, source, statement.position);
     for (const mutation of readSqlMutations(literalSql, 0)) {
       mutations.push({ ...mutation, position: offset + statement.position });
     }
   }
   return mutations;
+}
+
+function resolveExecutedSql(
+  expressionSource: string,
+  functionSource: string,
+  position: number,
+): string {
+  const directValues = readSqlStringValues(expressionSource);
+  if (directValues.length > 0) {
+    return directValues.join(" ");
+  }
+  const identifier = /^\s*([a-z_][\w]*)\s*$/i.exec(expressionSource)?.[1];
+  if (!identifier) {
+    return "";
+  }
+  const assignmentPattern = new RegExp(
+    `\\b${escapeRegExp(identifier)}\\s*:=\\s*([\\s\\S]*?);`,
+    "gi",
+  );
+  let latestAssignment: RegExpMatchArray | null = null;
+  for (const match of functionSource.slice(0, position).matchAll(assignmentPattern)) {
+    latestAssignment = match;
+  }
+  return latestAssignment ? readSqlStringValues(latestAssignment[1] ?? "").join(" ") : "";
+}
+
+function readSqlDeletePredicateSource(source: string, position: number): string {
+  const statementEnd = source.indexOf(";", position);
+  const statement = source.slice(position, statementEnd < 0 ? source.length : statementEnd);
+  const whereMatch = /\bwhere\b/i.exec(statement);
+  return whereMatch ? statement.slice(whereMatch.index + whereMatch[0].length) : "";
 }
 
 function readSqlExecuteStatements(source: string): Array<{ expression: string; position: number }> {
@@ -1402,13 +1801,100 @@ function readSqlStringValues(source: string): string[] {
 function readProtectedSqlFields(
   mutation: SqlMutation,
   contract: PipelineTransitionContract,
-): string[] {
+): string[] | null {
+  if (!mutation.fieldsKnown) {
+    return null;
+  }
   const protectedFields = new Set(contract.protectedFields[mutation.table]);
   return mutation.fields.filter((field) => protectedFields.has(field)).sort();
 }
 
 function readSqlAssignedFields(setClause: string): string[] {
-  return [...setClause.matchAll(/\b([a-z_][\w]*)\s*=/gi)].map((match) => match[1]!.toLowerCase());
+  const fields = new Set(
+    [...setClause.matchAll(/\b([a-z_][\w]*)\s*=/gi)].map((match) => match[1]!.toLowerCase()),
+  );
+  for (const match of setClause.matchAll(/(?:^|,)\s*\(([^)]+)\)\s*=/gi)) {
+    for (const field of (match[1] ?? "").split(",")) {
+      const normalized = field.trim().replaceAll('"', "").toLowerCase();
+      if (/^[a-z_][\w]*$/.test(normalized)) {
+        fields.add(normalized);
+      }
+    }
+  }
+  return [...fields];
+}
+
+type ObservedSqlPredicate = {
+  field: string;
+  operator: string;
+  value: string;
+};
+
+function findMissingSqlPredicates(
+  predicateSource: string,
+  requirements: readonly SqlPredicateRequirement[],
+): string[] {
+  const observed = readSqlPredicates(predicateSource);
+  return requirements
+    .filter(
+      (requirement) =>
+        !observed.some(
+          (candidate) =>
+            candidate.field === requirement.field &&
+            candidate.operator === requirement.operator &&
+            candidate.value === canonicalExpectedSqlPredicateValue(requirement.value),
+        ),
+    )
+    .map(formatSqlPredicateRequirement);
+}
+
+function readSqlPredicates(source: string): ObservedSqlPredicate[] {
+  const predicates: ObservedSqlPredicate[] = [];
+  const pattern =
+    /\b(?:[a-z_][\w]*\.)?([a-z_][\w]*)\s*(is\s+not|is|<>|!=|=)\s*('(?:''|[^'])*'|null|true|false|-?\d+(?:\.\d+)?|[a-z_][\w]*(?:\.[a-z_][\w]*)?)/gi;
+  for (const match of source.matchAll(pattern)) {
+    predicates.push({
+      field: match[1]!.toLowerCase(),
+      operator: match[2]!.replace(/\s+/g, " ").toLowerCase(),
+      value: canonicalObservedSqlPredicateValue(match[3]!),
+    });
+  }
+  return predicates;
+}
+
+function canonicalObservedSqlPredicateValue(value: string): string {
+  const normalized = value.trim();
+  if (normalized.startsWith("'")) {
+    return canonicalScalar(readSqlStringValues(normalized)[0] ?? "");
+  }
+  if (normalized.toLowerCase() === "null") return canonicalScalar(null);
+  if (normalized.toLowerCase() === "true") return canonicalScalar(true);
+  if (normalized.toLowerCase() === "false") return canonicalScalar(false);
+  if (/^-?\d+(?:\.\d+)?$/.test(normalized)) return canonicalScalar(Number(normalized));
+  return `expression:${normalizeExpressionText(normalized.toLowerCase())}`;
+}
+
+function canonicalExpectedSqlPredicateValue(value: PredicateValue): string {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "expression" in value
+  ) {
+    return `expression:${normalizeExpressionText(value.expression.toLowerCase())}`;
+  }
+  return canonicalExpectedPredicateValue(value);
+}
+
+function formatSqlPredicateRequirement(requirement: SqlPredicateRequirement): string {
+  const value =
+    typeof requirement.value === "object" &&
+    requirement.value !== null &&
+    !Array.isArray(requirement.value) &&
+    "expression" in requirement.value
+      ? requirement.value.expression
+      : JSON.stringify(requirement.value);
+  return `${requirement.field} ${requirement.operator} ${value}`;
 }
 
 function maskSpans(source: string, spans: readonly SqlFunctionSpan[]): string {

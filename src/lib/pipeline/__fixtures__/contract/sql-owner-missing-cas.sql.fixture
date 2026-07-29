@@ -1,0 +1,10 @@
+create or replace function public.approve_session_stage()
+returns void
+language plpgsql
+as $$
+begin
+  update public.sessions
+  set phase_status = 'approved'
+  where id = target_session_id;
+end;
+$$;
