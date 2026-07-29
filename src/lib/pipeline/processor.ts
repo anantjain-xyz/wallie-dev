@@ -833,7 +833,28 @@ export async function handleRejection(input: {
     };
   }
 
-  await admin.from("sessions").update({ phase_status: "rejected" }).eq("id", input.sessionId);
+  const { data: rejectedSession, error: rejectSessionError } = await admin
+    .from("sessions")
+    .update({ phase_status: "rejected" })
+    .eq("id", input.sessionId)
+    .eq("workspace_id", input.expectedWorkspaceId)
+    .eq("rejection_count", newRejectionCount)
+    .eq("phase_status", "awaiting_review")
+    .eq("current_artifact_version", input.version)
+    .is("archived_at", null)
+    .select("id")
+    .maybeSingle();
+
+  if (rejectSessionError) {
+    return { error: rejectSessionError.message, success: false };
+  }
+
+  if (!rejectedSession) {
+    return {
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    };
+  }
 
   return {
     jobId: queued.jobId,

@@ -1721,6 +1721,8 @@ interface RejectionMockOptions {
   session: Tables<"sessions"> | null;
   rejectionClaim?: { id: string } | null;
   rejectionClaimError?: { message: string } | null;
+  phaseClaim?: { id: string } | null;
+  phaseClaimError?: { message: string } | null;
   enqueueError?: { code?: string; message: string } | null;
   workspaceMember?: { id: string } | null;
   feedbackInsertError?: { message: string; code?: string } | null;
@@ -1742,6 +1744,7 @@ function buildRejectionMock(opts: RejectionMockOptions) {
     },
     update: (patch: Record<string, unknown>) => {
       sessionUpdates.push(patch);
+      const isPhaseClaim = sessionUpdates.length > 1;
       const eqChain = {
         eq() {
           return eqChain;
@@ -1752,8 +1755,16 @@ function buildRejectionMock(opts: RejectionMockOptions) {
         select() {
           return {
             maybeSingle: async () => ({
-              data: opts.rejectionClaim === undefined ? { id: "sess-1" } : opts.rejectionClaim,
-              error: opts.rejectionClaimError ?? null,
+              data: isPhaseClaim
+                ? opts.phaseClaim === undefined
+                  ? { id: "sess-1" }
+                  : opts.phaseClaim
+                : opts.rejectionClaim === undefined
+                  ? { id: "sess-1" }
+                  : opts.rejectionClaim,
+              error: isPhaseClaim
+                ? (opts.phaseClaimError ?? null)
+                : (opts.rejectionClaimError ?? null),
             }),
           };
         },
@@ -2026,6 +2037,34 @@ describe("handleRejection", () => {
     expect(enqueuedJobs[0]!.trigger_type).toBe("comment_retry");
     expect(sessionUpdates[0]).toEqual({ rejection_count: 1 });
     expect(sessionUpdates.at(-1)).toEqual({ phase_status: "rejected" });
+  });
+
+  it("returns a race error when the final phase-status CAS loses after enqueue", async () => {
+    const session = baseSession({
+      current_artifact_version: 1,
+      phase_status: "awaiting_review",
+      rejection_count: 0,
+    });
+    const { admin, enqueuedJobs, sessionUpdates } = buildRejectionMock({
+      phaseClaim: null,
+      session,
+    });
+
+    const result = await handleRejection({
+      admin,
+      expectedWorkspaceId: "ws-1",
+      feedbackText: "needs work",
+      requestedByMemberId: "mem-reviewer",
+      sessionId: "sess-1",
+      version: 1,
+    });
+
+    expect(result).toEqual({
+      error: "Rejection raced with another update — please refresh and try again.",
+      success: false,
+    });
+    expect(enqueuedJobs).toHaveLength(1);
+    expect(sessionUpdates).toEqual([{ rejection_count: 1 }, { phase_status: "rejected" }]);
   });
 
   it("treats a unique_violation on enqueue (23505) as silent success — the existing queued job will pick up the feedback", async () => {

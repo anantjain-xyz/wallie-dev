@@ -1,0 +1,7 @@
+export async function cancelSessionWork(admin: any) {
+  await admin
+    .from("agent_jobs")
+    .update({ finished_at: new Date().toISOString(), status: "canceled" })
+    .eq("session_id", "session-1")
+    .in("status", ["queued", "started", "running"]);
+}

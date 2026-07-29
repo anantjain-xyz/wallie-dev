@@ -1,0 +1,9 @@
+export async function processPipelineJob(admin: any) {
+  const table = "sessions";
+  const patch = { phase_status: "agent_generating" };
+  const query = admin.from(table);
+  await query
+    .update(patch)
+    .eq("id", "session-1")
+    .eq("phase_status", "rejected");
+}

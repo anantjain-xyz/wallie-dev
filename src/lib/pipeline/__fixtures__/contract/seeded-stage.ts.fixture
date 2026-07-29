@@ -1,0 +1,6 @@
+export function instructionsFor(stageSlug: string) {
+  if (stageSlug === "plan") {
+    return "seed-specific behavior";
+  }
+  return "generic behavior";
+}
