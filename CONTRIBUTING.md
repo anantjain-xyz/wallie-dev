@@ -28,15 +28,20 @@ pnpm worker                  # in another
 
 ## Before you open a PR
 
-Run the full check suite locally — this is the pre-PR gate. CI runs `format:check`, `lint` (with **zero warnings**), and `test`, but **not** `typecheck`, so running `pnpm check` locally is what catches TypeScript errors before review:
+Run the full check suite locally — this is the pre-PR gate. PR CI delegates to
+the canonical `check:fast` and `check` profiles, so it includes typechecking:
 
 ```bash
-pnpm check   # format:check + lint + typecheck + test
+pnpm check   # check:fast + test
 ```
 
-You can run the pieces individually while iterating:
+The fast profile covers validation-contract verification, formatting, lint,
+typechecking, and privileged-import enforcement. The verifier's Vitest fixtures
+run with the full profile. You can run either profile or the individual pieces
+while iterating:
 
 ```bash
+pnpm check:fast    # canonical fast profile
 pnpm format       # auto-format with Prettier
 pnpm lint:fix     # auto-fix lint issues
 pnpm typecheck    # TypeScript, no emit
