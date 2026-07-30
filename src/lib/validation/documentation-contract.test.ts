@@ -21,10 +21,15 @@ function verifyFixture(
     | "broken-path"
     | "comment-string-false-green"
     | "duplicate-index"
+    | "html-link"
+    | "image-index"
+    | "linux-machine-local-path"
     | "machine-local-path"
     | "missing-command"
     | "missing-index"
-    | "passing",
+    | "passing"
+    | "question-glob"
+    | "root-path",
 ) {
   if (name === "passing") {
     return verifyDocumentationContract(resolve(fixturesDirectory, name));
@@ -47,7 +52,7 @@ afterEach(() => {
 });
 
 describe("documentation contract verifier", () => {
-  it("accepts reference-style links and ignores fenced examples", () => {
+  it("accepts Markdown variants, pnpm built-ins and options, and valid code paths", () => {
     expect(verifyFixture("passing")).toEqual([]);
   });
 
@@ -106,11 +111,71 @@ describe("documentation contract verifier", () => {
     });
   });
 
+  it("does not let an image satisfy a Task map entry", () => {
+    const diagnostics = verifyFixture("image-index");
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      invariant: "docs-index",
+      message: "docs/GUIDE.md is not indexed in the Task map.",
+    });
+  });
+
   it("rejects machine-local absolute paths outside fenced examples", () => {
     expect(verifyFixture("machine-local-path")).toEqual([
       expect.objectContaining({
         document: "docs/GUIDE.md",
         invariant: "portable-path",
+      }),
+    ]);
+  });
+
+  it("rejects Linux home paths in prose and link targets", () => {
+    expect(verifyFixture("linux-machine-local-path")).toEqual([
+      expect.objectContaining({
+        document: "docs/GUIDE.md",
+        invariant: "portable-path",
+        line: 3,
+      }),
+      expect.objectContaining({
+        document: "docs/GUIDE.md",
+        invariant: "portable-path",
+        line: 5,
+      }),
+    ]);
+  });
+
+  it("rejects broken repository-relative HTML links and images", () => {
+    expect(verifyFixture("html-link")).toEqual([
+      expect.objectContaining({
+        document: "docs/GUIDE.md",
+        invariant: "repository-link",
+        message: 'Repository-relative link "../src/missing-html.ts" does not resolve.',
+      }),
+      expect.objectContaining({
+        document: "docs/GUIDE.md",
+        invariant: "repository-link",
+        message: 'Repository-relative link "../public/missing.png" does not resolve.',
+      }),
+    ]);
+  });
+
+  it("implements single-character matching in referenced path globs", () => {
+    expect(verifyFixture("question-glob")).toEqual([
+      expect.objectContaining({
+        document: "docs/GUIDE.md",
+        invariant: "repository-path",
+        message: 'Referenced code path "src/missing?.ts" does not resolve.',
+      }),
+    ]);
+  });
+
+  it("validates referenced root-level repository paths", () => {
+    expect(verifyFixture("root-path")).toEqual([
+      expect.objectContaining({
+        document: "docs/GUIDE.md",
+        invariant: "repository-path",
+        message: 'Referenced code path "missing.config.ts" does not resolve.',
       }),
     ]);
   });

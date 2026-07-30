@@ -61,7 +61,107 @@ const repositoryPathPrefixes = [
   "supabase/",
   "test/",
 ] as const;
-const pnpmBuiltInCommands = new Set(["dlx", "exec", "install"]);
+const repositoryRootConfigExtensions = new Set([
+  "cjs",
+  "json",
+  "jsonc",
+  "mjs",
+  "toml",
+  "ts",
+  "yaml",
+  "yml",
+]);
+const repositoryRootPathNames = new Set([
+  ".env.example",
+  "Dockerfile",
+  "LICENSE",
+  "Makefile",
+  "Procfile",
+  "middleware.ts",
+  "package.json",
+  "pnpm-lock.yaml",
+  "railway.json",
+  "skills-lock.json",
+  "tsconfig.json",
+]);
+const pnpmBuiltInCommands = new Set([
+  "add",
+  "approve-builds",
+  "audit",
+  "bin",
+  "cat-file",
+  "cat-index",
+  "config",
+  "create",
+  "deploy",
+  "dlx",
+  "doctor",
+  "env",
+  "exec",
+  "fetch",
+  "find-hash",
+  "help",
+  "i",
+  "ignored-builds",
+  "import",
+  "init",
+  "install",
+  "install-test",
+  "it",
+  "link",
+  "licenses",
+  "list",
+  "ln",
+  "ls",
+  "outdated",
+  "pack",
+  "patch",
+  "patch-commit",
+  "patch-remove",
+  "prune",
+  "publish",
+  "rb",
+  "rebuild",
+  "remove",
+  "rm",
+  "root",
+  "run",
+  "self-update",
+  "server",
+  "setup",
+  "start",
+  "store",
+  "t",
+  "test",
+  "unlink",
+  "up",
+  "update",
+  "why",
+]);
+const pnpmOptionsWithValues = new Set([
+  "-C",
+  "-F",
+  "--cache-dir",
+  "--config-dir",
+  "--dir",
+  "--fetch-retries",
+  "--fetch-retry-factor",
+  "--fetch-retry-maxtimeout",
+  "--fetch-retry-mintimeout",
+  "--fetch-timeout",
+  "--filter",
+  "--global-bin-dir",
+  "--global-dir",
+  "--loglevel",
+  "--network-concurrency",
+  "--package-import-method",
+  "--reporter",
+  "--state-dir",
+  "--store-dir",
+  "--use-node-version",
+  "--virtual-store-dir",
+  "--workspace-concurrency",
+]);
 const ignoredWalkDirectories = new Set([".git", ".next", "node_modules"]);
 
 function normalizePath(path: string) {
@@ -82,6 +182,7 @@ function visit(node: MarkdownNode, callback: (node: MarkdownNode) => void) {
 }
 
 function textOf(node: MarkdownNode): string {
+  if (node.type === "html") return "";
   if (typeof node.value === "string") return node.value;
   return (node.children ?? []).map(textOf).join("");
 }
@@ -138,28 +239,44 @@ function collectDefinitions(root: MarkdownNode) {
   return definitions;
 }
 
-function linkFromNode(
+function linksFromNode(
   node: MarkdownNode,
   definitions: ReadonlyMap<string, string>,
-): MarkdownLink | null {
-  if ((node.type === "link" || node.type === "image") && typeof node.url === "string") {
-    return { line: lineOf(node), url: node.url };
+  includeImages = true,
+): MarkdownLink[] {
+  if (
+    (node.type === "link" || (includeImages && node.type === "image")) &&
+    typeof node.url === "string"
+  ) {
+    return [{ line: lineOf(node), url: node.url }];
   }
   if (
-    (node.type === "linkReference" || node.type === "imageReference") &&
+    (node.type === "linkReference" || (includeImages && node.type === "imageReference")) &&
     typeof node.identifier === "string"
   ) {
     const url = definitions.get(normalizedIdentifier(node.identifier));
-    return url ? { line: lineOf(node), url } : null;
+    return url ? [{ line: lineOf(node), url }] : [];
   }
-  return null;
+  if (node.type === "html" && typeof node.value === "string" && node.value.includes("<")) {
+    const links: MarkdownLink[] = [];
+    const html = node.value.replace(/<!--[\s\S]*?-->/g, "");
+    for (const match of html.matchAll(
+      /<a\b[^>]*?\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))|<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi,
+    )) {
+      const isImage = match[4] !== undefined || match[5] !== undefined || match[6] !== undefined;
+      if (isImage && !includeImages) continue;
+      const url = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? match[6];
+      if (url !== undefined) links.push({ line: lineOf(node), url });
+    }
+    return links;
+  }
+  return [];
 }
 
 function collectLinks(root: MarkdownNode, definitions: ReadonlyMap<string, string>) {
   const links: MarkdownLink[] = [];
   visit(root, (node) => {
-    const link = linkFromNode(node, definitions);
-    if (link) links.push(link);
+    links.push(...linksFromNode(node, definitions));
   });
   return links;
 }
@@ -231,14 +348,29 @@ function isInsideProject(projectDirectory: string, path: string) {
 
 function machineLocalPaths(value: string) {
   const pattern =
-    /(?:file:\/\/)?(?:\/Users\/[^/\s`"'<>]+(?:\/[^\s`"'<>)]*)?|\/(?:private\/)?tmp\/[^\s`"'<>)]*|[A-Za-z]:[\\/]+Users[\\/][^\s`"'<>)]*)/g;
-  return Array.from(value.matchAll(pattern), (match) => match[0]);
+    /(?:file:\/\/)?(?:\/Users\/[^/\s`"'<>]+(?:\/[^\s`"'<>)]*)?|\/home\/[^/\s`"'<>]+(?:\/[^\s`"'<>)]*)?|\/(?:private\/)?tmp\/[^\s`"'<>)]*|[A-Za-z]:[\\/]+Users[\\/][^\s`"'<>)]*)/g;
+  return Array.from(value.matchAll(pattern), (match) => match[0]).filter((path) => {
+    const portablePath = path.replace(/^file:\/\//, "");
+    return !/^\/home\/(?:daytona|user|username)(?:\/|$)/.test(portablePath);
+  });
 }
 
 function repositoryPathCandidate(value: string) {
-  const candidate = value.trim().replace(/#L\d+(?:-L\d+)?$/, "");
+  const candidate = value.trim().replace(/#.*$/, "");
   if (candidate.includes(" ")) return null;
-  return repositoryPathPrefixes.some((prefix) => candidate.startsWith(prefix)) ? candidate : null;
+  if (repositoryPathPrefixes.some((prefix) => candidate.startsWith(prefix))) return candidate;
+  if (candidate.startsWith("./")) return candidate.slice(2);
+  if (candidate.startsWith("../")) return candidate;
+  if (repositoryRootPathNames.has(candidate)) return candidate;
+  if (/^\.[A-Za-z0-9][A-Za-z0-9._-]*\.example$/.test(candidate)) return candidate;
+
+  const configExtension = candidate.match(
+    /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.config\.([A-Za-z0-9_-]+)$/,
+  )?.[1];
+  if (configExtension && repositoryRootConfigExtensions.has(configExtension.toLowerCase())) {
+    return candidate;
+  }
+  return /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.jsonc?$/.test(candidate) ? candidate : null;
 }
 
 function walkProjectPaths(projectDirectory: string) {
@@ -278,6 +410,10 @@ function globPattern(pattern: string) {
     }
     if (character === "*") {
       expression += "[^/]*";
+      continue;
+    }
+    if (character === "?") {
+      expression += "[^/]";
       continue;
     }
     if (character === "{") {
@@ -339,13 +475,41 @@ function packageScripts(projectDirectory: string, diagnostics: DocumentationDiag
   return new Set<string>();
 }
 
+function shellWords(value: string) {
+  return Array.from(
+    value.matchAll(/"((?:\\.|[^"])*)"|'([^']*)'|([^\s]+)/g),
+    (match) => match[1] ?? match[2] ?? match[3] ?? "",
+  );
+}
+
+function commandAfterPnpmOptions(words: readonly string[], start = 0) {
+  let index = start;
+  while (index < words.length) {
+    const word = words[index]!;
+    if (word === "--") return { command: words[index + 1], index: index + 1 };
+    if (!word.startsWith("-") || word === "-") return { command: word, index };
+
+    const optionName = word.split("=", 1)[0]!;
+    const hasInlineValue =
+      word.includes("=") || ((word.startsWith("-C") || word.startsWith("-F")) && word.length > 2);
+    index += pnpmOptionsWithValues.has(optionName) && !hasInlineValue ? 2 : 1;
+  }
+  return { command: undefined, index };
+}
+
 function documentedPnpmCommands(value: string) {
   const commands: string[] = [];
-  for (const match of value.matchAll(/\bpnpm\s+([A-Za-z0-9:_-]+)(?:\s+([A-Za-z0-9:_-]+))?/g)) {
-    const command = match[1];
+  for (const match of value.matchAll(/\bpnpm\b([^;&|\n]*)/g)) {
+    const words = shellWords(match[1] ?? "");
+    const parsed = commandAfterPnpmOptions(words);
+    const command = parsed.command;
     if (!command) continue;
-    if (command === "run" && match[2]) commands.push(match[2]);
-    else commands.push(command);
+    if (command === "run") {
+      const script = commandAfterPnpmOptions(words, parsed.index + 1).command;
+      commands.push(script ?? command);
+    } else {
+      commands.push(command);
+    }
   }
   return commands;
 }
@@ -425,8 +589,7 @@ export function verifyDocumentationContract(projectDirectory = process.cwd()) {
     const indexLinks: MarkdownLink[] = [];
     for (const node of indexNodes) {
       visit(node, (child) => {
-        const link = linkFromNode(child, indexDocument.definitions);
-        if (link) indexLinks.push(link);
+        indexLinks.push(...linksFromNode(child, indexDocument.definitions, false));
       });
     }
 
@@ -492,7 +655,10 @@ export function verifyDocumentationContract(projectDirectory = process.cwd()) {
 
       if (isExternalDestination(link.url)) continue;
       const destination = splitDestination(link.url);
-      const targetPath = resolve(dirname(document.absolutePath), destination.path || ".");
+      const targetPath =
+        destination.path === ""
+          ? document.absolutePath
+          : resolve(dirname(document.absolutePath), destination.path);
       if (!isInsideProject(projectDirectory, targetPath) || !existsSync(targetPath)) {
         diagnostics.push({
           document: document.relativePath,

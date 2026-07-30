@@ -2,9 +2,17 @@
 
 ## Details
 
-The implementation lives at `src/example.ts`. Run `pnpm check`.
+The implementation lives at `src/example.ts`, matches `src/example?.ts`, and is
+configured by `package.json`.
 
-See the [Task map](README.md#task-map).
+Run `pnpm check`, `pnpm add example`, and `pnpm -C . check`.
+
+See [these details](#details), the [HTML heading](#use-foo), and the
+[Task map](README.md#task-map).
+
+## Use <code>foo</code>
+
+<a href="README.md#task-map">Open the Task map from HTML.</a>
 
 ```text
 /Users/example/local-checkout
