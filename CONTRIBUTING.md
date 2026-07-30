@@ -35,9 +35,10 @@ the canonical `check:fast` and `check` profiles, so it includes typechecking:
 pnpm check   # check:fast + test
 ```
 
-The fast profile covers verifier fixtures, formatting, lint, typechecking, and
-privileged-import enforcement. You can run it or the individual pieces while
-iterating:
+The fast profile covers validation-contract verification, formatting, lint,
+typechecking, and privileged-import enforcement. The verifier's Vitest fixtures
+run with the full profile. You can run either profile or the individual pieces
+while iterating:
 
 ```bash
 pnpm check:fast    # canonical fast profile

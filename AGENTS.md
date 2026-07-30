@@ -19,7 +19,7 @@ Use Vercel route handlers for privileged and third-party integrations.
 ## Commands
 
 ```bash
-pnpm check:fast                 # verifier + format + lint + typecheck + privileged imports
+pnpm check:fast                 # validation contract + format + lint + typecheck + privileged imports
 pnpm check                      # check:fast + test — the full pre-PR gate
 pnpm test path/to/file.test.ts  # run a single test file
 pnpm test -t "name of test"     # run tests matching a name
