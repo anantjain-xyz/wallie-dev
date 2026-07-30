@@ -8,6 +8,20 @@
     "expectedDiagnostics": [],
     "mutations": [
       {
+        "instructions": {
+          "content": "The default workflow skills are `pull` and `retired`.",
+          "path": "UPGRADABLE_WALLIE_LEGACY_FILES[0]::AGENTS.md",
+          "source": "generated-legacy"
+        },
+        "op": "addAgentsInstructions"
+      }
+    ],
+    "name": "preserves a frozen legacy AGENTS inventory independently of current skills"
+  },
+  {
+    "expectedDiagnostics": [],
+    "mutations": [
+      {
         "op": "patchRepositorySkill",
         "patch": {
           "body": "# Pull\n\nRun `pnpm check` with repository-specific orchestration.",
@@ -76,6 +90,63 @@
       }
     ],
     "name": "rejects a stale referenced validation command"
+  },
+  {
+    "expectedDiagnostics": [
+      "Skill projection \".agents/skills/pull/SKILL.md\" references missing package script \"pnpm check:stale\" (semantic owner: generated skill \"pull\")."
+    ],
+    "mutations": [
+      {
+        "op": "patchRepositorySkill",
+        "patch": {
+          "body": "# Pull\n\nRun `pnpm run check:stale` before shipping.",
+          "content": "---\nname: pull\ndescription: Pull safely.\n---\n\n# Pull\n\nRun `pnpm run check:stale` before shipping.\n"
+        },
+        "path": ".agents/skills/pull/SKILL.md"
+      }
+    ],
+    "name": "rejects a stale package script referenced through pnpm run"
+  },
+  {
+    "expectedDiagnostics": [
+      "Projection \"SANDBOX_PROVIDER_OPTIONS\" repeats inventory value \"vercel\" (semantic owner: SANDBOX_PROVIDER_IDS)."
+    ],
+    "mutations": [
+      {
+        "op": "addProviderInventoryValue",
+        "path": "SANDBOX_PROVIDER_OPTIONS",
+        "value": "vercel"
+      }
+    ],
+    "name": "rejects a duplicate provider projection value"
+  },
+  {
+    "expectedDiagnostics": [
+      "Projection \"PIPELINE_VARIABLE_HELP\" repeats inventory value \"session.title\" (semantic owner: buildStageTemplateVariables)."
+    ],
+    "mutations": [
+      {
+        "op": "addPromptVariableProjection",
+        "value": "session.title"
+      }
+    ],
+    "name": "rejects a duplicate prompt-help projection value"
+  },
+  {
+    "expectedDiagnostics": [
+      "Skill manifest \".agents/skills/pull/SKILL.md\" must declare non-empty name, description, and body (semantic owner: generated skill \"pull\")."
+    ],
+    "mutations": [
+      {
+        "op": "patchRepositorySkill",
+        "patch": {
+          "description": " \t",
+          "name": "   "
+        },
+        "path": ".agents/skills/pull/SKILL.md"
+      }
+    ],
+    "name": "rejects whitespace-only manifest name and description fields"
   },
   {
     "expectedDiagnostics": [

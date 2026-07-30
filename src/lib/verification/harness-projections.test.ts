@@ -21,6 +21,19 @@ type FixtureMutation =
       op: "addAdaptation";
     }
   | {
+      instructions: HarnessProjectionSnapshot["agentsInstructions"][number];
+      op: "addAgentsInstructions";
+    }
+  | {
+      op: "addPromptVariableProjection";
+      value: string;
+    }
+  | {
+      op: "addProviderInventoryValue";
+      path: string;
+      value: string;
+    }
+  | {
       op: "addRepositorySkill";
       skill: HarnessSkillProjection;
     }
@@ -52,6 +65,16 @@ function applyMutations(
   for (const mutation of mutations) {
     if (mutation.op === "addAdaptation") {
       snapshot.adaptations.push(mutation.adaptation);
+    } else if (mutation.op === "addAgentsInstructions") {
+      snapshot.agentsInstructions.push(mutation.instructions);
+    } else if (mutation.op === "addPromptVariableProjection") {
+      snapshot.promptVariables.projection.push(mutation.value);
+    } else if (mutation.op === "addProviderInventoryValue") {
+      const inventory = snapshot.providerInventories.find(
+        (candidate) => candidate.path === mutation.path,
+      );
+      if (!inventory) throw new Error(`Fixture inventory not found: ${mutation.path}`);
+      inventory.values.push(mutation.value);
     } else if (mutation.op === "addRepositorySkill") {
       snapshot.repositorySkills.push(mutation.skill);
     } else if (mutation.op === "patchRepositorySkill") {

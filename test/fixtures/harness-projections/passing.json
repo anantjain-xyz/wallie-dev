@@ -12,7 +12,8 @@
   "agentsInstructions": [
     {
       "content": "The default workflow skills are `pull`.",
-      "path": "WALLIE_AGENTS_INSTRUCTIONS"
+      "path": "WALLIE_AGENTS_INSTRUCTIONS",
+      "source": "generated-current"
     }
   ],
   "claudeSkillLinks": [

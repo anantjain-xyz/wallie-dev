@@ -47,7 +47,11 @@ export type HarnessSkillProjection = {
 
 export type HarnessProjectionSnapshot = {
   adaptations: HarnessProjectionAdaptation[];
-  agentsInstructions: Array<{ content: string; path: string }>;
+  agentsInstructions: Array<{
+    content: string;
+    path: string;
+    source: "generated-current" | "generated-legacy";
+  }>;
   claudeSkillLinks: Array<{ path: string; target: string }>;
   generatedSkills: HarnessSkillProjection[];
   packageScripts: string[];
@@ -324,7 +328,11 @@ export function discoverHarnessProjectionSnapshot(
     stageSlug: trustedPromptValue("stage.slug", "build"),
   });
   const currentInstructions = [
-    { content: WALLIE_AGENTS_INSTRUCTIONS, path: "WALLIE_AGENTS_INSTRUCTIONS" },
+    {
+      content: WALLIE_AGENTS_INSTRUCTIONS,
+      path: "WALLIE_AGENTS_INSTRUCTIONS",
+      source: "generated-current" as const,
+    },
   ];
   const legacyInstructions = UPGRADABLE_WALLIE_LEGACY_FILES.flatMap((file, index) =>
     file.path === "AGENTS.md"
@@ -332,6 +340,7 @@ export function discoverHarnessProjectionSnapshot(
           {
             content: file.content,
             path: `UPGRADABLE_WALLIE_LEGACY_FILES[${index}]::AGENTS.md`,
+            source: "generated-legacy" as const,
           },
         ]
       : [],
@@ -582,7 +591,7 @@ function verifySkillShape(
   diagnostics: HarnessProjectionDiagnostic[],
   allowsMetadata = false,
 ): void {
-  if (!skill.name || !skill.description || !skill.body) {
+  if (![skill.name, skill.description, skill.body].every((value) => value?.trim())) {
     diagnostics.push({
       message: `Skill manifest "${skill.path}" must declare non-empty name, description, and body (semantic owner: ${owner}).`,
       owner,
@@ -707,6 +716,7 @@ function verifyAgentsInstructions(
   });
   expected.sort();
   for (const instructions of snapshot.agentsInstructions) {
+    if (instructions.source === "generated-legacy") continue;
     const inventory = /default workflow skills are ([^.]+)\./.exec(instructions.content)?.[1] ?? "";
     const actual = [...inventory.matchAll(/`([^`]+)`/g)].map((match) => match[1]!).sort();
     compareExactInventory(
@@ -743,9 +753,16 @@ function verifyReferencedCommands(
 
 function referencedPnpmScripts(content: string): string[] {
   const scripts = new Set<string>();
-  for (const match of content.matchAll(/\bpnpm(?:\s+--[\w-]+(?:=\S+)?)?\s+([\w:-]+)/g)) {
+  for (const match of content.matchAll(
+    /\bpnpm(?:\s+--[\w-]+(?:=\S+)?)?\s+([\w:-]+)(?:\s+([\w:-]+))?/g,
+  )) {
     const command = match[1]!;
-    if (!PNPM_BUILTINS.has(command)) scripts.add(command);
+    if (command === "run") {
+      const script = match[2];
+      if (script) scripts.add(script);
+    } else if (!PNPM_BUILTINS.has(command)) {
+      scripts.add(command);
+    }
   }
   return [...scripts].sort();
 }
@@ -759,6 +776,8 @@ function verifyInventory(
   usedAdaptations: Set<string>,
   diagnostics: HarnessProjectionDiagnostic[],
 ): void {
+  verifyInventoryDuplicates(ownerValues, "Semantic owner", owner, projection, diagnostics);
+  verifyInventoryDuplicates(projectionValues, "Projection", owner, projection, diagnostics);
   const ownerSet = new Set(ownerValues);
   const projectionSet = new Set(projectionValues);
   for (const value of ownerSet) {
@@ -793,6 +812,8 @@ function compareExactInventory(
   projection: string,
   diagnostics: HarnessProjectionDiagnostic[],
 ): void {
+  verifyInventoryDuplicates(ownerValues, "Semantic owner", owner, projection, diagnostics);
+  verifyInventoryDuplicates(projectionValues, "Projection", owner, projection, diagnostics);
   const ownerSet = new Set(ownerValues);
   const projectionSet = new Set(projectionValues);
   for (const value of ownerSet) {
@@ -812,6 +833,25 @@ function compareExactInventory(
         projection,
       });
     }
+  }
+}
+
+function verifyInventoryDuplicates(
+  values: string[],
+  subject: "Projection" | "Semantic owner",
+  owner: string,
+  projection: string,
+  diagnostics: HarnessProjectionDiagnostic[],
+): void {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  for (const [value, count] of counts) {
+    if (count < 2) continue;
+    diagnostics.push({
+      message: `${subject} "${subject === "Projection" ? projection : owner}" repeats inventory value "${value}" (semantic owner: ${owner}).`,
+      owner,
+      projection,
+    });
   }
 }
 
