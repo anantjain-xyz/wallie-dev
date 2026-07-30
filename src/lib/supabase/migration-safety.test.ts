@@ -238,6 +238,21 @@ describe("migration safety", () => {
     ]);
   });
 
+  it("fails closed on SELECT function calls while allowing inspectable data-only SELECTs", async () => {
+    const issues = await inspect(`
+      select 1;
+      select status from public.sessions where id is null;
+      select public.destructive_function();
+    `);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unsupported-ddl",
+        message: expect.stringContaining("SELECT with an opaque function invocation"),
+      }),
+    ]);
+  });
+
   it("fails closed on other unknown PostgreSQL DDL instead of accepting it", async () => {
     const issues = await inspect(
       "create server remote_db foreign data wrapper postgres_fdw options (host 'db');",
@@ -335,6 +350,23 @@ describe("migration safety", () => {
     ]);
   });
 
+  it("keeps CASCADE distinct from the default RESTRICT drop waiver identity", async () => {
+    const issues = await inspect(`
+      drop table public.jobs;
+      -- wallie-migration-safety: allow drop-table:"public"."sessions" owner=@anantjain-xyz issue=OP-387
+      drop table public.sessions cascade;
+    `);
+
+    expect(issueCodes(issues)).toEqual([
+      "unwaived-operation",
+      "unwaived-operation",
+      "unused-waiver",
+    ]);
+    expect(issues[0].message).toContain('drop-table:"public"."jobs"');
+    expect(issues[1].message).toContain('drop-table:"public"."sessions":cascade');
+    expect(issues[2].message).toContain('waiver drop-table:"public"."sessions"');
+  });
+
   it("retains overload arrays and relation-qualified policy and trigger identities", async () => {
     const issues = await inspect(`
       drop function public.lookup_job(integer[]);
@@ -393,6 +425,20 @@ describe("migration safety", () => {
     ]);
   });
 
+  it("classifies an unqualified UPDATE while allowing targeted updates", async () => {
+    const issues = await inspect(`
+      update public.sessions set status = 'retired';
+      update public.sessions set status = 'retired' where id is null;
+    `);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unwaived-operation",
+        message: expect.stringContaining('update-all-rows:"public"."sessions":ast-'),
+      }),
+    ]);
+  });
+
   it("allows the explicit additive subset without a waiver", async () => {
     const issues = await inspect(`
       create table public.jobs (id uuid primary key, note text);
@@ -405,6 +451,22 @@ describe("migration safety", () => {
     `);
 
     expect(issues).toEqual([]);
+  });
+
+  it("requires a waiver for a unique index while allowing a non-unique index", async () => {
+    const issues = await inspect(`
+      create index jobs_created_at_idx on public.jobs (created_at);
+      create unique index jobs_external_id_idx on public.jobs (external_id);
+    `);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "unwaived-operation",
+        message: expect.stringContaining(
+          'add-unique-index:"public"."jobs"."jobs_external_id_idx":ast-',
+        ),
+      }),
+    ]);
   });
 
   it("requires a waiver for additive shapes that break old writers", async () => {
@@ -441,16 +503,55 @@ describe("migration safety", () => {
     ]);
   });
 
-  it("distinguishes additive permissive policies from restrictive policies", async () => {
+  it("requires waivers for permissive and restrictive RLS policies", async () => {
     const issues = await inspect(`
       create policy read_jobs on public.jobs using (true);
       create policy active_jobs on public.jobs as restrictive using (archived_at is null);
     `);
 
+    expect(issues.map((issue) => issue.message)).toEqual([
+      expect.stringContaining('add-permissive-policy:"public"."jobs"."read_jobs":ast-'),
+      expect.stringContaining('add-restrictive-policy:"public"."jobs"."active_jobs":ast-'),
+    ]);
+  });
+
+  it("requires waivers before enabling existing triggers", async () => {
+    const issues = await inspect(`
+      alter table public.jobs enable trigger job_trigger;
+      alter table public.jobs enable trigger all;
+      alter table public.jobs enable trigger user;
+    `);
+
+    expect(issues.map((issue) => issue.message)).toEqual([
+      expect.stringContaining('alter-table-enable-trig:"public"."jobs"."job_trigger"'),
+      expect.stringContaining('alter-table-enable-trig-all:"public"."jobs"'),
+      expect.stringContaining('alter-table-enable-trig-user:"public"."jobs"'),
+    ]);
+  });
+
+  it("rejects new migration versions that are not later than the comparison base", async () => {
+    const base = {
+      "20260729000000_base.sql": "select 1;\n",
+    };
+    const issues = await verifyMigrationSafety({
+      baseMigrations: base,
+      currentMigrations: {
+        ...base,
+        "20260728000000_backdated.sql": "select 1;\n",
+        "20260729000000_same_version.sql": "select 1;\n",
+        "20260730000000_forward.sql": "select 1;\n",
+      },
+      waiverOwners: [],
+    });
+
     expect(issues).toEqual([
       expect.objectContaining({
-        code: "unwaived-operation",
-        message: expect.stringContaining('add-restrictive-policy:"public"."jobs"."active_jobs"'),
+        code: "backdated-migration",
+        file: "20260728000000_backdated.sql",
+      }),
+      expect.objectContaining({
+        code: "backdated-migration",
+        file: "20260729000000_same_version.sql",
       }),
     ]);
   });

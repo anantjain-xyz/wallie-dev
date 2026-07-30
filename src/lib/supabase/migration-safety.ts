@@ -6,6 +6,7 @@ import type { ParseResult, RawStmt } from "@pgsql/parser/v17";
 export type MigrationFiles = Readonly<Record<string, string>>;
 
 export type MigrationSafetyIssueCode =
+  | "backdated-migration"
   | "historical-migration-edited"
   | "historical-migration-deleted"
   | "historical-migration-renamed"
@@ -77,14 +78,11 @@ const SAFE_STATEMENTS = new Set([
   "CreateStatsStmt",
   "CreateStmt",
   "CreateTableAsStmt",
-  "IndexStmt",
   "InsertStmt",
   "MergeStmt",
   "RefreshMatViewStmt",
   "SecLabelStmt",
-  "SelectStmt",
   "TransactionStmt",
-  "UpdateStmt",
   "VariableSetStmt",
 ]);
 
@@ -98,9 +96,6 @@ const SAFE_ALTER_TABLE_COMMANDS = new Set([
   "AT_DropCluster",
   "AT_DropNotNull",
   "AT_EnableRule",
-  "AT_EnableTrig",
-  "AT_EnableTrigAll",
-  "AT_EnableTrigUser",
   "AT_GenericOptions",
   "AT_NoForceRowSecurity",
   "AT_ResetOptions",
@@ -141,6 +136,9 @@ const CONTRACTING_ALTER_TABLE_COMMANDS = new Set([
   "AT_EnableRowSecurity",
   "AT_EnableAlwaysRule",
   "AT_EnableAlwaysTrig",
+  "AT_EnableTrig",
+  "AT_EnableTrigAll",
+  "AT_EnableTrigUser",
   "AT_EnableReplicaRule",
   "AT_EnableReplicaTrig",
   "AT_ForceRowSecurity",
@@ -163,6 +161,17 @@ function nodeVariant(node: unknown): [string, AstRecord] | undefined {
   if (entries.length !== 1 || !isRecord(entries[0][1])) return undefined;
 
   return [entries[0][0], entries[0][1]];
+}
+
+function containsNodeVariant(value: unknown, kind: string): boolean {
+  const variant = nodeVariant(value);
+  if (variant?.[0] === kind) return true;
+
+  if (Array.isArray(value)) {
+    return value.some((item) => containsNodeVariant(item, kind));
+  }
+
+  return isRecord(value) && Object.values(value).some((item) => containsNodeVariant(item, kind));
 }
 
 function stringNode(node: unknown): string | undefined {
@@ -322,6 +331,9 @@ function classifyDrop(statement: AstRecord): StatementAnalysis {
   if (!label || !Array.isArray(statement.objects)) {
     return { operations: [], unsupported: "DROP has an unsupported object identity" };
   }
+  if (statement.behavior !== "DROP_RESTRICT" && statement.behavior !== "DROP_CASCADE") {
+    return { operations: [], unsupported: `DROP ${label} has an unknown drop behavior` };
+  }
 
   const identities = statement.objects.map(canonicalObject);
   if (identities.some((identity) => identity === undefined)) {
@@ -333,7 +345,10 @@ function classifyDrop(statement: AstRecord): StatementAnalysis {
 
   return {
     operations: (identities as string[]).map((identity) =>
-      operation(`drop-${label}:${identity}`, `DROP ${label} ${identity}`),
+      operation(
+        `drop-${label}:${identity}${statement.behavior === "DROP_CASCADE" ? ":cascade" : ""}`,
+        `DROP ${label} ${identity}${statement.behavior === "DROP_CASCADE" ? " CASCADE" : ""}`,
+      ),
     ),
   };
 }
@@ -542,6 +557,61 @@ function classifyDelete(statement: AstRecord): StatementAnalysis {
     : { operations: [] };
 }
 
+function classifyUpdate(statement: AstRecord): StatementAnalysis {
+  const relation = canonicalRangeVar(statement.relation);
+  if (!relation) {
+    return { operations: [], unsupported: "UPDATE has an unsupported relation identity" };
+  }
+
+  return statement.whereClause === undefined
+    ? {
+        operations: [
+          operation(
+            `update-all-rows:${relation}:ast-${canonicalAstDigest({
+              fromClause: statement.fromClause,
+              targetList: statement.targetList,
+              withClause: statement.withClause,
+            })}`,
+            `UPDATE every row in table ${relation}`,
+          ),
+        ],
+      }
+    : { operations: [] };
+}
+
+function classifyIndex(statement: AstRecord): StatementAnalysis {
+  if (statement.unique !== true) return { operations: [] };
+
+  const relation = canonicalRangeVar(statement.relation);
+  if (!relation || (statement.idxname !== undefined && typeof statement.idxname !== "string")) {
+    return { operations: [], unsupported: "UNIQUE INDEX has an unsupported identity" };
+  }
+
+  const indexIdentity =
+    typeof statement.idxname === "string"
+      ? relationMember(relation, statement.idxname)
+      : `${relation}:unnamed`;
+
+  return {
+    operations: [
+      operation(
+        `add-unique-index:${indexIdentity}:ast-${canonicalAstDigest(statement)}`,
+        `add UNIQUE index ${indexIdentity}`,
+      ),
+    ],
+  };
+}
+
+function classifySelect(statement: AstRecord): StatementAnalysis {
+  return containsNodeVariant(statement, "FuncCall")
+    ? {
+        operations: [],
+        unsupported:
+          "SELECT with an opaque function invocation is outside the supported migration subset",
+      }
+    : { operations: [] };
+}
+
 function classifyFunction(
   statement: AstRecord,
   context: MigrationAnalysisContext,
@@ -587,6 +657,9 @@ function classifyStatement(
   if (kind === "AlterTableStmt") return classifyAlterTable(statement);
   if (kind === "TruncateStmt") return classifyTruncate(statement);
   if (kind === "DeleteStmt") return classifyDelete(statement);
+  if (kind === "UpdateStmt") return classifyUpdate(statement);
+  if (kind === "IndexStmt") return classifyIndex(statement);
+  if (kind === "SelectStmt") return classifySelect(statement);
   if (kind === "CreateFunctionStmt") return classifyFunction(statement, context);
 
   if (kind === "ViewStmt") {
@@ -645,14 +718,13 @@ function classifyStatement(
   }
 
   if (kind === "CreatePolicyStmt") {
-    if (statement.permissive === true) return { operations: [] };
-
     const relation = canonicalRangeVar(statement.table);
+    const policyMode = statement.permissive === true ? "permissive" : "restrictive";
     return relation && typeof statement.policy_name === "string"
       ? {
           operations: [
             operation(
-              `add-restrictive-policy:${relation}.${quotedIdentifier(
+              `add-${policyMode}-policy:${relation}.${quotedIdentifier(
                 statement.policy_name,
               )}:ast-${canonicalAstDigest({
                 cmd_name: statement.cmd_name,
@@ -660,7 +732,7 @@ function classifyStatement(
                 roles: statement.roles,
                 with_check: statement.with_check,
               })}`,
-              `add restrictive policy on ${relation}`,
+              `add ${policyMode} policy on ${relation}`,
             ),
           ],
         }
@@ -954,12 +1026,48 @@ function historicalIssues(
   return issues;
 }
 
+function migrationVersion(file: string): string | undefined {
+  return file.match(/^(\d{14})_/)?.[1];
+}
+
+function backdatedMigrationIssues(
+  baseMigrations: MigrationFiles,
+  currentMigrations: MigrationFiles,
+): MigrationSafetyIssue[] {
+  const newestBaseVersion = Object.keys(baseMigrations)
+    .map(migrationVersion)
+    .filter((version): version is string => version !== undefined)
+    .sort()
+    .at(-1);
+
+  if (!newestBaseVersion) return [];
+
+  return Object.keys(currentMigrations)
+    .filter((file) => baseMigrations[file] === undefined)
+    .sort()
+    .flatMap((file) => {
+      const version = migrationVersion(file);
+      return version !== undefined && version <= newestBaseVersion
+        ? [
+            {
+              code: "backdated-migration" as const,
+              file,
+              message: `new migration version ${version} must be later than comparison-base version ${newestBaseVersion}`,
+            },
+          ]
+        : [];
+    });
+}
+
 export async function verifyMigrationSafety({
   baseMigrations,
   currentMigrations,
   waiverOwners,
 }: VerifyMigrationSafetyOptions): Promise<MigrationSafetyIssue[]> {
-  const issues = historicalIssues(baseMigrations, currentMigrations);
+  const issues = [
+    ...historicalIssues(baseMigrations, currentMigrations),
+    ...backdatedMigrationIssues(baseMigrations, currentMigrations),
+  ];
   const approvedOwners = new Set(waiverOwners);
   const newFiles = Object.keys(currentMigrations)
     .filter((file) => baseMigrations[file] === undefined)
