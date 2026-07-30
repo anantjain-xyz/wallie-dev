@@ -13,7 +13,14 @@ const fixturesDirectory = fileURLToPath(
 const temporaryDirectories: string[] = [];
 
 function verifyFixture(
-  name: "missing-ignores" | "overbroad-ignore" | "passing" | "tracked-artifacts",
+  name:
+    | "missing-ignores"
+    | "negated-ignore"
+    | "overbroad-ignore"
+    | "passing"
+    | "tracked-artifacts"
+    | "unexported-eslint"
+    | "unrelated-eslint",
 ) {
   const projectDirectory = mkdtempSync(join(tmpdir(), "wallie-workspace-hygiene-"));
   temporaryDirectories.push(projectDirectory);
@@ -53,6 +60,27 @@ describe("workspace hygiene verifier", () => {
     expect(verifyFixture("overbroad-ignore")).toContain(
       'Legitimate source path "src/lib/.omo/example.ts" is hidden by .gitignore pattern ".omo/"; replace it with the bounded pattern "/.omo/".',
     );
+  });
+
+  it("honors later negations when determining Git and Prettier ownership", () => {
+    expect(verifyFixture("negated-ignore")).toEqual([
+      'Workspace hygiene path ".playwright-cli/" is not owned by .gitignore; add the bounded pattern "/.playwright-cli/".',
+      'Workspace hygiene path ".playwright-cli/" is not owned by .prettierignore; add the bounded pattern "/.playwright-cli/".',
+    ]);
+  });
+
+  it("ignores global ignore calls that do not contribute to the default export", () => {
+    expect(verifyFixture("unexported-eslint")).toEqual(
+      expect.arrayContaining([
+        'Workspace hygiene path ".playwright-cli/" is not owned by eslint.config.mjs; add the bounded pattern ".playwright-cli/**".',
+        'Workspace hygiene path "supabase/.temp/" is not owned by eslint.config.mjs; add the bounded pattern "supabase/.temp/**".',
+      ]),
+    );
+    expect(verifyFixture("unexported-eslint")).toHaveLength(8);
+  });
+
+  it("does not treat an unrelated local globalIgnores function as ESLint ownership", () => {
+    expect(verifyFixture("unrelated-eslint")).toHaveLength(8);
   });
 
   it("rejects tracked caches, temporary preview routes, test results, and proof artifacts", () => {
