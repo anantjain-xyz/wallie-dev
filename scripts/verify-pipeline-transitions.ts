@@ -349,10 +349,19 @@ function sqlTouchesProtectedLifecycle(source: string, protectedTables: readonly 
 }
 
 type SqlFunctionDefinition = Readonly<{
+  kind: "create";
   name: string;
   source: string;
   start: number;
 }>;
+
+type SqlFunctionDrop = Readonly<{
+  kind: "drop";
+  name: string;
+  start: number;
+}>;
+
+type SqlFunctionEvent = SqlFunctionDefinition | SqlFunctionDrop;
 
 function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
   const pattern =
@@ -371,13 +380,40 @@ function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
       if (closingDelimiter >= 0) {
         end = start + closingDelimiter + delimiter.length;
       }
+    } else {
+      const statementEnd = candidate.indexOf(";");
+      if (statementEnd >= 0) end = start + statementEnd + 1;
     }
     return {
+      kind: "create",
       name: header[1]!.toLowerCase(),
       source: source.slice(start, end),
       start,
     };
   });
+}
+
+function sqlFunctionEvents(source: string): SqlFunctionEvent[] {
+  const definitions = sqlFunctionDefinitions(source);
+  const dropPattern =
+    /\bdrop\s+function\s+(?:if\s+exists\s+)?(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\b(?=\s*(?:\(|,|;|\bcascade\b|\brestrict\b))/gi;
+  const drops = [...source.matchAll(dropPattern)]
+    .filter(
+      (drop) =>
+        !definitions.some(
+          (definition) =>
+            drop.index >= definition.start &&
+            drop.index < definition.start + definition.source.length,
+        ),
+    )
+    .map(
+      (drop): SqlFunctionDrop => ({
+        kind: "drop",
+        name: drop[1]!.toLowerCase(),
+        start: drop.index,
+      }),
+    );
+  return [...definitions, ...drops].sort((left, right) => left.start - right.start);
 }
 
 function sqlStringLiterals(source: string) {
@@ -393,10 +429,13 @@ function sqlStringLiterals(source: string) {
 }
 
 function isTransitionModuleSpecifier(specifier: string, configuredSpecifier: string) {
+  const resolvableExtension = /\.(?:[cm]?[jt]sx?)$/i;
+  const normalizedSpecifier = specifier.replace(resolvableExtension, "");
+  const normalizedConfiguredSpecifier = configuredSpecifier.replace(resolvableExtension, "");
   return (
-    specifier === configuredSpecifier ||
-    specifier === "./transitions" ||
-    specifier.endsWith("/pipeline/transitions")
+    normalizedSpecifier === normalizedConfiguredSpecifier ||
+    normalizedSpecifier === "./transitions" ||
+    normalizedSpecifier.endsWith("/pipeline/transitions")
   );
 }
 
@@ -437,7 +476,10 @@ export function verifyPipelineTransitions({
   const usedDynamicExceptions = new Set<string>();
   const usedSeededStageExceptions = new Set<string>();
   const usedSqlOwners = new Set<string>();
-  const latestRpcDefinition = new Map<string, string>();
+  const effectiveRpcDefinition = new Map<
+    string,
+    Readonly<{ definitionPath: string | null; eventPath: string }>
+  >();
 
   for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
     if (!isWithin(file.path, config.sourceRoots)) continue;
@@ -456,17 +498,21 @@ export function verifyPipelineTransitions({
           });
         }
       }
-      for (const definition of sqlFunctionDefinitions(file.source)) {
-        if (rpcOwnerByName.has(definition.name)) {
-          latestRpcDefinition.set(definition.name, file.path);
+      for (const event of sqlFunctionEvents(file.source)) {
+        if (rpcOwnerByName.has(event.name)) {
+          effectiveRpcDefinition.set(event.name, {
+            definitionPath: event.kind === "create" ? file.path : null,
+            eventPath: file.path,
+          });
         }
-        for (const literal of sqlStringLiterals(definition.source)) {
+        if (event.kind === "drop") continue;
+        for (const literal of sqlStringLiterals(event.source)) {
           if (!config.seededStageSlugs.includes(literal.value)) continue;
-          const exceptionKey = `${file.path}\0${definition.name}\0${literal.value}`;
+          const exceptionKey = `${file.path}\0${event.name}\0${literal.value}`;
           const exception = config.seededStageLiteralExceptions.find(
             (candidate) =>
               candidate.path === file.path &&
-              candidate.functionName === definition.name &&
+              candidate.functionName === event.name &&
               candidate.value === literal.value,
           );
           if (exception) {
@@ -474,7 +520,7 @@ export function verifyPipelineTransitions({
           } else {
             diagnostics.push({
               code: "seeded-stage-branch",
-              line: file.source.slice(0, definition.start + literal.index).split("\n").length,
+              line: file.source.slice(0, event.start + literal.index).split("\n").length,
               message:
                 "Generic pipeline SQL functions cannot name a seeded stage slug. Resolve stages by id/position; seeded defaults belong in an exact designated adapter.",
               path: file.path,
@@ -689,6 +735,64 @@ export function verifyPipelineTransitions({
 
     visit(sourceFile);
 
+    const topLevelInitializers = new Map<string, ts.Expression>();
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+          topLevelInitializers.set(declaration.name.text, declaration.initializer);
+        }
+      }
+    }
+
+    function transitionValueInExport(
+      node: ts.Node,
+      resolving = new Set<string>(),
+    ): string | undefined {
+      if (ts.isIdentifier(node)) {
+        const parent = node.parent;
+        const isNonValueName =
+          (ts.isPropertyAssignment(parent) && parent.name === node) ||
+          (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+          (ts.isMethodDeclaration(parent) && parent.name === node);
+        if (isNonValueName || ts.isTypeNode(parent)) return undefined;
+
+        const importedName = importLocalNames.get(node.text);
+        if (importedName) {
+          let callTarget: ts.Node = node;
+          while (
+            ts.isParenthesizedExpression(callTarget.parent) ||
+            ts.isAsExpression(callTarget.parent) ||
+            ts.isTypeAssertionExpression(callTarget.parent) ||
+            ts.isNonNullExpression(callTarget.parent) ||
+            ts.isSatisfiesExpression(callTarget.parent)
+          ) {
+            callTarget = callTarget.parent;
+          }
+          if (
+            ts.isCallExpression(callTarget.parent) &&
+            callTarget.parent.expression === callTarget
+          ) {
+            return undefined;
+          }
+          return importedName;
+        }
+        const initializer = topLevelInitializers.get(node.text);
+        if (initializer && !resolving.has(node.text)) {
+          const nextResolving = new Set(resolving).add(node.text);
+          return transitionValueInExport(initializer, nextResolving);
+        }
+      }
+
+      let escapedTransition: string | undefined;
+      ts.forEachChild(node, (child) => {
+        if (!escapedTransition) {
+          escapedTransition = transitionValueInExport(child, resolving);
+        }
+      });
+      return escapedTransition;
+    }
+
     for (const statement of sourceFile.statements) {
       let reexportedTransition: string | undefined;
       if (
@@ -699,18 +803,20 @@ export function verifyPipelineTransitions({
       ) {
         for (const element of statement.exportClause.elements) {
           const localName = element.propertyName?.text ?? element.name.text;
-          reexportedTransition = importLocalNames.get(localName);
+          reexportedTransition =
+            importLocalNames.get(localName) ??
+            transitionValueInExport(topLevelInitializers.get(localName) ?? element);
           if (reexportedTransition) break;
         }
-      } else if (ts.isExportAssignment(statement) && ts.isIdentifier(statement.expression)) {
-        reexportedTransition = importLocalNames.get(statement.expression.text);
+      } else if (ts.isExportAssignment(statement)) {
+        reexportedTransition = transitionValueInExport(statement.expression);
       } else if (
         ts.isVariableStatement(statement) &&
         statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
       ) {
         for (const declaration of statement.declarationList.declarations) {
-          if (declaration.initializer && ts.isIdentifier(declaration.initializer)) {
-            reexportedTransition = importLocalNames.get(declaration.initializer.text);
+          if (declaration.initializer) {
+            reexportedTransition = transitionValueInExport(declaration.initializer);
             if (reexportedTransition) break;
           }
         }
@@ -798,13 +904,13 @@ export function verifyPipelineTransitions({
         path: owner.path,
       });
     }
-    const latest = latestRpcDefinition.get(owner.rpc);
-    if (latest !== owner.latestMigration) {
+    const effective = effectiveRpcDefinition.get(owner.rpc);
+    if (effective?.definitionPath !== owner.latestMigration) {
       diagnostics.push({
         code: "sql-owner",
         line: 1,
-        message: `The effective ${owner.rpc} definition is ${latest ?? "missing"}, not its exact owner ${owner.latestMigration}. ${owner.canonicalApi}`,
-        path: latest ?? owner.latestMigration,
+        message: `The effective ${owner.rpc} definition is ${effective?.definitionPath ?? "missing"}, not its exact owner ${owner.latestMigration}. ${owner.canonicalApi}`,
+        path: effective?.eventPath ?? owner.latestMigration,
       });
     }
   }

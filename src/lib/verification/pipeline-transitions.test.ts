@@ -275,6 +275,62 @@ describe("pipeline transition boundary verifier", () => {
     expect(diagnostics[0]?.message).toContain("fail-closed");
   });
 
+  it("normalizes resolvable extensions before checking transition imports", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("extension-import.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "extension-import.ts",
+      }),
+    ]);
+  });
+
+  it("rejects transition APIs embedded in exported aggregate bindings", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig({
+        importPermissions: [
+          {
+            callers: ["transition-export-aggregate.ts", "transition-export-object.ts"],
+            name: "cancelSessionAgentJobs",
+          },
+        ],
+      }),
+      files: [fixture("transition-export-object.ts"), fixture("transition-export-aggregate.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-aggregate.ts",
+      }),
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-object.ts",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("cannot be re-exported");
+  });
+
+  it("allows exported results and wrappers that directly invoke a permitted transition", () => {
+    expect(
+      verifyPipelineTransitions({
+        config: fixtureConfig({
+          importPermissions: [
+            {
+              callers: ["valid/aggregate-caller.ts"],
+              name: "cancelSessionAgentJobs",
+            },
+          ],
+        }),
+        files: [fixture("valid/aggregate-caller.ts")],
+      }),
+    ).toEqual([]);
+  });
+
   it("does not grant ownership to a same-named nested declaration", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig({
@@ -430,6 +486,81 @@ describe("pipeline transition boundary verifier", () => {
           fixture("valid/rpc-owner.ts"),
           fixture("valid/rpc-caller.ts"),
           fixture("valid/approve-plain.sql"),
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("treats a later DROP FUNCTION as removing the effective RPC owner", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          name: "approveSessionStage",
+        },
+      ],
+      rpcOwners: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          canonicalApi: "Use approveSessionStage().",
+          functionName: "approveSessionStage",
+          latestMigration: "valid/approve.sql",
+          path: "valid/rpc-owner.ts",
+          rpc: "approve_session_stage",
+        },
+      ],
+      transitionModule: "./rpc-owner",
+    });
+
+    const diagnostics = verifyPipelineTransitions({
+      config,
+      files: [
+        fixture("valid/rpc-owner.ts"),
+        fixture("valid/rpc-caller.ts"),
+        fixture("valid/approve.sql"),
+        fixture("valid/drop-approve.sql"),
+      ],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "sql-owner",
+        path: "valid/drop-approve.sql",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("missing");
+    expect(diagnostics[0]?.message).toContain("Use approveSessionStage()");
+  });
+
+  it("accepts an RPC recreated after a DROP FUNCTION in its owning migration", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          name: "approveSessionStage",
+        },
+      ],
+      rpcOwners: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          canonicalApi: "Use approveSessionStage().",
+          functionName: "approveSessionStage",
+          latestMigration: "valid/recreate-approve.sql",
+          path: "valid/rpc-owner.ts",
+          rpc: "approve_session_stage",
+        },
+      ],
+      transitionModule: "./rpc-owner",
+    });
+
+    expect(
+      verifyPipelineTransitions({
+        config,
+        files: [
+          fixture("valid/rpc-owner.ts"),
+          fixture("valid/rpc-caller.ts"),
+          fixture("valid/approve.sql"),
+          fixture("valid/recreate-approve.sql"),
         ],
       }),
     ).toEqual([]);

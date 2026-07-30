@@ -1,0 +1,8 @@
+drop function if exists public.approve_session_stage();
+
+create function public.approve_session_stage()
+returns void
+language sql
+as $$
+  select;
+$$;
