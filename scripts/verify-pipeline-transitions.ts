@@ -94,6 +94,7 @@ export type PipelineTransitionDiagnosticCode =
   | "dynamic-table-access"
   | "invalid-config"
   | "pipeline-owner"
+  | "production-test-import"
   | "recovery-owner-unused"
   | "seeded-stage-branch"
   | "sql-owner"
@@ -120,6 +121,7 @@ type VerifyInput = Readonly<{
 
 const MUTATION_OPERATIONS = new Set<PipelineOperation>(["delete", "insert", "update", "upsert"]);
 const TEST_FILE_PATTERN = /\.(?:fixture|spec|test|typecheck)\.[cm]?[jt]sx?$/;
+const TEST_MODULE_SPECIFIER_PATTERN = /\.(?:fixture|spec|test|typecheck)(?:\.[cm]?[jt]sx?)?$/;
 
 function normalizePath(path: string) {
   return path.split(sep).join("/");
@@ -595,6 +597,67 @@ export function verifyPipelineTransitions({
     );
 
     const importLocalNames = new Map<string, string>();
+    const staticStringBindings = new Map<string, string>();
+    function collectStaticStringBindings(node: ts.Node) {
+      if ((ts.isVariableDeclaration(node) || ts.isParameter(node)) && ts.isIdentifier(node.name)) {
+        const initializer = node.initializer
+          ? unwrapTransparentExpression(node.initializer)
+          : undefined;
+        if (initializer && ts.isStringLiteralLike(initializer)) {
+          staticStringBindings.set(node.name.text, initializer.text);
+        } else if (initializer && ts.isIdentifier(initializer)) {
+          const aliasedValue = staticStringBindings.get(initializer.text);
+          if (aliasedValue) staticStringBindings.set(node.name.text, aliasedValue);
+        } else if (
+          node.type &&
+          ts.isLiteralTypeNode(node.type) &&
+          ts.isStringLiteralLike(node.type.literal)
+        ) {
+          staticStringBindings.set(node.name.text, node.type.literal.text);
+        }
+      }
+      ts.forEachChild(node, collectStaticStringBindings);
+    }
+    collectStaticStringBindings(sourceFile);
+
+    function resolvedPropertyName(expression: ts.Expression): string | null {
+      const directName = propertyName(expression);
+      if (directName) return directName;
+      const unwrapped = unwrapTransparentExpression(expression);
+      if (!ts.isElementAccessExpression(unwrapped) || !unwrapped.argumentExpression) {
+        return null;
+      }
+      const argument = unwrapTransparentExpression(unwrapped.argumentExpression);
+      return ts.isIdentifier(argument) ? (staticStringBindings.get(argument.text) ?? null) : null;
+    }
+
+    function isComputedPropertyCall(expression: ts.Expression) {
+      const unwrapped = unwrapTransparentExpression(expression);
+      return (
+        ts.isElementAccessExpression(unwrapped) &&
+        !!unwrapped.argumentExpression &&
+        !ts.isStringLiteralLike(unwrapTransparentExpression(unwrapped.argumentExpression))
+      );
+    }
+
+    function importDeclarationHasRuntimeBindings(node: ts.ImportDeclaration) {
+      const clause = node.importClause;
+      if (!clause) return true;
+      if (clause.isTypeOnly) return false;
+      if (clause.name || !clause.namedBindings || ts.isNamespaceImport(clause.namedBindings)) {
+        return true;
+      }
+      return clause.namedBindings.elements.some((element) => !element.isTypeOnly);
+    }
+
+    function recordProductionTestImport(node: ts.Node) {
+      diagnostics.push({
+        code: "production-test-import",
+        line: lineOf(sourceFile, node),
+        message: `Production modules cannot import verifier-skipped test, fixture, spec, or typecheck modules into the runtime graph. Move runtime code to a production module and use the canonical transition API in ${config.transitionModule}.`,
+        path: file.path,
+      });
+    }
 
     function recordSeededStageReference(value: string, node: ts.Node) {
       if (
@@ -646,6 +709,27 @@ export function verifyPipelineTransitions({
     }
 
     function visit(node: ts.Node) {
+      if (
+        ts.isImportDeclaration(node) &&
+        ts.isStringLiteralLike(node.moduleSpecifier) &&
+        TEST_MODULE_SPECIFIER_PATTERN.test(node.moduleSpecifier.text) &&
+        importDeclarationHasRuntimeBindings(node)
+      ) {
+        recordProductionTestImport(node);
+        return;
+      }
+
+      if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteralLike(node.moduleSpecifier) &&
+        TEST_MODULE_SPECIFIER_PATTERN.test(node.moduleSpecifier.text) &&
+        !node.isTypeOnly
+      ) {
+        recordProductionTestImport(node);
+        return;
+      }
+
       if (
         ts.isExportDeclaration(node) &&
         node.moduleSpecifier &&
@@ -727,7 +811,7 @@ export function verifyPipelineTransitions({
         (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
         !isDirectlyInvoked(node)
       ) {
-        const method = propertyName(node);
+        const method = resolvedPropertyName(node);
         const receiver = propertyReceiver(node);
         const receiverText = receiver?.getText(sourceFile) ?? "";
         if (
@@ -742,7 +826,7 @@ export function verifyPipelineTransitions({
       }
 
       if (ts.isCallExpression(node)) {
-        const method = propertyName(node.expression);
+        const method = resolvedPropertyName(node.expression);
         const receiver = propertyReceiver(node.expression);
 
         const isDynamicModuleLoad =
@@ -750,6 +834,11 @@ export function verifyPipelineTransitions({
           (ts.isIdentifier(node.expression) && node.expression.text === "require");
         if (node.arguments[0] && isDynamicModuleLoad) {
           if (
+            ts.isStringLiteralLike(node.arguments[0]) &&
+            TEST_MODULE_SPECIFIER_PATTERN.test(node.arguments[0].text)
+          ) {
+            recordProductionTestImport(node);
+          } else if (
             !ts.isStringLiteralLike(node.arguments[0]) ||
             isTransitionModuleSpecifier(node.arguments[0].text, config.transitionModule)
           ) {
@@ -763,7 +852,11 @@ export function verifyPipelineTransitions({
           }
         }
 
-        if (method === "from" && receiver) {
+        const computedClientMethod =
+          isComputedPropertyCall(node.expression) && (method === "from" || method === "rpc");
+        if (computedClientMethod) {
+          recordDetachedClientMethod(method, node);
+        } else if (method === "from" && receiver) {
           const tableArgument = node.arguments[0];
           const receiverText = receiver.getText(sourceFile);
           if (
@@ -821,7 +914,7 @@ export function verifyPipelineTransitions({
           }
         }
 
-        if (method === "rpc" && node.arguments[0]) {
+        if (!computedClientMethod && method === "rpc" && node.arguments[0]) {
           if (!ts.isStringLiteralLike(node.arguments[0])) {
             diagnostics.push({
               code: "dynamic-rpc-access",

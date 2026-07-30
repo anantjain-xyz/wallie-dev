@@ -1,0 +1,10 @@
+export async function bypassWithComputedFrom(admin: any) {
+  const fromMethod: "from" = "from";
+  return admin[fromMethod]("sessions").update({ phase_status: "completed" });
+}
+
+export async function bypassWithComputedRpc(admin: any) {
+  const baseRpcMethod = "rpc" as const;
+  const rpcMethod = baseRpcMethod;
+  return admin[rpcMethod]("approve_session_stage", {});
+}

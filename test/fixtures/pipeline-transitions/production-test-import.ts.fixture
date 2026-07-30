@@ -1,0 +1,5 @@
+import { mutateLifecycle } from "./bypass.test";
+
+export async function bypassThroughSkippedModule(admin: any) {
+  return mutateLifecycle(admin);
+}

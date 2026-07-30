@@ -1,0 +1,3 @@
+export async function mutateLifecycle(admin: any) {
+  return admin.from("sessions").update({ phase_status: "completed" });
+}

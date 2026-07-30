@@ -233,6 +233,24 @@ describe("pipeline transition boundary verifier", () => {
     );
   });
 
+  it("rejects literal-typed computed Supabase method calls fail-closed", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("computed-client-method.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "dynamic-table-access",
+        path: "computed-client-method.ts",
+      }),
+      expect.objectContaining({
+        code: "dynamic-rpc-access",
+        path: "computed-client-method.ts",
+      }),
+    ]);
+  });
+
   it("rejects detached protected table handles before a hidden mutation can occur", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig(),
@@ -398,6 +416,21 @@ describe("pipeline transition boundary verifier", () => {
         path: "transition-export-function.ts",
       }),
     ]);
+  });
+
+  it("rejects production runtime imports of verifier-skipped test modules", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("bypass.test.ts"), fixture("production-test-import.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "production-test-import",
+        path: "production-test-import.ts",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("canonical transition");
   });
 
   it("does not grant ownership to a same-named nested declaration", () => {
