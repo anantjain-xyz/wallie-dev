@@ -4,24 +4,29 @@ Verification should match the claim being made. A focused unit test proves a
 function; it does not prove the worker is deployed, a browser journey works, or
 RLS isolates two workspaces.
 
-## Canonical local gate
+## Canonical validation profiles
 
-Before review, run:
+The repository owns two validation profiles:
 
 ```bash
+pnpm check:fast
 pnpm check
 ```
 
-This is the repository-owned pre-PR gate:
+The fast profile runs:
 
 ```text
-format:check → lint → typecheck → test
+verify:validation → format:check → lint → typecheck → check:privileged-imports
 ```
 
-Current CI runs formatting, lint, tests, a production build, and route-budget
-checks in separate jobs, but it does not run `typecheck`. Until CI delegates to
-the canonical gate, a green pull request is not evidence that TypeScript passed;
-run `pnpm check` locally and report it explicitly.
+The full profile runs `check:fast` and then the complete Vitest suite. Before
+review, run `pnpm check`, the repository-owned full pre-PR gate.
+
+Pull-request CI delegates directly to both canonical profiles: the fast
+validation job runs `pnpm check:fast`, and the test job runs `pnpm check`.
+Typechecking therefore runs in PR CI. A separate CI job builds the production
+app and enforces route budgets; production builds and route-budget checks are
+not part of either canonical profile.
 
 ## Verification lanes
 
@@ -33,7 +38,8 @@ run `pnpm check` locally and report it explicitly.
 | Static analysis            | `pnpm lint`                                              | ESLint and repository custom rules pass with zero warnings                | TypeScript or runtime behavior                            |
 | Types                      | `pnpm typecheck`                                         | TypeScript compiles with no emit                                          | Database runtime compatibility                            |
 | Unit suite                 | `pnpm test`                                              | All colocated Vitest tests pass                                           | A real browser, worker, provider, or hosted database      |
-| Canonical local gate       | `pnpm check`                                             | Format, lint, types, and unit tests pass together                         | Production build, route budgets, E2E, hosted integrations |
+| Canonical fast profile     | `pnpm check:fast`                                        | Verifier fixtures, format, lint, types, and privileged imports pass       | Unit tests, production build, route budgets, E2E          |
+| Canonical full profile     | `pnpm check`                                             | The fast profile and all unit tests pass together                         | Production build, route budgets, E2E, hosted integrations |
 | Production route budget    | `pnpm build && pnpm check:route-budgets`                 | Next production build succeeds and committed route ceilings hold          | Interaction latency or user-perceived behavior            |
 | Authenticated bundle check | `pnpm build && pnpm analyze:authenticated-bundle`        | Selected authenticated chunks omit the script's prohibited bundle markers | A general dependency audit or runtime correctness         |
 | Local schema reset         | `supabase db reset`                                      | The full migration chain and seed apply to a clean local stack            | Upgrade compatibility from an older deployed schema       |
@@ -42,6 +48,11 @@ run `pnpm check` locally and report it explicitly.
 
 `pnpm db:types` rewrites a generated file. Run it only against the intended
 local Supabase schema and inspect the diff.
+
+Database, browser, sandbox-provider, and hosted-integration checks depend on
+additional local services, credentials, or external environments. Run the
+relevant lane explicitly when the change makes that claim; neither canonical
+profile substitutes for it.
 
 ## Runtime development
 

@@ -19,7 +19,8 @@ Use Vercel route handlers for privileged and third-party integrations.
 ## Commands
 
 ```bash
-pnpm check                      # format:check + lint + typecheck + test — the pre-PR gate
+pnpm check:fast                 # verifier + format + lint + typecheck + privileged imports
+pnpm check                      # check:fast + test — the full pre-PR gate
 pnpm test path/to/file.test.ts  # run a single test file
 pnpm test -t "name of test"     # run tests matching a name
 pnpm test:watch                 # Vitest watch mode
@@ -31,7 +32,7 @@ supabase start                  # local Postgres/Auth/Realtime/Storage via Docke
 supabase db reset               # re-apply migrations + seed
 ```
 
-CI runs `format:check`, `lint`, and `test` but **not** `typecheck` — run `pnpm check` locally to catch TypeScript errors before review.
+PR CI runs the canonical `check:fast` and `check` profiles, including `typecheck`. Production builds and route-budget checks run separately; environment-dependent verification still requires its relevant local service or credentials.
 
 Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Without the worker, sessions stay stuck in `agent_generating`.
 
