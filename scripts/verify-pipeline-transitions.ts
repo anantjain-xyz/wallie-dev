@@ -149,23 +149,53 @@ function lineOf(sourceFile: ts.SourceFile, node: ts.Node) {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 
-function propertyName(expression: ts.Expression): string | null {
-  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
-  if (
-    ts.isElementAccessExpression(expression) &&
-    expression.argumentExpression &&
-    ts.isStringLiteralLike(expression.argumentExpression)
+function unwrapTransparentExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
   ) {
-    return expression.argumentExpression.text;
+    current = current.expression;
+  }
+  return current;
+}
+
+function propertyName(expression: ts.Expression): string | null {
+  const unwrapped = unwrapTransparentExpression(expression);
+  if (ts.isPropertyAccessExpression(unwrapped)) return unwrapped.name.text;
+  if (
+    ts.isElementAccessExpression(unwrapped) &&
+    unwrapped.argumentExpression &&
+    ts.isStringLiteralLike(unwrapped.argumentExpression)
+  ) {
+    return unwrapped.argumentExpression.text;
   }
   return null;
 }
 
 function propertyReceiver(expression: ts.Expression): ts.Expression | null {
-  if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
-    return expression.expression;
+  const unwrapped = unwrapTransparentExpression(expression);
+  if (ts.isPropertyAccessExpression(unwrapped) || ts.isElementAccessExpression(unwrapped)) {
+    return unwrapped.expression;
   }
   return null;
+}
+
+function isDirectlyInvoked(node: ts.Node) {
+  let callTarget = node;
+  while (
+    ts.isParenthesizedExpression(callTarget.parent) ||
+    ts.isAsExpression(callTarget.parent) ||
+    ts.isTypeAssertionExpression(callTarget.parent) ||
+    ts.isNonNullExpression(callTarget.parent) ||
+    ts.isSatisfiesExpression(callTarget.parent)
+  ) {
+    callTarget = callTarget.parent;
+  }
+  return ts.isCallExpression(callTarget.parent) && callTarget.parent.expression === callTarget;
 }
 
 function enclosingFunctionName(node: ts.Node): string | null {
@@ -395,9 +425,8 @@ function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
 
 function sqlFunctionEvents(source: string): SqlFunctionEvent[] {
   const definitions = sqlFunctionDefinitions(source);
-  const dropPattern =
-    /\bdrop\s+function\s+(?:if\s+exists\s+)?(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\b(?=\s*(?:\(|,|;|\bcascade\b|\brestrict\b))/gi;
-  const drops = [...source.matchAll(dropPattern)]
+  const dropHeaderPattern = /\bdrop\s+(?:function|routine)\s+(?:if\s+exists\s+)?/gi;
+  const drops = [...source.matchAll(dropHeaderPattern)]
     .filter(
       (drop) =>
         !definitions.some(
@@ -406,13 +435,38 @@ function sqlFunctionEvents(source: string): SqlFunctionEvent[] {
             drop.index < definition.start + definition.source.length,
         ),
     )
-    .map(
-      (drop): SqlFunctionDrop => ({
-        kind: "drop",
-        name: drop[1]!.toLowerCase(),
-        start: drop.index,
-      }),
-    );
+    .flatMap((drop): SqlFunctionDrop[] => {
+      const targetsStart = drop.index + drop[0].length;
+      const statementEnd = source.indexOf(";", targetsStart);
+      const targets = source.slice(targetsStart, statementEnd >= 0 ? statementEnd : source.length);
+      const segments: Array<{ source: string; start: number }> = [];
+      let depth = 0;
+      let segmentStart = 0;
+      for (let index = 0; index <= targets.length; index++) {
+        const character = targets[index];
+        if (character === "(") depth++;
+        if (character === ")") depth = Math.max(0, depth - 1);
+        if ((character === "," && depth === 0) || index === targets.length) {
+          segments.push({
+            source: targets.slice(segmentStart, index),
+            start: targetsStart + segmentStart,
+          });
+          segmentStart = index + 1;
+        }
+      }
+      return segments.flatMap((segment): SqlFunctionDrop[] => {
+        const name = /^\s*(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\b/i.exec(segment.source);
+        return name
+          ? [
+              {
+                kind: "drop",
+                name: name[1]!.toLowerCase(),
+                start: segment.start + name.index,
+              },
+            ]
+          : [];
+      });
+    });
   return [...definitions, ...drops].sort((left, right) => left.start - right.start);
 }
 
@@ -542,6 +596,55 @@ export function verifyPipelineTransitions({
 
     const importLocalNames = new Map<string, string>();
 
+    function recordSeededStageReference(value: string, node: ts.Node) {
+      if (
+        !config.seededStageSlugs.includes(value) ||
+        !isWithin(file.path, config.genericStageSourceRoots) ||
+        isWithin(file.path, config.seededStageAdapters)
+      ) {
+        return;
+      }
+      const functionName = enclosingFunctionName(node) ?? "<module>";
+      const exceptionKey = `${file.path}\0${functionName}\0${value}`;
+      const exception = config.seededStageLiteralExceptions.find(
+        (candidate) =>
+          candidate.path === file.path &&
+          candidate.functionName === functionName &&
+          candidate.value === value,
+      );
+      if (exception) {
+        usedSeededStageExceptions.add(exceptionKey);
+      } else {
+        diagnostics.push({
+          code: "seeded-stage-branch",
+          line: lineOf(sourceFile, node),
+          message:
+            "Generic pipeline production code cannot name a seeded stage slug. Resolve stages by id/position; seeded defaults belong in a designated adapter.",
+          path: file.path,
+        });
+      }
+    }
+
+    function recordDetachedClientMethod(method: "from" | "rpc", node: ts.Node) {
+      if (method === "from") {
+        diagnostics.push({
+          code: "dynamic-table-access",
+          line: lineOf(sourceFile, node),
+          message:
+            "Detached Supabase table methods are fail-closed because they hide protected lifecycle access. Invoke `.from(...)` directly through the canonical transition owner.",
+          path: file.path,
+        });
+      } else {
+        diagnostics.push({
+          code: "dynamic-rpc-access",
+          line: lineOf(sourceFile, node),
+          message:
+            "Detached or indirectly invoked RPC methods are fail-closed because they can hide a protected lifecycle transition. Invoke `.rpc(...)` directly through its exact typed owner.",
+          path: file.path,
+        });
+      }
+    }
+
     function visit(node: ts.Node) {
       if (
         ts.isExportDeclaration(node) &&
@@ -596,30 +699,45 @@ export function verifyPipelineTransitions({
       }
 
       if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+        recordSeededStageReference(node.text, node);
+      } else if (
+        ts.isIdentifier(node) &&
+        ((ts.isPropertyAssignment(node.parent) && node.parent.name === node) ||
+          (ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node) ||
+          (ts.isMethodDeclaration(node.parent) && node.parent.name === node) ||
+          (ts.isPropertyDeclaration(node.parent) && node.parent.name === node) ||
+          (ts.isGetAccessorDeclaration(node.parent) && node.parent.name === node) ||
+          (ts.isSetAccessorDeclaration(node.parent) && node.parent.name === node) ||
+          (ts.isEnumMember(node.parent) && node.parent.name === node))
+      ) {
+        recordSeededStageReference(node.text, node);
+      }
+
+      if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+        const property = node.propertyName ?? node.name;
         if (
-          config.seededStageSlugs.includes(node.text) &&
-          isWithin(file.path, config.genericStageSourceRoots) &&
-          !isWithin(file.path, config.seededStageAdapters)
+          (ts.isIdentifier(property) || ts.isStringLiteralLike(property)) &&
+          (property.text === "from" || property.text === "rpc")
         ) {
-          const functionName = enclosingFunctionName(node) ?? "<module>";
-          const exceptionKey = `${file.path}\0${functionName}\0${node.text}`;
-          const exception = config.seededStageLiteralExceptions.find(
-            (candidate) =>
-              candidate.path === file.path &&
-              candidate.functionName === functionName &&
-              candidate.value === node.text,
-          );
-          if (exception) {
-            usedSeededStageExceptions.add(exceptionKey);
-          } else {
-            diagnostics.push({
-              code: "seeded-stage-branch",
-              line: lineOf(sourceFile, node),
-              message:
-                "Generic pipeline production code cannot name a seeded stage slug. Resolve stages by id/position; seeded defaults belong in a designated adapter.",
-              path: file.path,
-            });
-          }
+          recordDetachedClientMethod(property.text, node);
+        }
+      }
+
+      if (
+        (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+        !isDirectlyInvoked(node)
+      ) {
+        const method = propertyName(node);
+        const receiver = propertyReceiver(node);
+        const receiverText = receiver?.getText(sourceFile) ?? "";
+        if (
+          method === "from" &&
+          !receiverText.endsWith(".storage") &&
+          !["Array", "Buffer", "Readable"].includes(receiverText)
+        ) {
+          recordDetachedClientMethod(method, node);
+        } else if (method === "rpc") {
+          recordDetachedClientMethod(method, node);
         }
       }
 
@@ -735,13 +853,19 @@ export function verifyPipelineTransitions({
 
     visit(sourceFile);
 
-    const topLevelInitializers = new Map<string, ts.Expression>();
+    const topLevelBindings = new Map<string, ts.Node>();
     for (const statement of sourceFile.statements) {
-      if (!ts.isVariableStatement(statement)) continue;
-      for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
-          topLevelInitializers.set(declaration.name.text, declaration.initializer);
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+            topLevelBindings.set(declaration.name.text, declaration.initializer);
+          }
         }
+      } else if (
+        (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+        statement.name
+      ) {
+        topLevelBindings.set(statement.name.text, statement);
       }
     }
 
@@ -754,33 +878,28 @@ export function verifyPipelineTransitions({
         const isNonValueName =
           (ts.isPropertyAssignment(parent) && parent.name === node) ||
           (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-          (ts.isMethodDeclaration(parent) && parent.name === node);
+          (ts.isMethodDeclaration(parent) && parent.name === node) ||
+          (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+          (ts.isGetAccessorDeclaration(parent) && parent.name === node) ||
+          (ts.isSetAccessorDeclaration(parent) && parent.name === node) ||
+          (ts.isFunctionDeclaration(parent) && parent.name === node) ||
+          (ts.isFunctionExpression(parent) && parent.name === node) ||
+          (ts.isClassDeclaration(parent) && parent.name === node) ||
+          (ts.isClassExpression(parent) && parent.name === node) ||
+          (ts.isVariableDeclaration(parent) && parent.name === node) ||
+          (ts.isParameter(parent) && parent.name === node) ||
+          (ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node));
         if (isNonValueName || ts.isTypeNode(parent)) return undefined;
 
         const importedName = importLocalNames.get(node.text);
         if (importedName) {
-          let callTarget: ts.Node = node;
-          while (
-            ts.isParenthesizedExpression(callTarget.parent) ||
-            ts.isAsExpression(callTarget.parent) ||
-            ts.isTypeAssertionExpression(callTarget.parent) ||
-            ts.isNonNullExpression(callTarget.parent) ||
-            ts.isSatisfiesExpression(callTarget.parent)
-          ) {
-            callTarget = callTarget.parent;
-          }
-          if (
-            ts.isCallExpression(callTarget.parent) &&
-            callTarget.parent.expression === callTarget
-          ) {
-            return undefined;
-          }
+          if (isDirectlyInvoked(node)) return undefined;
           return importedName;
         }
-        const initializer = topLevelInitializers.get(node.text);
-        if (initializer && !resolving.has(node.text)) {
+        const binding = topLevelBindings.get(node.text);
+        if (binding && !resolving.has(node.text)) {
           const nextResolving = new Set(resolving).add(node.text);
-          return transitionValueInExport(initializer, nextResolving);
+          return transitionValueInExport(binding, nextResolving);
         }
       }
 
@@ -805,7 +924,7 @@ export function verifyPipelineTransitions({
           const localName = element.propertyName?.text ?? element.name.text;
           reexportedTransition =
             importLocalNames.get(localName) ??
-            transitionValueInExport(topLevelInitializers.get(localName) ?? element);
+            transitionValueInExport(topLevelBindings.get(localName) ?? element);
           if (reexportedTransition) break;
         }
       } else if (ts.isExportAssignment(statement)) {
@@ -820,6 +939,11 @@ export function verifyPipelineTransitions({
             if (reexportedTransition) break;
           }
         }
+      } else if (
+        (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+        statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ) {
+        reexportedTransition = transitionValueInExport(statement);
       }
       if (reexportedTransition) {
         diagnostics.push({

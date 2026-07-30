@@ -331,18 +331,28 @@ type OnboardingSnapshotRpcResult = PromiseLike<{
   error: unknown;
 }>;
 
+type OnboardingSnapshotRpc = (
+  name: OnboardingSnapshotRpcName,
+  args: { target_workspace_id: string },
+) => OnboardingSnapshotRpcResult;
+
 function loadOnboardingSnapshotRows(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   functionName: OnboardingSnapshotRpcName,
   workspaceId: string,
 ) {
   // These forward-migration RPCs are intentionally not hand-added to generated database.types.ts.
-  const rpc = admin.rpc.bind(admin) as unknown as (
-    name: OnboardingSnapshotRpcName,
-    args: { target_workspace_id: string },
-  ) => OnboardingSnapshotRpcResult;
-
-  return rpc(functionName, { target_workspace_id: workspaceId });
+  const args = { target_workspace_id: workspaceId };
+  if (functionName === "load_workspace_onboarding_sandbox_checks") {
+    return (admin.rpc as unknown as OnboardingSnapshotRpc)(
+      "load_workspace_onboarding_sandbox_checks",
+      args,
+    );
+  }
+  return (admin.rpc as unknown as OnboardingSnapshotRpc)(
+    "load_workspace_onboarding_secret_previews",
+    args,
+  );
 }
 
 function snapshotRows<T>(value: Json | null, source: OnboardingSnapshotRpcName): T[] {

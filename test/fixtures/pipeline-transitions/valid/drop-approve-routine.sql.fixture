@@ -1,0 +1,1 @@
+drop routine if exists public.unrelated_rpc(), public.approve_session_stage();

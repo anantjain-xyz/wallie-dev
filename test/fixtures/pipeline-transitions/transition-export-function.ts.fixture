@@ -1,0 +1,9 @@
+import { cancelSessionAgentJobs } from "./transitions";
+
+export function rawTransition() {
+  return cancelSessionAgentJobs;
+}
+
+export class TransitionBag {
+  raw = cancelSessionAgentJobs;
+}

@@ -175,6 +175,25 @@ describe("pipeline transition boundary verifier", () => {
     ]);
   });
 
+  it("rejects detached Supabase table methods fail-closed", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("detached-from.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "dynamic-table-access",
+        path: "detached-from.ts",
+      }),
+      expect.objectContaining({
+        code: "dynamic-table-access",
+        path: "detached-from.ts",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("fail-closed");
+  });
+
   it("rejects dynamically named RPC calls fail-closed", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig(),
@@ -187,6 +206,31 @@ describe("pipeline transition boundary verifier", () => {
         path: "dynamic-rpc.ts",
       }),
     ]);
+  });
+
+  it("rejects detached and indirectly invoked RPC methods fail-closed", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("detached-rpc.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "dynamic-rpc-access",
+        path: "detached-rpc.ts",
+      }),
+      expect.objectContaining({
+        code: "dynamic-rpc-access",
+        path: "detached-rpc.ts",
+      }),
+      expect.objectContaining({
+        code: "dynamic-rpc-access",
+        path: "detached-rpc.ts",
+      }),
+    ]);
+    expect(diagnostics.every((diagnostic) => diagnostic.message.includes("fail-closed"))).toBe(
+      true,
+    );
   });
 
   it("rejects detached protected table handles before a hidden mutation can occur", () => {
@@ -331,6 +375,31 @@ describe("pipeline transition boundary verifier", () => {
     ).toEqual([]);
   });
 
+  it("rejects transition values escaping exported function and class bodies", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig({
+        importPermissions: [
+          {
+            callers: ["transition-export-function.ts"],
+            name: "cancelSessionAgentJobs",
+          },
+        ],
+      }),
+      files: [fixture("transition-export-function.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-function.ts",
+      }),
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-function.ts",
+      }),
+    ]);
+  });
+
   it("does not grant ownership to a same-named nested declaration", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig({
@@ -366,6 +435,20 @@ describe("pipeline transition boundary verifier", () => {
       expect.objectContaining({
         code: "seeded-stage-branch",
         path: "seeded-stage-alias.ts",
+      }),
+    ]);
+  });
+
+  it("rejects seeded-stage identifier property names in generic production code", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig(),
+      files: [fixture("seeded-stage-property.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "seeded-stage-branch",
+        path: "seeded-stage-property.ts",
       }),
     ]);
   });
@@ -530,6 +613,46 @@ describe("pipeline transition boundary verifier", () => {
     ]);
     expect(diagnostics[0]?.message).toContain("missing");
     expect(diagnostics[0]?.message).toContain("Use approveSessionStage()");
+  });
+
+  it("treats a later DROP ROUTINE as removing the effective RPC owner", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          name: "approveSessionStage",
+        },
+      ],
+      rpcOwners: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          canonicalApi: "Use approveSessionStage().",
+          functionName: "approveSessionStage",
+          latestMigration: "valid/approve.sql",
+          path: "valid/rpc-owner.ts",
+          rpc: "approve_session_stage",
+        },
+      ],
+      transitionModule: "./rpc-owner",
+    });
+
+    const diagnostics = verifyPipelineTransitions({
+      config,
+      files: [
+        fixture("valid/rpc-owner.ts"),
+        fixture("valid/rpc-caller.ts"),
+        fixture("valid/approve.sql"),
+        fixture("valid/drop-approve-routine.sql"),
+      ],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "sql-owner",
+        path: "valid/drop-approve-routine.sql",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("missing");
   });
 
   it("accepts an RPC recreated after a DROP FUNCTION in its owning migration", () => {

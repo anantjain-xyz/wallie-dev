@@ -1,0 +1,9 @@
+const handlers = {
+  plan() {
+    return "planned";
+  },
+};
+
+export function dispatch(stage: { slug: string }) {
+  return handlers[stage.slug as keyof typeof handlers]();
+}

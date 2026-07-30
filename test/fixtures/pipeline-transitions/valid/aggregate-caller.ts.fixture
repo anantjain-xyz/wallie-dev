@@ -3,3 +3,13 @@ import { cancelSessionAgentJobs } from "./transitions";
 export const cancellation = cancelSessionAgentJobs({}, "session-1");
 export const cancel = () => cancelSessionAgentJobs({}, "session-2");
 export const api = { cancelSessionAgentJobs: cancellation };
+
+export function cancelDirectly() {
+  return cancelSessionAgentJobs({}, "session-3");
+}
+
+export class CancellationApi {
+  cancel() {
+    return cancelSessionAgentJobs({}, "session-4");
+  }
+}

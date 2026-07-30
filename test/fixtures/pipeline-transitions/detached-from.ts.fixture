@@ -1,0 +1,9 @@
+export async function bypassTransitionOwners(admin: any) {
+  const from = admin.from.bind(admin);
+  return from("sessions").update({ phase_status: "completed" });
+}
+
+export async function bypassWithDestructuring(admin: any) {
+  const { from } = admin;
+  return from("sessions").update({ phase_status: "completed" });
+}

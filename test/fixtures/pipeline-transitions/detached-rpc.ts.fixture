@@ -1,0 +1,13 @@
+export async function bypassWithBoundRpc(admin: any) {
+  const rpc = admin.rpc.bind(admin);
+  return rpc("approve_session_stage", {});
+}
+
+export async function bypassWithRpcCall(admin: any) {
+  return admin.rpc.call(admin, "approve_session_stage", {});
+}
+
+export async function bypassWithDestructuring(admin: any) {
+  const { rpc } = admin;
+  return rpc("approve_session_stage", {});
+}
