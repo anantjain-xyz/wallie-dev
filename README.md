@@ -548,7 +548,7 @@ Linear-linked sessions are deduplicated on `(workspace_id, linear_issue_id)`; se
 
 - Integration credentials are encrypted at rest with AES-256-GCM
 - GitHub webhooks are signature-verified
-- A `sanitizeUntrusted()` helper lives in `src/lib/pipeline/prompt-safety.ts` for prompt-injection defense; note it is **not yet wired into the prompt path** (`processPipelineJob()` renders the session prompt as-is), so apply it yourself when extending prompts with untrusted input
+- Production stage prompts enforce a typed trust boundary: `runStage()` classifies trusted control text and untrusted session data before `renderStagePrompt()`, which crosses each value into renderer strings through `verifyPromptBoundary()`. Untrusted values are wrapped in collision-free boundary markers before template rendering; new prompt inputs must be explicitly classified with `trustedPromptValue()` or `untrustedPromptValue()` and cross through the same verifier.
 
 ### Realtime
 
