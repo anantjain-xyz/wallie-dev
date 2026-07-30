@@ -395,9 +395,19 @@ type SqlFunctionDrop = Readonly<{
 
 type SqlFunctionEvent = SqlFunctionDefinition | SqlFunctionDrop;
 
+const SQL_IDENTIFIER_PATTERN = String.raw`(?:"(?:[^"]|"")*"|[a-z_][a-z0-9_]*)`;
+
+function sqlIdentifierValue(identifier: string) {
+  return identifier.startsWith('"')
+    ? identifier.slice(1, -1).replaceAll('""', '"')
+    : identifier.toLowerCase();
+}
+
 function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
-  const pattern =
-    /\bcreate\s+(?:or\s+replace\s+)?function\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\(/gi;
+  const pattern = new RegExp(
+    String.raw`\bcreate\s+(?:or\s+replace\s+)?function\s+(?:${SQL_IDENTIFIER_PATTERN}\s*\.\s*)?(${SQL_IDENTIFIER_PATTERN})\s*\(`,
+    "gi",
+  );
   const headers = [...source.matchAll(pattern)];
   return headers.map((header, index) => {
     const start = header.index;
@@ -418,7 +428,7 @@ function sqlFunctionDefinitions(source: string): SqlFunctionDefinition[] {
     }
     return {
       kind: "create",
-      name: header[1]!.toLowerCase(),
+      name: sqlIdentifierValue(header[1]!),
       source: source.slice(start, end),
       start,
     };
@@ -457,12 +467,15 @@ function sqlFunctionEvents(source: string): SqlFunctionEvent[] {
         }
       }
       return segments.flatMap((segment): SqlFunctionDrop[] => {
-        const name = /^\s*(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\b/i.exec(segment.source);
+        const name = new RegExp(
+          String.raw`^\s*(?:${SQL_IDENTIFIER_PATTERN}\s*\.\s*)?(${SQL_IDENTIFIER_PATTERN})`,
+          "i",
+        ).exec(segment.source);
         return name
           ? [
               {
                 kind: "drop",
-                name: name[1]!.toLowerCase(),
+                name: sqlIdentifierValue(name[1]!),
                 start: segment.start + name.index,
               },
             ]
@@ -962,6 +975,35 @@ export function verifyPipelineTransitions({
       }
     }
 
+    const exportedBindingNames = new Set<string>();
+    for (const statement of sourceFile.statements) {
+      if (
+        ts.isVariableStatement(statement) &&
+        statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) exportedBindingNames.add(declaration.name.text);
+        }
+      } else if (
+        (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+        statement.name &&
+        statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ) {
+        exportedBindingNames.add(statement.name.text);
+      } else if (
+        ts.isExportDeclaration(statement) &&
+        !statement.moduleSpecifier &&
+        statement.exportClause &&
+        ts.isNamedExports(statement.exportClause)
+      ) {
+        for (const element of statement.exportClause.elements) {
+          exportedBindingNames.add(element.propertyName?.text ?? element.name.text);
+        }
+      } else if (ts.isExportAssignment(statement) && ts.isIdentifier(statement.expression)) {
+        exportedBindingNames.add(statement.expression.text);
+      }
+    }
+
     function transitionValueInExport(
       node: ts.Node,
       resolving = new Set<string>(),
@@ -1005,6 +1047,32 @@ export function verifyPipelineTransitions({
       return escapedTransition;
     }
 
+    function rootIdentifierName(expression: ts.Expression): string | null {
+      let current = unwrapTransparentExpression(expression);
+      while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+        current = unwrapTransparentExpression(current.expression);
+      }
+      return ts.isIdentifier(current) ? current.text : null;
+    }
+
+    function isExportedHolderName(name: string, resolving = new Set<string>()): boolean {
+      if (exportedBindingNames.has(name)) return true;
+      if (resolving.has(name)) return false;
+      const binding = topLevelBindings.get(name);
+      if (!binding || !ts.isExpression(binding)) return false;
+      const aliasedName = rootIdentifierName(binding);
+      return aliasedName ? isExportedHolderName(aliasedName, new Set(resolving).add(name)) : false;
+    }
+
+    function recordTransitionExport(importedName: string, node: ts.Node) {
+      diagnostics.push({
+        code: "unauthorized-transition-import",
+        line: lineOf(sourceFile, node),
+        message: `Imported transition ${importedName} cannot be re-exported or aliased through an exported binding; callers must import their exact owned API directly.`,
+        path: file.path,
+      });
+    }
+
     for (const statement of sourceFile.statements) {
       let reexportedTransition: string | undefined;
       if (
@@ -1039,14 +1107,41 @@ export function verifyPipelineTransitions({
         reexportedTransition = transitionValueInExport(statement);
       }
       if (reexportedTransition) {
-        diagnostics.push({
-          code: "unauthorized-transition-import",
-          line: lineOf(sourceFile, statement),
-          message: `Imported transition ${reexportedTransition} cannot be re-exported or aliased through an exported binding; callers must import their exact owned API directly.`,
-          path: file.path,
-        });
+        recordTransitionExport(reexportedTransition, statement);
       }
     }
+
+    function scanExportedHolderMutations(node: ts.Node) {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ) {
+        const holder = rootIdentifierName(node.left);
+        const leakedTransition = holder ? transitionValueInExport(node.right) : undefined;
+        if (holder && isExportedHolderName(holder) && leakedTransition) {
+          recordTransitionExport(leakedTransition, node);
+        }
+      } else if (ts.isCallExpression(node)) {
+        const receiver = propertyReceiver(node.expression);
+        const holderThroughReceiver = receiver ? rootIdentifierName(receiver) : null;
+        const holderThroughArgument = node.arguments.some((argument) => {
+          const holder = rootIdentifierName(argument);
+          return !!holder && isExportedHolderName(holder);
+        });
+        if (
+          holderThroughArgument ||
+          (!!holderThroughReceiver && isExportedHolderName(holderThroughReceiver))
+        ) {
+          const leakedTransition = node.arguments
+            .map((argument) => transitionValueInExport(argument))
+            .find((candidate) => !!candidate);
+          if (leakedTransition) recordTransitionExport(leakedTransition, node);
+        }
+      }
+      ts.forEachChild(node, scanExportedHolderMutations);
+    }
+    scanExportedHolderMutations(sourceFile);
 
     for (const [localName, importedName] of importLocalNames) {
       let references = 0;

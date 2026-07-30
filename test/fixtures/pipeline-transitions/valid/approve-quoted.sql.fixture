@@ -1,0 +1,6 @@
+create or replace function public."approve_session_stage"()
+returns void
+language sql
+as $$
+  select;
+$$;

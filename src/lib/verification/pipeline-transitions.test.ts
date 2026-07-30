@@ -418,6 +418,35 @@ describe("pipeline transition boundary verifier", () => {
     ]);
   });
 
+  it("rejects post-declaration mutations of exported transition holders", () => {
+    const diagnostics = verifyPipelineTransitions({
+      config: fixtureConfig({
+        importPermissions: [
+          {
+            callers: ["transition-export-mutation.ts"],
+            name: "cancelSessionAgentJobs",
+          },
+        ],
+      }),
+      files: [fixture("transition-export-mutation.ts")],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-mutation.ts",
+      }),
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-mutation.ts",
+      }),
+      expect.objectContaining({
+        code: "unauthorized-transition-import",
+        path: "transition-export-mutation.ts",
+      }),
+    ]);
+  });
+
   it("rejects production runtime imports of verifier-skipped test modules", () => {
     const diagnostics = verifyPipelineTransitions({
       config: fixtureConfig(),
@@ -607,6 +636,39 @@ describe("pipeline transition boundary verifier", () => {
     ).toEqual([]);
   });
 
+  it("recognizes a quoted CREATE FUNCTION as the effective RPC definition", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          name: "approveSessionStage",
+        },
+      ],
+      rpcOwners: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          canonicalApi: "Use approveSessionStage().",
+          functionName: "approveSessionStage",
+          latestMigration: "valid/approve-quoted.sql",
+          path: "valid/rpc-owner.ts",
+          rpc: "approve_session_stage",
+        },
+      ],
+      transitionModule: "./rpc-owner",
+    });
+
+    expect(
+      verifyPipelineTransitions({
+        config,
+        files: [
+          fixture("valid/rpc-owner.ts"),
+          fixture("valid/rpc-caller.ts"),
+          fixture("valid/approve-quoted.sql"),
+        ],
+      }),
+    ).toEqual([]);
+  });
+
   it("treats a later DROP FUNCTION as removing the effective RPC owner", () => {
     const config = fixtureConfig({
       importPermissions: [
@@ -646,6 +708,46 @@ describe("pipeline transition boundary verifier", () => {
     ]);
     expect(diagnostics[0]?.message).toContain("missing");
     expect(diagnostics[0]?.message).toContain("Use approveSessionStage()");
+  });
+
+  it("treats a quoted DROP FUNCTION as removing the effective RPC owner", () => {
+    const config = fixtureConfig({
+      importPermissions: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          name: "approveSessionStage",
+        },
+      ],
+      rpcOwners: [
+        {
+          callers: ["valid/rpc-caller.ts"],
+          canonicalApi: "Use approveSessionStage().",
+          functionName: "approveSessionStage",
+          latestMigration: "valid/approve.sql",
+          path: "valid/rpc-owner.ts",
+          rpc: "approve_session_stage",
+        },
+      ],
+      transitionModule: "./rpc-owner",
+    });
+
+    const diagnostics = verifyPipelineTransitions({
+      config,
+      files: [
+        fixture("valid/rpc-owner.ts"),
+        fixture("valid/rpc-caller.ts"),
+        fixture("valid/approve.sql"),
+        fixture("valid/drop-approve-quoted.sql"),
+      ],
+    });
+
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        code: "sql-owner",
+        path: "valid/drop-approve-quoted.sql",
+      }),
+    ]);
+    expect(diagnostics[0]?.message).toContain("missing");
   });
 
   it("treats a later DROP ROUTINE as removing the effective RPC owner", () => {

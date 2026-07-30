@@ -1,0 +1,11 @@
+import { cancelSessionAgentJobs } from "./transitions";
+
+const api: Record<string, unknown> = {};
+const methods: unknown[] = [];
+const apiAlias = api;
+
+api.cancel = cancelSessionAgentJobs;
+methods.push(cancelSessionAgentJobs);
+apiAlias.retry = cancelSessionAgentJobs;
+
+export { api, methods };
