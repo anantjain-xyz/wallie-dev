@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
+import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import type { FlashMessage } from "@/features/settings/settings-types";
@@ -72,6 +73,8 @@ export function SandboxProviderSection({
       : (settings.enabledProviders[0] ?? null);
   });
   const [pending, setPending] = useState<string | null>(null);
+  const [disconnectProvider, setDisconnectProvider] = useState<SandboxProvider | null>(null);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
   async function request<T>(url: string, init: RequestInit): Promise<T> {
     const response = await fetch(url, {
@@ -123,6 +126,7 @@ export function SandboxProviderSection({
 
   async function disconnect(provider: SandboxProvider) {
     setPending(`delete:${provider}`);
+    setDisconnectError(null);
     try {
       await request<{ connection: null }>(
         `/api/workspaces/${workspaceId}/sandbox-connections/${provider}`,
@@ -132,11 +136,14 @@ export function SandboxProviderSection({
         ...settings,
         connections: { ...settings.connections, [provider]: null },
       });
+      setDisconnectProvider(null);
       setFlashMessage({ kind: "success", text: `${providerLabel(provider)} disconnected.` });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Sandbox disconnect failed.";
+      setDisconnectError(message);
       setFlashMessage({
         kind: "error",
-        text: error instanceof Error ? error.message : "Sandbox disconnect failed.",
+        text: message,
       });
     } finally {
       setPending(null);
@@ -178,6 +185,12 @@ export function SandboxProviderSection({
       connected,
       connection,
     } as const;
+  }
+
+  function selectProvider(provider: SandboxProvider) {
+    setSelectedProvider(provider);
+    setDisconnectProvider(null);
+    setDisconnectError(null);
   }
 
   function providerForm(provider: SandboxProvider) {
@@ -233,7 +246,7 @@ export function SandboxProviderSection({
                       checked={selectedProvider === provider.id}
                       className="peer sr-only"
                       name="sandbox-provider"
-                      onChange={() => setSelectedProvider(provider.id)}
+                      onChange={() => selectProvider(provider.id)}
                       type="radio"
                       value={provider.id}
                     />
@@ -274,8 +287,17 @@ export function SandboxProviderSection({
                 <ProviderActions
                   canManage={canManage}
                   disabled={pending !== null}
+                  disconnectError={disconnectError}
+                  disconnectOpen={disconnectProvider === selectedProvider}
+                  disconnectPending={pending === `delete:${selectedProvider}`}
+                  onDisconnectOpenChange={(open) => {
+                    setDisconnectError(null);
+                    setDisconnectProvider(open ? selectedProvider : null);
+                  }}
                   onActivate={() => void activate(selectedProvider)}
                   onDisconnect={() => void disconnect(selectedProvider)}
+                  provider={selectedProvider}
+                  activeProvider={settings.activeProvider}
                   status={connectionStatus(selectedProvider)}
                 />
               </div>
@@ -298,16 +320,28 @@ export function SandboxProviderSection({
 }
 
 function ProviderActions({
+  activeProvider,
   canManage,
   disabled,
+  disconnectError,
+  disconnectOpen,
+  disconnectPending,
   onActivate,
   onDisconnect,
+  onDisconnectOpenChange,
+  provider,
   status,
 }: {
+  activeProvider: SandboxProvider;
   canManage: boolean;
   disabled: boolean;
+  disconnectError: string | null;
+  disconnectOpen: boolean;
+  disconnectPending: boolean;
   onActivate: () => void;
   onDisconnect: () => void;
+  onDisconnectOpenChange: (open: boolean) => void;
+  provider: SandboxProvider;
   status: {
     active: boolean;
     connected: boolean;
@@ -327,14 +361,27 @@ function ProviderActions({
         </button>
       ) : null}
       {canManage && status.connection && !status.active ? (
-        <button
-          className="ui-button-danger"
-          disabled={disabled}
-          onClick={onDisconnect}
-          type="button"
-        >
-          Disconnect
-        </button>
+        <DestructiveConfirmationDialog
+          actionLabel={`Disconnect ${providerLabel(provider)}`}
+          description={`Disconnecting ${providerLabel(provider)} removes its saved connection from this workspace. Wallie will continue using ${providerLabel(activeProvider)}.`}
+          errorMessage={disconnectError}
+          onConfirm={onDisconnect}
+          onOpenChange={onDisconnectOpenChange}
+          open={disconnectOpen}
+          pending={disconnectPending}
+          pendingLabel="Disconnecting…"
+          title={`Disconnect ${providerLabel(provider)}?`}
+          trigger={
+            <button
+              aria-label={`Disconnect ${providerLabel(provider)}`}
+              className="ui-button-danger"
+              disabled={disabled}
+              type="button"
+            >
+              Disconnect
+            </button>
+          }
+        />
       ) : null}
       {status.active && status.connected ? (
         <a className="ui-button" href="#verify">
