@@ -91,7 +91,7 @@ function makeSessionListData(
     queryState: {
       cursor: null,
       query: "",
-      scope: "all",
+      scope: "active",
       sort: "updated",
       stageSlug: null,
     },

@@ -52,7 +52,7 @@ function makeData(count: number): SessionListPageData {
     hasMore: false,
     nextCursor: null,
     onboarding: null,
-    queryState: { cursor: null, query: "", scope: "all", sort: "updated", stageSlug: null },
+    queryState: { cursor: null, query: "", scope: "active", sort: "updated", stageSlug: null },
     sessions,
     stageFacets: count > 0 ? [{ count, name: "Plan", position: 0, slug: "plan" }] : [],
     totalCount: count,
@@ -74,6 +74,18 @@ describe("Sessions ledger server render", () => {
       ),
     );
     expect(zero).toContain("No sessions yet");
+
+    const archivedOnlyDefault = renderToStaticMarkup(
+      createElement(
+        OverlayProvider,
+        null,
+        createElement(SessionsPage, {
+          initialData: { ...makeData(0), hasAnySession: true },
+        }),
+      ),
+    );
+    expect(archivedOnlyDefault).toContain("No sessions match these filters");
+    expect(archivedOnlyDefault).not.toContain("No sessions yet");
 
     const one = renderToStaticMarkup(
       createElement(
@@ -122,7 +134,7 @@ describe("Sessions ledger server render", () => {
             queryState: {
               cursor: null,
               query: "",
-              scope: "all",
+              scope: "active",
               sort: "oldest",
               stageSlug: null,
             },

@@ -21,7 +21,7 @@ export function buildSessionsListHref(
   const params = new URLSearchParams();
   if (state.stageSlug) params.set("stage", state.stageSlug);
   if (state.query.trim()) params.set("q", state.query.trim());
-  if (state.scope !== "all") params.set("scope", state.scope);
+  if (state.scope !== "active") params.set("scope", state.scope);
   if (state.sort !== "updated") params.set("sort", state.sort);
   if (state.cursor) params.set("cursor", state.cursor);
   const qs = params.toString();

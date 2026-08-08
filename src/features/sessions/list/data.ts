@@ -55,10 +55,10 @@ function readSingle(searchParams: SearchParamInput, key: string): string | null 
 }
 
 function parseScope(raw: string | null): SessionFilterKey {
-  if (raw === "archived" || raw === "active") {
+  if (raw === "active" || raw === "archived" || raw === "all") {
     return raw;
   }
-  return "all";
+  return "active";
 }
 
 function parseSort(raw: string | null): SessionListSortKey {
