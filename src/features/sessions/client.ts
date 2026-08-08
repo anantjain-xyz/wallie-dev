@@ -9,7 +9,7 @@ import type { SessionRepositoryOption } from "@/features/sessions/types";
 export type CreateSessionInput = {
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
-  promptMd: string;
+  promptMd?: string | null;
   title?: string | null;
   workspaceId: string;
 };
@@ -111,14 +111,15 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
 export async function createSessionFromClient(
   input: CreateSessionInput,
 ): Promise<CreateSessionResult> {
-  const trimmedPrompt = input.promptMd.trim();
-  if (trimmedPrompt.length === 0) {
-    throw new Error("Prompt is required.");
+  const linearIssueUrl = input.linearIssueUrl?.trim() || null;
+  const trimmedPrompt = input.promptMd?.trim() ?? "";
+  if (!linearIssueUrl && trimmedPrompt.length === 0) {
+    throw new Error("Enter a Linear issue URL or a prompt.");
   }
 
   const payload = {
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
-    linearIssueUrl: input.linearIssueUrl?.trim() || null,
+    linearIssueUrl,
     promptMd: trimmedPrompt,
     title: input.title?.trim() || null,
     workspaceId: input.workspaceId,

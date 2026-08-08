@@ -7,8 +7,18 @@ const mocked = vi.hoisted(() => ({
   assertSessionSandboxCapabilityReady: vi.fn(),
   createSessionWithFirstJob: vi.fn(),
   createSupabaseAdminClient: vi.fn(),
+  decryptSecretValue: vi.fn(),
+  fetchLinearIssue: vi.fn(),
   loadSessionFirstRunPrerequisites: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
+}));
+
+vi.mock("@/lib/linear/client", () => ({
+  fetchLinearIssue: mocked.fetchLinearIssue,
+}));
+
+vi.mock("@/lib/secrets/crypto", () => ({
+  decryptSecretValue: mocked.decryptSecretValue,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -89,15 +99,38 @@ function buildSupabaseMock(
 function buildAdminMock(
   opts: {
     firstRepository?: RepositoryRow | null;
+    linearSecret?: string | null;
     primaryRepositoryId?: string | null;
     repositoriesById?: Record<string, RepositoryRow>;
   } = {},
 ) {
   const repositoriesById = opts.repositoriesById ?? {};
   const firstRepository = opts.firstRepository ?? null;
+  const linearSecret = opts.linearSecret === undefined ? "encrypted-linear-key" : opts.linearSecret;
 
   return {
     from(table: string) {
+      if (table === "workspace_secrets") {
+        let matchesWorkspace = false;
+        let matchesKey = false;
+        const builder = {
+          eq(column: string, value: string) {
+            if (column === "workspace_id") matchesWorkspace = value === WORKSPACE_ID;
+            if (column === "key") matchesKey = value === "LINEAR_API_KEY";
+            return builder;
+          },
+          maybeSingle: async () => ({
+            data:
+              matchesWorkspace && matchesKey && linearSecret
+                ? { encrypted_value: linearSecret }
+                : null,
+            error: null,
+          }),
+          select: () => builder,
+        };
+        return builder;
+      }
+
       if (table === "workspace_repository_profiles") {
         return {
           select: () => ({
@@ -214,6 +247,15 @@ describe("POST /api/sessions", () => {
       sessionId: "session-1",
       workspaceSlug: "acme",
     });
+    mocked.decryptSecretValue.mockReturnValue("linear-api-key");
+    mocked.fetchLinearIssue.mockResolvedValue({
+      description: "Issue description",
+      id: "linear-issue-id",
+      identifier: "TEAM-42",
+      stateName: "Todo",
+      title: "Linear issue title",
+      url: "https://linear.app/acme/issue/TEAM-42/canonical-title",
+    });
   });
 
   it("creates the session and first job through one transactional service mutation", async () => {
@@ -221,7 +263,7 @@ describe("POST /api/sessions", () => {
       makeRequest({
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",
-        title: "SSO",
+        title: "Custom session title",
         workspaceId: WORKSPACE_ID,
       }),
     );
@@ -253,10 +295,80 @@ describe("POST /api/sessions", () => {
         modelName: "gpt-5.5",
         modelProvider: "codex",
         promptMd: "Add SSO",
-        title: "SSO",
+        title: "Linear issue title",
         workspaceId: WORKSPACE_ID,
       }),
     );
+    expect(mocked.fetchLinearIssue).toHaveBeenCalledWith("linear-api-key", "TEAM-42");
+  });
+
+  it("uses the Linear issue description when no prompt is provided", async () => {
+    const response = await POST(
+      makeRequest({
+        linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
+        promptMd: "",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        linearIssueId: "TEAM-42",
+        linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/canonical-title",
+        promptMd: "Issue description",
+        title: "Linear issue title",
+      }),
+    );
+  });
+
+  it("falls back to the Linear issue title when its description is empty", async () => {
+    mocked.fetchLinearIssue.mockResolvedValueOnce({
+      description: "   ",
+      id: "linear-issue-id",
+      identifier: "TEAM-42",
+      stateName: "Todo",
+      title: "Linear issue title",
+      url: "https://linear.app/acme/issue/TEAM-42/canonical-title",
+    });
+
+    await POST(
+      makeRequest({
+        linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
+      expect.objectContaining({ promptMd: "Linear issue title" }),
+    );
+  });
+
+  it("returns a validation error when neither a Linear issue nor prompt is provided", async () => {
+    const response = await POST(makeRequest({ promptMd: " ", workspaceId: WORKSPACE_ID }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Enter a Linear issue URL or a prompt.",
+    });
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+  });
+
+  it("does not create a session when the Linear issue cannot be loaded", async () => {
+    mocked.fetchLinearIssue.mockRejectedValueOnce(new Error("Linear issue not found: TEAM-42"));
+
+    const response = await POST(
+      makeRequest({
+        linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
+        workspaceId: WORKSPACE_ID,
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "Linear issue not found: TEAM-42",
+    });
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
   it("pins an explicitly selected repository via point lookup", async () => {
