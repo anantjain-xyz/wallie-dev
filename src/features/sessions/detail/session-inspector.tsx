@@ -177,7 +177,7 @@ export function SessionInspector({
               {creatorDisplayName ? (
                 <span className="inline-flex items-center gap-2">
                   <CreatorAvatar displayName={creatorDisplayName} />
-                  {creatorDisplayName}
+                  <span className="min-w-0 break-all">{creatorDisplayName}</span>
                 </span>
               ) : (
                 <span className="text-muted">Unknown</span>

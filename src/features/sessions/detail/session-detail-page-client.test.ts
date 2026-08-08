@@ -174,6 +174,7 @@ describe("SessionDetailPageClient", () => {
     const html = renderDetail({ data });
 
     expect(html).toContain("Ada Lovelace");
+    expect(html).toContain('class="min-w-0 break-all"');
     expect(html).toContain("Created");
     expect(html).toContain('dateTime="2026-06-07T10:00:00.000Z"');
     expect(html).toContain(">2026-06-07 10:00 UTC</time>");
