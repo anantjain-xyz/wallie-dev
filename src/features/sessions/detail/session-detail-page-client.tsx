@@ -13,7 +13,7 @@ import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import { Status, sessionPhaseStatusValue } from "@/components/ui/status";
+import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -873,9 +873,6 @@ export function SessionDetailPageClient({
                   : (selectedStage?.description ?? "")}
               </p>
             </div>
-            {selectedStageSlug === session.currentStageSlug ? (
-              <Status compact value={sessionPhaseStatusValue(session.phaseStatus)} />
-            ) : null}
           </div>
 
           <div

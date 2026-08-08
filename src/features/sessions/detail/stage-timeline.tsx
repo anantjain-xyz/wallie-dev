@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from "react";
 
-import { Status, sessionPhaseStatusValue, type StatusValue } from "@/components/ui/status";
 import type { SessionReviewPipeline, SessionReviewSession } from "@/features/sessions/detail/data";
 import type { SessionPhaseStatus } from "@/features/sessions/types";
 import { cn } from "@/lib/utils";
@@ -92,14 +91,6 @@ export function centerStageTimelineSelection(
   });
 }
 
-function timelineStatusValue(entry: StageTimelineEntry): StatusValue {
-  if (entry.status === "completed") return "complete";
-  if (entry.status === "upcoming") return "upcoming";
-  if (entry.status === "failed") return "failed";
-  if (entry.status === "changes_requested") return "rejected";
-  return sessionPhaseStatusValue(entry.phaseStatus ?? "agent_generating");
-}
-
 type StageTimelineProps = {
   onSelect: (stageSlug: string) => void;
   selectedStageSlug: string;
@@ -141,7 +132,6 @@ export function StageTimeline({ onSelect, selectedStageSlug, timeline }: StageTi
                 )}
                 aria-current={isSelected ? "step" : undefined}
               >
-                <Status compact value={timelineStatusValue(entry)} />
                 <span className="min-w-0 [overflow-wrap:anywhere]">{entry.stage.name}</span>
               </button>
               {index < timeline.length - 1 ? (
