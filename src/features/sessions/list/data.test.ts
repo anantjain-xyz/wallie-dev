@@ -33,7 +33,7 @@ describe("parseSessionListQueryState", () => {
     ).toEqual({
       cursor: "older",
       query: "linear-42",
-      scope: "all",
+      scope: "active",
       sort: "updated",
       stageSlug: "plan",
     });
@@ -43,9 +43,13 @@ describe("parseSessionListQueryState", () => {
     expect(parseSessionListQueryState({})).toEqual({
       cursor: null,
       query: "",
-      scope: "all",
+      scope: "active",
       sort: "updated",
       stageSlug: null,
     });
+  });
+
+  it.each(["active", "archived", "all"] as const)("preserves the explicit %s scope", (scope) => {
+    expect(parseSessionListQueryState({ scope }).scope).toBe(scope);
   });
 });

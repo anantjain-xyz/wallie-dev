@@ -27,9 +27,9 @@ export type SessionsCommandBarProps = {
 };
 
 const STATUS_CHIPS: { key: SessionFilterKey; label: string }[] = [
-  { key: "all", label: "All" },
   { key: "active", label: "Active" },
   { key: "archived", label: "Archived" },
+  { key: "all", label: "All" },
 ];
 
 const DEFAULT_QUERY_STATE: Pick<
@@ -38,7 +38,7 @@ const DEFAULT_QUERY_STATE: Pick<
 > = {
   cursor: null,
   query: "",
-  scope: "all",
+  scope: "active",
   sort: "updated",
   stageSlug: null,
 };
@@ -46,7 +46,7 @@ const DEFAULT_QUERY_STATE: Pick<
 function hasActiveFilters(queryState: SessionListQueryState) {
   return (
     queryState.query.trim().length > 0 ||
-    queryState.scope !== "all" ||
+    queryState.scope !== "active" ||
     queryState.stageSlug !== null ||
     queryState.sort !== "updated"
   );

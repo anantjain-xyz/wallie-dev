@@ -105,14 +105,18 @@ describe("SessionsPageClient accessibility", () => {
     expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All", pressed: false })).toBeInTheDocument();
+    expect(
+      Array.from(
+        screen.getByRole("group", { name: "Status filter" }).querySelectorAll("button"),
+        (button) => button.textContent,
+      ),
+    ).toEqual(["Active", "Archived", "All"]);
 
     const search = screen.getByRole("searchbox", {
       name: "Search prompts, titles, or Linear IDs",
     });
     await user.type(search, "OP-339{Enter}");
-    expect(mocked.push).toHaveBeenLastCalledWith(
-      "/w/acme/sessions?stage=build&q=OP-339&scope=active",
-    );
+    expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions?stage=build&q=OP-339");
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(mocked.push).toHaveBeenLastCalledWith("/w/acme/sessions");
@@ -123,6 +127,24 @@ describe("SessionsPageClient accessibility", () => {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("renders Active as the clear-free default scope", () => {
+    render(
+      <OverlayProvider>
+        <main>
+          <SessionsPageClient
+            initialData={{
+              ...initialData,
+              queryState: { ...initialData.queryState, stageSlug: null },
+            }}
+          />
+        </main>
+      </OverlayProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "Active", pressed: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
   });
 
   it("restores Search focus after Clear navigation remounts the keyed input", async () => {
@@ -148,7 +170,12 @@ describe("SessionsPageClient accessibility", () => {
           <SessionsPageClient
             initialData={{
               ...dataWithQuery,
-              queryState: { ...dataWithQuery.queryState, query: "", scope: "all", stageSlug: null },
+              queryState: {
+                ...dataWithQuery.queryState,
+                query: "",
+                scope: "active",
+                stageSlug: null,
+              },
             }}
           />
         </main>
@@ -159,6 +186,43 @@ describe("SessionsPageClient accessibility", () => {
       expect(
         screen.getByRole("searchbox", { name: "Search prompts, titles, or Linear IDs" }),
       ).toHaveFocus(),
+    );
+  });
+
+  it("keeps every status scope addressable and resets cursors on navigation", async () => {
+    const user = userEvent.setup();
+    render(
+      <OverlayProvider>
+        <main>
+          <SessionsPageClient
+            initialData={{
+              ...initialData,
+              queryState: {
+                cursor: "stale-cursor",
+                query: "OP-339",
+                scope: "active",
+                sort: "oldest",
+                stageSlug: "build",
+              },
+            }}
+          />
+        </main>
+      </OverlayProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archived" }));
+    expect(mocked.push).toHaveBeenLastCalledWith(
+      "/w/acme/sessions?stage=build&q=OP-339&scope=archived&sort=oldest",
+    );
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(mocked.push).toHaveBeenLastCalledWith(
+      "/w/acme/sessions?stage=build&q=OP-339&scope=all&sort=oldest",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Active" }));
+    expect(mocked.push).toHaveBeenLastCalledWith(
+      "/w/acme/sessions?stage=build&q=OP-339&sort=oldest",
     );
   });
 

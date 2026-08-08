@@ -19,7 +19,7 @@ describe("sessions list helpers", () => {
         sort: "updated",
         stageSlug: "build",
       }),
-    ).toBe("/w/acme/sessions?stage=build&q=auth&scope=active&cursor=c1");
+    ).toBe("/w/acme/sessions?stage=build&q=auth&cursor=c1");
 
     expect(
       buildSessionsListHref("/w/acme/sessions", {
@@ -29,7 +29,17 @@ describe("sessions list helpers", () => {
         sort: "oldest",
         stageSlug: null,
       }),
-    ).toBe("/w/acme/sessions?sort=oldest");
+    ).toBe("/w/acme/sessions?scope=all&sort=oldest");
+
+    expect(
+      buildSessionsListHref("/w/acme/sessions", {
+        cursor: null,
+        query: "",
+        scope: "active",
+        sort: "updated",
+        stageSlug: null,
+      }),
+    ).toBe("/w/acme/sessions");
 
     expect(
       buildSessionsListHref("/w/acme/sessions", {
@@ -39,7 +49,7 @@ describe("sessions list helpers", () => {
         sort: "updated",
         stageSlug: null,
       }),
-    ).toBe("/w/acme/sessions");
+    ).toBe("/w/acme/sessions?scope=all");
   });
 
   it("labels pagination by the active sort direction", () => {
