@@ -119,7 +119,9 @@ subscription credentials are written to `.codex/auth.json` with owner-only
 permissions. Refreshed auth caches are persisted after the run with optimistic
 credential-version and generation guards. Runs may use the same saved
 credential concurrently; stale refresh and reconnect writes do not replace
-newer state, including after a disconnect and reconnect.
+newer state, including after a disconnect and reconnect. Within one credential
+generation, the provider's latest `last_refresh` wins when concurrent runs
+rotate auth tokens.
 
 The GitHub installation token is placed in the isolated sandbox's credential
 store for clone and push. Arbitrary `workspace_secrets` are not injected into

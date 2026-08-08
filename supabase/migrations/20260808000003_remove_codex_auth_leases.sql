@@ -63,8 +63,17 @@ begin
     updated_at = now()
   where public.user_codex_credentials.user_id = target_user_id
     and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
-    and public.user_codex_credentials.credential_version = previous_credential_version
     and public.user_codex_credentials.credential_generation = previous_credential_generation
+    and (
+      public.user_codex_credentials.credential_version = previous_credential_version
+      or (
+        new_auth_cache_last_refresh is not null
+        and (
+          public.user_codex_credentials.auth_cache_last_refresh is null
+          or new_auth_cache_last_refresh > public.user_codex_credentials.auth_cache_last_refresh
+        )
+      )
+    )
   returning public.user_codex_credentials.credential_version;
 end;
 $$;

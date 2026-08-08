@@ -186,6 +186,7 @@ describe("GET /auth/callback/codex", () => {
         account_email: "person@example.com",
         account_id: "acct-1",
         auth_cache_last_refresh: "2026-05-19T00:00:00.000Z",
+        credential_generation: expect.any(String),
         credential_type: "chatgpt_auth_json",
         encrypted_credential: 'encrypted:{"auth_mode":"chatgpt"}',
         user_id: "user-123",

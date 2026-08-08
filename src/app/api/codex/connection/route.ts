@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -115,6 +117,7 @@ export async function POST(request: Request) {
         auth_cache_last_refresh: null,
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
+        credential_generation: randomUUID(),
         credential_type: credentialType,
         credential_version: 1,
         encrypted_credential: encryptSecretValue(credential),
