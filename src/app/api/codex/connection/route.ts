@@ -113,8 +113,6 @@ export async function POST(request: Request) {
         account_email: null,
         account_id: null,
         auth_cache_last_refresh: null,
-        auth_lock_expires_at: null,
-        auth_lock_run_id: null,
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
         credential_type: credentialType,

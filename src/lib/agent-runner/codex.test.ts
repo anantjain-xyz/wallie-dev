@@ -175,7 +175,7 @@ describe("CodexRunner", () => {
     expect(execCall.args[1]).not.toContain("codex login --with-access-token");
   });
 
-  it("writes and persists ChatGPT auth.json for subscription credentials", async () => {
+  it("runs without a per-run lease and persists refreshed ChatGPT auth.json", async () => {
     const originalAuthJson = JSON.stringify({
       auth_mode: "chatgpt",
       tokens: {
@@ -211,19 +211,8 @@ describe("CodexRunner", () => {
       },
     );
     const store = {
-      acquireChatGptAuthLease: vi.fn().mockResolvedValue({
-        authCacheLastRefresh: null,
-        credentialVersion: 7,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        secret: originalAuthJson,
-        type: "chatgpt_auth_json",
-        userId: "user-1",
-      }),
       markChatGptAuthReconnectRequired: vi.fn(),
       persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
-      releaseChatGptAuthLease: vi.fn(),
     };
 
     const runner = new CodexRunner({
@@ -243,7 +232,6 @@ describe("CodexRunner", () => {
     const events = [];
     for await (const ev of runner.start({
       prompt: "p",
-      runId: "00000000-0000-0000-0000-000000000001",
       sandbox,
       sessionId: "s",
     })) {
@@ -251,11 +239,6 @@ describe("CodexRunner", () => {
     }
 
     expect(events).toContainEqual({ type: "completion", taskComplete: true, summary: "done" });
-    expect(store.acquireChatGptAuthLease).toHaveBeenCalledWith({
-      leaseExpiresAt: expect.any(String),
-      runId: "00000000-0000-0000-0000-000000000001",
-      userId: "user-1",
-    });
     expect(store.persistChatGptAuthJson).toHaveBeenCalledWith({
       authJson: refreshedAuthJson,
       metadata: {
@@ -264,11 +247,6 @@ describe("CodexRunner", () => {
         lastRefresh: "2026-05-19T00:00:00.000Z",
       },
       previousCredentialVersion: 7,
-      runId: "00000000-0000-0000-0000-000000000001",
-      userId: "user-1",
-    });
-    expect(store.releaseChatGptAuthLease).toHaveBeenCalledWith({
-      runId: "00000000-0000-0000-0000-000000000001",
       userId: "user-1",
     });
     expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
@@ -295,19 +273,8 @@ describe("CodexRunner", () => {
       { exitCode: 1 },
     );
     const store = {
-      acquireChatGptAuthLease: vi.fn().mockResolvedValue({
-        authCacheLastRefresh: null,
-        credentialVersion: 7,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        secret: authJson,
-        type: "chatgpt_auth_json",
-        userId: "user-1",
-      }),
       markChatGptAuthReconnectRequired: vi.fn(),
       persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
-      releaseChatGptAuthLease: vi.fn(),
     };
     const runner = new CodexRunner({
       chatGptAuthStore: store,
@@ -361,19 +328,8 @@ describe("CodexRunner", () => {
       { exitCode: 1 },
     );
     const store = {
-      acquireChatGptAuthLease: vi.fn().mockResolvedValue({
-        authCacheLastRefresh: null,
-        credentialVersion: 7,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        secret: authJson,
-        type: "chatgpt_auth_json",
-        userId: "user-1",
-      }),
       markChatGptAuthReconnectRequired: vi.fn(),
       persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
-      releaseChatGptAuthLease: vi.fn(),
     };
     const runner = new CodexRunner({
       chatGptAuthStore: store,
@@ -399,47 +355,10 @@ describe("CodexRunner", () => {
     }
 
     expect(store.markChatGptAuthReconnectRequired).toHaveBeenCalledWith({
+      previousCredentialVersion: 7,
       reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
-      runId: "00000000-0000-0000-0000-000000000001",
       userId: "user-1",
     });
-  });
-
-  it("throws a lease busy error when another ChatGPT-authenticated run holds the credential", async () => {
-    const sandbox = new FakeSandbox();
-    const store = {
-      acquireChatGptAuthLease: vi.fn().mockResolvedValue(null),
-      markChatGptAuthReconnectRequired: vi.fn(),
-      persistChatGptAuthJson: vi.fn(),
-      releaseChatGptAuthLease: vi.fn(),
-    };
-    const runner = new CodexRunner({
-      chatGptAuthStore: store,
-      credential: {
-        authCacheLastRefresh: null,
-        credentialVersion: 1,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        secret: "{}",
-        type: "chatgpt_auth_json",
-        userId: "user-1",
-      },
-    });
-
-    await expect(
-      (async () => {
-        for await (const _ of runner.start({
-          prompt: "p",
-          runId: "00000000-0000-0000-0000-000000000001",
-          sandbox,
-          sessionId: "s",
-        })) {
-          void _;
-        }
-      })(),
-    ).rejects.toThrow(/already in use/);
-    expect(store.releaseChatGptAuthLease).not.toHaveBeenCalled();
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {

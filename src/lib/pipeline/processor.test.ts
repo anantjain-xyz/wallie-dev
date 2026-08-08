@@ -4,7 +4,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Tables } from "@/lib/supabase/database.types";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
 import { normalizeAgentProviderName, type AgentProvider } from "@/lib/agent-config/contracts";
-import { CodexAuthLeaseBusyError } from "@/lib/codex/contracts";
 
 // ---- hoisted mocks ------------------------------------------------------
 const mocked = vi.hoisted(() => ({
@@ -1516,44 +1515,6 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "agent_generating" },
       { phase_status: "rejected" },
     ]);
-  });
-
-  it("records a visible error and defers when Codex ChatGPT auth lease is busy", async () => {
-    mocked.createAgentRunner.mockReturnValue({
-      provider: "codex",
-      requiresSandbox: true,
-      async *start() {
-        throw new CodexAuthLeaseBusyError();
-      },
-    });
-    const session = baseSession();
-    const { admin, insertedMessages, rpc, updatedJobs, updatedRuns, updatedSessions } =
-      buildAdminMock({ session });
-
-    const result = await processPipelineJob({ admin, job: baseJob() });
-
-    expect(result).toEqual({
-      jobId: "job-1",
-      processed: true,
-      result: "idle",
-      runId: "run-1",
-    });
-    expect(insertedMessages).toEqual([
-      expect.objectContaining({
-        kind: "error",
-        message_md: "**Error:** Codex ChatGPT auth is already in use by another run.",
-      }),
-    ]);
-    expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
-    expect(updatedSessions.at(-1)).toEqual({ phase_status: "agent_generating" });
-    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
-      base_delay_ms: 15000,
-      max_backoff_ms: 120000,
-      target_job_id: "job-1",
-    });
-    expect(updatedJobs.at(-1)).toEqual({
-      last_error: "Codex ChatGPT auth is already in use by another run.",
-    });
   });
 
   it("swallows diagnostic insert failures and preserves sandbox failure handling", async () => {

@@ -143,8 +143,6 @@ describe("/api/codex/connection", () => {
       expect.objectContaining({
         access_token_expires_at: null,
         auth_cache_last_refresh: null,
-        auth_lock_expires_at: null,
-        auth_lock_run_id: null,
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
         credential_type: "platform_api_key",
@@ -187,8 +185,6 @@ describe("/api/codex/connection", () => {
       expect.objectContaining({
         access_token_expires_at: "2099-06-01T00:00:00.000Z",
         auth_cache_last_refresh: null,
-        auth_lock_expires_at: null,
-        auth_lock_run_id: null,
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
         credential_type: "codex_access_token",

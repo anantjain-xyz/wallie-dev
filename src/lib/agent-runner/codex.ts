@@ -1,6 +1,5 @@
 import { parseCodexChatGptAuthJson } from "@/lib/codex/auth-json";
 import {
-  CodexAuthLeaseBusyError,
   type ChatGptCodexCredential,
   type CodexChatGptAuthStore,
   type CodexCredential,
@@ -12,14 +11,13 @@ import type { AgentEffort } from "@/lib/agent-config/contracts";
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 const CODEX_HOME_DIR = ".codex";
 const CODEX_AUTH_FILE_NAME = "auth.json";
-const CHATGPT_AUTH_LEASE_MS = 35 * 60_000;
 export const CODEX_EXTERNAL_SANDBOX_FLAG = "--dangerously-bypass-approvals-and-sandbox";
 export const CODEX_SANDBOX_MODE = "danger-full-access";
 
 export interface CodexRunnerOptions {
   /** User-supplied Codex credential resolved by getCodexCredentialForUser. */
   credential: CodexCredential;
-  /** Required for ChatGPT subscription auth so the runner can lease and persist auth.json. */
+  /** Required for ChatGPT subscription auth so the runner can persist refreshed auth.json. */
   chatGptAuthStore?: CodexChatGptAuthStore;
   /** Model identifier (e.g. "gpt-5.6-sol"). */
   model?: string;
@@ -32,7 +30,7 @@ export interface CodexRunnerOptions {
  *
  * Runs `codex exec` inside a per-session sandbox. API keys and Codex access
  * tokens are injected only into the process environment. ChatGPT subscription
- * auth writes a leased Codex auth.json before the run and persists any
+ * auth writes the saved Codex auth.json before the run and persists any
  * refreshed auth cache after the CLI exits. Streams stdout line-by-line as
  * AgentEvents.
  *
@@ -134,43 +132,21 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner expected ChatGPT subscription auth.");
     }
 
-    const runId = input.runId;
-    if (!runId) {
-      throw new Error("CodexRunner requires runId for ChatGPT subscription auth.");
-    }
-
     const store = this.options.chatGptAuthStore;
     if (!store) {
       throw new Error("CodexRunner requires a ChatGPT auth store for subscription auth.");
     }
 
-    const leaseExpiresAt = new Date(Date.now() + CHATGPT_AUTH_LEASE_MS).toISOString();
-    const leased = await store.acquireChatGptAuthLease({
-      leaseExpiresAt,
-      runId,
-      userId: credential.userId,
-    });
-    if (!leased) {
-      throw new CodexAuthLeaseBusyError();
-    }
-
-    try {
-      yield* this.runWithLeasedChatGptAuth(input, leased, store);
-    } finally {
-      await store.releaseChatGptAuthLease({
-        runId,
-        userId: leased.userId,
-      });
-    }
+    yield* this.runWithChatGptAuth(input, credential, store);
   }
 
-  private async *runWithLeasedChatGptAuth(
+  private async *runWithChatGptAuth(
     input: AgentRunnerStartInput,
     credential: ChatGptCodexCredential,
     store: CodexChatGptAuthStore,
   ): AsyncIterable<AgentEvent> {
     const { sandbox } = input;
-    if (!sandbox || !input.runId) return;
+    if (!sandbox) return;
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
     const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
@@ -217,7 +193,6 @@ export class CodexRunner implements AgentRunner {
 
     await persistRefreshedChatGptAuthJson({
       credential,
-      runId: input.runId,
       sandbox,
       store,
     });
@@ -227,9 +202,9 @@ export class CodexRunner implements AgentRunner {
       const message = codexExitErrorMessage(code, stderrBuf);
       if (isAuthFailure(message)) {
         await store.markChatGptAuthReconnectRequired({
+          previousCredentialVersion: credential.credentialVersion,
           reason:
             "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
-          runId: input.runId,
           userId: credential.userId,
         });
       }
@@ -428,7 +403,6 @@ function codexCommandForCredential(
 
 async function persistRefreshedChatGptAuthJson(input: {
   credential: ChatGptCodexCredential;
-  runId: string;
   sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>;
   store: CodexChatGptAuthStore;
 }) {
@@ -440,7 +414,6 @@ async function persistRefreshedChatGptAuthJson(input: {
     authJson: refreshedAuthJson,
     metadata,
     previousCredentialVersion: input.credential.credentialVersion,
-    runId: input.runId,
     userId: input.credential.userId,
   });
 }

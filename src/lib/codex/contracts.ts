@@ -42,35 +42,17 @@ export interface CodexAuthJsonMetadata {
 }
 
 export interface CodexChatGptAuthStore {
-  acquireChatGptAuthLease(input: {
-    leaseExpiresAt: string;
-    runId: string;
-    userId: string;
-  }): Promise<ChatGptCodexCredential | null>;
   markChatGptAuthReconnectRequired(input: {
+    previousCredentialVersion: number;
     reason: string;
-    runId: string;
     userId: string;
   }): Promise<void>;
   persistChatGptAuthJson(input: {
     authJson: string;
     metadata: CodexAuthJsonMetadata;
     previousCredentialVersion: number;
-    runId: string;
     userId: string;
   }): Promise<boolean>;
-  releaseChatGptAuthLease(input: { runId: string; userId: string }): Promise<void>;
-}
-
-export class CodexAuthLeaseBusyError extends Error {
-  constructor(message = "Codex ChatGPT auth is already in use by another run.") {
-    super(message);
-    this.name = "CodexAuthLeaseBusyError";
-  }
-}
-
-export function isCodexAuthLeaseBusyError(error: unknown): error is CodexAuthLeaseBusyError {
-  return error instanceof CodexAuthLeaseBusyError;
 }
 
 export interface CodexCredentialStatusRow {

@@ -5,7 +5,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
 import {
   isCodexCredentialType,
-  type ChatGptCodexCredential,
   type CodexChatGptAuthStore,
   type CodexCredential,
   type CodexCredentialType,
@@ -79,24 +78,10 @@ export async function getCodexCredentialForUser(
 
 export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAuthStore {
   return {
-    async acquireChatGptAuthLease(input) {
-      const { data, error } = await admin.rpc("acquire_codex_auth_lease", {
-        lease_expires_at: input.leaseExpiresAt,
-        target_run_id: input.runId,
-        target_user_id: input.userId,
-      });
-      if (error) throw error;
-
-      const row = Array.isArray(data) ? data[0] : null;
-      return row
-        ? (mapCredentialRow(input.userId, row as CodexCredentialRow) as ChatGptCodexCredential)
-        : null;
-    },
-
     async markChatGptAuthReconnectRequired(input) {
       const { error } = await admin.rpc("mark_codex_auth_reconnect_required", {
+        previous_credential_version: input.previousCredentialVersion,
         reconnect_reason: input.reason,
-        target_run_id: input.runId,
         target_user_id: input.userId,
       });
       if (error) throw error;
@@ -109,20 +94,11 @@ export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAut
         new_auth_cache_last_refresh: input.metadata.lastRefresh as string,
         new_encrypted_credential: encryptSecretValue(input.authJson),
         previous_credential_version: input.previousCredentialVersion,
-        target_run_id: input.runId,
         target_user_id: input.userId,
       });
       if (error) throw error;
 
       return Array.isArray(data) ? data.length > 0 : Boolean(data);
-    },
-
-    async releaseChatGptAuthLease(input) {
-      const { error } = await admin.rpc("release_codex_auth_lease", {
-        target_run_id: input.runId,
-        target_user_id: input.userId,
-      });
-      if (error) throw error;
     },
   };
 }
