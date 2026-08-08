@@ -41,6 +41,10 @@ const detailMigration = readFileSync(
   join(process.cwd(), "supabase/migrations/20260718000001_narrow_session_detail_page.sql"),
   "utf8",
 );
+const creatorIdentityMigration = readFileSync(
+  join(process.cwd(), "supabase/migrations/20260808000000_use_creator_email_fallback.sql"),
+  "utf8",
+);
 
 function makeRpcPayload() {
   return {
@@ -163,6 +167,18 @@ describe("session detail RPC access result", () => {
     expect(detailMigration).toContain("wm.user_id = auth.uid()");
     expect(detailMigration).toContain("and wm.is_active");
     expect(detailMigration).toContain("and wm.kind = 'human'");
+  });
+
+  it("falls back through nonblank creator identity fields before using the placeholder", () => {
+    const fullNameIndex = creatorIdentityMigration.indexOf("nullif(btrim(wm.full_name), '')");
+    const usernameIndex = creatorIdentityMigration.indexOf("nullif(btrim(wm.username), '')");
+    const emailIndex = creatorIdentityMigration.indexOf("nullif(btrim(wm.email), '')");
+    const unknownMemberIndex = creatorIdentityMigration.indexOf("'Unknown member'");
+
+    expect(fullNameIndex).toBeGreaterThan(-1);
+    expect(usernameIndex).toBeGreaterThan(fullNameIndex);
+    expect(emailIndex).toBeGreaterThan(usernameIndex);
+    expect(unknownMemberIndex).toBeGreaterThan(emailIndex);
   });
 });
 
