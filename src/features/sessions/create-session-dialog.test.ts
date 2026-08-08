@@ -40,7 +40,10 @@ describe("getLinearUrlError", () => {
 
   it("rejects non-Linear URLs", () => {
     expect(getLinearUrlError("https://example.com/acme/issue/TEAM-42")).toBe(
-      "Must be a linear.app URL.",
+      "Must be a Linear issue URL.",
+    );
+    expect(getLinearUrlError("https://linear.app/acme/settings")).toBe(
+      "Must be a Linear issue URL.",
     );
   });
 });
@@ -52,6 +55,7 @@ describe("isCreateSessionSubmitDisabled", () => {
         hasRepositoryResult: false,
         isRepositoryStale: false,
         isSubmitting: false,
+        linearUrl: "",
         prompt: "Build the dashboard",
       }),
     ).toBe(true);
@@ -60,9 +64,43 @@ describe("isCreateSessionSubmitDisabled", () => {
         hasRepositoryResult: true,
         isRepositoryStale: false,
         isSubmitting: false,
+        linearUrl: "",
         prompt: "Build the dashboard",
       }),
     ).toBe(false);
+  });
+
+  it("accepts either a prompt or a Linear issue URL", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "",
+      }),
+    ).toBe(true);
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "https://linear.app/acme/issue/TEAM-42/title",
+        prompt: "",
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks submission while the Linear issue URL is invalid", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "https://linear.app/acme/settings",
+        prompt: "Additional context",
+      }),
+    ).toBe(true);
   });
 
   it("blocks submission while cached repository options are stale", () => {
@@ -71,6 +109,7 @@ describe("isCreateSessionSubmitDisabled", () => {
         hasRepositoryResult: true,
         isRepositoryStale: true,
         isSubmitting: false,
+        linearUrl: "",
         prompt: "Build the dashboard",
       }),
     ).toBe(true);

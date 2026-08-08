@@ -27,14 +27,40 @@ describe("createSessionFromClient", () => {
     vi.unstubAllGlobals();
   });
 
-  it("rejects an empty prompt before calling the API", async () => {
+  it("rejects an empty work source before calling the API", async () => {
     const fetchMock = mockFetch({ body: { number: 7 }, ok: true });
 
     await expect(
       createSessionFromClient({ promptMd: "   ", workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Prompt is required.");
+    ).rejects.toThrow("Enter a Linear issue URL or a prompt.");
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a Linear issue URL without a prompt", async () => {
+    const fetchMock = mockFetch({
+      body: { canonicalUrl: "/w/acme/sessions/42", number: 42 },
+      ok: true,
+    });
+
+    await createSessionFromClient({
+      linearIssueUrl: "  https://linear.app/acme/issue/TEAM-42/title  ",
+      promptMd: "  ",
+      workspaceId: WORKSPACE_ID,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions",
+      expect.objectContaining({
+        body: JSON.stringify({
+          githubRepositoryId: null,
+          linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/title",
+          promptMd: "",
+          title: null,
+          workspaceId: WORKSPACE_ID,
+        }),
+      }),
+    );
   });
 
   it("posts the normalized create-session payload and returns the session number", async () => {

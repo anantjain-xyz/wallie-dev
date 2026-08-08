@@ -115,9 +115,10 @@ describe("CreateSessionDialog accessibility", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Start a new session" });
     expect(dialog).toHaveAccessibleDescription(
-      "Describe the work, choose its repository, and optionally link a Linear issue.",
+      "Link a Linear issue or describe the work, then choose where Wallie should run.",
     );
-    await waitFor(() => expect(screen.getByLabelText("Prompt")).toHaveFocus());
+    expect(screen.queryByText("Work to start")).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("Linear issue URL")).toHaveFocus());
     await waitFor(() => expect(document.body.dataset.scrollLocked).toBe("1"));
     expect(screen.getByText("Outside").closest("button")).toHaveAttribute("aria-hidden", "true");
 
@@ -130,6 +131,83 @@ describe("CreateSessionDialog accessibility", () => {
 
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("starts a session from a Linear issue without requiring a prompt", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const userId = "00000000-0000-4000-8000-000000000002";
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      repositoryOptions: [],
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={onClose}
+          open
+          userId={userId}
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    await user.type(
+      await screen.findByLabelText("Linear issue URL"),
+      "https://linear.app/acme/issue/TEAM-42/title",
+    );
+    expect(screen.getByLabelText("Title (optional)")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    await waitFor(() =>
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith({
+        githubRepositoryId: null,
+        linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/title",
+        promptMd: "",
+        title: null,
+        workspaceId,
+      }),
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(router.push).toHaveBeenCalledWith("/w/acme/sessions/42");
+  });
+
+  it("clears a Linear URL error when the URL is corrected", async () => {
+    const user = userEvent.setup();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      repositoryOptions: [],
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId="00000000-0000-4000-8000-000000000001"
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    const linearInput = await screen.findByLabelText("Linear issue URL");
+    await user.type(linearInput, "https://linear.app/acme/settings");
+    await user.tab();
+    expect(screen.getByText("Must be a Linear issue URL.")).toBeVisible();
+
+    await user.clear(linearInput);
+    await user.type(linearInput, "https://linear.app/acme/issue/TEAM-42/title");
+
+    expect(screen.queryByText("Must be a Linear issue URL.")).toBeNull();
+    expect(screen.getByLabelText("Title (optional)")).toBeDisabled();
   });
 
   it("blocks keyboard submission while cached repository options are stale", async () => {

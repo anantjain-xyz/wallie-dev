@@ -5,6 +5,8 @@ import {
   normalizeCreateSessionPayload,
 } from "@/features/sessions/create";
 import type { WallieSessionRepository } from "@/features/wallie/types";
+import { fetchLinearIssue, type LinearIssue } from "@/lib/linear/client";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildAgentRunActionErrorResponse } from "@/lib/wallie/http";
 import {
@@ -170,6 +172,29 @@ async function loadDefaultSessionRepository(input: {
   };
 }
 
+async function loadWorkspaceLinearIssue(input: {
+  admin: AdminClient;
+  issueIdentifier: string;
+  workspaceId: string;
+}): Promise<LinearIssue> {
+  const { data, error } = await input.admin
+    .from("workspace_secrets")
+    .select("encrypted_value")
+    .eq("workspace_id", input.workspaceId)
+    .eq("key", "LINEAR_API_KEY")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("Connect Linear before linking an issue to a session.");
+  }
+
+  return fetchLinearIssue(decryptSecretValue(data.encrypted_value), input.issueIdentifier);
+}
+
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const parsed = createSessionPayloadSchema.safeParse(payload);
@@ -193,7 +218,7 @@ export async function POST(request: Request) {
   }
 
   const admin = createSupabaseAdminClient();
-  const [onboardingResult, firstRunPrereqsResult] = await Promise.all([
+  const [onboardingResult, firstRunPrereqsResult, linearIssueResult] = await Promise.all([
     access.context.supabase
       .from("workspace_onboarding")
       .select("status, selected_github_repository_id")
@@ -203,6 +228,16 @@ export async function POST(request: Request) {
       (data) => ({ data, error: null }),
       (error: unknown) => ({ data: null, error }),
     ),
+    normalized.linearIssueId
+      ? loadWorkspaceLinearIssue({
+          admin,
+          issueIdentifier: normalized.linearIssueId,
+          workspaceId: normalized.workspaceId,
+        }).then(
+          (data) => ({ data, error: null }),
+          (error: unknown) => ({ data: null, error }),
+        )
+      : Promise.resolve({ data: null, error: null }),
   ]);
   const { data: onboardingRow, error: onboardingError } = onboardingResult;
   if (onboardingError) {
@@ -214,6 +249,17 @@ export async function POST(request: Request) {
       { status: 409 },
     );
   }
+
+  if (linearIssueResult.error) {
+    return NextResponse.json(
+      {
+        error: getErrorMessage(linearIssueResult.error, "Wallie could not load that Linear issue."),
+      },
+      { status: 422 },
+    );
+  }
+
+  const linearIssue = linearIssueResult.data;
 
   let githubRepositoryId: string | null = null;
   let repositoryForPreflight: WallieSessionRepository | null = null;
@@ -288,12 +334,12 @@ export async function POST(request: Request) {
       admin,
       creatorMemberId: access.context.currentMember.id,
       githubRepositoryId,
-      linearIssueId: normalized.linearIssueId,
-      linearIssueUrl: normalized.linearIssueUrl,
+      linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
+      linearIssueUrl: linearIssue?.url ?? normalized.linearIssueUrl,
       modelName: agentConfig.model,
       modelProvider: agentConfig.provider,
-      promptMd: normalized.promptMd,
-      title: normalized.title,
+      promptMd: normalized.promptMd || linearIssue?.description.trim() || linearIssue?.title || "",
+      title: linearIssue?.title ?? normalized.title,
       workspaceId: normalized.workspaceId,
     });
 

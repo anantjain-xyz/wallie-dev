@@ -8,6 +8,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
+import { extractLinearIssueId } from "@/features/sessions/linear-issue-url";
 import {
   preloadSessionRepositories as preloadSessionRepositoryCache,
   retrySessionRepositories,
@@ -26,19 +27,17 @@ type CreateSessionDialogProps = {
   workspaceSlug: string;
 };
 
-const LINEAR_URL_RE = /^https?:\/\/(?:[\w-]+\.)?linear\.app\//i;
-
 export function isSessionSubmitShortcut(event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey">) {
   return (event.metaKey || event.ctrlKey) && event.key === "Enter";
 }
 
 export function getLinearUrlError(value: string) {
   const trimmed = value.trim();
-  if (!trimmed || LINEAR_URL_RE.test(trimmed)) {
+  if (!trimmed || extractLinearIssueId(trimmed)) {
     return null;
   }
 
-  return "Must be a linear.app URL.";
+  return "Must be a Linear issue URL.";
 }
 
 export function preloadSessionRepositories(input: SessionRepositoryCacheKey) {
@@ -49,11 +48,15 @@ export function isCreateSessionSubmitDisabled(input: {
   hasRepositoryResult: boolean;
   isRepositoryStale: boolean;
   isSubmitting: boolean;
+  linearUrl: string;
   prompt: string;
 }) {
+  const hasInvalidLinearUrl = Boolean(getLinearUrlError(input.linearUrl));
+
   return (
     input.isSubmitting ||
-    !input.prompt.trim() ||
+    hasInvalidLinearUrl ||
+    (!input.linearUrl.trim() && !input.prompt.trim()) ||
     !input.hasRepositoryResult ||
     input.isRepositoryStale
   );
@@ -93,7 +96,15 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     setLinearError(getLinearUrlError(linearUrl));
   }
 
+  function handleLinearChange(value: string) {
+    setLinearUrl(value);
+    if (linearError) {
+      setLinearError(getLinearUrlError(value));
+    }
+  }
+
   const derivedTitle = deriveSessionTitleFromPrompt(prompt);
+  const hasLinearIssue = Boolean(extractLinearIssueId(linearUrl.trim()));
   const repositorySelectOptions = repositoryOptions.map((repository) => ({
     label: repository.fullName,
     value: repository.id,
@@ -128,8 +139,8 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       return;
     }
 
-    if (!prompt.trim()) {
-      setErrorMessage("A prompt is required.");
+    if (!prompt.trim() && !linearUrl.trim()) {
+      setErrorMessage("Enter a Linear issue URL or a prompt.");
       return;
     }
 
@@ -186,27 +197,75 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     >
       <DialogContent
         className="max-w-xl"
-        description="Describe the work, choose its repository, and optionally link a Linear issue."
+        description="Link a Linear issue or describe the work, then choose where Wallie should run."
         dismissible={!isSubmitting}
         title="Start a new session"
       >
         <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
-              Prompt
-            </label>
-            <textarea
-              id="session-prompt"
-              aria-describedby={errorMessage ? "create-session-error" : undefined}
-              autoComplete="off"
-              autoFocus
-              name="prompt"
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              className="ui-textarea min-h-40 leading-6"
-              placeholder="What should Wallie build?"
-              required
-            />
+          <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
+                Linear issue URL
+              </label>
+              <input
+                id="session-linear"
+                aria-describedby={
+                  [
+                    "session-linear-description",
+                    linearError ? "session-linear-error" : null,
+                    errorMessage ? "create-session-error" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
+                }
+                autoComplete="off"
+                autoFocus
+                name="linearUrl"
+                value={linearUrl}
+                onChange={(event) => handleLinearChange(event.target.value)}
+                onBlur={handleLinearBlur}
+                className="ui-input"
+                placeholder="https://linear.app/acme/issue/TEAM-123"
+                type="url"
+              />
+              <p className="type-annotation text-muted" id="session-linear-description">
+                Wallie uses the issue title and, when the prompt is empty, its description.
+              </p>
+              {linearError ? (
+                <p className="text-xs text-danger" id="session-linear-error" role="alert">
+                  {linearError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-border" />
+              <span className="type-annotation text-muted">or</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground" htmlFor="session-prompt">
+                Prompt
+              </label>
+              <textarea
+                id="session-prompt"
+                aria-describedby={
+                  ["session-prompt-description", errorMessage ? "create-session-error" : null]
+                    .filter(Boolean)
+                    .join(" ") || undefined
+                }
+                autoComplete="off"
+                name="prompt"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                className="ui-textarea min-h-32 leading-6"
+                placeholder="What should Wallie build?"
+              />
+              <p className="type-annotation text-muted" id="session-prompt-description">
+                Required only when no Linear issue is linked.
+              </p>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -220,8 +279,18 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               className="ui-input"
-              placeholder={prompt.trim() ? derivedTitle : "Generated from the prompt"}
+              disabled={hasLinearIssue}
+              placeholder={
+                hasLinearIssue
+                  ? "From the linked Linear issue"
+                  : prompt.trim()
+                    ? derivedTitle
+                    : "Generated from the prompt"
+              }
             />
+            {hasLinearIssue ? (
+              <p className="type-annotation text-muted">Linear issue titles take precedence.</p>
+            ) : null}
           </div>
 
           <RepositoryField
@@ -231,37 +300,6 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             selectedGithubRepositoryId={selectedGithubRepositoryId}
             snapshot={repositorySnapshot}
           />
-
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
-              Linear issue URL{" "}
-              <span className="type-annotation font-normal text-muted">(optional)</span>
-            </label>
-            <input
-              id="session-linear"
-              aria-describedby={
-                [
-                  linearError ? "session-linear-error" : null,
-                  errorMessage ? "create-session-error" : null,
-                ]
-                  .filter(Boolean)
-                  .join(" ") || undefined
-              }
-              autoComplete="off"
-              name="linearUrl"
-              value={linearUrl}
-              onChange={(event) => setLinearUrl(event.target.value)}
-              onBlur={handleLinearBlur}
-              className="ui-input"
-              placeholder="https://linear.app/acme/issue/TEAM-123"
-              type="url"
-            />
-            {linearError ? (
-              <p className="text-xs text-danger" id="session-linear-error" role="alert">
-                {linearError}
-              </p>
-            ) : null}
-          </div>
 
           {errorMessage ? (
             <div
@@ -284,6 +322,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
                 hasRepositoryResult: repositorySnapshot.data !== null,
                 isRepositoryStale: repositorySnapshot.isStale,
                 isSubmitting,
+                linearUrl,
                 prompt,
               })}
               className="ui-button-primary"
