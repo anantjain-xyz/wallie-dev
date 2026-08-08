@@ -112,9 +112,9 @@ export async function processPipelineJob(input: {
     // marker landed cannot execute against an archived session.
     const { data: claimed, error: claimError } = await admin
       .from("sessions")
-      .update({ phase_status: "agent_generating" })
+      .update({ phase_status: "in_progress" })
       .eq("id", session.id)
-      .in("phase_status", ["agent_generating", "awaiting_review", "rejected"])
+      .in("phase_status", ["in_progress", "awaiting_review", "rejected"])
       .is("archived_at", null)
       .select("id")
       .maybeSingle();
@@ -417,7 +417,7 @@ async function runStage(input: {
       // was parked (canceled or stalled) or archived while this run produced its
       // artifact, this CAS affects zero rows and we must not un-park/un-freeze
       // it or surface the draft.
-      .eq("phase_status", "agent_generating")
+      .eq("phase_status", "in_progress")
       .is("archived_at", null)
       .select("id");
     if (pointerError) throw pointerError;
@@ -676,7 +676,7 @@ export async function handleApproval(input: {
     };
   }
 
-  if (!row.archived_at && row.phase_status === "agent_generating") {
+  if (!row.archived_at && row.phase_status === "in_progress") {
     try {
       const queued = await enqueueSessionJobWithRun({
         admin,
@@ -893,11 +893,11 @@ async function updateSessionStatus(
     .from("sessions")
     .update({ phase_status: status })
     .eq("id", sessionId)
-    // Every caller runs after the stage was CAS-claimed to `agent_generating`,
+    // Every caller runs after the stage was CAS-claimed to `in_progress`,
     // so this guard is a no-op on the normal path. Its job is to keep a session
     // that was canceled mid-run parked in `rejected` instead of being moved
     // back to a live phase by a late-finishing worker.
-    .eq("phase_status", "agent_generating");
+    .eq("phase_status", "in_progress");
   if (error) throw error;
 }
 

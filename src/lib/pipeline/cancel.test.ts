@@ -163,7 +163,7 @@ describe("cancelSessionWork", () => {
     const sessionPark = calls.find((c) => c.table === "sessions" && c.op === "update");
     expect(sessionPark?.patch).toMatchObject({ phase_status: "rejected" });
     // Only un-stick a session that is still generating.
-    expect(sessionPark?.filters["eq.phase_status"]).toBe("agent_generating");
+    expect(sessionPark?.filters["eq.phase_status"]).toBe("in_progress");
   });
 
   it("leaves phase_status untouched when parkPhaseStatus is false", async () => {

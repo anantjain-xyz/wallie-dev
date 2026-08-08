@@ -302,7 +302,7 @@ describe("sweepStalledRuns", () => {
       ],
       jobs: [job()],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, runUpdates } = buildAdminMock(state);
@@ -317,7 +317,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun()],
       jobs: [job()],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, runMessageInserts, runUpdates, sessionUpdates } = buildAdminMock(state);
@@ -354,7 +354,7 @@ describe("sweepStalledRuns", () => {
 
     expect(sessionUpdates).toEqual([
       {
-        expected: "agent_generating",
+        expected: "in_progress",
         id: "sess-1",
         patch: { phase_status: "rejected" },
       },
@@ -378,7 +378,7 @@ describe("sweepStalledRuns", () => {
         }),
       ],
       rpcCalls: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
     };
     const { admin } = buildAdminMock(state);
 
@@ -407,8 +407,8 @@ describe("sweepStalledRuns", () => {
       ],
       rpcCalls: [],
       sessions: new Map([
-        ["sess-1", { phase_status: "agent_generating" }],
-        ["sess-2", { phase_status: "agent_generating" }],
+        ["sess-1", { phase_status: "in_progress" }],
+        ["sess-2", { phase_status: "in_progress" }],
       ]),
     };
     const { admin } = buildAdminMock(state);
@@ -429,7 +429,7 @@ describe("sweepStalledRuns", () => {
       jobs: [job()],
       configs: [],
       heartbeats: [{ active_job_ids: ["job-1"], last_heartbeat_at: new Date().toISOString() }],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, runUpdates, sessionUpdates } = buildAdminMock(state);
@@ -454,7 +454,7 @@ describe("sweepStalledRuns", () => {
       heartbeats: [
         { active_job_ids: ["job-1", "job-2"], last_heartbeat_at: new Date().toISOString() },
       ],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, runUpdates } = buildAdminMock(state);
@@ -470,7 +470,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun({ status: "queued" })],
       jobs: [job({ status: "queued" })],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, runMessageInserts, runUpdates, sessionUpdates } = buildAdminMock(state);
@@ -490,7 +490,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun({ status: "queued" })],
       jobs: [job({ status: "running" })],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin } = buildAdminMock(state);
@@ -529,7 +529,7 @@ describe("sweepStalledRuns", () => {
       ],
       jobs: [...queuedJobs, job({ id: "late-job", session_id: "late-session" })],
       configs: [],
-      sessions: new Map([["late-session", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["late-session", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, runUpdates } = buildAdminMock(state);
@@ -548,7 +548,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun()],
       jobs: [job({ attempt_count: 3 })],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin, jobUpdates } = buildAdminMock(state);
@@ -581,7 +581,7 @@ describe("sweepStalledRuns", () => {
       ],
       jobs: [job()],
       configs: [{ workspace_id: "ws-1", key: "stall_timeout_ms", value_json: 60_000 }],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin } = buildAdminMock(state);
@@ -594,7 +594,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun()],
       jobs: [job()],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
       retryRpcShouldFail: true,
     };
@@ -609,7 +609,7 @@ describe("sweepStalledRuns", () => {
       runs: [activeRun({ sandbox_id: null })],
       jobs: [job()],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin } = buildAdminMock(state);
@@ -624,7 +624,7 @@ describe("sweepStalledRuns", () => {
     // an agent_runs row in 'running', and the JS process was killed before
     // its `finally` could call sandbox.stop(). Operationally the sandbox is
     // still alive in the provider, the run is stuck in 'running', and the
-    // session is wedged in 'agent_generating'.
+    // session is wedged in 'in_progress'.
     const state: MockState = {
       runs: [
         activeRun({
@@ -635,7 +635,7 @@ describe("sweepStalledRuns", () => {
       ],
       jobs: [job({ id: "job-1", attempt_count: 0 })],
       configs: [],
-      sessions: new Map([["sess-1", { phase_status: "agent_generating" }]]),
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
       rpcCalls: [],
     };
     const { admin } = buildAdminMock(state);

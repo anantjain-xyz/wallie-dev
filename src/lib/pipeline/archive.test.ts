@@ -16,7 +16,7 @@ import { archiveSession, unarchiveSession } from "@/lib/pipeline/archive";
 type Row = {
   archived_at: string | null;
   id: string;
-  phase_status: "agent_generating" | "approved" | "awaiting_review" | "rejected";
+  phase_status: "in_progress" | "approved" | "awaiting_review" | "rejected";
   updated_at: string;
 };
 
@@ -97,7 +97,7 @@ describe("archiveSession", () => {
       updateRow: {
         archived_at: "2026-06-07T12:00:00.000Z",
         id: "s1",
-        phase_status: "agent_generating",
+        phase_status: "in_progress",
         updated_at: "2026-06-07T12:00:00.000Z",
       },
     });

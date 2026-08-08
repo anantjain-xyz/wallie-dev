@@ -161,7 +161,7 @@ function baseSession(overrides: Partial<Tables<"sessions">> = {}): Tables<"sessi
     linear_issue_url: "https://linear.app/team/issue/TEAM-1",
     pipeline_id: "pipe-1",
     current_stage_id: "stage-product",
-    phase_status: "agent_generating",
+    phase_status: "in_progress",
     rejection_count: 0,
     search_document: null,
     search_text: null,
@@ -749,7 +749,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       }),
     ]);
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
@@ -852,7 +852,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -923,7 +923,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -971,7 +971,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1104,7 +1104,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(insertedArtifacts).toHaveLength(1);
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { current_artifact_version: 1, phase_status: "awaiting_review" },
     ]);
     expect(result.result).toBe("success");
@@ -1142,7 +1142,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     );
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1189,7 +1189,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { current_artifact_version: 3, phase_status: "awaiting_review" },
       { current_artifact_version: 2, phase_status: "rejected" },
     ]);
@@ -1228,7 +1228,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1255,7 +1255,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
     expect(rpc).not.toHaveBeenCalledWith("schedule_job_retry", expect.anything());
@@ -1343,7 +1343,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1512,7 +1512,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
     expect(updatedRuns.at(-1)).toMatchObject({ status: "error" });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1537,7 +1537,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       status: "error",
     });
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
     consoleError.mockRestore();
@@ -1571,7 +1571,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
-      { phase_status: "agent_generating" },
+      { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
   });
@@ -1623,7 +1623,7 @@ describe("handleApproval", () => {
           archived_at: null,
           current_stage_id: "stage-design",
           id: "sess-1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
         },
       ],
       error: null,
@@ -1711,7 +1711,7 @@ describe("handleApproval", () => {
         archivedAt: null,
         currentArtifactVersion: 0,
         currentStageId: "stage-design",
-        phaseStatus: "agent_generating",
+        phaseStatus: "in_progress",
         rejectionCount: 0,
       },
       success: true,

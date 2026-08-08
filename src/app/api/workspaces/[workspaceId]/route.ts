@@ -131,7 +131,7 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
     // The teardown above already canceled this workspace's in-flight jobs and
     // runs in anticipation of the cascade. The delete didn't commit, so the
     // workspace and its sessions survive — park any session left mid-generation
-    // out of `agent_generating` so it doesn't show "Drafting" forever with no
+    // out of `in_progress` so it doesn't show "Drafting" forever with no
     // job to advance it. Best-effort; the owner can retry the delete.
     await parkGeneratingSessions(admin, access.context.workspace.id);
     return NextResponse.json({ error: "Failed to delete workspace." }, { status: 500 });
@@ -166,7 +166,7 @@ async function parkGeneratingSessions(
     .from("sessions")
     .update({ phase_status: "rejected" })
     .eq("workspace_id", workspaceId)
-    .eq("phase_status", "agent_generating");
+    .eq("phase_status", "in_progress");
 
   if (error) {
     console.error("[workspace-delete] failed to park sessions after delete error", {

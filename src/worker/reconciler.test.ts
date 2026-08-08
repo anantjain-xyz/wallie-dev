@@ -261,28 +261,28 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "s2",
           workspace_id: "wA",
           linear_issue_id: "i2",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
         {
           id: "s3",
           workspace_id: "wA",
           linear_issue_id: "i3",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:02Z",
         },
         {
           id: "s4",
           workspace_id: "wB",
           linear_issue_id: "i4",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:03Z",
         },
       ],
@@ -326,14 +326,14 @@ describe("reconcileLinearState", () => {
           id: "s1",
           created_at: "2026-05-01T00:00:00Z",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           workspace_id: "wA",
         },
         {
           id: "s2",
           created_at: "2026-05-01T00:00:01Z",
           linear_issue_id: "i2",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           workspace_id: "wB",
         },
       ],
@@ -368,14 +368,14 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "iActive",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "s2",
           workspace_id: "wA",
           linear_issue_id: "iDone",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
       ],
@@ -405,7 +405,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "s2",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -434,7 +434,7 @@ describe("reconcileLinearState", () => {
           id: "sGenerating",
           workspace_id: "wA",
           linear_issue_id: "iGenerating",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
@@ -488,7 +488,7 @@ describe("reconcileLinearState", () => {
 
     const sessionsScan = calls.find((c) => c.table === "sessions" && c.op === "select");
     expect(sessionsScan?.filters["in.phase_status"]).toEqual([
-      "agent_generating",
+      "in_progress",
       "awaiting_review",
       "rejected",
     ]);
@@ -506,7 +506,7 @@ describe("reconcileLinearState", () => {
       );
       expect(sessionRejection).toBeDefined();
       expect(sessionRejection?.filters["in.phase_status"]).toEqual([
-        "agent_generating",
+        "in_progress",
         "awaiting_review",
         "rejected",
       ]);
@@ -570,7 +570,7 @@ describe("reconcileLinearState", () => {
           pipeline_id: "pipe-1",
           workspace_id: "wA",
           linear_issue_id: "iCustomDone",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
       ],
@@ -673,7 +673,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sRework",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -935,7 +935,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sDoneMissingLand",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -1138,7 +1138,7 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
       ],
@@ -1173,14 +1173,14 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "s2",
           workspace_id: "wB",
           linear_issue_id: "i2",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
       ],
@@ -1210,14 +1210,14 @@ describe("reconcileLinearState", () => {
           id: "sFail",
           workspace_id: "wA",
           linear_issue_id: "iDoneFail",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
         {
           id: "sOk",
           workspace_id: "wA",
           linear_issue_id: "iDoneOk",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:01Z",
         },
       ],
@@ -1249,7 +1249,7 @@ describe("reconcileLinearState", () => {
       expect.objectContaining({
         filters: expect.objectContaining({
           "eq.id": "sOk",
-          "in.phase_status": ["agent_generating", "awaiting_review", "rejected"],
+          "in.phase_status": ["in_progress", "awaiting_review", "rejected"],
         }),
         op: "update",
         table: "sessions",
@@ -1268,7 +1268,7 @@ describe("reconcileLinearState", () => {
           id: "s1",
           workspace_id: "wA",
           linear_issue_id: "i1",
-          phase_status: "agent_generating",
+          phase_status: "in_progress",
           created_at: "2026-05-01T00:00:00Z",
         },
       ],

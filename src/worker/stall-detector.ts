@@ -145,8 +145,8 @@ export async function sweepStalledRuns(
         stallReason,
       });
 
-      // Transition the session out of agent_generating so the UI is not
-      // stuck. Retried jobs flip back to agent_generating when claimed.
+      // Transition the session out of in_progress so the UI is not
+      // stuck. Retried jobs flip back to in_progress when claimed.
       const { data: jobRow } = await admin
         .from("agent_jobs")
         .select("session_id")
@@ -158,7 +158,7 @@ export async function sweepStalledRuns(
           .from("sessions")
           .update({ phase_status: "rejected" })
           .eq("id", jobRow.session_id)
-          .eq("phase_status", "agent_generating");
+          .eq("phase_status", "in_progress");
       }
     }
 

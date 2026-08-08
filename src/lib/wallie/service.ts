@@ -716,7 +716,7 @@ async function validateQueuedRunRequest(input: {
   }
 
   // A completed session sits in `approved` (terminal-stage approval leaves it
-  // there). The processor only claims agent_generating/awaiting_review/rejected,
+  // there). The processor only claims in_progress/awaiting_review/rejected,
   // so enqueueing here would strand a queued run the worker never finishes.
   // Reject up front — this also covers a completed session that was unarchived.
   if (session.phase_status === "approved") {
