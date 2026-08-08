@@ -115,9 +115,13 @@ of containing instructions, delimiters, or unexpectedly large content.
 | Claude Code | Per-user Anthropic API credential                          | Runs with permission bypass inside the external sandbox and streams normalized events    |
 
 Credentials belong to the session creator, not the current reviewer. ChatGPT
-subscription credentials use a database lease while a run is active, are
-written to `.codex/auth.json` with owner-only permissions, refreshed after the
-run when needed, and released in `finally`.
+subscription credentials are written to `.codex/auth.json` with owner-only
+permissions. Refreshed auth caches are persisted after the run with optimistic
+credential-version and generation guards. Runs may use the same saved
+credential concurrently; stale refresh and reconnect writes do not replace
+newer state, including after a disconnect and reconnect. Within one credential
+generation, the provider's latest `last_refresh` wins when concurrent runs
+rotate auth tokens.
 
 The GitHub installation token is placed in the isolated sandbox's credential
 store for clone and push. Arbitrary `workspace_secrets` are not injected into
@@ -155,10 +159,6 @@ reusable.
   session in `rejected`.
 - Retry scheduling belongs to the job lifecycle and may reuse the stage branch,
   but never the sandbox.
-- A busy Codex credential lease defers the job without running the agent.
-  However, each worker claim already incremented `attempt_count`, and deferral
-  does not restore or separately account for it. Repeated contention can
-  therefore consume retry headroom before a genuine runner failure.
 - Cancellation first makes the job and run terminal, then attempts sandbox
   cleanup. Late processor writes preserve `canceled`.
 - Setup failure after sandbox creation must stop the resource before the create
@@ -187,8 +187,6 @@ These are current limitations, not desired contracts:
   one diagnostic-redaction boundary.
 - GitHub App construction and installation-client initialization are outside
   the recoverable PR-synchronization boundary.
-- Credential-lease deferrals share `attempt_count` with real execution
-  failures, so contention can exhaust the retry budget.
 
 Remove a limitation from this section only in the pull request that establishes
 and proves the replacement contract.
@@ -201,7 +199,8 @@ When changing the harness:
    member data, reviewer data, agent data, or derived metadata.
 2. Update the variable table and test missing, malformed, and delimiter-bearing
    input.
-3. Preserve session-owner credential selection and lease cleanup.
+3. Preserve session-owner credential selection and version-and-generation-guarded auth-cache
+   persistence.
 4. Keep provider SDK details behind runner and sandbox interfaces.
 5. Define what becomes an event, artifact, PR update, or diagnostic.
 6. Test empty output, cancellation, setup failure, and a late terminal write.

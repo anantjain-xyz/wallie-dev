@@ -5,7 +5,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveSessionOwnerUserId } from "@/lib/agent-credentials/session-owner";
 import {
   isCodexCredentialType,
-  type ChatGptCodexCredential,
   type CodexChatGptAuthStore,
   type CodexCredential,
   type CodexCredentialType,
@@ -20,6 +19,7 @@ type CodexCredentialRow = {
   auth_cache_last_refresh: string | null;
   auth_reconnect_reason: string | null;
   auth_reconnect_required: boolean;
+  credential_generation: string;
   credential_type: string;
   credential_version: number;
   encrypted_credential: string;
@@ -62,7 +62,7 @@ export async function getCodexCredentialForUser(
   const { data, error } = await admin
     .from("user_codex_credentials")
     .select(
-      "credential_type, encrypted_credential, access_token_expires_at, credential_version, auth_cache_last_refresh, auth_reconnect_required, auth_reconnect_reason",
+      "credential_type, encrypted_credential, access_token_expires_at, credential_generation, credential_version, auth_cache_last_refresh, auth_reconnect_required, auth_reconnect_reason",
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -79,24 +79,21 @@ export async function getCodexCredentialForUser(
 
 export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAuthStore {
   return {
-    async acquireChatGptAuthLease(input) {
-      const { data, error } = await admin.rpc("acquire_codex_auth_lease", {
-        lease_expires_at: input.leaseExpiresAt,
-        target_run_id: input.runId,
-        target_user_id: input.userId,
-      });
-      if (error) throw error;
-
-      const row = Array.isArray(data) ? data[0] : null;
-      return row
-        ? (mapCredentialRow(input.userId, row as CodexCredentialRow) as ChatGptCodexCredential)
-        : null;
+    async loadChatGptAuth(input) {
+      const credential = await getCodexCredentialForUser(admin, input.userId);
+      if (credential.type !== "chatgpt_auth_json") {
+        throw new CodexNotConnectedError(
+          "The saved Codex credential is no longer a ChatGPT subscription credential.",
+        );
+      }
+      return credential;
     },
 
     async markChatGptAuthReconnectRequired(input) {
       const { error } = await admin.rpc("mark_codex_auth_reconnect_required", {
+        previous_credential_generation: input.previousCredentialGeneration,
+        previous_credential_version: input.previousCredentialVersion,
         reconnect_reason: input.reason,
-        target_run_id: input.runId,
         target_user_id: input.userId,
       });
       if (error) throw error;
@@ -108,21 +105,13 @@ export function createCodexChatGptAuthStore(admin: AdminClient): CodexChatGptAut
         new_account_id: input.metadata.accountId as string,
         new_auth_cache_last_refresh: input.metadata.lastRefresh as string,
         new_encrypted_credential: encryptSecretValue(input.authJson),
+        previous_credential_generation: input.previousCredentialGeneration,
         previous_credential_version: input.previousCredentialVersion,
-        target_run_id: input.runId,
         target_user_id: input.userId,
       });
       if (error) throw error;
 
       return Array.isArray(data) ? data.length > 0 : Boolean(data);
-    },
-
-    async releaseChatGptAuthLease(input) {
-      const { error } = await admin.rpc("release_codex_auth_lease", {
-        target_run_id: input.runId,
-        target_user_id: input.userId,
-      });
-      if (error) throw error;
     },
   };
 }
@@ -156,6 +145,7 @@ function mapCredentialRow(userId: string, row: CodexCredentialRow): CodexCredent
     case "chatgpt_auth_json":
       return {
         authCacheLastRefresh: row.auth_cache_last_refresh,
+        credentialGeneration: row.credential_generation,
         credentialVersion: row.credential_version,
         expiresAt: null,
         reconnectReason: row.auth_reconnect_reason,

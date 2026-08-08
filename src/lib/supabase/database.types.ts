@@ -1191,11 +1191,10 @@ export type Database = {
           account_email: string | null
           account_id: string | null
           auth_cache_last_refresh: string | null
-          auth_lock_expires_at: string | null
-          auth_lock_run_id: string | null
           auth_reconnect_reason: string | null
           auth_reconnect_required: boolean
           created_at: string
+          credential_generation: string
           credential_type: string
           credential_version: number
           encrypted_credential: string
@@ -1208,11 +1207,10 @@ export type Database = {
           account_email?: string | null
           account_id?: string | null
           auth_cache_last_refresh?: string | null
-          auth_lock_expires_at?: string | null
-          auth_lock_run_id?: string | null
           auth_reconnect_reason?: string | null
           auth_reconnect_required?: boolean
           created_at?: string
+          credential_generation?: string
           credential_type?: string
           credential_version?: number
           encrypted_credential: string
@@ -1225,11 +1223,10 @@ export type Database = {
           account_email?: string | null
           account_id?: string | null
           auth_cache_last_refresh?: string | null
-          auth_lock_expires_at?: string | null
-          auth_lock_run_id?: string | null
           auth_reconnect_reason?: string | null
           auth_reconnect_required?: boolean
           created_at?: string
+          credential_generation?: string
           credential_type?: string
           credential_version?: number
           encrypted_credential?: string
@@ -1970,22 +1967,6 @@ export type Database = {
         }
         Returns: Json
       }
-      acquire_codex_auth_lease: {
-        Args: {
-          lease_expires_at: string
-          target_run_id: string
-          target_user_id: string
-        }
-        Returns: {
-          access_token_expires_at: string
-          auth_cache_last_refresh: string
-          auth_reconnect_reason: string
-          auth_reconnect_required: boolean
-          credential_type: string
-          credential_version: number
-          encrypted_credential: string
-        }[]
-      }
       approve_session_stage: {
         Args: {
           approver_member_id?: string
@@ -2175,8 +2156,9 @@ export type Database = {
       }
       mark_codex_auth_reconnect_required: {
         Args: {
+          previous_credential_generation: string
+          previous_credential_version: number
           reconnect_reason: string
-          target_run_id: string
           target_user_id: string
         }
         Returns: undefined
@@ -2191,17 +2173,13 @@ export type Database = {
           new_account_id: string
           new_auth_cache_last_refresh: string
           new_encrypted_credential: string
+          previous_credential_generation: string
           previous_credential_version: number
-          target_run_id: string
           target_user_id: string
         }
         Returns: {
           credential_version: number
         }[]
-      }
-      release_codex_auth_lease: {
-        Args: { target_run_id: string; target_user_id: string }
-        Returns: undefined
       }
       remove_workspace_member: {
         Args: { expected_workspace_id: string; target_member_id: string }

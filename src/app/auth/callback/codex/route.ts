@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextRequest, NextResponse } from "next/server";
 
 import {
@@ -81,10 +83,9 @@ export async function GET(request: NextRequest) {
         account_email: authenticated.metadata.accountEmail,
         account_id: authenticated.metadata.accountId,
         auth_cache_last_refresh: authenticated.metadata.lastRefresh,
-        auth_lock_expires_at: null,
-        auth_lock_run_id: null,
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
+        credential_generation: randomUUID(),
         credential_type: "chatgpt_auth_json",
         credential_version: 1,
         encrypted_credential: encryptSecretValue(authenticated.authJson),

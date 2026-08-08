@@ -20,7 +20,6 @@ import {
   ClaudeCodeNotConnectedError,
   getClaudeCodeCredentialForSession,
 } from "@/lib/claude-code/tokens";
-import { isCodexAuthLeaseBusyError } from "@/lib/codex/contracts";
 import {
   createCodexChatGptAuthStore,
   CodexNotConnectedError,
@@ -460,12 +459,6 @@ async function runStage(input: {
         });
         runFailureMessageRecorded = true;
       }
-    }
-
-    if (isCodexAuthLeaseBusyError(error)) {
-      await updateSessionStatus(admin, session.id, session.phase_status);
-      await deferPipelineJob(admin, job, error.message);
-      return { jobId: job.id, processed: true, result: "idle", runId };
     }
 
     if (artifactInserted) {
@@ -1567,23 +1560,4 @@ async function markPipelineJobError(
     // A job canceled mid-flight stays canceled — never flip it to error.
     .neq("status", "canceled");
   await markActiveRunsForJobError(admin, job.id);
-}
-
-async function deferPipelineJob(
-  admin: AdminClient,
-  job: Tables<"agent_jobs">,
-  message: string,
-): Promise<void> {
-  const { error: retryError } = await admin.rpc("schedule_job_retry", {
-    target_job_id: job.id,
-    base_delay_ms: 15000,
-    max_backoff_ms: 120000,
-  });
-
-  if (!retryError) {
-    await admin.from("agent_jobs").update({ last_error: message }).eq("id", job.id);
-    return;
-  }
-
-  await markPipelineJobError(admin, job, message);
 }
