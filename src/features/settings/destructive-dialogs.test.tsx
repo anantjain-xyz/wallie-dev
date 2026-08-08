@@ -10,7 +10,6 @@ import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { DangerZoneSection } from "@/features/settings/danger-zone-section";
 import { LinearKeyControls } from "@/features/settings/linear-key-controls";
 import { WorkspaceSecretsPanel } from "@/features/settings/secrets-section";
-import { VercelSandboxConnectionSection } from "@/features/settings/vercel-sandbox-connection-section";
 import { WorkspaceMembersSection } from "@/features/settings/workspace-members-section";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
@@ -61,18 +60,6 @@ afterEach(() => {
 });
 
 function renderSettingsDestructiveFlows() {
-  const connection = {
-    lastValidatedAt: timestamp,
-    lastValidationError: null,
-    projectId: "prj_123",
-    projectName: "wallie-sandboxes",
-    status: "connected" as const,
-    teamId: "team_123",
-    tokenPreview: "vca_...123",
-    updatedAt: timestamp,
-    workspaceId,
-  };
-
   return render(
     <OverlayProvider>
       <DangerZoneSection canDelete workspaceId={workspaceId} workspaceName="Acme" />
@@ -115,13 +102,6 @@ function renderSettingsDestructiveFlows() {
           valuePreview: "••••1234",
           workspaceId,
         }}
-        workspaceId={workspaceId}
-      />
-      <VercelSandboxConnectionSection
-        canManage
-        connection={connection}
-        onConnectionChange={vi.fn()}
-        setFlashMessage={vi.fn()}
         workspaceId={workspaceId}
       />
       <WorkspaceSecretsPanel
@@ -183,7 +163,6 @@ describe("destructive settings dialogs", () => {
     ["Remove Ada", "Remove Ada?"],
     ["Revoke invitation for invitee@example.com", "Revoke invitee@example.com's invitation?"],
     ["Remove Linear API key", "Remove Linear API key?"],
-    ["Disconnect Vercel Sandbox", "Disconnect wallie-sandboxes?"],
     ["Delete DEPLOY_TOKEN", "Delete DEPLOY_TOKEN?"],
   ])(
     "supports keyboard dismissal, focus restoration, and axe for %s",

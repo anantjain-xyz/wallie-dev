@@ -13,9 +13,8 @@ import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provide
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import { DestructiveConfirmationDialog } from "@/components/ui/destructive-confirmation-dialog";
 import { SelectField, type SelectOption } from "@/components/ui/select";
-import { Status, configurationStatusFromTone } from "@/components/ui/status";
+import { Status } from "@/components/ui/status";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { WorkspaceOnboardingData } from "@/features/onboarding/data";
 import {
@@ -48,15 +47,8 @@ import type {
   UpsertWorkspaceSecretResponse,
   WorkspaceSecretPreview,
 } from "@/lib/secrets/contracts";
-import type {
-  VercelSandboxConnectionPreview,
-  VercelSandboxConnectionResponse,
-} from "@/lib/vercel-sandbox/contracts";
-import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 
 import type { OnboardingStepProps } from "./types";
-
-type HealthTone = "accent" | "danger" | "neutral" | "success" | "warning";
 
 type FieldType = "number" | "select" | "text";
 
@@ -298,98 +290,6 @@ function updateClaudeCodeConnectionInData(
   };
 }
 
-export function updateVercelSandboxConnectionInData(
-  currentData: WorkspaceOnboardingData,
-  connection: VercelSandboxConnectionPreview | null,
-): WorkspaceOnboardingData {
-  return {
-    ...currentData,
-    vercelSandboxConnection: connection,
-    setupHealth: {
-      ...currentData.setupHealth,
-      vercelSandboxConnection: connection
-        ? {
-            connected: connection.status === "connected",
-            lastValidationError: connection.lastValidationError,
-            projectId: connection.projectId,
-            projectName: connection.projectName,
-            status: connection.status,
-            teamId: connection.teamId,
-            updatedAt: connection.updatedAt,
-          }
-        : {
-            connected: false,
-            lastValidationError: null,
-            projectId: null,
-            projectName: null,
-            status: "missing",
-            teamId: null,
-            updatedAt: null,
-          },
-    },
-  };
-}
-
-export function updateSandboxSettingsInData(
-  currentData: WorkspaceOnboardingData,
-  settings: SandboxSettingsResponse,
-): WorkspaceOnboardingData {
-  const active = settings.connections[settings.activeProvider];
-  const vercel = settings.connections.vercel;
-  const activeProviderEnabled = settings.enabledProviders.includes(settings.activeProvider);
-  const providerLabel =
-    settings.activeProvider === "vercel"
-      ? "Vercel Sandbox"
-      : settings.activeProvider === "e2b"
-        ? "E2B"
-        : "Daytona";
-  return {
-    ...currentData,
-    sandboxSettings: settings,
-    vercelSandboxConnection: vercel,
-    setupHealth: {
-      ...currentData.setupHealth,
-      sandboxConnection: {
-        connected: activeProviderEnabled && active?.status === "connected",
-        connectionRevision: active ? String(active.connectionRevision) : null,
-        displayName:
-          settings.activeProvider === "vercel"
-            ? (vercel?.projectName ?? vercel?.projectId ?? null)
-            : settings.activeProvider === "e2b"
-              ? (settings.connections.e2b?.apiKeyPreview ?? null)
-              : (settings.connections.daytona?.target ??
-                settings.connections.daytona?.apiUrl ??
-                null),
-        lastValidationError: activeProviderEnabled
-          ? (active?.lastValidationError ?? null)
-          : `${providerLabel} is disabled in this Wallie deployment. Switch to an enabled sandbox provider.`,
-        provider: settings.activeProvider,
-        providerLabel,
-        status: activeProviderEnabled ? (active?.status ?? "missing") : "error",
-        updatedAt: active?.updatedAt ?? null,
-      },
-      vercelSandboxConnection: vercel
-        ? {
-            connected: vercel.status === "connected",
-            lastValidationError: vercel.lastValidationError,
-            projectId: vercel.projectId,
-            projectName: vercel.projectName,
-            status: vercel.status,
-            teamId: vercel.teamId,
-            updatedAt: vercel.updatedAt,
-          }
-        : {
-            connected: false,
-            lastValidationError: null,
-            projectId: null,
-            projectName: null,
-            status: "missing",
-            teamId: null,
-            updatedAt: null,
-          },
-    },
-  };
-}
 const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
   {
     configKey: "agent_provider",
@@ -453,235 +353,6 @@ function RuntimeRequirementList({
           />
         </div>
       ))}
-    </div>
-  );
-}
-
-export function OnboardingVercelSandboxPanel({
-  canManage,
-  connection,
-  disabled,
-  onConnectionChange,
-  workspaceId,
-}: {
-  canManage: boolean;
-  connection: VercelSandboxConnectionPreview | null;
-  disabled: boolean;
-  onConnectionChange: (connection: VercelSandboxConnectionPreview | null) => void;
-  workspaceId: string;
-}) {
-  const [token, setToken] = useState("");
-  const [teamId, setTeamId] = useState(connection?.teamId ?? "");
-  const [projectId, setProjectId] = useState(connection?.projectId ?? "");
-  const [busyAction, setBusyAction] = useState<"disconnect" | "save" | null>(null);
-  const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [disconnectError, setDisconnectError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const busy = disabled || busyAction !== null;
-  const connected = connection?.status === "connected";
-  const statusTone: HealthTone = !connection ? "warning" : connected ? "success" : "danger";
-  const statusLabel = !connection ? "Missing" : connected ? "Connected" : "Needs attention";
-
-  async function handleSave() {
-    if (!canManage || busy) return;
-    if (!token.trim() || !teamId.trim() || !projectId.trim()) {
-      setMessage(null);
-      setError("Enter a Vercel token, team id, and project id.");
-      return;
-    }
-    setBusyAction("save");
-    setError(null);
-    setMessage(null);
-
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/vercel-sandbox-connection`, {
-        body: JSON.stringify({
-          projectId: projectId.trim(),
-          teamId: teamId.trim(),
-          token: token.trim(),
-        }),
-        headers: { "content-type": "application/json" },
-        method: "PUT",
-      });
-      const body = (await response.json().catch(() => null)) as
-        | (VercelSandboxConnectionResponse & { error?: string })
-        | null;
-      if (!response.ok || !body) {
-        throw new Error(body?.error ?? "Vercel Sandbox connection failed.");
-      }
-      onConnectionChange(body.connection);
-      setToken("");
-      setMessage("Vercel Sandbox connection saved.");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Vercel Sandbox connection failed.");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function handleDisconnect() {
-    if (!canManage || busy) return;
-    setBusyAction("disconnect");
-    setDisconnectError(null);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/vercel-sandbox-connection`, {
-        method: "DELETE",
-      });
-      const body = (await response.json().catch(() => null)) as
-        | (VercelSandboxConnectionResponse & { error?: string })
-        | null;
-      if (!response.ok || !body) {
-        throw new Error(body?.error ?? "Vercel Sandbox disconnect failed.");
-      }
-      setDisconnectOpen(false);
-      onConnectionChange(body.connection);
-      setMessage("Vercel Sandbox disconnected.");
-    } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "Vercel Sandbox disconnect failed.";
-      setDisconnectError(message);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  return (
-    <div className="rounded-[6px] border border-border bg-sheet p-4" id="onboarding-vercel">
-      <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-[14px] font-semibold text-foreground">Vercel Sandbox</h3>
-          <p className="mt-1 text-xs leading-5 text-muted">
-            Wallie runs every session inside this workspace&apos;s Vercel project. Connect it here
-            so sessions can run — the token is encrypted and never returned to the browser.
-          </p>
-        </div>
-        <Status label={statusLabel} value={configurationStatusFromTone(statusTone)} />
-      </div>
-
-      {error ? (
-        <div
-          className="mt-4 rounded-[6px] border border-danger/20 bg-danger-soft px-3 py-2 text-[13px] text-danger"
-          role="alert"
-        >
-          {error}
-        </div>
-      ) : null}
-      {message ? (
-        <div
-          className="mt-4 rounded-[6px] border border-success/20 bg-success-soft px-3 py-2 text-[13px] text-success"
-          role="status"
-        >
-          {message}
-        </div>
-      ) : null}
-
-      <div className="mt-4 flex flex-col gap-1">
-        {connection ? (
-          <p className="text-xs leading-5 text-muted">
-            {connection.projectName ?? connection.projectId} on {connection.teamId}
-            {connection.tokenPreview ? ` · ${connection.tokenPreview}` : ""}
-          </p>
-        ) : (
-          <p className="text-xs leading-5 text-muted">
-            Connect a Vercel project before running Wallie sessions.
-          </p>
-        )}
-        {connection?.lastValidationError ? (
-          <p className="text-xs leading-5 text-danger">{connection.lastValidationError}</p>
-        ) : null}
-      </div>
-
-      {canManage ? (
-        <>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="block space-y-1.5 sm:col-span-2">
-              <span className="text-xs font-medium text-muted">Vercel token</span>
-              <input
-                autoComplete="off"
-                className="ui-input"
-                disabled={busy}
-                onChange={(event) => setToken(event.target.value)}
-                placeholder="vca_…"
-                spellCheck={false}
-                type="password"
-                value={token}
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-muted">Team id</span>
-              <input
-                autoComplete="off"
-                className="ui-input"
-                disabled={busy}
-                onChange={(event) => setTeamId(event.target.value)}
-                placeholder="team_…"
-                spellCheck={false}
-                value={teamId}
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-muted">Project id</span>
-              <input
-                autoComplete="off"
-                className="ui-input"
-                disabled={busy}
-                onChange={(event) => setProjectId(event.target.value)}
-                placeholder="prj_…"
-                spellCheck={false}
-                value={projectId}
-              />
-            </label>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-            {connection ? (
-              <DestructiveConfirmationDialog
-                actionLabel="Disconnect Vercel Sandbox"
-                description={`Disconnecting ${connection.projectName ?? connection.projectId} prevents this workspace from starting new sandbox runs until another Vercel connection is saved.`}
-                errorMessage={disconnectError}
-                onConfirm={() => void handleDisconnect()}
-                onOpenChange={(open) => {
-                  setDisconnectOpen(open);
-                  setDisconnectError(null);
-                }}
-                open={disconnectOpen}
-                pending={busyAction === "disconnect"}
-                pendingLabel="Disconnecting…"
-                title={`Disconnect ${connection.projectName ?? connection.projectId}?`}
-                trigger={
-                  <button
-                    aria-label="Disconnect Vercel Sandbox"
-                    className="ui-button-danger"
-                    disabled={busy}
-                    type="button"
-                  >
-                    Disconnect
-                  </button>
-                }
-              />
-            ) : null}
-            <button
-              className="ui-button-primary"
-              disabled={busy}
-              onClick={() => void handleSave()}
-              type="button"
-            >
-              <ActionButtonLabel
-                idle="Save Vercel connection"
-                pending={busyAction === "save"}
-                pendingLabel="Validating…"
-              />
-            </button>
-          </div>
-        </>
-      ) : (
-        <p className="mt-4 text-[13px] leading-6 text-muted">
-          Workspace admins can connect the Vercel Sandbox project used for Wallie runs.
-        </p>
-      )}
     </div>
   );
 }
@@ -757,6 +428,7 @@ export default function RuntimeStep({
   });
   const selectedProvider = readiness.provider;
   const defaultsProvider = runtimeReadinessFromData(data).provider;
+  const sandboxConnectionHref = "#sandbox";
   const defaultDraftForKey = (key: AgentConfigKey) =>
     agentConfigValueToDraft(key, getRecommendedAgentConfigDefault(key, defaultsProvider));
   const envSuggestions = data.github.primaryProfile?.envKeySuggestions ?? [];
@@ -1125,7 +797,7 @@ export default function RuntimeStep({
           </div>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-4" data-sandbox-connection-href={sandboxConnectionHref}>
           <ProviderAccessPanel
             initialClaudeCodeStatus={{
               checkedAt: data.setupHealth.claudeCodeConnection.checkedAt,
@@ -1148,7 +820,7 @@ export default function RuntimeStep({
             onSandboxConnectionSelect={() => onSelectStep("sandbox")}
             provider={selectedProvider}
             returnTo={`/w/${data.workspace.slug}/onboarding?step=runtime`}
-            sandboxConnectionHref="#sandbox"
+            sandboxConnectionHref={sandboxConnectionHref}
             sandboxConnectionLabel={
               data.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"
             }
