@@ -2,16 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   AGENT_CONFIG_LIMITS,
+  AGENT_EFFORT_LEVELS,
   AGENT_PROVIDERS,
   RECOMMENDED_AGENT_CONFIG_DEFAULTS,
+  RECOMMENDED_AGENT_EFFORT,
   RECOMMENDED_AGENT_MODELS,
-  RECOMMENDED_CLAUDE_CODE_EFFORT,
-  RECOMMENDED_CODEX_REASONING_EFFORT,
   STALL_TIMEOUT_MINUTE_LIMITS,
   formatStallTimeoutMinutes,
   getRecommendedAgentConfigDefault,
   getRecommendedAgentModel,
   isAgentConfigKey,
+  isAgentEffort,
   isAgentProvider,
   modelMatchesProvider,
   normalizeAgentProviderName,
@@ -207,9 +208,26 @@ describe("provider-specific recommended defaults", () => {
     );
   });
 
-  it("uses extra-high effort for both CLI providers", () => {
-    expect(RECOMMENDED_CODEX_REASONING_EFFORT).toBe("xhigh");
-    expect(RECOMMENDED_CLAUDE_CODE_EFFORT).toBe("xhigh");
+  it("uses extra-high effort by default", () => {
+    expect(RECOMMENDED_AGENT_EFFORT).toBe("xhigh");
+    expect(RECOMMENDED_AGENT_CONFIG_DEFAULTS.agent_effort).toBe("xhigh");
+  });
+});
+
+describe("parseAgentConfigValue — agent_effort", () => {
+  it("accepts every supported effort level", () => {
+    for (const effort of AGENT_EFFORT_LEVELS) {
+      expect(parseAgentConfigValue("agent_effort", effort)).toEqual({ ok: true, value: effort });
+      expect(isAgentEffort(effort)).toBe(true);
+    }
+  });
+
+  it("rejects unsupported effort levels", () => {
+    expect(parseAgentConfigValue("agent_effort", "ultra")).toEqual({
+      ok: false,
+      error: "Effort must be one of: low, medium, high, xhigh, max.",
+    });
+    expect(isAgentEffort("ultra")).toBe(false);
   });
 });
 

@@ -66,6 +66,7 @@ describe("parseAgentConfigDraft — stall_timeout_ms", () => {
 describe("applyAgentConfigDraftChange", () => {
   it("pairs a provider change with the provider's recommended model", () => {
     const drafts = {
+      agent_effort: "xhigh",
       agent_provider: "codex",
       agent_model: "gpt-5.6-sol",
       concurrency_limit: "1",

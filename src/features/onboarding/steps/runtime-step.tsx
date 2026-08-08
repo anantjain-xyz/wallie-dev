@@ -9,7 +9,10 @@ import type {
   BatchUpsertAgentConfigRequest,
   BatchUpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
-import { AGENT_PROVIDER_SELECT_OPTIONS } from "@/components/shared/agent-provider-options";
+import {
+  AGENT_EFFORT_SELECT_OPTIONS,
+  AGENT_PROVIDER_SELECT_OPTIONS,
+} from "@/components/shared/agent-provider-options";
 import { PlusIcon } from "@/components/shared/icons/plus-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
@@ -138,6 +141,10 @@ function buildAgentConfigDrafts(agentConfig: AgentConfigMap): AgentConfigDrafts 
     agent_model: agentConfigValueToDraft(
       "agent_model",
       resolveAgentConfigValue("agent_model", agentConfig),
+    ),
+    agent_effort: agentConfigValueToDraft(
+      "agent_effort",
+      resolveAgentConfigValue("agent_effort", agentConfig),
     ),
     concurrency_limit: agentConfigValueToDraft(
       "concurrency_limit",
@@ -306,6 +313,13 @@ const AGENT_CONFIG_FIELDS: FieldDescriptor[] = [
     type: "text",
   },
   {
+    configKey: "agent_effort",
+    description: "Reasoning effort passed to the selected agent provider.",
+    label: "Agent effort",
+    options: AGENT_EFFORT_SELECT_OPTIONS,
+    type: "select",
+  },
+  {
     configKey: "concurrency_limit",
     description: `Parallel agent jobs (${AGENT_CONFIG_LIMITS.concurrency_limit.min}-${AGENT_CONFIG_LIMITS.concurrency_limit.max}).`,
     label: "Concurrency",
@@ -407,11 +421,15 @@ export default function RuntimeStep({
   });
   const providerFieldStatuses = fieldStatuses.filter(
     (status) =>
-      status.field.configKey === "agent_provider" || status.field.configKey === "agent_model",
+      status.field.configKey === "agent_provider" ||
+      status.field.configKey === "agent_model" ||
+      status.field.configKey === "agent_effort",
   );
   const executionFieldStatuses = fieldStatuses.filter(
     (status) =>
-      status.field.configKey !== "agent_provider" && status.field.configKey !== "agent_model",
+      status.field.configKey !== "agent_provider" &&
+      status.field.configKey !== "agent_model" &&
+      status.field.configKey !== "agent_effort",
   );
   const hasInvalidDrafts = fieldStatuses.some((status) => status.validationError !== null);
   const hasUnsavedDrafts = fieldStatuses.some((status) => status.isDirty);

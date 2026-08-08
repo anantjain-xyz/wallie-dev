@@ -173,7 +173,11 @@ function adminMock() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocked.loadWorkspaceAgentConfig.mockResolvedValue({ model: "gpt-5.5", provider: "codex" });
+  mocked.loadWorkspaceAgentConfig.mockResolvedValue({
+    effort: "xhigh",
+    model: "gpt-5.5",
+    provider: "codex",
+  });
   mocked.loadRequiredWorkspaceSandboxConnection.mockResolvedValue({
     connection: { credentials, provider: "vercel", revision: "revision-1" },
     provider: "vercel",

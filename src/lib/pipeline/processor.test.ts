@@ -66,6 +66,7 @@ vi.mock("@/lib/prompt-templates", () => ({
 vi.mock("@/lib/agent-runner", () => ({
   createAgentRunner: mocked.createAgentRunner,
   DEFAULT_AGENT_RUNNER_CONFIG: {
+    effort: "xhigh",
     provider: "codex",
     model: "gpt-5.5",
     maxTurns: 5,
@@ -256,8 +257,10 @@ function buildAdminMock(opts: MockOptions) {
   }
   const rawProvider = typeof lookup.agent_provider === "string" ? lookup.agent_provider : undefined;
   const rawModel = typeof lookup.agent_model === "string" ? lookup.agent_model : undefined;
+  const rawEffort = typeof lookup.agent_effort === "string" ? lookup.agent_effort : undefined;
   const resolvedProvider = rawProvider ? normalizeAgentProviderName(rawProvider) : "codex";
   const resolvedConfig = {
+    effort: rawEffort ?? "xhigh",
     maxTurns: typeof lookup.max_turns === "number" ? lookup.max_turns : undefined,
     model: rawModel ?? "gpt-5.5",
     provider: resolvedProvider ?? "codex",
@@ -979,6 +982,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const { admin } = buildAdminMock({
       session,
       agentConfig: [
+        { key: "agent_effort", value_json: "max" },
         { key: "agent_provider", value_json: "claude-code" },
         { key: "agent_model", value_json: "claude-sonnet-4-5" },
       ],
@@ -990,6 +994,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.createAgentRunner).toHaveBeenCalledWith("claude-code", {
       claudeCode: {
         credential: { secret: "sk-ant-test" },
+        effort: "max",
         model: "claude-sonnet-4-5",
       },
     });

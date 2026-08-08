@@ -1,6 +1,7 @@
 import type { ClaudeCodeCredential } from "@/lib/claude-code/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CLAUDE_CODE_EFFORT, DEFAULT_CLAUDE_CODE_MODEL } from "./types";
+import type { AgentEffort } from "@/lib/agent-config/contracts";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 
@@ -9,6 +10,8 @@ export interface ClaudeCodeRunnerOptions {
   credential: ClaudeCodeCredential;
   /** Model identifier or Claude Code alias, e.g. "claude-opus-4-8[1m]". */
   model?: string;
+  /** Reasoning effort passed to Claude Code. */
+  effort?: AgentEffort;
 }
 
 /**
@@ -41,12 +44,13 @@ export class ClaudeCodeRunner implements AgentRunner {
     await sandbox.writeFile(promptFile, input.prompt);
 
     const model = this.options.model ?? DEFAULT_CLAUDE_CODE_MODEL;
+    const effort = this.options.effort ?? DEFAULT_CLAUDE_CODE_EFFORT;
     const cliArgs = [
       "--print",
       "--model",
       model,
       "--effort",
-      DEFAULT_CLAUDE_CODE_EFFORT,
+      effort,
       "--permission-mode",
       "bypassPermissions",
       "--output-format",

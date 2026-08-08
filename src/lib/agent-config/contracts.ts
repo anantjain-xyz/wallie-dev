@@ -8,6 +8,7 @@ export const ALLOWED_AGENT_CONFIG_KEYS = [
   "max_retries",
   "agent_provider",
   "agent_model",
+  "agent_effort",
 ] as const;
 
 export type AgentConfigKey = (typeof ALLOWED_AGENT_CONFIG_KEYS)[number];
@@ -21,8 +22,11 @@ export const RECOMMENDED_AGENT_MODELS = {
   "claude-code": "claude-opus-4-8[1m]",
 } as const satisfies Record<AgentProvider, string>;
 
-export const RECOMMENDED_CODEX_REASONING_EFFORT = "xhigh";
-export const RECOMMENDED_CLAUDE_CODE_EFFORT = "xhigh";
+export const AGENT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export type AgentEffort = (typeof AGENT_EFFORT_LEVELS)[number];
+
+export const RECOMMENDED_AGENT_EFFORT: AgentEffort = "xhigh";
 
 const AGENT_PROVIDER_ALIASES: Record<string, AgentProvider> = {
   claude_code: "claude-code",
@@ -70,6 +74,7 @@ export function formatStallTimeoutMinutes(ms: number): string {
 export const RECOMMENDED_AGENT_CONFIG_DEFAULTS = {
   agent_provider: "codex",
   agent_model: RECOMMENDED_AGENT_MODELS.codex,
+  agent_effort: RECOMMENDED_AGENT_EFFORT,
   concurrency_limit: 1,
   max_retries: 3,
   stall_timeout_ms: 900_000,
@@ -189,6 +194,12 @@ const agentModelSchema = z
     `Model must start with "${CLAUDE_MODEL_PREFIX}" or one of: ${CODEX_MODEL_PREFIXES.join(", ")}.`,
   );
 
+const agentEffortSchema = z.enum(AGENT_EFFORT_LEVELS, {
+  errorMap: () => ({
+    message: `Effort must be one of: ${AGENT_EFFORT_LEVELS.join(", ")}.`,
+  }),
+});
+
 function modelMatchesAnyProvider(model: string): boolean {
   const trimmed = model.trim();
   if (!modelHasSupportedSyntax(trimmed)) return false;
@@ -217,6 +228,7 @@ export const agentConfigValueSchemas = {
   max_retries: maxRetriesSchema,
   agent_provider: agentProviderSchema,
   agent_model: agentModelSchema,
+  agent_effort: agentEffortSchema,
 } as const;
 
 /**
@@ -247,6 +259,10 @@ export function isAgentConfigKey(value: unknown): value is AgentConfigKey {
 
 export function isAgentProvider(value: unknown): value is AgentProvider {
   return typeof value === "string" && normalizeAgentProviderName(value) !== null;
+}
+
+export function isAgentEffort(value: unknown): value is AgentEffort {
+  return typeof value === "string" && (AGENT_EFFORT_LEVELS as readonly string[]).includes(value);
 }
 
 /**

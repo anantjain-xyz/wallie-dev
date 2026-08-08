@@ -131,7 +131,7 @@ describe("wallie service helpers", () => {
   it("blocks first-run prep when the resolved repository is archived", () => {
     expect(() =>
       assertSessionFirstRunReady({
-        agentConfig: { model: "gpt-5.5", provider: "codex" },
+        agentConfig: { effort: "xhigh", model: "gpt-5.5", provider: "codex" },
         missingSecretKeys: [],
         repository: {
           defaultBranch: "main",

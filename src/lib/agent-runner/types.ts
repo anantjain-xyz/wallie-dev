@@ -4,11 +4,8 @@
  * to the caller for persistence and real-time UI.
  */
 
-import {
-  RECOMMENDED_CLAUDE_CODE_EFFORT,
-  RECOMMENDED_CODEX_REASONING_EFFORT,
-  getRecommendedAgentModel,
-} from "@/lib/agent-config/contracts";
+import { RECOMMENDED_AGENT_EFFORT, getRecommendedAgentModel } from "@/lib/agent-config/contracts";
+import type { AgentEffort } from "@/lib/agent-config/contracts";
 import type { AgentProvider, SandboxHandle } from "@/lib/sandbox/types";
 
 // ---------------------------------------------------------------------------
@@ -98,17 +95,21 @@ export interface AgentRunnerConfig {
   provider: AgentProvider;
   /** Model to use (provider-specific, e.g. "gpt-5.6-sol" or "claude-opus-4-8[1m]"). */
   model?: string;
+  /** Reasoning effort passed to the selected agent CLI. */
+  effort?: AgentEffort;
   /** Maximum turns per agent invocation. */
   maxTurns?: number;
 }
 
 export const DEFAULT_CODEX_MODEL = getRecommendedAgentModel("codex");
 export const DEFAULT_CLAUDE_CODE_MODEL = getRecommendedAgentModel("claude-code");
-export const DEFAULT_CODEX_REASONING_EFFORT = RECOMMENDED_CODEX_REASONING_EFFORT;
-export const DEFAULT_CLAUDE_CODE_EFFORT = RECOMMENDED_CLAUDE_CODE_EFFORT;
+export const DEFAULT_AGENT_EFFORT = RECOMMENDED_AGENT_EFFORT;
+export const DEFAULT_CODEX_REASONING_EFFORT = DEFAULT_AGENT_EFFORT;
+export const DEFAULT_CLAUDE_CODE_EFFORT = DEFAULT_AGENT_EFFORT;
 
 export const DEFAULT_AGENT_RUNNER_CONFIG: AgentRunnerConfig = {
   provider: "codex",
   model: DEFAULT_CODEX_MODEL,
+  effort: DEFAULT_AGENT_EFFORT,
   maxTurns: 5,
 };

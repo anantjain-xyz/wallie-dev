@@ -3,12 +3,14 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { AgentConfigSection } from "@/features/settings/agent-config-section";
 
 const checkedAt = new Date().toISOString();
 const initialAgentConfig = {
+  agent_effort: "xhigh",
   agent_model: "gpt-5.5",
   agent_provider: "codex",
   concurrency_limit: 1,
@@ -16,13 +18,36 @@ const initialAgentConfig = {
   stall_timeout_ms: 900_000,
 };
 
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: () => false,
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: () => undefined,
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: () => undefined,
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => undefined,
+  });
+});
+
+beforeEach(() => {
+  vi.stubGlobal("PointerEvent", MouseEvent);
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-function renderSection(setFlashMessage = vi.fn()) {
-  render(
+function renderSection(setFlashMessage = vi.fn(), withOverlays = false) {
+  const section = (
     <AgentConfigSection
       canManage
       initialAgentConfig={initialAgentConfig}
@@ -30,12 +55,38 @@ function renderSection(setFlashMessage = vi.fn()) {
       initialCodexStatus={{ checkedAt, connected: false }}
       setFlashMessage={setFlashMessage}
       workspaceId="00000000-0000-4000-8000-000000000001"
-    />,
+    />
   );
+  render(withOverlays ? <OverlayProvider>{section}</OverlayProvider> : section);
   return setFlashMessage;
 }
 
 describe("AgentConfigSection batch save", () => {
+  it("saves a selected agent effort", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((input: RequestInfo | URL, request?: RequestInit) => {
+      void input;
+      void request;
+      return Promise.resolve({
+        json: () => Promise.resolve({ entries: [{ key: "agent_effort", value: "max" }] }),
+        ok: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSection(vi.fn(), true);
+
+    await user.click(screen.getByRole("combobox", { name: "Agent effort" }));
+    await user.click(screen.getByRole("option", { name: "Max" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, request] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse(String(request?.body))).toEqual({
+      config: { agent_effort: "max" },
+      workspaceId: "00000000-0000-4000-8000-000000000001",
+    });
+  });
+
   it("saves multiple changed fields with one network mutation", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn((input: RequestInfo | URL, request?: RequestInit) => {

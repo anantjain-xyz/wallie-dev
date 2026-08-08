@@ -8,7 +8,11 @@ import type { PipelineStage } from "@/features/sessions/types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAgentRunner, loadWorkspaceAgentConfig } from "@/lib/agent-runner";
-import { AGENT_PROVIDERS, normalizeAgentProviderName } from "@/lib/agent-config/contracts";
+import {
+  AGENT_PROVIDERS,
+  normalizeAgentProviderName,
+  type AgentEffort,
+} from "@/lib/agent-config/contracts";
 import { inferWallieRunMode } from "@/features/wallie/utils";
 import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 import type { AgentEvent, AgentRunner } from "@/lib/agent-runner/types";
@@ -213,6 +217,7 @@ async function runStage(input: {
   try {
     const resolvedRunner = await resolveAgentRunner({
       admin,
+      effort: config.effort,
       model: config.model,
       provider,
       session,
@@ -949,6 +954,7 @@ async function insertArtifact(
 
 async function resolveAgentRunner(input: {
   admin: AdminClient;
+  effort: AgentEffort;
   model?: string;
   provider: AgentProvider;
   session: Pick<SessionRow, "creator_member_id" | "workspace_id">;
@@ -961,6 +967,7 @@ async function resolveAgentRunner(input: {
           codex: {
             chatGptAuthStore: createCodexChatGptAuthStore(input.admin),
             credential,
+            effort: input.effort,
             model: input.model,
           },
         }),
@@ -978,7 +985,7 @@ async function resolveAgentRunner(input: {
       const credential = await getClaudeCodeCredentialForSession(input.admin, input.session);
       return {
         runner: createAgentRunner("claude-code", {
-          claudeCode: { credential, model: input.model },
+          claudeCode: { credential, effort: input.effort, model: input.model },
         }),
       };
     } catch (error) {

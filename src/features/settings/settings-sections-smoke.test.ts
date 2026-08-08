@@ -1109,6 +1109,7 @@ describe("Settings integration sections", () => {
 
   it("pairs Settings provider changes with the provider's recommended model", () => {
     const currentDrafts = {
+      agent_effort: "xhigh",
       agent_model: "gpt-5.6-sol",
       agent_provider: "codex",
       concurrency_limit: "1",

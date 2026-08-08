@@ -25,6 +25,7 @@ function buildAdmin(rows: ConfigRow[]) {
 describe("loadWorkspaceAgentConfig", () => {
   it("returns the workspace's configured model and provider", async () => {
     const admin = buildAdmin([
+      { key: "agent_effort", value_json: "max" },
       { key: "agent_model", value_json: "claude-sonnet-4-20250514" },
       { key: "agent_provider", value_json: "claude-code" },
       { key: "max_turns", value_json: 7 },
@@ -33,6 +34,7 @@ describe("loadWorkspaceAgentConfig", () => {
     const config = await loadWorkspaceAgentConfig(admin, "ws-1");
 
     expect(config).toEqual({
+      effort: "max",
       maxTurns: 7,
       model: "claude-sonnet-4-20250514",
       provider: "claude-code",
@@ -45,8 +47,17 @@ describe("loadWorkspaceAgentConfig", () => {
     const config = await loadWorkspaceAgentConfig(admin, "ws-1");
 
     expect(config.model).toBe(DEFAULT_AGENT_RUNNER_CONFIG.model);
+    expect(config.effort).toBe(DEFAULT_AGENT_RUNNER_CONFIG.effort);
     expect(config.provider).toBe(DEFAULT_AGENT_RUNNER_CONFIG.provider);
     expect(config.maxTurns).toBeUndefined();
+  });
+
+  it("falls back to the default effort when the configured value is invalid", async () => {
+    const admin = buildAdmin([{ key: "agent_effort", value_json: "ultra" }]);
+
+    const config = await loadWorkspaceAgentConfig(admin, "ws-1");
+
+    expect(config.effort).toBe(DEFAULT_AGENT_RUNNER_CONFIG.effort);
   });
 
   it("falls back to the selected provider's default model when only provider is configured", async () => {
