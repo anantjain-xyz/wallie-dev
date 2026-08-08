@@ -116,9 +116,10 @@ of containing instructions, delimiters, or unexpectedly large content.
 
 Credentials belong to the session creator, not the current reviewer. ChatGPT
 subscription credentials are written to `.codex/auth.json` with owner-only
-permissions. Refreshed auth caches are persisted after the run with an
-optimistic credential-version guard. Runs may use the same saved credential
-concurrently; stale refresh and reconnect writes do not replace newer state.
+permissions. Refreshed auth caches are persisted after the run with optimistic
+credential-version and generation guards. Runs may use the same saved
+credential concurrently; stale refresh and reconnect writes do not replace
+newer state, including after a disconnect and reconnect.
 
 The GitHub installation token is placed in the isolated sandbox's credential
 store for clone and push. Arbitrary `workspace_secrets` are not injected into
@@ -196,7 +197,8 @@ When changing the harness:
    member data, reviewer data, agent data, or derived metadata.
 2. Update the variable table and test missing, malformed, and delimiter-bearing
    input.
-3. Preserve session-owner credential selection and version-guarded auth-cache persistence.
+3. Preserve session-owner credential selection and version-and-generation-guarded auth-cache
+   persistence.
 4. Keep provider SDK details behind runner and sandbox interfaces.
 5. Define what becomes an event, artifact, PR update, or diagnostic.
 6. Test empty output, cancellation, setup failure, and a late terminal write.

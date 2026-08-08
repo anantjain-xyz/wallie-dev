@@ -1194,6 +1194,7 @@ export type Database = {
           auth_reconnect_reason: string | null
           auth_reconnect_required: boolean
           created_at: string
+          credential_generation: string
           credential_type: string
           credential_version: number
           encrypted_credential: string
@@ -1209,6 +1210,7 @@ export type Database = {
           auth_reconnect_reason?: string | null
           auth_reconnect_required?: boolean
           created_at?: string
+          credential_generation?: string
           credential_type?: string
           credential_version?: number
           encrypted_credential: string
@@ -1224,6 +1226,7 @@ export type Database = {
           auth_reconnect_reason?: string | null
           auth_reconnect_required?: boolean
           created_at?: string
+          credential_generation?: string
           credential_type?: string
           credential_version?: number
           encrypted_credential?: string
@@ -2153,6 +2156,7 @@ export type Database = {
       }
       mark_codex_auth_reconnect_required: {
         Args: {
+          previous_credential_generation: string
           previous_credential_version: number
           reconnect_reason: string
           target_user_id: string
@@ -2169,6 +2173,7 @@ export type Database = {
           new_account_id: string
           new_auth_cache_last_refresh: string
           new_encrypted_credential: string
+          previous_credential_generation: string
           previous_credential_version: number
           target_user_id: string
         }

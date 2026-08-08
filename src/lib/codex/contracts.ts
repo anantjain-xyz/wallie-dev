@@ -14,6 +14,7 @@ interface BaseCodexCredential {
 
 export interface ChatGptCodexCredential extends BaseCodexCredential {
   authCacheLastRefresh: string | null;
+  credentialGeneration: string;
   credentialVersion: number;
   reconnectReason: string | null;
   reconnectRequired: boolean;
@@ -42,7 +43,9 @@ export interface CodexAuthJsonMetadata {
 }
 
 export interface CodexChatGptAuthStore {
+  loadChatGptAuth(input: { userId: string }): Promise<ChatGptCodexCredential>;
   markChatGptAuthReconnectRequired(input: {
+    previousCredentialGeneration: string;
     previousCredentialVersion: number;
     reason: string;
     userId: string;
@@ -50,6 +53,7 @@ export interface CodexChatGptAuthStore {
   persistChatGptAuthJson(input: {
     authJson: string;
     metadata: CodexAuthJsonMetadata;
+    previousCredentialGeneration: string;
     previousCredentialVersion: number;
     userId: string;
   }): Promise<boolean>;

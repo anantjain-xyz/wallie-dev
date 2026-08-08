@@ -15,7 +15,8 @@ drop index if exists public.user_codex_credentials_auth_lock_idx;
 
 alter table public.user_codex_credentials
   drop column auth_lock_run_id,
-  drop column auth_lock_expires_at;
+  drop column auth_lock_expires_at,
+  add column credential_generation uuid not null default gen_random_uuid();
 
 create or replace function internal.bump_codex_credential_version()
 returns trigger
@@ -36,6 +37,7 @@ execute function internal.bump_codex_credential_version();
 create or replace function public.persist_codex_auth_json(
   target_user_id uuid,
   previous_credential_version integer,
+  previous_credential_generation uuid,
   new_encrypted_credential text,
   new_auth_cache_last_refresh timestamptz,
   new_account_id text,
@@ -62,6 +64,7 @@ begin
   where public.user_codex_credentials.user_id = target_user_id
     and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
     and public.user_codex_credentials.credential_version = previous_credential_version
+    and public.user_codex_credentials.credential_generation = previous_credential_generation
   returning public.user_codex_credentials.credential_version;
 end;
 $$;
@@ -69,6 +72,7 @@ $$;
 create or replace function public.mark_codex_auth_reconnect_required(
   target_user_id uuid,
   previous_credential_version integer,
+  previous_credential_generation uuid,
   reconnect_reason text
 )
 returns void
@@ -84,18 +88,19 @@ begin
     updated_at = now()
   where public.user_codex_credentials.user_id = target_user_id
     and public.user_codex_credentials.credential_type = 'chatgpt_auth_json'
-    and public.user_codex_credentials.credential_version = previous_credential_version;
+    and public.user_codex_credentials.credential_version = previous_credential_version
+    and public.user_codex_credentials.credential_generation = previous_credential_generation;
 end;
 $$;
 
 revoke all on function internal.bump_codex_credential_version() from public, anon, authenticated;
-revoke all on function public.persist_codex_auth_json(uuid, integer, text, timestamptz, text, text)
+revoke all on function public.persist_codex_auth_json(uuid, integer, uuid, text, timestamptz, text, text)
   from public, anon, authenticated;
-revoke all on function public.mark_codex_auth_reconnect_required(uuid, integer, text)
+revoke all on function public.mark_codex_auth_reconnect_required(uuid, integer, uuid, text)
   from public, anon, authenticated;
 
 grant execute on function internal.bump_codex_credential_version() to service_role;
-grant execute on function public.persist_codex_auth_json(uuid, integer, text, timestamptz, text, text)
+grant execute on function public.persist_codex_auth_json(uuid, integer, uuid, text, timestamptz, text, text)
   to service_role;
-grant execute on function public.mark_codex_auth_reconnect_required(uuid, integer, text)
+grant execute on function public.mark_codex_auth_reconnect_required(uuid, integer, uuid, text)
   to service_role;

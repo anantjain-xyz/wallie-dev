@@ -54,6 +54,7 @@ describe("getCodexCredentialForUser", () => {
         auth_cache_last_refresh: "2026-05-19T00:00:00.000Z",
         auth_reconnect_reason: null,
         auth_reconnect_required: false,
+        credential_generation: "11111111-1111-4111-8111-111111111111",
         credential_type: "chatgpt_auth_json",
         credential_version: 3,
         encrypted_credential: 'encrypted:{"auth_mode":"chatgpt"}',
@@ -63,6 +64,7 @@ describe("getCodexCredentialForUser", () => {
 
     expect(credential).toMatchObject({
       authCacheLastRefresh: "2026-05-19T00:00:00.000Z",
+      credentialGeneration: "11111111-1111-4111-8111-111111111111",
       credentialVersion: 3,
       secret: '{"auth_mode":"chatgpt"}',
       type: "chatgpt_auth_json",
@@ -97,6 +99,7 @@ describe("getCodexCredentialForUser", () => {
           auth_cache_last_refresh: null,
           auth_reconnect_reason: "reconnect now",
           auth_reconnect_required: true,
+          credential_generation: "11111111-1111-4111-8111-111111111111",
           credential_type: "chatgpt_auth_json",
           credential_version: 1,
           encrypted_credential: "encrypted:{}",
@@ -108,6 +111,28 @@ describe("getCodexCredentialForUser", () => {
 });
 
 describe("createCodexChatGptAuthStore", () => {
+  it("reloads the current ChatGPT credential", async () => {
+    const store = createCodexChatGptAuthStore(
+      adminWithCredential({
+        access_token_expires_at: null,
+        auth_cache_last_refresh: "2026-05-19T00:00:00.000Z",
+        auth_reconnect_reason: null,
+        auth_reconnect_required: false,
+        credential_generation: "22222222-2222-4222-8222-222222222222",
+        credential_type: "chatgpt_auth_json",
+        credential_version: 5,
+        encrypted_credential: 'encrypted:{"auth_mode":"chatgpt"}',
+      }),
+    );
+
+    await expect(store.loadChatGptAuth({ userId: "user-1" })).resolves.toMatchObject({
+      credentialGeneration: "22222222-2222-4222-8222-222222222222",
+      credentialVersion: 5,
+      secret: '{"auth_mode":"chatgpt"}',
+      type: "chatgpt_auth_json",
+    });
+  });
+
   it("persists refreshed auth JSON through the RPC", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ credential_version: 4 }], error: null });
     const store = createCodexChatGptAuthStore({ rpc } as never);
@@ -120,6 +145,7 @@ describe("createCodexChatGptAuthStore", () => {
           accountId: "acct-1",
           lastRefresh: "2026-05-19T00:00:00.000Z",
         },
+        previousCredentialGeneration: "11111111-1111-4111-8111-111111111111",
         previousCredentialVersion: 3,
         userId: "user-1",
       }),
@@ -130,6 +156,7 @@ describe("createCodexChatGptAuthStore", () => {
       new_account_id: "acct-1",
       new_auth_cache_last_refresh: "2026-05-19T00:00:00.000Z",
       new_encrypted_credential: 'encrypted:{"auth_mode":"chatgpt"}',
+      previous_credential_generation: "11111111-1111-4111-8111-111111111111",
       previous_credential_version: 3,
       target_user_id: "user-1",
     });
@@ -140,12 +167,14 @@ describe("createCodexChatGptAuthStore", () => {
     const store = createCodexChatGptAuthStore({ rpc } as never);
 
     await store.markChatGptAuthReconnectRequired({
+      previousCredentialGeneration: "22222222-2222-4222-8222-222222222222",
       previousCredentialVersion: 4,
       reason: "reconnect",
       userId: "user-1",
     });
 
     expect(rpc).toHaveBeenCalledWith("mark_codex_auth_reconnect_required", {
+      previous_credential_generation: "22222222-2222-4222-8222-222222222222",
       previous_credential_version: 4,
       reconnect_reason: "reconnect",
       target_user_id: "user-1",

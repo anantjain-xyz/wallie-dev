@@ -175,12 +175,19 @@ describe("CodexRunner", () => {
     expect(execCall.args[1]).not.toContain("codex login --with-access-token");
   });
 
-  it("runs without a per-run lease and persists refreshed ChatGPT auth.json", async () => {
-    const originalAuthJson = JSON.stringify({
+  it("reloads the latest ChatGPT auth without a lease and persists refreshed auth.json", async () => {
+    const configuredAuthJson = JSON.stringify({
       auth_mode: "chatgpt",
       tokens: {
-        access_token: "access-token-value-1234567890",
-        refresh_token: "refresh-token-value-1234567890",
+        access_token: "configured-access-token-value",
+        refresh_token: "configured-refresh-token-value",
+      },
+    });
+    const currentAuthJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: "current-access-token-value",
+        refresh_token: "current-refresh-token-value",
       },
     });
     const refreshedAuthJson = JSON.stringify({
@@ -200,7 +207,7 @@ describe("CodexRunner", () => {
       (call) => call.args[1]?.includes("codex 'exec'") ?? false,
       (call) => {
         expect(sandbox.files.get("/vercel/sandbox/.codex/auth.json")?.data.toString("utf8")).toBe(
-          originalAuthJson,
+          currentAuthJson,
         );
         void call;
         sandbox.files.set("/vercel/sandbox/.codex/auth.json", {
@@ -210,7 +217,19 @@ describe("CodexRunner", () => {
         return [{ data: `{"type":"result","summary":"done"}\n`, stream: "stdout" }];
       },
     );
+    const currentCredential = {
+      authCacheLastRefresh: null,
+      credentialGeneration: "22222222-2222-4222-8222-222222222222",
+      credentialVersion: 8,
+      expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
+      secret: currentAuthJson,
+      type: "chatgpt_auth_json" as const,
+      userId: "user-1",
+    };
     const store = {
+      loadChatGptAuth: vi.fn().mockResolvedValue(currentCredential),
       markChatGptAuthReconnectRequired: vi.fn(),
       persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
     };
@@ -219,11 +238,12 @@ describe("CodexRunner", () => {
       chatGptAuthStore: store,
       credential: {
         authCacheLastRefresh: null,
+        credentialGeneration: "11111111-1111-4111-8111-111111111111",
         credentialVersion: 7,
         expiresAt: null,
         reconnectReason: null,
         reconnectRequired: false,
-        secret: originalAuthJson,
+        secret: configuredAuthJson,
         type: "chatgpt_auth_json",
         userId: "user-1",
       },
@@ -239,6 +259,7 @@ describe("CodexRunner", () => {
     }
 
     expect(events).toContainEqual({ type: "completion", taskComplete: true, summary: "done" });
+    expect(store.loadChatGptAuth).toHaveBeenCalledWith({ userId: "user-1" });
     expect(store.persistChatGptAuthJson).toHaveBeenCalledWith({
       authJson: refreshedAuthJson,
       metadata: {
@@ -246,7 +267,8 @@ describe("CodexRunner", () => {
         accountId: null,
         lastRefresh: "2026-05-19T00:00:00.000Z",
       },
-      previousCredentialVersion: 7,
+      previousCredentialGeneration: "22222222-2222-4222-8222-222222222222",
+      previousCredentialVersion: 8,
       userId: "user-1",
     });
     expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
@@ -272,22 +294,25 @@ describe("CodexRunner", () => {
       [{ data: "context token limit exceeded\n", stream: "stderr" }],
       { exitCode: 1 },
     );
+    const credential = {
+      authCacheLastRefresh: null,
+      credentialGeneration: "11111111-1111-4111-8111-111111111111",
+      credentialVersion: 7,
+      expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
+      secret: authJson,
+      type: "chatgpt_auth_json" as const,
+      userId: "user-1",
+    };
     const store = {
+      loadChatGptAuth: vi.fn().mockResolvedValue(credential),
       markChatGptAuthReconnectRequired: vi.fn(),
       persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
     };
     const runner = new CodexRunner({
       chatGptAuthStore: store,
-      credential: {
-        authCacheLastRefresh: null,
-        credentialVersion: 7,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        secret: authJson,
-        type: "chatgpt_auth_json",
-        userId: "user-1",
-      },
+      credential,
     });
 
     const events = [];
@@ -317,6 +342,14 @@ describe("CodexRunner", () => {
         refresh_token: "refresh-token-value-1234567890",
       },
     });
+    const rewrittenAuthJson = JSON.stringify({
+      auth_mode: "chatgpt",
+      last_refresh: "2026-05-19T00:00:00.000Z",
+      tokens: {
+        access_token: "invalid-refreshed-access-token",
+        refresh_token: "invalid-refreshed-refresh-token",
+      },
+    });
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
       (call) => call.args[1]?.includes("mkdir -p '/vercel/sandbox/.codex'") ?? false,
@@ -324,25 +357,34 @@ describe("CodexRunner", () => {
     );
     sandbox.scriptExec(
       (call) => call.args[1]?.includes("codex 'exec'") ?? false,
-      [{ data: "401 unauthorized\n", stream: "stderr" }],
+      () => {
+        sandbox.files.set("/vercel/sandbox/.codex/auth.json", {
+          data: Buffer.from(rewrittenAuthJson, "utf8"),
+          mode: 0o600,
+        });
+        return [{ data: "401 unauthorized\n", stream: "stderr" }];
+      },
       { exitCode: 1 },
     );
+    const credential = {
+      authCacheLastRefresh: null,
+      credentialGeneration: "11111111-1111-4111-8111-111111111111",
+      credentialVersion: 7,
+      expiresAt: null,
+      reconnectReason: null,
+      reconnectRequired: false,
+      secret: authJson,
+      type: "chatgpt_auth_json" as const,
+      userId: "user-1",
+    };
     const store = {
+      loadChatGptAuth: vi.fn().mockResolvedValue(credential),
       markChatGptAuthReconnectRequired: vi.fn(),
       persistChatGptAuthJson: vi.fn().mockResolvedValue(true),
     };
     const runner = new CodexRunner({
       chatGptAuthStore: store,
-      credential: {
-        authCacheLastRefresh: null,
-        credentialVersion: 7,
-        expiresAt: null,
-        reconnectReason: null,
-        reconnectRequired: false,
-        secret: authJson,
-        type: "chatgpt_auth_json",
-        userId: "user-1",
-      },
+      credential,
     });
 
     for await (const _ of runner.start({
@@ -355,10 +397,12 @@ describe("CodexRunner", () => {
     }
 
     expect(store.markChatGptAuthReconnectRequired).toHaveBeenCalledWith({
+      previousCredentialGeneration: "11111111-1111-4111-8111-111111111111",
       previousCredentialVersion: 7,
       reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
       userId: "user-1",
     });
+    expect(store.persistChatGptAuthJson).not.toHaveBeenCalled();
   });
 
   it("emits an error event when the CLI exits non-zero", async () => {

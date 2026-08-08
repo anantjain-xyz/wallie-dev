@@ -127,8 +127,8 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner requires a sandbox.");
     }
 
-    const credential = this.options.credential;
-    if (credential.type !== "chatgpt_auth_json") {
+    const configuredCredential = this.options.credential;
+    if (configuredCredential.type !== "chatgpt_auth_json") {
       throw new Error("CodexRunner expected ChatGPT subscription auth.");
     }
 
@@ -137,6 +137,7 @@ export class CodexRunner implements AgentRunner {
       throw new Error("CodexRunner requires a ChatGPT auth store for subscription auth.");
     }
 
+    const credential = await store.loadChatGptAuth({ userId: configuredCredential.userId });
     yield* this.runWithChatGptAuth(input, credential, store);
   }
 
@@ -191,27 +192,27 @@ export class CodexRunner implements AgentRunner {
       if (event) yield event;
     }
 
-    await persistRefreshedChatGptAuthJson({
-      credential,
-      sandbox,
-      store,
-    });
-
     const code = await proc.exitCode;
-    if (code !== 0) {
-      const message = codexExitErrorMessage(code, stderrBuf);
-      if (isAuthFailure(message)) {
-        await store.markChatGptAuthReconnectRequired({
-          previousCredentialVersion: credential.credentialVersion,
-          reason:
-            "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
-          userId: credential.userId,
-        });
-      }
+    const errorMessage = code === 0 ? null : codexExitErrorMessage(code, stderrBuf);
+    if (errorMessage && isAuthFailure(errorMessage)) {
+      await store.markChatGptAuthReconnectRequired({
+        previousCredentialGeneration: credential.credentialGeneration,
+        previousCredentialVersion: credential.credentialVersion,
+        reason: "The saved ChatGPT Codex sign-in is no longer valid. Reconnect Codex in Settings.",
+        userId: credential.userId,
+      });
+    } else {
+      await persistRefreshedChatGptAuthJson({
+        credential,
+        sandbox,
+        store,
+      });
+    }
 
+    if (errorMessage) {
       yield {
         type: "error",
-        message,
+        message: errorMessage,
       };
     }
 
@@ -413,6 +414,7 @@ async function persistRefreshedChatGptAuthJson(input: {
   await input.store.persistChatGptAuthJson({
     authJson: refreshedAuthJson,
     metadata,
+    previousCredentialGeneration: input.credential.credentialGeneration,
     previousCredentialVersion: input.credential.credentialVersion,
     userId: input.credential.userId,
   });
