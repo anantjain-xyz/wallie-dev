@@ -42,11 +42,11 @@ const detailMigration = readFileSync(
   "utf8",
 );
 const creatorIdentityMigration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260808000001_session_selected_stages.sql"),
+  join(process.cwd(), "supabase/migrations/20260808000002_session_selected_stages.sql"),
   "utf8",
 );
 const selectedStagesMigration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260808000001_session_selected_stages.sql"),
+  join(process.cwd(), "supabase/migrations/20260808000002_session_selected_stages.sql"),
   "utf8",
 );
 

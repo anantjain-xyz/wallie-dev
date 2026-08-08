@@ -362,7 +362,10 @@ export async function POST(request: Request) {
 
     if (getErrorCode(error) === "P0003") {
       return NextResponse.json(
-        { error: "The workspace pipeline changed. Refresh the stage options and try again." },
+        {
+          code: "session_options_changed",
+          error: "The workspace pipeline changed. Refresh the stage options and try again.",
+        },
         { status: 409 },
       );
     }

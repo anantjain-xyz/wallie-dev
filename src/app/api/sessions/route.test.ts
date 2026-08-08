@@ -534,6 +534,7 @@ describe("POST /api/sessions", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
+      code: "session_options_changed",
       error: "The workspace pipeline changed. Refresh the stage options and try again.",
     });
   });

@@ -295,6 +295,65 @@ describe("CreateSessionDialog accessibility", () => {
     );
   });
 
+  it("refreshes session options after a selected-stage conflict", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const pipelineId = "00000000-0000-4000-8000-000000000010";
+    const planStageId = "00000000-0000-4000-8000-000000000011";
+    const buildStageId = "00000000-0000-4000-8000-000000000012";
+    clientMocks.loadSessionRepositoryOptionsFromClient
+      .mockResolvedValueOnce({
+        defaultGithubRepositoryId: null,
+        pipelineId,
+        repositoryOptions: [],
+        stageOptions: [
+          { description: "Plan the work", id: planStageId, name: "Plan", position: 1 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        defaultGithubRepositoryId: null,
+        pipelineId,
+        repositoryOptions: [],
+        stageOptions: [
+          { description: "Plan the work", id: planStageId, name: "Plan", position: 1 },
+          { description: "Build the work", id: buildStageId, name: "Build", position: 2 },
+        ],
+      });
+    clientMocks.createSessionFromClient.mockRejectedValueOnce(
+      Object.assign(
+        new Error("The workspace pipeline changed. Refresh the stage options and try again."),
+        { code: "session_options_changed" },
+      ),
+    );
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Stages All 1 stages." })).toBeVisible();
+    await user.type(screen.getByLabelText("Prompt"), "Build the dashboard");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    expect(
+      await screen.findByText(
+        "The workspace pipeline changed. Refresh the stage options and try again.",
+      ),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledTimes(2),
+    );
+    expect(await screen.findByRole("button", { name: "Stages All 2 stages." })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  });
+
   it("blocks keyboard submission while cached repository options are stale", async () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000001";

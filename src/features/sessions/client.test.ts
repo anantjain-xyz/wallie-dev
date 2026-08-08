@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createSessionFromClient,
   loadSessionRepositoryOptionsFromClient,
+  SessionOptionsChangedError,
   updateSessionTitleFromClient,
 } from "./client";
 
@@ -107,6 +108,26 @@ describe("createSessionFromClient", () => {
         workspaceId: WORKSPACE_ID,
       }),
     ).rejects.toThrow("Complete workspace setup before starting a session.");
+  });
+
+  it("preserves a recognizable session-options conflict", async () => {
+    mockFetch({
+      body: {
+        code: "session_options_changed",
+        error: "The workspace pipeline changed. Refresh the stage options and try again.",
+      },
+      ok: false,
+      status: 409,
+    });
+
+    const request = createSessionFromClient({
+      promptMd: "Add SSO",
+      selectedStageIds: [STAGE_ID],
+      workspaceId: WORKSPACE_ID,
+    });
+
+    await expect(request).rejects.toBeInstanceOf(SessionOptionsChangedError);
+    await expect(request).rejects.toMatchObject({ code: "session_options_changed" });
   });
 
   it("rejects malformed success responses", async () => {

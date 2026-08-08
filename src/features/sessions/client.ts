@@ -23,6 +23,15 @@ export type CreateSessionResult = {
   number: number;
 };
 
+export class SessionOptionsChangedError extends Error {
+  readonly code = "session_options_changed";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionOptionsChangedError";
+  }
+}
+
 export type UpdateSessionTitleInput = {
   sessionId: string;
   title: string;
@@ -145,12 +154,18 @@ export async function createSessionFromClient(
     method: "POST",
   });
   const responsePayload = (await response.json().catch(() => null)) as {
+    code?: string;
     error?: string;
     canonicalUrl?: string;
     number?: number;
   } | null;
 
   if (!response.ok) {
+    if (responsePayload?.code === "session_options_changed") {
+      throw new SessionOptionsChangedError(
+        responsePayload.error ?? "The workspace pipeline changed. Refresh and try again.",
+      );
+    }
     throw new Error(responsePayload?.error ?? "Failed to create session.");
   }
 

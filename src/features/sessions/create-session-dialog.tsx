@@ -11,6 +11,7 @@ import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
 import { extractLinearIssueId } from "@/features/sessions/linear-issue-url";
 import {
+  invalidateSessionRepositoryCache,
   preloadSessionRepositories as preloadSessionRepositoryCache,
   retrySessionRepositories,
   useSessionRepositories,
@@ -39,6 +40,10 @@ export function getLinearUrlError(value: string) {
   }
 
   return "Must be a Linear issue URL.";
+}
+
+function isSessionOptionsChangedError(error: unknown) {
+  return error instanceof Error && "code" in error && error.code === "session_options_changed";
 }
 
 export function preloadSessionRepositories(input: SessionRepositoryCacheKey) {
@@ -188,6 +193,9 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       router.push(result.canonicalUrl);
     } catch (error) {
       submitInFlightRef.current = false;
+      if (isSessionOptionsChangedError(error)) {
+        invalidateSessionRepositoryCache(workspaceId);
+      }
       setErrorMessage(error instanceof Error ? error.message : "Failed to create session.");
       setIsSubmitting(false);
     }

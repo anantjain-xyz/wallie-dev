@@ -244,6 +244,7 @@ export function resetSessionRepositoryCacheForTests() {
   activeUserId = null;
   if (invalidationListenerAttached && typeof window !== "undefined") {
     window.removeEventListener(SESSION_REPOSITORIES_CHANGED_EVENT, handleRepositoriesChanged);
+    window.removeEventListener(SETTINGS_PIPELINE_CHANGED, handlePipelineChanged);
   }
   invalidationListenerAttached = false;
 }
