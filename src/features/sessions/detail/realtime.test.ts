@@ -22,7 +22,7 @@ const baseSession: SessionReviewSession = {
   linearIssueUrl: null,
   number: 7,
   phaseCompletions: [],
-  phaseStatus: "agent_generating",
+  phaseStatus: "in_progress",
   pipeline: {
     stages: [
       {
@@ -82,7 +82,7 @@ describe("session detail realtime helpers", () => {
       linear_issue_id: null,
       linear_issue_url: null,
       number: 7,
-      phase_status: "agent_generating" as const,
+      phase_status: "in_progress" as const,
       pipeline_id: "pipe-1",
       prompt_md: baseSession.promptMd,
       rejection_count: 0,

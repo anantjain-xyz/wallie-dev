@@ -28,7 +28,7 @@ describe("product status grammar", () => {
   it("defines exact sentence-case copy and semantic tones for every status", () => {
     expect(Object.keys(STATUS_DEFINITIONS)).toEqual([...STATUS_VALUES]);
     expect(STATUS_DEFINITIONS).toMatchObject({
-      agent_generating: { label: "Agent generating", tone: "progress" },
+      in_progress: { label: "In progress", tone: "progress" },
       approved: { label: "Approved", tone: "success" },
       archived: { label: "Archived", tone: "subdued" },
       awaiting_review: { label: "Awaiting review", tone: "attention" },
@@ -49,7 +49,7 @@ describe("product status grammar", () => {
 
   it("keeps source enums exhaustive through typed adapters", () => {
     expect(SESSION_PHASE_STATUS_VALUES).toEqual({
-      agent_generating: "agent_generating",
+      in_progress: "in_progress",
       approved: "approved",
       awaiting_review: "awaiting_review",
       rejected: "rejected",

@@ -34,7 +34,7 @@ supabase db reset               # re-apply migrations + seed
 
 PR CI runs the canonical `check:fast` and `check` profiles, including `typecheck`. Production builds and route-budget checks run separately; environment-dependent verification still requires its relevant local service or credentials.
 
-Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Without the worker, sessions stay stuck in `agent_generating`.
+Running the app end-to-end needs two terminals: `pnpm dev` and `pnpm worker`. Without the worker, sessions stay stuck in `in_progress`.
 
 ## Architecture
 

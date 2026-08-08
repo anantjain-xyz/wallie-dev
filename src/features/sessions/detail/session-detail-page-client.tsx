@@ -200,7 +200,7 @@ export function SessionDetailPageClient({
     (selectedStageIsCurrent && (session.currentArtifactVersion ?? 0) > 0);
   const isDraftingSelectedStage =
     selectedStageIsCurrent &&
-    (session.phaseStatus === "agent_generating" || stopPending) &&
+    (session.phaseStatus === "in_progress" || stopPending) &&
     !session.archivedAt;
 
   const reviewMode = resolveReviewMode({
@@ -279,7 +279,7 @@ export function SessionDetailPageClient({
         if (typeof body.canApprove === "boolean") setCanApprove(body.canApprove);
         // Generating / awaiting_review clear failure UI immediately (sibling effect).
         // Ignore a stale error run so refetch-on-phaseStatus cannot resurrect it.
-        if (phaseStatusAtFetch === "agent_generating" || phaseStatusAtFetch === "awaiting_review") {
+        if (phaseStatusAtFetch === "in_progress" || phaseStatusAtFetch === "awaiting_review") {
           setHasFailedRun(false);
           setFailedStageSlug(null);
           return;
@@ -298,7 +298,7 @@ export function SessionDetailPageClient({
   }, [phaseActionPending, session.currentStageId, session.id, session.phaseStatus]);
 
   useEffect(() => {
-    if (session.phaseStatus === "agent_generating" || session.phaseStatus === "awaiting_review") {
+    if (session.phaseStatus === "in_progress" || session.phaseStatus === "awaiting_review") {
       setHasFailedRun(false);
       setFailedStageSlug(null);
     }
@@ -520,7 +520,7 @@ export function SessionDetailPageClient({
               currentArtifactVersion: 0,
               currentStageId: nextStage.id,
               phaseCompletions: optimisticPhaseCompletions,
-              phaseStatus: "agent_generating",
+              phaseStatus: "in_progress",
               rejectionCount: 0,
             }
           : {
@@ -657,7 +657,7 @@ export function SessionDetailPageClient({
     setArchivePending("archive");
     const optimisticPatch: SessionMutationPatch = {
       archivedAt: new Date().toISOString(),
-      ...(session.phaseStatus === "agent_generating" ? { phaseStatus: "rejected" as const } : {}),
+      ...(session.phaseStatus === "in_progress" ? { phaseStatus: "rejected" as const } : {}),
     };
     const previousPatch: SessionMutationPatch = {
       archivedAt: session.archivedAt,

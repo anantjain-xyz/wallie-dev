@@ -60,7 +60,7 @@ export function resolveReviewMode(input: ResolveReviewModeInput): ReviewMode {
     };
   }
 
-  if (input.phaseStatus === "agent_generating") {
+  if (input.phaseStatus === "in_progress") {
     return { kind: "running" };
   }
 

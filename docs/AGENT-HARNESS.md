@@ -28,7 +28,7 @@ resource ownership and cleanup, see
 ## Execution sequence
 
 1. The worker loads the session and its current stage, then CAS-claims the
-   unarchived session into `agent_generating`.
+   unarchived session into `in_progress`.
 2. The processor resolves the workspace's selected agent provider and model.
 3. It loads pipeline operating rules, the latest feedback for this stage, and
    the latest artifact version for every stage slug present on the session.
@@ -139,7 +139,7 @@ the target repository remains their runtime semantic owner.
 - An execution that produces no text is a stage error and creates no artifact.
 - Artifact versions are per session and stage slug.
 - Publishing the artifact requires the session to remain unarchived and
-  `agent_generating`.
+  `in_progress`.
 - After the GitHub App and installation client initialize, PR synchronization
   failures are returned and logged without preventing artifact review.
 - GitHub App construction or installation-client initialization happens outside

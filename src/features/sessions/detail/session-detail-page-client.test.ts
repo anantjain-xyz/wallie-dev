@@ -132,7 +132,7 @@ describe("SessionDetailPageClient", () => {
       },
       currentStageId: "stage-2",
       id: data.session.id,
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
       rejectionCount: 0,
       updatedAt: "2026-06-07T12:00:00.000Z",
     });
@@ -226,7 +226,7 @@ describe("SessionDetailPageClient", () => {
 
   it("shows stop run while generating", () => {
     const data = makeSessionDetailData();
-    data.session.phaseStatus = "agent_generating";
+    data.session.phaseStatus = "in_progress";
     data.session.pipeline.stages = [
       {
         description: "Shape the approach",
@@ -257,7 +257,7 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Stop run");
     expect(html).not.toContain("Request changes");
     expect(html).not.toContain("data-status=");
-    expect(html).not.toMatch(/Agent generating|Complete|Upcoming/);
+    expect(html).not.toMatch(/In progress|Complete|Upcoming/);
   });
 
   it("shows an explicit completed reason", () => {

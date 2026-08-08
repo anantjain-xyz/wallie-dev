@@ -127,7 +127,7 @@ describe("sessions list helpers", () => {
       resolveOptimisticArchive(
         {
           archivedAt: "2026-06-07T14:00:00.000Z",
-          phaseStatus: "agent_generating",
+          phaseStatus: "in_progress",
           updatedAt: "2026-06-07T14:00:00.000Z",
         },
         {
@@ -139,7 +139,7 @@ describe("sessions list helpers", () => {
       ),
     ).toEqual({
       archivedAt: "2026-06-07T14:00:00.000Z",
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
     });
   });
 

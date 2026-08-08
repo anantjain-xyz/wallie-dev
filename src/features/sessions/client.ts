@@ -42,7 +42,7 @@ export type UpdateSessionTitleResult = SessionTitleMutationResult;
 export type SessionArchiveResult = {
   archivedAt: string | null;
   id: string;
-  phaseStatus: "agent_generating" | "approved" | "awaiting_review" | "rejected";
+  phaseStatus: "in_progress" | "approved" | "awaiting_review" | "rejected";
   updatedAt: string;
 };
 

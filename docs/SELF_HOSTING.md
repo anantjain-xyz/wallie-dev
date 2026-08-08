@@ -91,7 +91,7 @@ The worker runs `pnpm worker` continuously and needs the **same environment vari
 
 > **Session sandboxes need a per-workspace connection, not provider API keys in env.** At job start the worker loads the workspace's selected Vercel, E2B, or Daytona connection and fails closed if it is missing, invalid, or has a stale capability check. `VERCEL_*` only covers legacy operator/helper sandboxes. Each workspace connects and tests its provider in **Settings** before sessions can run.
 
-**Any other always-on host (Fly, Render, a VM, Docker):** run the same repo with `pnpm install && pnpm worker` and the same environment. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `agent_generating` and never progress.
+**Any other always-on host (Fly, Render, a VM, Docker):** run the same repo with `pnpm install && pnpm worker` and the same environment. Keep it running (restart-on-exit). Without the worker, sessions get stuck at `in_progress` and never progress.
 
 ## 5. Create the production GitHub App
 
@@ -131,7 +131,7 @@ See [README → Configure agent provider](../README.md#configure-agent-provider)
 5. Create a session.
 6. Confirm the **worker logs** show it claiming the job, and that an artifact appears in the session detail view for review.
 
-If a session stays at `agent_generating`: the worker isn't running, agent credentials are missing/invalid, or the worker can't reach your web origin or Supabase. Check the worker logs first.
+If a session stays at `in_progress`: the worker isn't running, agent credentials are missing/invalid, or the worker can't reach your web origin or Supabase. Check the worker logs first.
 
 ## Upgrading
 

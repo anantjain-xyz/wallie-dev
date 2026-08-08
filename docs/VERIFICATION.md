@@ -65,7 +65,7 @@ pnpm worker
 ```
 
 Run the web app and worker in separate terminals. Without the worker, queued
-sessions remain in `agent_generating`.
+sessions remain in `in_progress`.
 
 For hermetic pipeline tests and local work that must not allocate a remote
 sandbox, set:

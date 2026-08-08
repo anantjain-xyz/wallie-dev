@@ -93,7 +93,7 @@ test("approve and reject expose optimistic status while delayed", async ({ page 
         },
         currentStageId: "synthetic-next-stage",
         id: "a2b2c3d4-0001-4000-8000-000000000001",
-        phaseStatus: "agent_generating",
+        phaseStatus: "in_progress",
         rejectionCount: 0,
         updatedAt: "2026-07-17T20:02:00.000Z",
       },

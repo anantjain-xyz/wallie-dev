@@ -25,7 +25,7 @@ function makeSession(index: number): SessionListItem {
     linearIssueId: index % 7 === 0 ? `OP-${index}` : null,
     linearIssueUrl: index % 7 === 0 ? `https://linear.app/issue/OP-${index}` : null,
     number: index,
-    phaseStatus: awaiting ? "awaiting_review" : "agent_generating",
+    phaseStatus: awaiting ? "awaiting_review" : "in_progress",
     pipelineId: "pipeline-1",
     pullRequestCount: index % 5 === 0 ? 1 : 0,
     pullRequests:

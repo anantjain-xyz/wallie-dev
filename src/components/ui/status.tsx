@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 export const STATUS_VALUES = [
   "awaiting_review",
-  "agent_generating",
+  "in_progress",
   "running",
   "approved",
   "complete",
@@ -60,10 +60,10 @@ export const STATUS_DEFINITIONS = {
     label: "Awaiting review",
     tone: "attention",
   },
-  agent_generating: {
+  in_progress: {
     description: "The agent is generating the stage artifact.",
     icon: "progress",
-    label: "Agent generating",
+    label: "In progress",
     tone: "progress",
   },
   running: {
@@ -160,7 +160,7 @@ const UNKNOWN_STATUS_DEFINITION: StatusDefinition = {
 };
 
 export const SESSION_PHASE_STATUS_VALUES = {
-  agent_generating: "agent_generating",
+  in_progress: "in_progress",
   awaiting_review: "awaiting_review",
   approved: "approved",
   rejected: "rejected",

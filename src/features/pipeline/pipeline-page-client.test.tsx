@@ -75,7 +75,7 @@ function card(
     linearIssueId: null,
     linearIssueUrl: null,
     number,
-    phaseStatus: "agent_generating",
+    phaseStatus: "in_progress",
     pipelineId: PIPELINE_ID,
     pullRequests: [],
     rejectionCount: 0,
@@ -185,9 +185,9 @@ describe("pipeline filter helpers", () => {
       formatLaneStateSummary([
         card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
         card(2, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
-        card(3, PLAN_STAGE_ID, { phaseStatus: "agent_generating" }),
+        card(3, PLAN_STAGE_ID, { phaseStatus: "in_progress" }),
       ]),
-    ).toBe("2 awaiting review · 1 agent generating");
+    ).toBe("2 awaiting review · 1 in progress");
     expect(
       formatLaneStateSummary([card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" })], {
         isPartial: true,
@@ -309,16 +309,14 @@ describe("PipelinePageClient", () => {
       <PipelinePageClient
         initialData={initialData([
           card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review" }),
-          card(2, PLAN_STAGE_ID, { phaseStatus: "agent_generating" }),
+          card(2, PLAN_STAGE_ID, { phaseStatus: "in_progress" }),
         ])}
       />,
     );
 
     const planLane = screen.getByRole("heading", { name: "Plan" }).closest("section")!;
     // Plan lane seeds totalCount >= 2 and keeps a cursor, so summaries are partial.
-    expect(
-      within(planLane).getByText("Loaded: 1 awaiting review · 1 agent generating"),
-    ).toBeTruthy();
+    expect(within(planLane).getByText("Loaded: 1 awaiting review · 1 in progress")).toBeTruthy();
   });
 
   it("falls back focus to the card overlay when the Review CTA disappears", async () => {
@@ -344,7 +342,7 @@ describe("PipelinePageClient", () => {
         eventType: "UPDATE",
         new: sessionRow(
           card(1, BUILD_STAGE_ID, {
-            phaseStatus: "agent_generating",
+            phaseStatus: "in_progress",
             title: "Needs review",
             updatedAt: "2026-07-18T06:00:00.000Z",
           }),
@@ -365,7 +363,7 @@ describe("PipelinePageClient", () => {
     render(
       <PipelinePageClient
         initialData={initialData([
-          card(1, PLAN_STAGE_ID, { phaseStatus: "agent_generating", title: "Still generating" }),
+          card(1, PLAN_STAGE_ID, { phaseStatus: "in_progress", title: "Still generating" }),
         ])}
       />,
     );
@@ -388,7 +386,7 @@ describe("PipelinePageClient", () => {
         initialData={initialData(
           [
             card(1, PLAN_STAGE_ID, { phaseStatus: "awaiting_review", title: "Needs review" }),
-            card(2, PLAN_STAGE_ID, { phaseStatus: "agent_generating", title: "Still generating" }),
+            card(2, PLAN_STAGE_ID, { phaseStatus: "in_progress", title: "Still generating" }),
           ],
           [card(3, BUILD_STAGE_ID, { phaseStatus: "rejected", title: "Needs changes" })],
         )}
