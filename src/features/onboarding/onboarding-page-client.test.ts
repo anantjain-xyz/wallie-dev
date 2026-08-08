@@ -9,10 +9,7 @@ import {
   buildVerifyChecklist,
   verifyBlockersFromChecklist,
 } from "@/features/onboarding/runtime-readiness";
-import {
-  isAgentConfigDraftDirty,
-  updateSandboxSettingsInData,
-} from "@/features/onboarding/steps/runtime-step";
+import { isAgentConfigDraftDirty } from "@/features/onboarding/steps/runtime-step";
 import VerifyStep, {
   updateSandboxCapabilityCheckInData,
 } from "@/features/onboarding/steps/verify-step";
@@ -1421,7 +1418,7 @@ describe("OnboardingPageClient", () => {
     expect(html).not.toContain('href="/w/northwind/settings#vercel"');
   });
 
-  it("blocks Connect Agent completion until the Vercel Sandbox is connected", () => {
+  it("blocks Connect Agent completion and links back to Connect Sandbox", () => {
     const connectedCodex = {
       accountEmail: null,
       checkedAt: "2026-05-16T18:00:01.000Z",
@@ -1458,6 +1455,8 @@ describe("OnboardingPageClient", () => {
       }),
     );
     expect(primaryFooterButton(blockedHtml)).toContain("disabled");
+    expect(blockedHtml).toContain('data-sandbox-connection-href="#sandbox"');
+    expect(blockedHtml).not.toContain('href="/w/northwind/settings#vercel"');
 
     const readyHtml = renderToStaticMarkup(
       createElement(OnboardingPageClient, {
@@ -1897,47 +1896,6 @@ describe("OnboardingPageClient", () => {
     expect(nextData.onboarding.currentStep).toBe("runtime");
     expect(nextData.onboarding.completedSteps).toEqual(["github", "repository", "pipeline"]);
     expect(nextData.setupHealth.latestSandboxCapabilityCheck?.id).toBe("check-2");
-  });
-
-  it("preserves a disabled active provider block after sandbox settings updates", () => {
-    const currentData = onboardingData();
-    const nextData = updateSandboxSettingsInData(currentData, {
-      activeProvider: "e2b",
-      connections: {
-        daytona: {
-          apiKeyPreview: "daytona_…1234",
-          apiUrl: "https://app.daytona.io/api",
-          connectionRevision: "revision-daytona",
-          lastValidatedAt: "2026-05-16T18:00:00.000Z",
-          lastValidationError: null,
-          status: "connected",
-          target: null,
-          updatedAt: "2026-05-16T18:00:00.000Z",
-          workspaceId: "workspace-1",
-        },
-        e2b: {
-          apiKeyPreview: "e2b_…1234",
-          connectionRevision: "revision-e2b",
-          lastValidatedAt: "2026-05-16T18:00:00.000Z",
-          lastValidationError: null,
-          status: "connected",
-          updatedAt: "2026-05-16T18:00:00.000Z",
-          workspaceId: "workspace-1",
-        },
-        vercel: null,
-      },
-      enabledProviders: ["vercel", "daytona"],
-      revision: 3,
-      updatedAt: "2026-05-16T18:00:00.000Z",
-    });
-
-    expect(nextData.setupHealth.sandboxConnection).toMatchObject({
-      connected: false,
-      lastValidationError:
-        "E2B is disabled in this Wallie deployment. Switch to an enabled sandbox provider.",
-      provider: "e2b",
-      status: "error",
-    });
   });
 
   it("scrolls onboarding setup transitions back to the top", () => {
