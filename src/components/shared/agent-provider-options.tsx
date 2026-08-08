@@ -1,7 +1,12 @@
 import type { SVGProps } from "react";
 
 import type { SelectOption } from "@/components/ui/select";
-import { AGENT_PROVIDERS, type AgentProvider } from "@/lib/agent-config/contracts";
+import {
+  AGENT_EFFORT_LEVELS,
+  AGENT_PROVIDERS,
+  type AgentEffort,
+  type AgentProvider,
+} from "@/lib/agent-config/contracts";
 import { cn } from "@/lib/utils";
 
 export const AGENT_PROVIDER_LABELS = {
@@ -39,6 +44,27 @@ export const AGENT_PROVIDER_SELECT_OPTIONS = AGENT_PROVIDERS.map(
 
 export const AGENT_PROVIDER_EMPTY_OPTION = {
   icon: <GenericProviderLogoIcon />,
+  label: "Not configured",
+  value: "",
+} satisfies SelectOption;
+
+const AGENT_EFFORT_LABELS = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+} as const satisfies Record<AgentEffort, string>;
+
+export const AGENT_EFFORT_SELECT_OPTIONS = AGENT_EFFORT_LEVELS.map(
+  (effort) =>
+    ({
+      label: AGENT_EFFORT_LABELS[effort],
+      value: effort,
+    }) satisfies SelectOption,
+);
+
+export const AGENT_EFFORT_EMPTY_OPTION = {
   label: "Not configured",
   value: "",
 } satisfies SelectOption;

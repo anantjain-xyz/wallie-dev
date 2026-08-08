@@ -11,6 +11,8 @@ import type {
   BatchUpsertAgentConfigResponse,
 } from "@/app/api/agent-config/route";
 import {
+  AGENT_EFFORT_EMPTY_OPTION,
+  AGENT_EFFORT_SELECT_OPTIONS,
   AGENT_PROVIDER_EMPTY_OPTION,
   AGENT_PROVIDER_SELECT_OPTIONS,
 } from "@/components/shared/agent-provider-options";
@@ -64,6 +66,7 @@ type FieldType = "number" | "select" | "text";
 type FieldDescriptor = {
   configKey: AgentConfigKey;
   description: string;
+  emptyOption?: SelectOption;
   label: string;
   options?: readonly SelectOption[];
   placeholder?: string;
@@ -74,6 +77,7 @@ function AgentConfigField({
   description,
   disabled,
   draft,
+  emptyOption,
   error,
   label,
   onChange,
@@ -85,6 +89,7 @@ function AgentConfigField({
   description: string;
   disabled: boolean;
   draft: string;
+  emptyOption?: SelectOption;
   error: string | null;
   label: string;
   onChange: (next: string) => void;
@@ -98,7 +103,7 @@ function AgentConfigField({
       {type === "select" && options ? (
         <SelectField
           disabled={disabled}
-          emptyOption={AGENT_PROVIDER_EMPTY_OPTION}
+          emptyOption={emptyOption}
           label={label}
           onValueChange={onChange}
           options={options}
@@ -156,6 +161,7 @@ export function AgentConfigSection({
   const [drafts, setDrafts] = useState<Record<AgentConfigKey, string>>(() => ({
     agent_provider: agentConfigValueToDraft("agent_provider", initialAgentConfig.agent_provider),
     agent_model: agentConfigValueToDraft("agent_model", initialAgentConfig.agent_model),
+    agent_effort: agentConfigValueToDraft("agent_effort", initialAgentConfig.agent_effort),
     concurrency_limit: agentConfigValueToDraft(
       "concurrency_limit",
       initialAgentConfig.concurrency_limit,
@@ -178,6 +184,7 @@ export function AgentConfigSection({
       {
         configKey: "agent_provider",
         description: "Which agent CLI to use for coding tasks.",
+        emptyOption: AGENT_PROVIDER_EMPTY_OPTION,
         label: "Agent provider",
         options: AGENT_PROVIDER_SELECT_OPTIONS,
         type: "select",
@@ -188,6 +195,14 @@ export function AgentConfigSection({
         label: "Agent model",
         placeholder: getRecommendedAgentModel(selectedAgentProvider),
         type: "text",
+      },
+      {
+        configKey: "agent_effort",
+        description: "Reasoning effort passed to the selected agent provider.",
+        emptyOption: AGENT_EFFORT_EMPTY_OPTION,
+        label: "Agent effort",
+        options: AGENT_EFFORT_SELECT_OPTIONS,
+        type: "select",
       },
       {
         configKey: "concurrency_limit",
@@ -237,11 +252,15 @@ export function AgentConfigSection({
   });
   const providerFieldStatuses = fieldStatuses.filter(
     (status) =>
-      status.field.configKey === "agent_provider" || status.field.configKey === "agent_model",
+      status.field.configKey === "agent_provider" ||
+      status.field.configKey === "agent_model" ||
+      status.field.configKey === "agent_effort",
   );
   const executionFieldStatuses = fieldStatuses.filter(
     (status) =>
-      status.field.configKey !== "agent_provider" && status.field.configKey !== "agent_model",
+      status.field.configKey !== "agent_provider" &&
+      status.field.configKey !== "agent_model" &&
+      status.field.configKey !== "agent_effort",
   );
 
   const hasErrors = fieldStatuses.some((status) => status.validationError !== null);
@@ -332,6 +351,7 @@ export function AgentConfigSection({
                 description={status.field.description}
                 disabled={isSaving}
                 draft={status.draft}
+                emptyOption={status.field.emptyOption}
                 error={status.validationError}
                 label={status.field.label}
                 onChange={(next) => handleFieldChange(status.field.configKey, next)}
@@ -363,6 +383,7 @@ export function AgentConfigSection({
                 description={status.field.description}
                 disabled={isSaving}
                 draft={status.draft}
+                emptyOption={status.field.emptyOption}
                 error={status.validationError}
                 label={status.field.label}
                 onChange={(next) => handleFieldChange(status.field.configKey, next)}

@@ -74,6 +74,12 @@ describe("CodexRunner", () => {
     ]);
   });
 
+  it("passes the configured reasoning effort to Codex", () => {
+    expect(codexExecArgs("gpt-5.6-sol", "/vercel/sandbox", "max")).toContain(
+      'model_reasoning_effort="max"',
+    );
+  });
+
   it("logs in with a Codex access token before running exec", async () => {
     const sandbox = new FakeSandbox();
     sandbox.scriptExec(
@@ -99,6 +105,7 @@ describe("CodexRunner", () => {
 
     const runner = new CodexRunner({
       credential: { expiresAt: null, secret: "tok", type: "codex_access_token" },
+      effort: "max",
     });
     const events = [];
     for await (const ev of runner.start({
@@ -135,7 +142,7 @@ describe("CodexRunner", () => {
       `printf '%s' "$CODEX_ACCESS_TOKEN" | codex login --with-access-token -c 'cli_auth_credentials_store="file"' >/dev/stderr`,
     );
     expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.6-sol'");
-    expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="xhigh"'`);
+    expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="max"'`);
     expect(call.args[1]).toContain(`'-c' 'cli_auth_credentials_store="file"'`);
     expectExternalSandboxMode(call.args[1]!);
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");

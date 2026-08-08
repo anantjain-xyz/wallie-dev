@@ -7,6 +7,7 @@ import {
 } from "@/lib/codex/contracts";
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
+import type { AgentEffort } from "@/lib/agent-config/contracts";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 const CODEX_HOME_DIR = ".codex";
@@ -22,6 +23,8 @@ export interface CodexRunnerOptions {
   chatGptAuthStore?: CodexChatGptAuthStore;
   /** Model identifier (e.g. "gpt-5.6-sol"). */
   model?: string;
+  /** Reasoning effort passed to Codex. */
+  effort?: AgentEffort;
 }
 
 /**
@@ -57,6 +60,7 @@ export class CodexRunner implements AgentRunner {
     }
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
+    const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
     const promptFile = promptFileFor(sandbox);
     const codexHome = codexHomeFor(sandbox);
 
@@ -67,6 +71,7 @@ export class CodexRunner implements AgentRunner {
 
     const shellCmd = codexCommandForCredential(
       model,
+      effort,
       this.options.credential,
       codexHome,
       promptFile,
@@ -168,6 +173,7 @@ export class CodexRunner implements AgentRunner {
     if (!sandbox || !input.runId) return;
 
     const model = this.options.model ?? DEFAULT_CODEX_MODEL;
+    const effort = this.options.effort ?? DEFAULT_CODEX_REASONING_EFFORT;
     const promptFile = promptFileFor(sandbox);
     const codexHome = codexHomeFor(sandbox);
     const codexAuthFile = codexAuthFileFor(sandbox);
@@ -177,7 +183,7 @@ export class CodexRunner implements AgentRunner {
 
     const proc = await sandbox.exec(
       "bash",
-      ["-lc", codexExecCommand(model, promptFile, sandbox.repoPath)],
+      ["-lc", codexExecCommand(model, effort, promptFile, sandbox.repoPath)],
       {
         cwd: sandbox.repoPath,
         env: { CI: "1", CODEX_HOME: codexHome },
@@ -401,13 +407,14 @@ function codexAuthFileFor(sandbox: NonNullable<AgentRunnerStartInput["sandbox"]>
 
 function codexCommandForCredential(
   model: string,
+  effort: AgentEffort,
   credential: CodexCredential,
   codexHome: string,
   promptFile: string,
   sandboxRepoPath: string,
 ): string {
   if (credential.type !== "codex_access_token") {
-    return codexExecCommand(model, promptFile, sandboxRepoPath);
+    return codexExecCommand(model, effort, promptFile, sandboxRepoPath);
   }
 
   const loginCommand = [
@@ -416,7 +423,7 @@ function codexCommandForCredential(
       `cli_auth_credentials_store="file"`,
     )} >/dev/stderr`,
   ].join(" && ");
-  return `${loginCommand} && ${codexExecCommand(model, promptFile, sandboxRepoPath)}`;
+  return `${loginCommand} && ${codexExecCommand(model, effort, promptFile, sandboxRepoPath)}`;
 }
 
 async function persistRefreshedChatGptAuthJson(input: {
@@ -438,7 +445,11 @@ async function persistRefreshedChatGptAuthJson(input: {
   });
 }
 
-export function codexExecArgs(model: string, sandboxRepoPath: string): string[] {
+export function codexExecArgs(
+  model: string,
+  sandboxRepoPath: string,
+  effort: AgentEffort = DEFAULT_CODEX_REASONING_EFFORT,
+): string[] {
   return [
     "exec",
     "--model",
@@ -446,7 +457,7 @@ export function codexExecArgs(model: string, sandboxRepoPath: string): string[] 
     "--sandbox",
     CODEX_SANDBOX_MODE,
     "-c",
-    `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+    `model_reasoning_effort="${effort}"`,
     "-c",
     `cli_auth_credentials_store="file"`,
     CODEX_EXTERNAL_SANDBOX_FLAG,
@@ -457,10 +468,13 @@ export function codexExecArgs(model: string, sandboxRepoPath: string): string[] 
   ];
 }
 
-function codexExecCommand(model: string, promptFile: string, sandboxRepoPath: string): string {
-  return `codex ${codexExecArgs(model, sandboxRepoPath).map(shellQuote).join(" ")} < ${shellQuote(
-    promptFile,
-  )}`;
+function codexExecCommand(
+  model: string,
+  effort: AgentEffort,
+  promptFile: string,
+  sandboxRepoPath: string,
+): string {
+  return `codex ${codexExecArgs(model, sandboxRepoPath, effort).map(shellQuote).join(" ")} < ${shellQuote(promptFile)}`;
 }
 
 async function ensureCodexHome(

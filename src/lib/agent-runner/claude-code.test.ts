@@ -49,7 +49,7 @@ describe("ClaudeCodeRunner", () => {
       },
     ]);
 
-    const runner = new ClaudeCodeRunner({ credential: anthropicCredential });
+    const runner = new ClaudeCodeRunner({ credential: anthropicCredential, effort: "max" });
     const events = [];
     for await (const ev of runner.start({
       sessionId: "s1",
@@ -72,7 +72,7 @@ describe("ClaudeCodeRunner", () => {
     expect(call.cmd).toBe("bash");
     expect(call.args[0]).toBe("-lc");
     expect(call.args[1]).toContain("'--model' 'claude-opus-4-8[1m]'");
-    expect(call.args[1]).toContain("'--effort' 'xhigh'");
+    expect(call.args[1]).toContain("'--effort' 'max'");
     expect(call.args[1]).toContain("'--permission-mode' 'bypassPermissions'");
     expect(call.args[1]).toContain("'--resume' 'prev-session'");
     expect(call.args[1]).not.toContain("'--stdin'");

@@ -83,6 +83,30 @@ describe("POST /api/agent-config — value validation", () => {
     expect(payload.fieldErrors.max_retries).toMatch(/at most 10/);
   });
 
+  it("rejects an unsupported agent effort", async () => {
+    const response = await POST(
+      postWith({ config: { agent_effort: "ultra" }, workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { fieldErrors: Record<string, string> };
+    expect(payload.fieldErrors.agent_effort).toMatch(/must be one of/);
+  });
+
+  it("accepts max agent effort with admin access", async () => {
+    grantAccess();
+    setupSuccessfulUpsert();
+
+    const response = await POST(
+      postWith({ config: { agent_effort: "max" }, workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      entries: [{ key: "agent_effort", value: "max" }],
+    });
+  });
+
   it("rejects unknown agent_provider", async () => {
     const response = await POST(
       postWith({ config: { agent_provider: "openai" }, workspaceId: WORKSPACE_ID }),
@@ -237,6 +261,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
         { key: "concurrency_limit", value: 1 },
         { key: "stall_timeout_ms", value: 900000 },
         { key: "max_retries", value: 3 },
+        { key: "agent_effort", value: "xhigh" },
       ],
       skippedKeys: [],
     });
@@ -245,6 +270,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
         { key: "concurrency_limit", value_json: 1, workspace_id: WORKSPACE_ID },
         { key: "stall_timeout_ms", value_json: 900000, workspace_id: WORKSPACE_ID },
         { key: "max_retries", value_json: 3, workspace_id: WORKSPACE_ID },
+        { key: "agent_effort", value_json: "xhigh", workspace_id: WORKSPACE_ID },
       ],
       { onConflict: "workspace_id,key" },
     );
@@ -277,6 +303,7 @@ describe("PATCH /api/agent-config — recommended defaults", () => {
       "stall_timeout_ms",
       "max_retries",
       "agent_provider",
+      "agent_effort",
     ]);
     expect(upsert).not.toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ key: "agent_model" })]),
