@@ -117,6 +117,7 @@ describe("CreateSessionDialog accessibility", () => {
     expect(dialog).toHaveAccessibleDescription(
       "Link a Linear issue or describe the work, then choose where Wallie should run.",
     );
+    expect(screen.queryByText("Work to start")).toBeNull();
     await waitFor(() => expect(screen.getByLabelText("Linear issue URL")).toHaveFocus());
     await waitFor(() => expect(document.body.dataset.scrollLocked).toBe("1"));
     expect(screen.getByText("Outside").closest("button")).toHaveAttribute("aria-hidden", "true");

@@ -202,9 +202,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
         title="Start a new session"
       >
         <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
-          <fieldset className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
-            <legend className="px-1 text-sm font-semibold text-foreground">Work to start</legend>
-
+          <div className="space-y-4 rounded-[8px] border border-border bg-control-muted/40 p-4">
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground" htmlFor="session-linear">
                 Linear issue URL
@@ -268,7 +266,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
                 Required only when no Linear issue is linked.
               </p>
             </div>
-          </fieldset>
+          </div>
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-foreground" htmlFor="session-title">
