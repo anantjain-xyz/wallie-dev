@@ -227,9 +227,37 @@ describe("SessionDetailPageClient", () => {
   it("shows stop run while generating", () => {
     const data = makeSessionDetailData();
     data.session.phaseStatus = "agent_generating";
+    data.session.pipeline.stages = [
+      {
+        description: "Shape the approach",
+        id: "stage-0",
+        name: "Plan",
+        position: 0,
+        slug: "plan",
+      },
+      ...data.session.pipeline.stages,
+      {
+        description: "Ship the change",
+        id: "stage-2",
+        name: "Land",
+        position: 2,
+        slug: "land",
+      },
+    ];
+    data.session.phaseCompletions = [
+      { completedAt: "2026-06-07T10:30:00.000Z", stageSlug: "plan" },
+    ];
     const html = renderDetail({ data });
+
+    expect(html).toContain(">Plan</span>");
+    expect(html).toContain(">Product</span>");
+    expect(html).toContain(">Land</span>");
+    expect(html).toContain("Product artifact");
+    expect(html).toContain("Wallie is drafting the artifact for this stage.");
     expect(html).toContain("Stop run");
     expect(html).not.toContain("Request changes");
+    expect(html).not.toContain("data-status=");
+    expect(html).not.toMatch(/Agent generating|Complete|Upcoming/);
   });
 
   it("shows an explicit completed reason", () => {
@@ -245,6 +273,8 @@ describe("SessionDetailPageClient", () => {
     data.session.archivedAt = "2026-07-01T00:00:00.000Z";
     const html = renderDetail({ data });
     expect(html).toContain("This session is archived.");
+    expect(html).toContain('data-status="archived"');
+    expect(html).toContain(">Archived</span>");
     expect(html).not.toContain("Request changes");
   });
 

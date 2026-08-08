@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -75,6 +78,38 @@ describe("centerStageTimelineSelection", () => {
 });
 
 describe("StageTimeline", () => {
+  it("keeps stage selection wired to each stage name", () => {
+    const onSelect = vi.fn();
+    render(
+      createElement(StageTimeline, {
+        onSelect,
+        selectedStageSlug: "build",
+        timeline: buildStageTimeline(makeSession()),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Land" }));
+
+    expect(onSelect).toHaveBeenCalledWith("land");
+  });
+
+  it("renders selectable stage names without status pills", () => {
+    const html = renderToStaticMarkup(
+      createElement(StageTimeline, {
+        onSelect: vi.fn(),
+        selectedStageSlug: "build",
+        timeline: buildStageTimeline(makeSession()),
+      }),
+    );
+
+    expect(html).toContain(">Plan</span>");
+    expect(html).toContain(">Build</span>");
+    expect(html).toContain(">Land</span>");
+    expect(html).toContain('aria-current="step"');
+    expect(html).not.toContain("data-status=");
+    expect(html).not.toMatch(/Complete|Awaiting review|Upcoming/);
+  });
+
   it("contains long unbroken stage names at narrow widths", () => {
     const session = makeSession({
       pipeline: {
