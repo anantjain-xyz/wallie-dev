@@ -178,6 +178,37 @@ describe("CreateSessionDialog accessibility", () => {
     expect(router.push).toHaveBeenCalledWith("/w/acme/sessions/42");
   });
 
+  it("clears a Linear URL error when the URL is corrected", async () => {
+    const user = userEvent.setup();
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      repositoryOptions: [],
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId="00000000-0000-4000-8000-000000000001"
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    const linearInput = await screen.findByLabelText("Linear issue URL");
+    await user.type(linearInput, "https://linear.app/acme/settings");
+    await user.tab();
+    expect(screen.getByText("Must be a Linear issue URL.")).toBeVisible();
+
+    await user.clear(linearInput);
+    await user.type(linearInput, "https://linear.app/acme/issue/TEAM-42/title");
+
+    expect(screen.queryByText("Must be a Linear issue URL.")).toBeNull();
+    expect(screen.getByLabelText("Title (optional)")).toBeDisabled();
+  });
+
   it("blocks keyboard submission while cached repository options are stale", async () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000001";

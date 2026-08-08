@@ -96,6 +96,13 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     setLinearError(getLinearUrlError(linearUrl));
   }
 
+  function handleLinearChange(value: string) {
+    setLinearUrl(value);
+    if (linearError) {
+      setLinearError(getLinearUrlError(value));
+    }
+  }
+
   const derivedTitle = deriveSessionTitleFromPrompt(prompt);
   const hasLinearIssue = Boolean(extractLinearIssueId(linearUrl.trim()));
   const repositorySelectOptions = repositoryOptions.map((repository) => ({
@@ -217,7 +224,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
                 autoFocus
                 name="linearUrl"
                 value={linearUrl}
-                onChange={(event) => setLinearUrl(event.target.value)}
+                onChange={(event) => handleLinearChange(event.target.value)}
                 onBlur={handleLinearBlur}
                 className="ui-input"
                 placeholder="https://linear.app/acme/issue/TEAM-123"
