@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
+  loadDefaultPipelineForWorkspace: vi.fn(),
   loadSessionRepositoryOptionsWithPrimary: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
 }));
@@ -15,6 +16,10 @@ vi.mock("@/features/sessions/repository-options", async (importOriginal) => {
 
 vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
+}));
+
+vi.mock("@/lib/pipeline/stages", () => ({
+  loadDefaultPipelineForWorkspace: mocked.loadDefaultPipelineForWorkspace,
 }));
 
 import { GET } from "./route";
@@ -51,6 +56,28 @@ describe("session repositories route", () => {
     vi.clearAllMocks();
   });
 
+  beforeEach(() => {
+    mocked.loadDefaultPipelineForWorkspace.mockResolvedValue({
+      id: "pipeline-1",
+      isDefault: true,
+      name: "Default",
+      operatingRulesMd: "",
+      stages: [
+        {
+          anyoneCanApprove: true,
+          approverMemberIds: [],
+          description: "Plan the work",
+          id: "stage-1",
+          name: "Plan",
+          pipelineId: "pipeline-1",
+          position: 1,
+          promptTemplateMd: "",
+          slug: "plan",
+        },
+      ],
+    });
+  });
+
   it("returns options and derives the default without another repository lookup", async () => {
     const supabase = grantAccess();
     mocked.loadSessionRepositoryOptionsWithPrimary.mockResolvedValue({
@@ -67,10 +94,12 @@ describe("session repositories route", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({
       defaultGithubRepositoryId: "repo-primary",
+      pipelineId: "pipeline-1",
       repositoryOptions: [
         { fullName: "acme/primary", id: "repo-primary" },
         { fullName: "acme/selected", id: "repo-selected" },
       ],
+      stageOptions: [{ description: "Plan the work", id: "stage-1", name: "Plan", position: 1 }],
     });
     expect(mocked.loadSessionRepositoryOptionsWithPrimary).toHaveBeenCalledTimes(1);
     expect(mocked.loadSessionRepositoryOptionsWithPrimary).toHaveBeenCalledWith({
@@ -90,7 +119,27 @@ describe("session repositories route", () => {
 
     await expect(response.json()).resolves.toEqual({
       defaultGithubRepositoryId: null,
+      pipelineId: "pipeline-1",
       repositoryOptions: [],
+      stageOptions: [{ description: "Plan the work", id: "stage-1", name: "Plan", position: 1 }],
+    });
+  });
+
+  it("returns an empty stage set when the workspace has no default pipeline", async () => {
+    grantAccess(null);
+    mocked.loadDefaultPipelineForWorkspace.mockResolvedValue(null);
+    mocked.loadSessionRepositoryOptionsWithPrimary.mockResolvedValue({
+      primaryGithubRepositoryId: null,
+      repositoryOptions: [],
+    });
+
+    const response = await GET(new Request("http://localhost"), routeContext());
+
+    await expect(response.json()).resolves.toEqual({
+      defaultGithubRepositoryId: null,
+      pipelineId: null,
+      repositoryOptions: [],
+      stageOptions: [],
     });
   });
 

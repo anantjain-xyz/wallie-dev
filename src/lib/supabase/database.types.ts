@@ -1019,6 +1019,49 @@ export type Database = {
           },
         ]
       }
+      session_selected_stages: {
+        Row: {
+          created_at: string
+          session_id: string
+          stage_id: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          session_id: string
+          stage_id: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          session_id?: string
+          stage_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_selected_stages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_selected_stages_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_selected_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sessions: {
         Row: {
           archived_at: string | null
@@ -2044,6 +2087,7 @@ export type Database = {
           agent_model_provider: string
           creator_member_id: string
           selected_pipeline_id?: string
+          selected_stage_ids?: string[]
           session_github_repository_id?: string
           session_linear_issue_id?: string
           session_linear_issue_url?: string

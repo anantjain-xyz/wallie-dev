@@ -97,7 +97,16 @@ describe("CreateSessionDialog accessibility", () => {
     const onClose = vi.fn();
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
       defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
     });
 
     render(
@@ -140,7 +149,16 @@ describe("CreateSessionDialog accessibility", () => {
     const userId = "00000000-0000-4000-8000-000000000002";
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
       defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
     });
     clientMocks.createSessionFromClient.mockResolvedValue({
       canonicalUrl: "/w/acme/sessions/42",
@@ -171,6 +189,7 @@ describe("CreateSessionDialog accessibility", () => {
         githubRepositoryId: null,
         linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/title",
         promptMd: "",
+        selectedStageIds: ["00000000-0000-4000-8000-000000000011"],
         title: null,
         workspaceId,
       }),
@@ -183,7 +202,16 @@ describe("CreateSessionDialog accessibility", () => {
     const user = userEvent.setup();
     clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
       defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
     });
 
     render(
@@ -210,13 +238,138 @@ describe("CreateSessionDialog accessibility", () => {
     expect(screen.getByLabelText("Title (optional)")).toBeDisabled();
   });
 
+  it("defaults every stage on, validates an empty selection, and submits a partial selection", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const planStageId = "00000000-0000-4000-8000-000000000011";
+    const buildStageId = "00000000-0000-4000-8000-000000000012";
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
+      repositoryOptions: [],
+      stageOptions: [
+        { description: "Plan the work", id: planStageId, name: "Plan", position: 1 },
+        { description: "Build the work", id: buildStageId, name: "Build", position: 2 },
+      ],
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    const stagesButton = await screen.findByRole("button", { name: "Stages All 2 stages." });
+    stagesButton.focus();
+    await user.keyboard(" ");
+    expect(stagesButton).toHaveAttribute("aria-expanded", "true");
+    const planCheckbox = screen.getByRole("checkbox", { name: "Plan (Plan the work)" });
+    const buildCheckbox = screen.getByRole("checkbox", { name: "Build (Build the work)" });
+    expect(planCheckbox).toBeChecked();
+    expect(buildCheckbox).toBeChecked();
+
+    await user.click(buildCheckbox);
+    expect(screen.getByRole("button", { name: "Stages 1 of 2 stages." })).toBeVisible();
+    await user.click(planCheckbox);
+    expect(screen.getByText("Select at least one stage.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
+
+    await user.click(planCheckbox);
+    await user.type(screen.getByLabelText("Prompt"), "Build the dashboard");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    await waitFor(() =>
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+        expect.objectContaining({ selectedStageIds: [planStageId], workspaceId }),
+      ),
+    );
+  });
+
+  it("refreshes session options after a selected-stage conflict", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    const pipelineId = "00000000-0000-4000-8000-000000000010";
+    const planStageId = "00000000-0000-4000-8000-000000000011";
+    const buildStageId = "00000000-0000-4000-8000-000000000012";
+    clientMocks.loadSessionRepositoryOptionsFromClient
+      .mockResolvedValueOnce({
+        defaultGithubRepositoryId: null,
+        pipelineId,
+        repositoryOptions: [],
+        stageOptions: [
+          { description: "Plan the work", id: planStageId, name: "Plan", position: 1 },
+        ],
+      })
+      .mockResolvedValueOnce({
+        defaultGithubRepositoryId: null,
+        pipelineId,
+        repositoryOptions: [],
+        stageOptions: [
+          { description: "Plan the work", id: planStageId, name: "Plan", position: 1 },
+          { description: "Build the work", id: buildStageId, name: "Build", position: 2 },
+        ],
+      });
+    clientMocks.createSessionFromClient.mockRejectedValueOnce(
+      Object.assign(
+        new Error("The workspace pipeline changed. Refresh the stage options and try again."),
+        { code: "session_options_changed" },
+      ),
+    );
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "Stages All 1 stages." })).toBeVisible();
+    await user.type(screen.getByLabelText("Prompt"), "Build the dashboard");
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    expect(
+      await screen.findByText(
+        "The workspace pipeline changed. Refresh the stage options and try again.",
+      ),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(clientMocks.loadSessionRepositoryOptionsFromClient).toHaveBeenCalledTimes(2),
+    );
+    expect(await screen.findByRole("button", { name: "Stages All 2 stages." })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled();
+  });
+
   it("blocks keyboard submission while cached repository options are stale", async () => {
     const user = userEvent.setup();
     const workspaceId = "00000000-0000-4000-8000-000000000001";
     const userId = "00000000-0000-4000-8000-000000000002";
     const repositoryResult = {
       defaultGithubRepositoryId: "repo-1",
+      pipelineId: "00000000-0000-4000-8000-000000000010",
       repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
     };
 
     await loadSessionRepositories(
@@ -248,7 +401,7 @@ describe("CreateSessionDialog accessibility", () => {
     expect(clientMocks.createSessionFromClient).not.toHaveBeenCalled();
     expect(
       screen
-        .getByText("Refresh repository options before starting a session.")
+        .getByText("Refresh session options before starting a session.")
         .closest('[role="status"]'),
     ).toBeVisible();
   });

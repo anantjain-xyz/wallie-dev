@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { notifySessionRepositoriesChanged } from "@/features/sessions/session-repository-cache-events";
+import { SETTINGS_PIPELINE_CHANGED } from "@/features/settings/settings-island-events";
 import {
   getSessionRepositorySnapshot,
   invalidateSessionRepositoryCache,
@@ -14,7 +15,9 @@ import {
 const key = { userId: "user-1", workspaceId: "workspace-1" };
 const result = {
   defaultGithubRepositoryId: "repo-1",
+  pipelineId: "pipeline-1",
   repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+  stageOptions: [],
 };
 
 describe("session repository cache", () => {
@@ -36,7 +39,9 @@ describe("session repository cache", () => {
   it("does not share results across workspaces or users", async () => {
     const load = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({
       defaultGithubRepositoryId: workspaceId,
+      pipelineId: workspaceId,
       repositoryOptions: [{ fullName: `acme/${workspaceId}`, id: workspaceId }],
+      stageOptions: [],
     }));
 
     await loadSessionRepositories(key, { load, now: 100 });
@@ -109,6 +114,17 @@ describe("session repository cache", () => {
     await loadSessionRepositories(key, { load, now: 100 });
 
     notifySessionRepositoriesChanged("workspace-1");
+
+    expect(getSessionRepositorySnapshot(key).isStale).toBe(true);
+  });
+
+  it("invalidates cached creation options when their pipeline is saved", async () => {
+    const load = vi.fn(async () => result);
+    await loadSessionRepositories(key, { load, now: 100 });
+
+    window.dispatchEvent(
+      new CustomEvent(SETTINGS_PIPELINE_CHANGED, { detail: { id: "pipeline-1" } }),
+    );
 
     expect(getSessionRepositorySnapshot(key).isStale).toBe(true);
   });

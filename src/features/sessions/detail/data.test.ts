@@ -42,7 +42,11 @@ const detailMigration = readFileSync(
   "utf8",
 );
 const creatorIdentityMigration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260808000000_use_creator_email_fallback.sql"),
+  join(process.cwd(), "supabase/migrations/20260808000002_session_selected_stages.sql"),
+  "utf8",
+);
+const selectedStagesMigration = readFileSync(
+  join(process.cwd(), "supabase/migrations/20260808000002_session_selected_stages.sql"),
   "utf8",
 );
 
@@ -179,6 +183,12 @@ describe("session detail RPC access result", () => {
     expect(usernameIndex).toBeGreaterThan(fullNameIndex);
     expect(emailIndex).toBeGreaterThan(usernameIndex);
     expect(unknownMemberIndex).toBeGreaterThan(emailIndex);
+  });
+
+  it("returns only the stages selected for the session", () => {
+    expect(selectedStagesMigration).toContain("join public.session_selected_stages selection");
+    expect(selectedStagesMigration).toContain("selection.session_id = v_session.id");
+    expect(selectedStagesMigration).toContain("'pipeline', jsonb_build_object('stages', v_stages)");
   });
 });
 

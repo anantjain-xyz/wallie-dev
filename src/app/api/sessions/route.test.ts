@@ -47,6 +47,7 @@ const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 const ARCHIVED_REPOSITORY_ID = "55555555-5555-4555-8555-555555555555";
+const STAGE_ID = "88888888-8888-4888-8888-888888888888";
 
 type RepositoryRow = {
   default_branch: string | null;
@@ -263,6 +264,7 @@ describe("POST /api/sessions", () => {
       makeRequest({
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",
+        selectedStageIds: [STAGE_ID],
         title: "Custom session title",
         workspaceId: WORKSPACE_ID,
       }),
@@ -295,6 +297,7 @@ describe("POST /api/sessions", () => {
         modelName: "gpt-5.5",
         modelProvider: "codex",
         promptMd: "Add SSO",
+        selectedStageIds: [STAGE_ID],
         title: "Linear issue title",
         workspaceId: WORKSPACE_ID,
       }),
@@ -352,6 +355,16 @@ describe("POST /api/sessions", () => {
       error: "Enter a Linear issue URL or a prompt.",
     });
     expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit empty stage selection before mutation", async () => {
+    const response = await POST(
+      makeRequest({ promptMd: "Add SSO", selectedStageIds: [], workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocked.requireWorkspaceAccessById).not.toHaveBeenCalled();
+    expect(mocked.createSessionWithFirstJob).not.toHaveBeenCalled();
   });
 
   it("does not create a session when the Linear issue cannot be loaded", async () => {
@@ -506,6 +519,23 @@ describe("POST /api/sessions", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
       error: "Workspace has no selected or default pipeline configured",
+    });
+  });
+
+  it("returns a refreshable conflict when selected stages changed", async () => {
+    mocked.createSessionWithFirstJob.mockRejectedValueOnce({
+      code: "P0003",
+      message: "Selected pipeline stages changed or do not belong to this pipeline",
+    });
+
+    const response = await POST(
+      makeRequest({ promptMd: "Add SSO", selectedStageIds: [STAGE_ID], workspaceId: WORKSPACE_ID }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      code: "session_options_changed",
+      error: "The workspace pipeline changed. Refresh the stage options and try again.",
     });
   });
 });

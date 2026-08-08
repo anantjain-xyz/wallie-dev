@@ -44,6 +44,13 @@ export type SessionRepositoryOption = {
   id: string;
 };
 
+export type SessionCreationStageOption = {
+  description: string;
+  id: string;
+  name: string;
+  position: number;
+};
+
 export type SessionPhaseCompletion = {
   completedAt: string;
   id?: string;

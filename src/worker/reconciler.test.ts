@@ -38,6 +38,7 @@ interface Fixture {
   agentJobs?: AgentJobRow[];
   pipelineStages?: PipelineStageRow[];
   routingRows?: RoutingRow[];
+  selectedStages?: Array<{ session_id: string; stage_id: string }>;
   /** Session ids whose `agent_jobs` cancel write should reject. */
   failCancelForSessionIds?: Set<string>;
 }
@@ -149,6 +150,20 @@ function buildAdmin(fixture: Fixture) {
         const rows = (fixture.pipelineStages ?? [])
           .filter((stage) => !pipelineId || stage.pipeline_id === pipelineId)
           .sort((a, b) => a.position - b.position);
+        return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
+      }
+
+      if (op === "select" && table === "session_selected_stages") {
+        const sessionId = filters["eq.session_id"] as string | undefined;
+        const explicitSelections = fixture.selectedStages?.filter(
+          (selection) => !sessionId || selection.session_id === sessionId,
+        );
+        const session = fixture.sessions.find((candidate) => candidate.id === sessionId);
+        const rows =
+          explicitSelections ??
+          (fixture.pipelineStages ?? [])
+            .filter((stage) => !session?.pipeline_id || stage.pipeline_id === session.pipeline_id)
+            .map((stage) => ({ session_id: sessionId ?? "", stage_id: stage.id }));
         return Promise.resolve({ data: single ? (rows[0] ?? null) : rows, error: null });
       }
 
@@ -796,6 +811,88 @@ describe("reconcileLinearState", () => {
         }),
       }),
     );
+  });
+
+  it("ignores nonterminal Linear routes to an excluded stage", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+      ],
+      routingRows: [routingRow({ land_stage_slug: "land" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      selectedStages: [{ session_id: "sSkipMerge", stage_id: "stage-engineering" }],
+      sessions: [
+        {
+          id: "sSkipMerge",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iSkipMerge",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iSkipMerge", state: { name: "Merging" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(result.canceled).toBe(0);
+    expect(calls.find((call) => call.table === "sessions" && call.op === "update")).toBeUndefined();
+    expect(
+      calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
+    ).toBeUndefined();
+  });
+
+  it("archives Done sessions when the configured target stage is excluded", async () => {
+    const fixture: Fixture = {
+      pipelineStages: [
+        { id: "stage-engineering", pipeline_id: "pipe-1", position: 1, slug: "engineering" },
+        { id: "stage-land", pipeline_id: "pipe-1", position: 2, slug: "land" },
+      ],
+      routingRows: [routingRow({ land_stage_slug: "land" })],
+      secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
+      selectedStages: [{ session_id: "sSkipDone", stage_id: "stage-engineering" }],
+      sessions: [
+        {
+          id: "sSkipDone",
+          current_stage_id: "stage-engineering",
+          pipeline_id: "pipe-1",
+          workspace_id: "wA",
+          linear_issue_id: "iSkipDone",
+          phase_status: "awaiting_review",
+          created_at: "2026-05-01T00:00:00Z",
+        },
+      ],
+    };
+    const { admin, calls } = buildAdmin(fixture);
+    fetchSpy.mockResolvedValue(
+      makeFetchResponse({
+        data: { issues: { nodes: [{ id: "iSkipDone", state: { name: "Done" } }] } },
+      }),
+    );
+
+    const result = await reconcileLinearState(admin as never, { sleep: vi.fn() });
+
+    expect(result.checked).toBe(1);
+    expect(result.canceled).toBe(1);
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        op: "update",
+        table: "sessions",
+        update: expect.objectContaining({ archived_at: expect.any(String) }),
+      }),
+    );
+    expect(
+      calls.find((call) => call.table === "agent_jobs" && call.op === "insert"),
+    ).toBeUndefined();
   });
 
   it("archives Done sessions when the configured land stage is missing", async () => {

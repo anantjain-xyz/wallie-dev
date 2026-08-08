@@ -11,7 +11,7 @@ AI-powered product development automation. Wallie turns a work prompt -- optiona
 
 ## How It Works
 
-Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. Session creation, the first queued job, and its queued run are written atomically. An always-on worker drains the job queue, runs the session's current stage, and flips it to `awaiting_review` for a human to approve or reject from the in-app dashboard.
+Wallie organizes work into **sessions**. Each session is pinned at create time to a **pipeline** -- an ordered, user-configurable list of **stages** owned by the workspace. Users can exclude stages when starting a session; the selected membership is captured with the session while each selected stage's live configuration and position continue to come from the workspace pipeline. Session creation, selected stages, the first queued job, and its queued run are written atomically. An always-on worker drains the job queue, runs the session's current stage, and flips it to `awaiting_review` for a human to approve or reject from the in-app dashboard.
 
 Stages are not hardcoded. A workspace can edit, add, remove, or reorder them from settings. Every new workspace is seeded with a default `plan → build → land` pipeline so the UX works out of the box, but each stage is just a row in `pipeline_stages` with a slug, position, name, description, prompt template, and approver list. Pipelines also carry workspace-editable operating rules that are prepended to every stage prompt. Nothing in the runner distinguishes one stage from another.
 
@@ -23,7 +23,7 @@ A single generic stage runner (`processPipelineJob()` in `src/lib/pipeline/proce
 4. Capture the agent's text output as a markdown artifact, version it as `(session_id, stage_slug, version)`, and best-effort push commits/open or refresh a pull request when the stage changed code.
 5. Flip the session to `awaiting_review` without making pull-request plumbing a prerequisite for artifact review.
 
-Humans approve or reject artifacts from the in-app dashboard. Approval advances to the next stage by `position` via the `approve_session_stage` RPC. Rejection records feedback against the reviewed artifact version and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt.
+Humans approve or reject artifacts from the in-app dashboard. Approval advances to the next selected stage by `position` via the `approve_session_stage` RPC. Rejection records feedback against the reviewed artifact version and enqueues a new job that re-runs the same stage with `{{attempt.feedback}}` injected into the prompt.
 
 ### Pipeline Flow
 

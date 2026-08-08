@@ -4,6 +4,7 @@ import {
   loadSessionRepositoryOptionsWithPrimary,
   resolveDefaultSessionRepositoryId,
 } from "@/features/sessions/repository-options";
+import { loadDefaultPipelineForWorkspace } from "@/lib/pipeline/stages";
 import { workspaceIdParamsSchema } from "@/lib/workspaces";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
@@ -31,7 +32,7 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: access.error }, { status: access.status });
   }
 
-  const [onboardingResult, repositoryResult] = await Promise.all([
+  const [onboardingResult, repositoryResult, pipeline] = await Promise.all([
     access.context.supabase
       .from("workspace_onboarding")
       .select("selected_github_repository_id")
@@ -41,6 +42,7 @@ export async function GET(_request: Request, context: RouteContext) {
       supabase: access.context.supabase,
       workspaceId: access.context.workspace.id,
     }),
+    loadDefaultPipelineForWorkspace(access.context.supabase, access.context.workspace.id),
   ]);
 
   if (onboardingResult.error) {
@@ -56,7 +58,15 @@ export async function GET(_request: Request, context: RouteContext) {
   return NextResponse.json(
     {
       defaultGithubRepositoryId,
+      pipelineId: pipeline?.id ?? null,
       repositoryOptions: repositoryResult.repositoryOptions,
+      stageOptions:
+        pipeline?.stages.map((stage) => ({
+          description: stage.description,
+          id: stage.id,
+          name: stage.name,
+          position: stage.position,
+        })) ?? [],
     },
     {
       headers: {
