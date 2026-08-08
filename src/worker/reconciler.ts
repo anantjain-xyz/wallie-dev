@@ -260,10 +260,10 @@ async function routeSessionToStage(
   session: SessionRow,
   route: { route: "done" | "merging" | "rework"; stageSlug: string; statusName: string },
 ): Promise<StageRouteResult> {
-  const stages = await loadPipelineStages(admin, session.pipeline_id);
+  const stages = await loadPipelineStages(admin, session.pipeline_id, session.id);
   const targetStage = stages.find((stage) => stage.slug === route.stageSlug);
   if (!targetStage) {
-    console.warn("[reconciler] configured Linear route stage does not exist on session pipeline", {
+    console.warn("[reconciler] configured Linear route stage is not selected on session pipeline", {
       linearIssueId: session.linear_issue_id,
       route: route.route,
       sessionId: session.id,
@@ -400,15 +400,22 @@ type PipelineStageRoutingRow = {
 async function loadPipelineStages(
   admin: AdminClient,
   pipelineId: string,
+  sessionId: string,
 ): Promise<PipelineStageRoutingRow[]> {
-  const { data, error } = await admin
-    .from("pipeline_stages")
-    .select("id, slug, position")
-    .eq("pipeline_id", pipelineId)
-    .order("position", { ascending: true });
+  const [{ data, error }, { data: selections, error: selectionError }] = await Promise.all([
+    admin
+      .from("pipeline_stages")
+      .select("id, slug, position")
+      .eq("pipeline_id", pipelineId)
+      .order("position", { ascending: true }),
+    admin.from("session_selected_stages").select("stage_id").eq("session_id", sessionId),
+  ]);
 
   if (error) throw error;
-  return (data ?? []) as PipelineStageRoutingRow[];
+  if (selectionError) throw selectionError;
+
+  const selectedIds = new Set((selections ?? []).map((selection) => selection.stage_id));
+  return ((data ?? []) as PipelineStageRoutingRow[]).filter((stage) => selectedIds.has(stage.id));
 }
 
 async function hasActivePipelineJob(admin: AdminClient, sessionId: string): Promise<boolean> {

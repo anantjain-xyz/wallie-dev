@@ -3,19 +3,19 @@ begin;
 create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
 
-select plan(23);
+select plan(32);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_function(
   'public',
   'create_session_with_first_job',
-  array['uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'uuid', 'uuid'],
+  array['uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'uuid', 'uuid', 'uuid[]'],
   'transactional create RPC exists'
 );
 select function_privs_are(
   'public',
   'create_session_with_first_job',
-  array['uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'uuid', 'uuid'],
+  array['uuid', 'uuid', 'text', 'text', 'text', 'text', 'text', 'text', 'uuid', 'uuid', 'uuid[]'],
   'service_role',
   array['EXECUTE'],
   'service_role can execute the create RPC'
@@ -23,7 +23,7 @@ select function_privs_are(
 select ok(
   not has_function_privilege(
     'anon',
-    'public.create_session_with_first_job(uuid,uuid,text,text,text,text,text,text,uuid,uuid)',
+    'public.create_session_with_first_job(uuid,uuid,text,text,text,text,text,text,uuid,uuid,uuid[])',
     'EXECUTE'
   ),
   'anon cannot execute the create RPC'
@@ -31,7 +31,7 @@ select ok(
 select ok(
   not has_function_privilege(
     'authenticated',
-    'public.create_session_with_first_job(uuid,uuid,text,text,text,text,text,text,uuid,uuid)',
+    'public.create_session_with_first_job(uuid,uuid,text,text,text,text,text,text,uuid,uuid,uuid[])',
     'EXECUTE'
   ),
   'authenticated cannot execute the create RPC'
@@ -60,6 +60,10 @@ select ok(
 select ok(
   (select relrowsecurity from pg_catalog.pg_class where oid = 'public.agent_runs'::regclass),
   'agent_runs keeps RLS enabled'
+);
+select ok(
+  (select relrowsecurity from pg_catalog.pg_class where oid = 'public.session_selected_stages'::regclass),
+  'session_selected_stages has RLS enabled'
 );
 set local role authenticated;
 set local "request.jwt.claim.role" = 'authenticated';
@@ -131,6 +135,127 @@ select ok(
   ),
   'first run is linked to the job with the requested model'
 );
+select is(
+  (
+    select count(*)::integer
+    from public.session_selected_stages selection
+    join first_result result on result.session_id = selection.session_id
+  ),
+  (
+    select count(*)::integer
+    from public.pipeline_stages stage
+    where stage.pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
+  ),
+  'omitted selection captures every current pipeline stage'
+);
+
+create temp table selected_result as
+select *
+from public.create_session_with_first_job(
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  'c1b2c3d4-0001-4000-8000-000000000001',
+  'Selected stages proof',
+  'Skip the plan stage.',
+  'codex',
+  'gpt-5.5',
+  null,
+  null,
+  '12b2c3d4-0001-4000-8000-000000000001',
+  null,
+  array[
+    (select id from public.pipeline_stages where pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001' and slug = 'build'),
+    (select id from public.pipeline_stages where pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001' and slug = 'land')
+  ]
+);
+
+select is(
+  (
+    select stage.slug
+    from public.sessions session
+    join selected_result result on result.session_id = session.id
+    join public.pipeline_stages stage on stage.id = session.current_stage_id
+  ),
+  'build',
+  'session starts at the earliest selected stage'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.session_selected_stages selection
+    join selected_result result on result.session_id = selection.session_id
+  ),
+  2,
+  'explicit selection persists only the requested stages'
+);
+
+update public.sessions session
+set phase_status = 'awaiting_review', current_artifact_version = 1
+from selected_result result
+where session.id = result.session_id;
+
+create temp table selected_approval_result as
+select approved.*
+from selected_result result
+cross join lateral public.approve_session_stage(
+  result.session_id,
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  1,
+  'c1b2c3d4-0001-4000-8000-000000000001'
+) approved;
+
+select is(
+  (select current_stage_slug from selected_approval_result),
+  'land',
+  'approval advances directly to the next selected stage'
+);
+
+update public.sessions session
+set phase_status = 'awaiting_review', current_artifact_version = 1
+from selected_result result
+where session.id = result.session_id;
+
+create temp table terminal_approval_result as
+select approved.*
+from selected_result result
+cross join lateral public.approve_session_stage(
+  result.session_id,
+  'b1b2c3d4-0001-4000-8000-000000000001',
+  1,
+  'c1b2c3d4-0001-4000-8000-000000000001'
+) approved;
+
+select ok(
+  (select archived_at is not null and phase_status = 'approved' from terminal_approval_result),
+  'approval archives after the final selected stage'
+);
+select throws_ok(
+  $$
+    select *
+    from public.create_session_with_first_job(
+      'b1b2c3d4-0001-4000-8000-000000000001',
+      'c1b2c3d4-0001-4000-8000-000000000001',
+      'No stages', 'Must fail.', 'codex', 'gpt-5.5',
+      null, null, null, null, array[]::uuid[]
+    )
+  $$,
+  '22023',
+  'Select at least one pipeline stage',
+  'explicit empty selection is rejected'
+);
+select throws_ok(
+  $$
+    select *
+    from public.create_session_with_first_job(
+      'b1b2c3d4-0001-4000-8000-000000000001',
+      'c1b2c3d4-0001-4000-8000-000000000001',
+      'Unknown stage', 'Must fail.', 'codex', 'gpt-5.5',
+      null, null, null, null, array[gen_random_uuid()]
+    )
+  $$,
+  'P0003',
+  'Selected pipeline stages changed or do not belong to this pipeline',
+  'unknown or foreign selected stages are rejected'
+);
 select throws_ok(
   $$
     insert into public.agent_jobs (
@@ -169,6 +294,7 @@ create temp table rollback_before as
 select
   (select count(*) from public.sessions) as session_count,
   (select count(*) from public.agent_jobs) as job_count,
+  (select count(*) from public.session_selected_stages) as selected_stage_count,
   (
     select last_issue_number
     from internal.workspace_issue_counters
@@ -199,6 +325,11 @@ select is(
   (select count(*) from public.agent_jobs),
   (select job_count from rollback_before),
   'failed RPC leaves no job'
+);
+select is(
+  (select count(*) from public.session_selected_stages),
+  (select selected_stage_count from rollback_before),
+  'failed RPC leaves no selected-stage rows'
 );
 select is(
   (

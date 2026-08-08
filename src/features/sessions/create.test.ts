@@ -4,6 +4,7 @@ import { createSessionPayloadSchema, normalizeCreateSessionPayload } from "./cre
 import { extractLinearIssueId } from "./linear-issue-url";
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
+const STAGE_ID = "33333333-3333-4333-8333-333333333333";
 
 describe("createSessionPayloadSchema", () => {
   it("accepts either a prompt or a Linear issue URL", () => {
@@ -40,12 +41,37 @@ describe("createSessionPayloadSchema", () => {
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toBe("Linear issue URL is invalid.");
   });
+
+  it("requires a nonempty unique stage selection when one is provided", () => {
+    expect(
+      createSessionPayloadSchema.safeParse({
+        promptMd: "Build it",
+        selectedStageIds: [],
+        workspaceId: WORKSPACE_ID,
+      }).success,
+    ).toBe(false);
+    expect(
+      createSessionPayloadSchema.safeParse({
+        promptMd: "Build it",
+        selectedStageIds: [STAGE_ID, STAGE_ID],
+        workspaceId: WORKSPACE_ID,
+      }).success,
+    ).toBe(false);
+    expect(
+      createSessionPayloadSchema.safeParse({
+        promptMd: "Build it",
+        selectedStageIds: [STAGE_ID],
+        workspaceId: WORKSPACE_ID,
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("normalizeCreateSessionPayload", () => {
   it("keeps an empty prompt when a Linear issue is the work source", () => {
     const parsed = createSessionPayloadSchema.parse({
       linearIssueUrl: " https://linear.app/acme/issue/team-42/build-it ",
+      selectedStageIds: [STAGE_ID],
       workspaceId: WORKSPACE_ID,
     });
 
@@ -53,6 +79,7 @@ describe("normalizeCreateSessionPayload", () => {
       linearIssueId: "TEAM-42",
       linearIssueUrl: "https://linear.app/acme/issue/team-42/build-it",
       promptMd: "",
+      selectedStageIds: [STAGE_ID],
     });
   });
 });

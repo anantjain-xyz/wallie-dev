@@ -10,6 +10,10 @@ import {
   SESSION_REPOSITORIES_CHANGED_EVENT,
   type SessionRepositoriesChangedDetail,
 } from "@/features/sessions/session-repository-cache-events";
+import {
+  SETTINGS_PIPELINE_CHANGED,
+  type PipelineChangedDetail,
+} from "@/features/settings/settings-island-events";
 
 export const SESSION_REPOSITORY_CACHE_TTL_MS = 30_000;
 
@@ -85,19 +89,44 @@ function publish(entry: CacheEntry, snapshot: SessionRepositorySnapshot) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Failed to load repositories.";
+  return error instanceof Error ? error.message : "Failed to load session options.";
 }
 
 function ensureInvalidationListener() {
   if (invalidationListenerAttached || typeof window === "undefined") return;
 
   window.addEventListener(SESSION_REPOSITORIES_CHANGED_EVENT, handleRepositoriesChanged);
+  window.addEventListener(SETTINGS_PIPELINE_CHANGED, handlePipelineChanged);
   invalidationListenerAttached = true;
 }
 
 function handleRepositoriesChanged(event: Event) {
   const workspaceId = (event as CustomEvent<SessionRepositoriesChangedDetail>).detail?.workspaceId;
   if (workspaceId) invalidateSessionRepositoryCache(workspaceId);
+}
+
+function handlePipelineChanged(event: Event) {
+  const pipeline = (event as CustomEvent<PipelineChangedDetail>).detail;
+  if (!pipeline?.id) return;
+
+  for (const entry of entries.values()) {
+    if (entry.snapshot.data?.pipelineId !== pipeline.id) continue;
+    invalidateEntry(entry);
+  }
+}
+
+function invalidateEntry(entry: CacheEntry) {
+  entry.updatedAt = 0;
+  publish(entry, {
+    ...entry.snapshot,
+    error: null,
+    isRefreshing: entry.listeners.size > 0,
+    isStale: entry.snapshot.data !== null,
+  });
+
+  if (entry.listeners.size > 0) {
+    void loadSessionRepositories(entry.key).catch(() => undefined);
+  }
 }
 
 export function getSessionRepositorySnapshot(key: SessionRepositoryCacheKey) {
@@ -176,18 +205,7 @@ export function retrySessionRepositories(key: SessionRepositoryCacheKey) {
 export function invalidateSessionRepositoryCache(workspaceId: string) {
   for (const entry of entries.values()) {
     if (entry.key.workspaceId !== workspaceId) continue;
-
-    entry.updatedAt = 0;
-    publish(entry, {
-      ...entry.snapshot,
-      error: null,
-      isRefreshing: entry.listeners.size > 0,
-      isStale: entry.snapshot.data !== null,
-    });
-
-    if (entry.listeners.size > 0) {
-      void loadSessionRepositories(entry.key).catch(() => undefined);
-    }
+    invalidateEntry(entry);
   }
 }
 

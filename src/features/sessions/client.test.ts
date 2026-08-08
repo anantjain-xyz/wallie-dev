@@ -9,6 +9,7 @@ import {
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
+const STAGE_ID = "66666666-6666-4666-8666-666666666666";
 
 function mockFetch(response: { body: Record<string, unknown>; ok: boolean; status?: number }) {
   const fetchMock = vi.fn(async () => ({
@@ -73,6 +74,7 @@ describe("createSessionFromClient", () => {
       githubRepositoryId: `  ${REPOSITORY_ID}  `,
       linearIssueUrl: "  https://linear.app/team/issue/TEAM-42/some-slug  ",
       promptMd: "  Add SSO  ",
+      selectedStageIds: [STAGE_ID],
       title: "  Override Title  ",
       workspaceId: WORKSPACE_ID,
     });
@@ -83,6 +85,7 @@ describe("createSessionFromClient", () => {
         githubRepositoryId: REPOSITORY_ID,
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",
+        selectedStageIds: [STAGE_ID],
         title: "Override Title",
         workspaceId: WORKSPACE_ID,
       }),
@@ -127,7 +130,16 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
     const fetchMock = mockFetch({
       body: {
         defaultGithubRepositoryId: REPOSITORY_ID,
+        pipelineId: "55555555-5555-4555-8555-555555555555",
         repositoryOptions: [{ fullName: "acme/app", id: REPOSITORY_ID }],
+        stageOptions: [
+          {
+            description: "Plan the work",
+            id: "66666666-6666-4666-8666-666666666666",
+            name: "Plan",
+            position: 1,
+          },
+        ],
       },
       ok: true,
     });
@@ -136,7 +148,16 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
       loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
     ).resolves.toEqual({
       defaultGithubRepositoryId: REPOSITORY_ID,
+      pipelineId: "55555555-5555-4555-8555-555555555555",
       repositoryOptions: [{ fullName: "acme/app", id: REPOSITORY_ID }],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "66666666-6666-4666-8666-666666666666",
+          name: "Plan",
+          position: 1,
+        },
+      ],
     });
 
     expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${WORKSPACE_ID}/session-repositories`, {
@@ -162,7 +183,7 @@ describe("loadSessionRepositoryOptionsFromClient", () => {
 
     await expect(
       loadSessionRepositoryOptionsFromClient({ workspaceId: WORKSPACE_ID }),
-    ).rejects.toThrow("Repository response was invalid.");
+    ).rejects.toThrow("Session options response was invalid.");
   });
 });
 

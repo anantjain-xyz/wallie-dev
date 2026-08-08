@@ -57,6 +57,8 @@ describe("isCreateSessionSubmitDisabled", () => {
         isSubmitting: false,
         linearUrl: "",
         prompt: "Build the dashboard",
+        selectedStageCount: 1,
+        stageCount: 1,
       }),
     ).toBe(true);
     expect(
@@ -66,6 +68,8 @@ describe("isCreateSessionSubmitDisabled", () => {
         isSubmitting: false,
         linearUrl: "",
         prompt: "Build the dashboard",
+        selectedStageCount: 1,
+        stageCount: 1,
       }),
     ).toBe(false);
   });
@@ -78,6 +82,8 @@ describe("isCreateSessionSubmitDisabled", () => {
         isSubmitting: false,
         linearUrl: "",
         prompt: "",
+        selectedStageCount: 1,
+        stageCount: 1,
       }),
     ).toBe(true);
     expect(
@@ -87,6 +93,8 @@ describe("isCreateSessionSubmitDisabled", () => {
         isSubmitting: false,
         linearUrl: "https://linear.app/acme/issue/TEAM-42/title",
         prompt: "",
+        selectedStageCount: 1,
+        stageCount: 1,
       }),
     ).toBe(false);
   });
@@ -99,6 +107,8 @@ describe("isCreateSessionSubmitDisabled", () => {
         isSubmitting: false,
         linearUrl: "https://linear.app/acme/settings",
         prompt: "Additional context",
+        selectedStageCount: 1,
+        stageCount: 1,
       }),
     ).toBe(true);
   });
@@ -111,6 +121,22 @@ describe("isCreateSessionSubmitDisabled", () => {
         isSubmitting: false,
         linearUrl: "",
         prompt: "Build the dashboard",
+        selectedStageCount: 1,
+        stageCount: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks submission when no pipeline stage is selected", () => {
+    expect(
+      isCreateSessionSubmitDisabled({
+        hasRepositoryResult: true,
+        isRepositoryStale: false,
+        isSubmitting: false,
+        linearUrl: "",
+        prompt: "Build the dashboard",
+        selectedStageCount: 0,
+        stageCount: 3,
       }),
     ).toBe(true);
   });
@@ -160,7 +186,7 @@ describe("RepositoryField", () => {
 
     expect(html).toContain('role="alert"');
     expect(html).toContain("Repositories unavailable.");
-    expect(html).toContain(">Retry repositories</button>");
+    expect(html).toContain(">Retry session options</button>");
   });
 
   it("makes the confirmed empty state explicit", () => {
@@ -168,7 +194,12 @@ describe("RepositoryField", () => {
       createElement(RepositoryField, {
         ...baseProps,
         snapshot: {
-          data: { defaultGithubRepositoryId: null, repositoryOptions: [] },
+          data: {
+            defaultGithubRepositoryId: null,
+            pipelineId: null,
+            repositoryOptions: [],
+            stageOptions: [],
+          },
           error: null,
           isLoading: false,
           isRefreshing: false,
@@ -190,7 +221,9 @@ describe("RepositoryField", () => {
         snapshot: {
           data: {
             defaultGithubRepositoryId: "repo-1",
+            pipelineId: null,
             repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+            stageOptions: [],
           },
           error: null,
           isLoading: false,
@@ -214,7 +247,9 @@ describe("RepositoryField", () => {
         snapshot: {
           data: {
             defaultGithubRepositoryId: "repo-1",
+            pipelineId: null,
             repositoryOptions: [{ fullName: "acme/app", id: "repo-1" }],
+            stageOptions: [],
           },
           error: "Network unavailable.",
           isLoading: false,
@@ -225,7 +260,7 @@ describe("RepositoryField", () => {
     );
 
     expect(html).toContain('role="alert"');
-    expect(html).toContain("Repository options may be out of date. Network unavailable.");
-    expect(html).toContain(">Refresh repositories</button>");
+    expect(html).toContain("Session options may be out of date. Network unavailable.");
+    expect(html).toContain(">Refresh session options</button>");
   });
 });

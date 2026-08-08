@@ -102,6 +102,7 @@ describe("wallie service helpers", () => {
       modelName: "gpt-5.5",
       modelProvider: "codex",
       promptMd: "Create it atomically.",
+      selectedStageIds: ["stage-build", "stage-land"],
       title: "Atomic create",
       workspaceId: "workspace-1",
     });
@@ -112,6 +113,7 @@ describe("wallie service helpers", () => {
       agent_model_provider: "codex",
       creator_member_id: "member-1",
       selected_pipeline_id: undefined,
+      selected_stage_ids: ["stage-build", "stage-land"],
       session_github_repository_id: undefined,
       session_linear_issue_id: undefined,
       session_linear_issue_url: undefined,

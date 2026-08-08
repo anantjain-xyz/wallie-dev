@@ -145,7 +145,9 @@ describe("create-session dialog loading", () => {
     const startedKey = { current: null };
     const preloadSessionRepositories = vi.fn(async () => ({
       defaultGithubRepositoryId: null,
+      pipelineId: null,
       repositoryOptions: [],
+      stageOptions: [],
     }));
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
     const input = { userId: "user-1", workspaceId: "workspace-1" };
@@ -177,7 +179,9 @@ describe("create-session dialog loading", () => {
     const startedKey = { current: null };
     const preloadSessionRepositories = vi.fn(async () => ({
       defaultGithubRepositoryId: null,
+      pipelineId: null,
       repositoryOptions: [],
+      stageOptions: [],
     }));
     const load = vi.fn(async () => ({ preloadSessionRepositories }));
 

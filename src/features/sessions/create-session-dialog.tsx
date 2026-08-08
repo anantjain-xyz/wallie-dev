@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { MultiSelectField } from "@/components/ui/multi-select-field";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
 import { createSessionFromClient } from "@/features/sessions/client";
@@ -50,6 +51,8 @@ export function isCreateSessionSubmitDisabled(input: {
   isSubmitting: boolean;
   linearUrl: string;
   prompt: string;
+  selectedStageCount: number;
+  stageCount: number;
 }) {
   const hasInvalidLinearUrl = Boolean(getLinearUrlError(input.linearUrl));
 
@@ -58,7 +61,9 @@ export function isCreateSessionSubmitDisabled(input: {
     hasInvalidLinearUrl ||
     (!input.linearUrl.trim() && !input.prompt.trim()) ||
     !input.hasRepositoryResult ||
-    input.isRepositoryStale
+    input.isRepositoryStale ||
+    input.stageCount === 0 ||
+    input.selectedStageCount === 0
   );
 }
 
@@ -85,12 +90,18 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   const [title, setTitle] = useState("");
   const [linearUrl, setLinearUrl] = useState("");
   const [githubRepositoryId, setGithubRepositoryId] = useState("");
+  const [excludedStageIds, setExcludedStageIds] = useState<string[]>([]);
   const [linearError, setLinearError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const repositoryCacheKey = { userId, workspaceId };
   const repositorySnapshot = useSessionRepositories(repositoryCacheKey);
   const repositoryOptions = repositorySnapshot.data?.repositoryOptions ?? [];
+  const stageOptions = repositorySnapshot.data?.stageOptions ?? [];
+  const excludedStageIdSet = new Set(excludedStageIds);
+  const selectedStageIds = stageOptions
+    .filter((stage) => !excludedStageIdSet.has(stage.id))
+    .map((stage) => stage.id);
 
   function handleLinearBlur() {
     setLinearError(getLinearUrlError(linearUrl));
@@ -135,12 +146,17 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     }
 
     if (repositorySnapshot.isStale) {
-      setErrorMessage("Refresh repository options before starting a session.");
+      setErrorMessage("Refresh session options before starting a session.");
       return;
     }
 
     if (!prompt.trim() && !linearUrl.trim()) {
       setErrorMessage("Enter a Linear issue URL or a prompt.");
+      return;
+    }
+
+    if (selectedStageIds.length === 0) {
+      setErrorMessage("Select at least one stage.");
       return;
     }
 
@@ -160,6 +176,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
+        selectedStageIds,
         title: title.trim() || null,
         workspaceId,
       });
@@ -301,6 +318,49 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
             snapshot={repositorySnapshot}
           />
 
+          {repositorySnapshot.data ? (
+            <MultiSelectField
+              description="Choose the pipeline stages this session should run."
+              disabled={isSubmitting || repositorySnapshot.isStale}
+              emptyMessage="No pipeline stages are configured."
+              error={
+                stageOptions.length === 0
+                  ? "Workspace pipeline has no stages."
+                  : selectedStageIds.length === 0
+                    ? "Select at least one stage."
+                    : undefined
+              }
+              id="session-stages"
+              label="Stages"
+              onValuesChange={(values) => {
+                const selected = new Set(values);
+                setExcludedStageIds(
+                  stageOptions.filter((stage) => !selected.has(stage.id)).map((stage) => stage.id),
+                );
+              }}
+              options={stageOptions.map((stage) => ({
+                description: stage.description || undefined,
+                label: stage.name,
+                value: stage.id,
+              }))}
+              summary={
+                selectedStageIds.length === stageOptions.length
+                  ? `All ${stageOptions.length} stages.`
+                  : `${selectedStageIds.length} of ${stageOptions.length} stages.`
+              }
+              values={selectedStageIds}
+            />
+          ) : repositorySnapshot.isLoading ? (
+            <div
+              aria-busy="true"
+              aria-live="polite"
+              className="rounded-[6px] border border-border bg-control-muted px-3 py-2 text-xs text-muted"
+              role="status"
+            >
+              Loading stages…
+            </div>
+          ) : null}
+
           {errorMessage ? (
             <div
               aria-live="polite"
@@ -324,6 +384,8 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
                 isSubmitting,
                 linearUrl,
                 prompt,
+                selectedStageCount: selectedStageIds.length,
+                stageCount: stageOptions.length,
               })}
               className="ui-button-primary"
             >
@@ -380,7 +442,7 @@ export function RepositoryField({
       >
         <span>{snapshot.error}</span>
         <button className="ui-button min-h-8" onClick={retry} type="button">
-          Retry repositories
+          Retry session options
         </button>
       </div>
     );
@@ -423,12 +485,12 @@ export function RepositoryField({
             {snapshot.isRefreshing
               ? "Refreshing repository options…"
               : snapshot.error
-                ? `Repository options may be out of date. ${snapshot.error}`
-                : "Repository options may be out of date."}
+                ? `Session options may be out of date. ${snapshot.error}`
+                : "Session options may be out of date."}
           </span>
           {!snapshot.isRefreshing ? (
             <button className="ui-button min-h-8" onClick={retry} type="button">
-              Refresh repositories
+              Refresh session options
             </button>
           ) : null}
         </div>

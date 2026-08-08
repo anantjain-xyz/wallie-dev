@@ -4,12 +4,16 @@ import type {
   SessionTitleMutationResult,
 } from "@/features/sessions/mutation-contracts";
 import { updateSessionTitleClientInputSchema } from "@/features/sessions/update-title";
-import type { SessionRepositoryOption } from "@/features/sessions/types";
+import type {
+  SessionCreationStageOption,
+  SessionRepositoryOption,
+} from "@/features/sessions/types";
 
 export type CreateSessionInput = {
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
   promptMd?: string | null;
+  selectedStageIds?: string[];
   title?: string | null;
   workspaceId: string;
 };
@@ -35,7 +39,9 @@ export type SessionArchiveResult = {
 
 export type SessionRepositoryOptionsResult = {
   defaultGithubRepositoryId: string | null;
+  pipelineId: string | null;
   repositoryOptions: SessionRepositoryOption[];
+  stageOptions: SessionCreationStageOption[];
 };
 
 export async function loadSessionStateFromClient(input: {
@@ -91,20 +97,27 @@ export async function loadSessionRepositoryOptionsFromClient(input: {
   const responsePayload = (await response.json().catch(() => null)) as {
     defaultGithubRepositoryId?: string | null;
     error?: string;
+    pipelineId?: string | null;
     repositoryOptions?: SessionRepositoryOption[];
+    stageOptions?: SessionCreationStageOption[];
   } | null;
 
   if (!response.ok) {
-    throw new Error(responsePayload?.error ?? "Failed to load repositories.");
+    throw new Error(responsePayload?.error ?? "Failed to load session options.");
   }
 
-  if (!Array.isArray(responsePayload?.repositoryOptions)) {
-    throw new Error("Repository response was invalid.");
+  if (
+    !Array.isArray(responsePayload?.repositoryOptions) ||
+    !Array.isArray(responsePayload?.stageOptions)
+  ) {
+    throw new Error("Session options response was invalid.");
   }
 
   return {
     defaultGithubRepositoryId: responsePayload.defaultGithubRepositoryId ?? null,
+    pipelineId: responsePayload.pipelineId ?? null,
     repositoryOptions: responsePayload.repositoryOptions,
+    stageOptions: responsePayload.stageOptions,
   };
 }
 
@@ -121,6 +134,7 @@ export async function createSessionFromClient(
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl,
     promptMd: trimmedPrompt,
+    ...(input.selectedStageIds ? { selectedStageIds: input.selectedStageIds } : {}),
     title: input.title?.trim() || null,
     workspaceId: input.workspaceId,
   };

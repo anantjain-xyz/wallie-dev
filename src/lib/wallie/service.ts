@@ -328,6 +328,7 @@ export async function createSessionWithFirstJob(input: {
   modelProvider: string;
   pipelineId?: string | null;
   promptMd: string;
+  selectedStageIds?: string[];
   title: string;
   workspaceId: string;
 }): Promise<CreateSessionWithFirstJobResult> {
@@ -338,6 +339,7 @@ export async function createSessionWithFirstJob(input: {
       agent_model_provider: input.modelProvider,
       creator_member_id: input.creatorMemberId,
       selected_pipeline_id: input.pipelineId ?? undefined,
+      selected_stage_ids: input.selectedStageIds,
       session_github_repository_id: input.githubRepositoryId ?? undefined,
       session_linear_issue_id: input.linearIssueId ?? undefined,
       session_linear_issue_url: input.linearIssueUrl ?? undefined,

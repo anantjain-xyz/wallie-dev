@@ -339,6 +339,7 @@ export async function POST(request: Request) {
       modelName: agentConfig.model,
       modelProvider: agentConfig.provider,
       promptMd: normalized.promptMd || linearIssue?.description.trim() || linearIssue?.title || "",
+      selectedStageIds: normalized.selectedStageIds,
       title: linearIssue?.title ?? normalized.title,
       workspaceId: normalized.workspaceId,
     });
@@ -355,6 +356,13 @@ export async function POST(request: Request) {
     if (getErrorCode(error) === "P0002") {
       return NextResponse.json(
         { error: getErrorMessage(error, "Workspace pipeline is not configured.") },
+        { status: 409 },
+      );
+    }
+
+    if (getErrorCode(error) === "P0003") {
+      return NextResponse.json(
+        { error: "The workspace pipeline changed. Refresh the stage options and try again." },
         { status: 409 },
       );
     }
