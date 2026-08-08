@@ -2344,7 +2344,7 @@ export type Database = {
       member_kind: "human" | "system"
       member_role: "owner" | "admin" | "member" | "agent"
       pipeline_phase_status:
-        | "agent_generating"
+        | "in_progress"
         | "awaiting_review"
         | "approved"
         | "rejected"
@@ -2501,7 +2501,7 @@ export const Constants = {
       member_kind: ["human", "system"],
       member_role: ["owner", "admin", "member", "agent"],
       pipeline_phase_status: [
-        "agent_generating",
+        "in_progress",
         "awaiting_review",
         "approved",
         "rejected",

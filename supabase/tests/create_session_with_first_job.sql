@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
 
-select plan(32);
+select plan(35);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_function(
@@ -65,6 +65,29 @@ select ok(
   (select relrowsecurity from pg_catalog.pg_class where oid = 'public.session_selected_stages'::regclass),
   'session_selected_stages has RLS enabled'
 );
+select is(
+  (
+    select string_agg(enum_value.enumlabel, ',' order by enum_value.enumsortorder)
+    from pg_catalog.pg_enum enum_value
+    join pg_catalog.pg_type enum_type on enum_type.oid = enum_value.enumtypid
+    join pg_catalog.pg_namespace namespace on namespace.oid = enum_type.typnamespace
+    where namespace.nspname = 'public'
+      and enum_type.typname = 'pipeline_phase_status'
+  ),
+  'in_progress,awaiting_review,approved,rejected',
+  'pipeline phase enum exposes only the renamed active value'
+);
+select is(
+  (
+    select column_default
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'sessions'
+      and column_name = 'phase_status'
+  ),
+  '''in_progress''::pipeline_phase_status',
+  'new sessions default to the renamed active phase'
+);
 set local role authenticated;
 set local "request.jwt.claim.role" = 'authenticated';
 set local "request.jwt.claim.sub" = '00000000-0000-4000-8000-000000000099';
@@ -105,7 +128,7 @@ select ok(
     join first_result result on result.session_id = session.id
     where session.number = result.session_number
       and session.pipeline_id = 'd1b2c3d4-0001-4000-8000-000000000001'
-      and session.phase_status = 'agent_generating'
+      and session.phase_status = 'in_progress'
   ),
   'session is numbered and pinned to the default pipeline'
 );
@@ -207,6 +230,11 @@ select is(
   (select current_stage_slug from selected_approval_result),
   'land',
   'approval advances directly to the next selected stage'
+);
+select is(
+  (select phase_status::text from selected_approval_result),
+  'in_progress',
+  'approval returns the renamed active phase for the next selected stage'
 );
 
 update public.sessions session

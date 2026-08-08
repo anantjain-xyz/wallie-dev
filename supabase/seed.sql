@@ -19,7 +19,7 @@
 --
 -- The 'queued' run is deliberately seeded with status 'queued' and a null
 -- agent_job_id: the worker's stall detector skips queued runs that have no
--- running parent job (src/worker/stall-detector.ts), so an agent_generating
+-- running parent job (src/worker/stall-detector.ts), so an in_progress
 -- demo session keeps a coherent in-flight run instead of being swept into an
 -- "Error: Stalled" state that contradicts its "Wallie is drafting" banner.
 CREATE OR REPLACE FUNCTION internal.seed_agent_run(
@@ -430,7 +430,7 @@ BEGIN
      to_jsonb(E'# Add SSO login via Google Workspace\n\n## Problem Statement\n\nBusiness customers cannot enforce login policies or reclaim seats when employees leave because Wallie only supports email/password.\n\n## User Story\n\nAs an IT admin on the Business plan, I want to require Google Workspace SSO for my workspace so that only employees with active corporate accounts can log in.\n\n## Acceptance Criteria\n\n- Owners can enable Google SSO from the workspace settings page.\n- Members with matching email domains sign in via Google and are auto-added to the workspace.\n- Non-matching domains are rejected with a clear error.\n- Email/password login is disabled for the workspace once SSO is required.\n\n## Technical Approach\n\n- Use the Supabase Auth Google provider; never break existing email/password sessions mid-request.\n\n## Non-Goals\n\n- Okta, Microsoft Entra, or other IdPs (follow-up).\n\n## Open Questions\n\n- Should we require MFA enforcement client-side or trust Google?\n'::text),
      now() - interval '90 minutes');
 
-  -- Session 2: build / agent_generating — plan approved, build agent running
+  -- Session 2: build / in_progress — plan approved, build agent running
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -440,7 +440,7 @@ BEGIN
      'Self-serve workspace creation flow',
      E'Onboarding is dropping off at workspace creation. Let''s build a proper guided flow.',
      mem1_id,
-     default_pipeline_id, stage_build_id, 'agent_generating', 0,
+     default_pipeline_id, stage_build_id, 'in_progress', 0,
      now() - interval '1 day', now() - interval '30 minutes');
 
   INSERT INTO public.session_artifacts
@@ -483,7 +483,7 @@ BEGIN
   VALUES
     (sess3_id, ws_id, stage_plan_id, 'plan', now() - interval '2 days 12 hours', mem2_id);
 
-  -- Session 4: review / agent_generating — build approved, reviewing the PR
+  -- Session 4: review / in_progress — build approved, reviewing the PR
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -493,7 +493,7 @@ BEGIN
      'Rich-text editor for session prompts',
      E'The plain textarea is rough. Let''s replace it with Tiptap and support image paste.',
      mem1_id,
-     default_pipeline_id, stage_review_id, 'agent_generating', 0,
+     default_pipeline_id, stage_review_id, 'in_progress', 0,
      now() - interval '6 days', now() - interval '4 hours');
 
   INSERT INTO public.session_artifacts
@@ -610,7 +610,7 @@ BEGIN
      to_jsonb(E'# Dark mode and theme customization\n\nAdd a theme toggle to settings. Detect system preference, allow manual override, persist per user.'::text),
      now() - interval '45 minutes');
 
-  -- Session 8: plan / agent_generating (rejected once, re-generating)
+  -- Session 8: plan / in_progress (rejected once, re-generating)
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version, rejection_count,
@@ -620,7 +620,7 @@ BEGIN
      'Weekly email digest of pipeline activity',
      E'We need a weekly email summarizing pipeline activity — sessions that moved, stuck items, and PRs awaiting review.',
      mem1_id,
-     default_pipeline_id, stage_plan_id, 'agent_generating', 0, 1,
+     default_pipeline_id, stage_plan_id, 'in_progress', 0, 1,
      now() - interval '4 hours', now() - interval '20 minutes');
 
   -- Session 9: plan / awaiting_review
@@ -671,7 +671,7 @@ BEGIN
   VALUES
     (sess10_id, ws_id, stage_plan_id, 'plan', now() - interval '2 days 12 hours', mem2_id);
 
-  -- Session 11: build / agent_generating
+  -- Session 11: build / in_progress
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -681,7 +681,7 @@ BEGIN
      'Webhook notifications for pipeline events',
      E'External systems need to react to phase transitions. Add webhook registration and signed POST delivery.',
      mem1_id,
-     default_pipeline_id, stage_build_id, 'agent_generating', 0,
+     default_pipeline_id, stage_build_id, 'in_progress', 0,
      now() - interval '4 days', now() - interval '1 hour');
 
   INSERT INTO public.session_artifacts
@@ -760,7 +760,7 @@ BEGIN
     (sess13_id, ws_id, stage_plan_id, 'plan',   now() - interval '4 days 12 hours', mem1_id),
     (sess13_id, ws_id, stage_build_id, 'build', now() - interval '4 hours',         mem1_id);
 
-  -- Session 14: land / agent_generating
+  -- Session 14: land / in_progress
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -770,7 +770,7 @@ BEGIN
      'Email notification preferences',
      E'Users get too many emails. Add per-user preferences: immediate, daily digest, or off per event category.',
      mem2_id,
-     default_pipeline_id, stage_land_id, 'agent_generating', 0,
+     default_pipeline_id, stage_land_id, 'in_progress', 0,
      now() - interval '7 days', now() - interval '2 hours');
 
   INSERT INTO public.session_artifacts
@@ -865,7 +865,7 @@ BEGIN
     (sess16_id, ws_id, stage_build_id, 'build',   now() - interval '8 days 18 hours',  mem1_id),
     (sess16_id, ws_id, stage_review_id, 'review', now() - interval '8 days 6 hours',   mem1_id);
 
-  -- Session 17: land / agent_generating
+  -- Session 17: land / in_progress
   INSERT INTO public.sessions
     (id, workspace_id, number, title, prompt_md, creator_member_id,
      pipeline_id, current_stage_id, phase_status, current_artifact_version,
@@ -875,7 +875,7 @@ BEGIN
      'GitHub PR auto-link from branch naming convention',
      E'When a branch matches wallie-{number}, auto-associate the PR with the session and show it on the card.',
      mem1_id,
-     default_pipeline_id, stage_land_id, 'agent_generating', 0,
+     default_pipeline_id, stage_land_id, 'in_progress', 0,
      now() - interval '12 days', now() - interval '8 days');
 
   INSERT INTO public.session_artifacts
@@ -963,7 +963,7 @@ BEGIN
   --   * one success run per already-approved stage (from phase completions),
   --   * plus the current stage's run(s) derived from phase_status, where
   --     N = sessions.rejection_count (rejections of the current stage):
-  --       agent_generating -> N rejected attempts + 1 queued run (the current
+  --       in_progress -> N rejected attempts + 1 queued run (the current
   --                           attempt; queued + null job survives the worker's
   --                           stall sweep, so it stays in-flight in the demo)
   --       awaiting_review  -> N rejected attempts + 1 success run (awaiting)
@@ -1014,7 +1014,7 @@ BEGIN
               'rejected', i, v_fin - interval '25 minutes', v_fin);
           END LOOP;
         ELSE
-          -- agent_generating / awaiting_review: N prior rejected attempts, then
+          -- in_progress / awaiting_review: N prior rejected attempts, then
           -- the current attempt (running, or a success awaiting review).
           FOR i IN 1..v_rej LOOP
             v_fin := sess_rec.updated_at - (v_rej - i + 1) * interval '3 hours';
@@ -1024,7 +1024,7 @@ BEGIN
               'rejected', i, v_fin - interval '25 minutes', v_fin);
           END LOOP;
 
-          IF sess_rec.phase_status = 'agent_generating' THEN
+          IF sess_rec.phase_status = 'in_progress' THEN
             PERFORM internal.seed_agent_run(
               ws_id, sess_rec.id, sess_rec.creator_member_id, sess_rec.title,
               sess_rec.current_stage_id, sess_rec.cur_slug, sess_rec.cur_name,
