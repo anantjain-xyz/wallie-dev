@@ -7,7 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
-import { processPipelineJob } from "@/lib/pipeline/processor";
+import { isPublicationRetryState, processPipelineJob } from "@/lib/pipeline/processor";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
@@ -967,7 +967,7 @@ async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
     .from("agent_jobs")
     .update({
       attempt_count: job.attempt_count + 1,
-      last_error: null,
+      last_error: isPublicationRetryState(job.last_error) ? job.last_error : null,
       started_at: job.started_at ?? new Date().toISOString(),
       status: "running",
     })

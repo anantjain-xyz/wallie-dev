@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/pipeline/processor", () => ({
+  isPublicationRetryState: (value: string | null) =>
+    value?.startsWith("Wallie pull request publication pending: ") ?? false,
   processPipelineJob: vi.fn(),
 }));
 
@@ -180,10 +182,12 @@ describe("wallie service helpers", () => {
 
   it("passes an abort signal into claimed pipeline job processing", async () => {
     const signal = new AbortController().signal;
-    const queuedJob = buildAgentJobRow();
+    const publicationState =
+      'Wallie pull request publication pending: {"artifactVersion":1,"pullRequestNumber":42,"reason":"db down"}';
+    const queuedJob = buildAgentJobRow({ last_error: publicationState });
     const claimedJob = buildAgentJobRow({
       attempt_count: 1,
-      last_error: null,
+      last_error: publicationState,
       started_at: baseTimestamp,
       status: "running",
     });
@@ -193,6 +197,15 @@ describe("wallie service helpers", () => {
       result: "success",
       runId: "run-1",
     });
+    const claimUpdate = vi.fn(() => ({
+      eq: () => ({
+        eq: () => ({
+          select: () => ({
+            maybeSingle: async () => ({ data: claimedJob, error: null }),
+          }),
+        }),
+      }),
+    }));
     const admin = {
       from: (table: string) => {
         if (table !== "agent_jobs") throw new Error(`unexpected table: ${table}`);
@@ -202,15 +215,7 @@ describe("wallie service helpers", () => {
               maybeSingle: async () => ({ data: queuedJob, error: null }),
             }),
           }),
-          update: () => ({
-            eq: () => ({
-              eq: () => ({
-                select: () => ({
-                  maybeSingle: async () => ({ data: claimedJob, error: null }),
-                }),
-              }),
-            }),
-          }),
+          update: claimUpdate,
         };
       },
     };
@@ -231,6 +236,12 @@ describe("wallie service helpers", () => {
       admin,
       job: claimedJob,
       signal,
+    });
+    expect(claimUpdate).toHaveBeenCalledWith({
+      attempt_count: 1,
+      last_error: publicationState,
+      started_at: expect.any(String),
+      status: "running",
     });
   });
 });

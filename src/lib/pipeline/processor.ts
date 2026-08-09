@@ -687,6 +687,10 @@ function serializePublicationRetryState(state: PublicationRetryState): string {
   return `${PUBLICATION_RETRY_PREFIX}${JSON.stringify(state)}`;
 }
 
+export function isPublicationRetryState(value: string | null): boolean {
+  return parsePublicationRetryState(value) !== null;
+}
+
 function parsePublicationRetryState(value: string | null): PublicationRetryState | null {
   if (!value?.startsWith(PUBLICATION_RETRY_PREFIX)) return null;
 

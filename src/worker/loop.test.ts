@@ -182,4 +182,16 @@ describe("claim_next_agent_job migration", () => {
     expect(migrationSql).toContain("from public.workspace_vercel_sandbox_connection_mutations");
     expect(migrationSql).toContain("where workspace_id = candidate.workspace_id");
   });
+
+  it("preserves publication retry state while claiming a queued job", () => {
+    const migrationSql = readFileSync(
+      "supabase/migrations/20260809201430_wallie_owned_git_publication.sql",
+      "utf8",
+    );
+
+    expect(migrationSql).toContain("create or replace function public.claim_next_agent_job");
+    expect(migrationSql).toContain(
+      "when last_error like 'Wallie pull request publication pending: %' then last_error",
+    );
+  });
 });
