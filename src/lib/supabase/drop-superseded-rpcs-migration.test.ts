@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  join(process.cwd(), "supabase/migrations/20260809000000_drop_superseded_service_role_rpcs.sql"),
+  join(process.cwd(), "supabase/migrations/20260809000001_drop_superseded_service_role_rpcs.sql"),
   "utf8",
 );
 const baseline = readFileSync(
