@@ -10,23 +10,15 @@ import {
   type LinearRoutingConfig,
   type LinearRoutingUpdateInput,
 } from "@/lib/linear-routing/contracts";
-import { asLooseSupabaseClient } from "@/lib/supabase/loose";
-import type { Database } from "@/lib/supabase/database.types";
+import type { Database, Json } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
-
-type LinearRoutingRow = {
-  land_stage_slug: string;
-  rework_stage_slug: string;
-  status_mappings: unknown;
-};
 
 export async function loadLinearRoutingConfig(
   admin: AdminClient,
   workspaceId: string,
 ): Promise<LinearRoutingConfig> {
-  const loose = asLooseSupabaseClient(admin);
-  const { data, error } = await loose
+  const { data, error } = await admin
     .from("workspace_linear_routing")
     .select("status_mappings, rework_stage_slug, land_stage_slug")
     .eq("workspace_id", workspaceId)
@@ -35,11 +27,10 @@ export async function loadLinearRoutingConfig(
   if (error) throw error;
   if (!data) return DEFAULT_LINEAR_ROUTING_CONFIG;
 
-  const row = data as LinearRoutingRow;
   return coerceLinearRoutingConfig({
-    landStageSlug: row.land_stage_slug,
-    reworkStageSlug: row.rework_stage_slug,
-    statusMappings: row.status_mappings,
+    landStageSlug: data.land_stage_slug,
+    reworkStageSlug: data.rework_stage_slug,
+    statusMappings: data.status_mappings,
   });
 }
 
@@ -92,12 +83,11 @@ export async function upsertLinearRoutingConfig(input: {
 }): Promise<LinearRoutingConfig> {
   const parsed = linearRoutingUpdateSchema.parse(input.config);
   const normalizedMappings = normalizeStatusMappings(parsed.statusMappings);
-  const loose = asLooseSupabaseClient(input.admin);
-  const { error } = await loose.from("workspace_linear_routing").upsert(
+  const { error } = await input.admin.from("workspace_linear_routing").upsert(
     {
       land_stage_slug: parsed.landStageSlug,
       rework_stage_slug: parsed.reworkStageSlug,
-      status_mappings: normalizedMappings,
+      status_mappings: normalizedMappings as Json,
       workspace_id: input.workspaceId,
     },
     { onConflict: "workspace_id" },

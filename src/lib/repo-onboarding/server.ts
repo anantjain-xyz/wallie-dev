@@ -15,8 +15,7 @@ import {
   WALLIE_SKILL_VERSION,
   wallieSkillManifestHash,
 } from "@/lib/repo-onboarding/skills";
-import type { Database } from "@/lib/supabase/database.types";
-import { asLooseSupabaseClient } from "@/lib/supabase/loose";
+import type { Database, Json } from "@/lib/supabase/database.types";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -201,8 +200,7 @@ async function loadOnboardingRow(input: {
   repositoryId: string;
   workspaceId: string;
 }): Promise<OnboardingRow | null> {
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
+  const { data, error } = await input.admin
     .from("repository_onboarding_status")
     .select(
       "github_repository_id, status, setup_branch_name, setup_pr_number, setup_pr_url, installed_skill_version, installed_skill_hash, conflict_report, last_error, updated_at",
@@ -238,12 +236,11 @@ async function upsertOnboardingState(input: {
   status: RepositoryOnboardingState["status"];
   workspaceId: string;
 }): Promise<RepositoryOnboardingState> {
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
+  const { data, error } = await input.admin
     .from("repository_onboarding_status")
     .upsert(
       {
-        conflict_report: input.conflictReport ?? [],
+        conflict_report: (input.conflictReport ?? []) as Json,
         github_repository_id: input.repositoryId,
         installed_skill_hash: input.installedSkillHash ?? null,
         installed_skill_version: input.installedSkillVersion ?? null,
