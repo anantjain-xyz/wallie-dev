@@ -31,6 +31,12 @@ import { assertCurrentSandboxCapabilityCheck } from "@/lib/sandbox-capabilities/
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
 import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
+import {
+  formatSessionAttachmentPromptData,
+  loadSessionAttachmentInputs,
+  materializeSessionAttachments,
+  SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
+} from "@/lib/pipeline/session-attachments";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest, resumeSessionPullRequestPublication } from "./pull-request";
@@ -191,47 +197,23 @@ async function runStage(input: {
 
   const newVersion = session.current_artifact_version + 1;
 
-  const config = await loadWorkspaceAgentConfig(admin, session.workspace_id);
+  const [config, previousStages, attemptFeedback, operatingRulesMd, sessionAttachments] =
+    await Promise.all([
+      loadWorkspaceAgentConfig(admin, session.workspace_id),
+      loadCompletedStageArtifacts(admin, session.id),
+      loadLatestFeedback(admin, session.id, stage.id),
+      loadPipelineOperatingRules(admin, stage.pipelineId),
+      loadSessionAttachmentInputs(admin, {
+        sessionId: session.id,
+        workspaceId: session.workspace_id,
+      }),
+    ]);
   const provider = normalizeAgentProviderName(config.provider);
   if (!provider) {
     throw new Error(
       `Unknown agent provider: "${config.provider}". Supported: ${AGENT_PROVIDERS.join(", ")}`,
     );
   }
-
-  // Pull artifacts from completed prior stages so the prompt can reference
-  // them via {{artifact.previousStages.<slug>}}.
-  const previousStages = await loadCompletedStageArtifacts(admin, session.id);
-
-  // Resume-on-rejection: pull the most recent feedback for this stage so the
-  // template can include it via {{attempt.feedback}}. Match on stage_id so a
-  // rename in the editor doesn't cause us to miss the prior attempt.
-  const attemptFeedback = await loadLatestFeedback(admin, session.id, stage.id);
-
-  // Workspace-editable operating rules for this pipeline, prepended to the
-  // stage prompt so the cross-cutting discipline applies to every stage.
-  const operatingRulesMd = await loadPipelineOperatingRules(admin, stage.pipelineId);
-
-  const prompt = renderStagePrompt(
-    {
-      promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
-      slug: trustedPromptValue("stage.slug", stage.slug),
-    },
-    {
-      attemptFeedback:
-        attemptFeedback === null ? null : untrustedPromptValue("attempt.feedback", attemptFeedback),
-      attemptNumber: session.rejection_count + 1,
-      operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
-      previousStages: Object.fromEntries(
-        Object.entries(previousStages).map(([slug, artifact]) => [
-          slug,
-          untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
-        ]),
-      ),
-      sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
-      sessionTitle: untrustedPromptValue("session.title", session.title),
-    },
-  );
 
   let runId: string | null = null;
   let sandbox: SandboxHandle | null = null;
@@ -356,6 +338,49 @@ async function runStage(input: {
       });
     }
 
+    if (sessionAttachments.length > 0 && !sandbox) {
+      throw new Error("The configured agent runner cannot receive session image attachments.");
+    }
+
+    const materializedAttachments = sandbox
+      ? await materializeSessionAttachments(admin, sandbox, sessionAttachments)
+      : [];
+    const prompt = renderStagePrompt(
+      {
+        promptTemplateMd: trustedPromptValue("stage.promptTemplate", stage.promptTemplateMd),
+        slug: trustedPromptValue("stage.slug", stage.slug),
+      },
+      {
+        attemptFeedback:
+          attemptFeedback === null
+            ? null
+            : untrustedPromptValue("attempt.feedback", attemptFeedback),
+        attemptNumber: session.rejection_count + 1,
+        operatingRulesMd: trustedPromptValue("pipeline.operatingRules", operatingRulesMd),
+        previousStages: Object.fromEntries(
+          Object.entries(previousStages).map(([slug, artifact]) => [
+            slug,
+            untrustedPromptValue(`artifact.previousStages.${slug}`, artifact),
+          ]),
+        ),
+        sessionAttachmentInstructions:
+          materializedAttachments.length > 0
+            ? trustedPromptValue(
+                "session.attachmentInstructions",
+                SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS,
+              )
+            : undefined,
+        sessionAttachments:
+          materializedAttachments.length > 0
+            ? untrustedPromptValue(
+                "session.attachments",
+                formatSessionAttachmentPromptData(materializedAttachments),
+              )
+            : undefined,
+        sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
+        sessionTitle: untrustedPromptValue("session.title", session.title),
+      },
+    );
     for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,

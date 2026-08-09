@@ -34,7 +34,3 @@ export type VercelSandboxConnectionPreview = {
   updatedAt: string;
   workspaceId: string;
 };
-
-export type VercelSandboxConnectionResponse = {
-  connection: VercelSandboxConnectionPreview | null;
-};

@@ -1138,8 +1138,8 @@ function ArtifactBodyView({
       {isMarkdown && !showRaw ? (
         (serverTree ?? (
           <div
-            // The API creates this markup with the same server-only Markdown renderer and
-            // sanitization policy used for the initial server component tree.
+            // The API returns markup from the same canonical server renderer used
+            // for the initial server component tree.
             dangerouslySetInnerHTML={{ __html: artifact.sanitizedHtml ?? "" }}
           />
         ))

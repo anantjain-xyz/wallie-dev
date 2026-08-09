@@ -11,6 +11,7 @@ const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const STAGE_ID = "66666666-6666-4666-8666-666666666666";
+const ATTACHMENT_ID = "77777777-7777-4777-8777-777777777777";
 
 function mockFetch(response: { body: Record<string, unknown>; ok: boolean; status?: number }) {
   const fetchMock = vi.fn(async () => ({
@@ -72,6 +73,7 @@ describe("createSessionFromClient", () => {
     });
 
     const result = await createSessionFromClient({
+      attachmentIds: [ATTACHMENT_ID],
       githubRepositoryId: `  ${REPOSITORY_ID}  `,
       linearIssueUrl: "  https://linear.app/team/issue/TEAM-42/some-slug  ",
       promptMd: "  Add SSO  ",
@@ -83,6 +85,7 @@ describe("createSessionFromClient", () => {
     expect(result).toEqual({ canonicalUrl: "/w/acme/sessions/42", number: 42 });
     expect(fetchMock).toHaveBeenCalledWith("/api/sessions", {
       body: JSON.stringify({
+        attachmentIds: [ATTACHMENT_ID],
         githubRepositoryId: REPOSITORY_ID,
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",

@@ -332,6 +332,7 @@ export async function POST(request: Request) {
   try {
     const result = await createSessionWithFirstJob({
       admin,
+      attachmentIds: normalized.attachmentIds,
       creatorMemberId: access.context.currentMember.id,
       githubRepositoryId,
       linearIssueId: linearIssue?.identifier ?? normalized.linearIssueId,
@@ -365,6 +366,16 @@ export async function POST(request: Request) {
         {
           code: "session_options_changed",
           error: "The workspace pipeline changed. Refresh the stage options and try again.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (getErrorCode(error) === "P0004") {
+      return NextResponse.json(
+        {
+          code: "session_attachments_changed",
+          error: "One or more session images expired or changed. Remove them and upload again.",
         },
         { status: 409 },
       );

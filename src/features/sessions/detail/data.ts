@@ -38,9 +38,18 @@ export type SessionReviewPipeline = {
   stages: SessionReviewStage[];
 };
 
+export type SessionPromptAttachment = {
+  contentType: string;
+  fileName: string;
+  id: string;
+  position: number;
+  sizeBytes: number;
+};
+
 export type SessionReviewSession = {
   archivedAt: string | null;
   artifacts: SessionArtifactSummary[];
+  attachments: SessionPromptAttachment[];
   createdAt: string;
   currentArtifactVersion: number | null;
   currentStageId: string;
@@ -92,8 +101,16 @@ export type SessionDetailPageData = {
 type SessionDetailRpcPayload = {
   activity: SessionActivityContext;
   creatorDisplayName: string | null;
-  session: SessionReviewSession;
+  session: Omit<SessionReviewSession, "attachments">;
   workspaceSlug: string;
+};
+
+type SessionAttachmentRpcRow = {
+  attachment_position: number;
+  content_type: string;
+  id: string;
+  original_filename: string;
+  size_bytes: number;
 };
 
 type SessionDetailRpcAccessMiss = {
@@ -129,7 +146,11 @@ async function loadSessionDetailPageDataWithTiming(
   timing: ServerTimingCollector,
 ): Promise<SessionDetailPageData> {
   const supabase = await createSupabaseServerClient();
-  const [user, { data: rpcData, error: rpcError }] = await Promise.all([
+  const [
+    user,
+    { data: rpcData, error: rpcError },
+    { data: attachmentData, error: attachmentError },
+  ] = await Promise.all([
     timing.segment(
       "auth.get-user",
       () => getSupabaseUserOrNull(supabase),
@@ -147,6 +168,15 @@ async function loadSessionDetailPageDataWithTiming(
         rows: result.data ? 1 : 0,
       }),
     ),
+    timing.segment(
+      "session-attachments",
+      () =>
+        supabase.rpc("get_session_prompt_attachments", {
+          target_session_number: sessionNumber,
+          target_workspace_slug: workspaceSlug,
+        }),
+      (result) => ({ rows: result.data?.length ?? 0 }),
+    ),
   ]);
 
   if (!user) {
@@ -154,6 +184,7 @@ async function loadSessionDetailPageDataWithTiming(
   }
 
   if (rpcError) throw rpcError;
+  if (attachmentError) throw attachmentError;
   if (!rpcData) notFound();
 
   const payload = rpcData as SessionDetailRpcResult;
@@ -167,7 +198,10 @@ async function loadSessionDetailPageDataWithTiming(
 
   if (!payload.session || !payload.activity) notFound();
 
-  const review = serializeSessionReviewData(payload);
+  const review = serializeSessionReviewData(
+    payload,
+    (attachmentData ?? []) as SessionAttachmentRpcRow[],
+  );
   const repository = serializeSessionReviewRepository(payload.activity.repository);
   const capabilities = await timing.segment("review.authorization", () =>
     loadSessionReviewCapabilities({
@@ -215,7 +249,10 @@ export function serializeSessionReviewRepository(
  * RPC payload spreads so a database field cannot silently re-expand the RSC
  * contract.
  */
-export function serializeSessionReviewData(payload: SessionDetailRpcPayload): SessionReviewData {
+export function serializeSessionReviewData(
+  payload: SessionDetailRpcPayload,
+  attachments: SessionAttachmentRpcRow[] = [],
+): SessionReviewData {
   return {
     creatorDisplayName: payload.creatorDisplayName,
     session: {
@@ -225,6 +262,13 @@ export function serializeSessionReviewData(payload: SessionDetailRpcPayload): Se
         payload: artifact.payload,
         stageSlug: artifact.stageSlug,
         version: artifact.version,
+      })),
+      attachments: attachments.map((attachment) => ({
+        contentType: attachment.content_type,
+        fileName: attachment.original_filename,
+        id: attachment.id,
+        position: attachment.attachment_position,
+        sizeBytes: attachment.size_bytes,
       })),
       createdAt: payload.session.createdAt,
       currentArtifactVersion: payload.session.currentArtifactVersion,

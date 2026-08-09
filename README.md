@@ -193,7 +193,6 @@ workspaces/[workspaceId]/repository-profile/                    <- workspace_rep
 workspaces/[workspaceId]/sandbox-capability-check/              <- probe active sandbox-provider readiness
 workspaces/[workspaceId]/sandbox-settings/                      <- active provider + optimistic switching
 workspaces/[workspaceId]/sandbox-connections/[provider]/        <- encrypted Vercel/E2B/Daytona connections
-workspaces/[workspaceId]/vercel-sandbox-connection/             <- compatibility endpoint
 workspaces/[workspaceId]/linear-routing/                        <- workspace_linear_routing rules
 workspaces/[workspaceId]/onboarding/ + onboarding/complete/     <- per-workspace setup state
 workspaces/[workspaceId]/maintenance/tick/                      <- privileged maintenance trigger

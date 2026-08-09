@@ -1,15 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
+import {
+  registerSettingsDataReplayConsumer,
+  replaySettingsDataChanges,
+  SETTINGS_DATA_CHANGED,
+  type SettingsDataChangedDetail,
+} from "@/features/settings/settings-island-events";
 import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 
 export function VerifySetupIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => replaySettingsDataChanges(initialData, "verify-setup"));
   const { feedback, setMessage } = useIslandFeedback();
+  useEffect(() => {
+    return registerSettingsDataReplayConsumer(initialData.workspace.id, "verify-setup");
+  }, [initialData.workspace.id]);
+  useEffect(() => {
+    const handleDataChange = (event: Event) => {
+      const { update, workspaceId } = (event as CustomEvent<SettingsDataChangedDetail>).detail;
+      if (workspaceId !== initialData.workspace.id) return;
+      setData((current) => (typeof update === "function" ? update(current) : update));
+    };
+    window.addEventListener(SETTINGS_DATA_CHANGED, handleDataChange);
+    return () => window.removeEventListener(SETTINGS_DATA_CHANGED, handleDataChange);
+  }, [initialData.workspace.id]);
   return (
     <>
       {feedback}
@@ -31,7 +49,7 @@ export function MaintenanceIsland({
   }
 
   return (
-    <div className="mt-6 space-y-4">
+    <section className="scroll-mt-8 space-y-4" id="maintenance">
       {feedback}
       <MaintenancePanel
         canManage
@@ -39,6 +57,6 @@ export function MaintenanceIsland({
         setFlashMessage={setMessage}
         workspaceId={workspaceId}
       />
-    </div>
+    </section>
   );
 }

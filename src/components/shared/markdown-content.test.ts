@@ -1,14 +1,12 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MarkdownContent } from "@/components/shared/markdown-content";
+import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
 
 function render(markdown: string): string {
-  return renderToStaticMarkup(createElement(MarkdownContent, null, markdown));
+  return renderMarkdownToHtml(markdown);
 }
 
-describe("MarkdownContent", () => {
+describe("renderMarkdownToHtml", () => {
   it("renders markdown structure as real typography", () => {
     const html = render("# Review\n\nPR #12 reviewed.\n\n- one\n- two");
     expect(html).toContain("<h1");

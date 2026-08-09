@@ -14,9 +14,19 @@ import {
 } from "@/features/settings/sandbox-provider-section";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import type { FlashMessage } from "@/features/settings/settings-types";
-import { updateGithubInSettingsData } from "@/features/settings/settings-data-updates";
 import {
+  updateAgentConfigInSettingsData,
+  updateClaudeCodeConnectionInSettingsData,
+  updateCodexConnectionInSettingsData,
+  updateGithubInSettingsData,
+  updateLinearRoutingInSettingsData,
+  updateSecretsInSettingsData,
+} from "@/features/settings/settings-data-updates";
+import {
+  dispatchSettingsDataChanged,
   dispatchSettingsEvent,
+  registerSettingsDataReplayConsumer,
+  replaySettingsDataChanges,
   SETTINGS_GITHUB_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
   SETTINGS_SANDBOX_CHANGED,
@@ -98,6 +108,9 @@ export function GithubIntegrationIsland({
         onGithubChange={(nextGithub) => {
           setGithub(nextGithub);
           dispatchSettingsEvent(SETTINGS_GITHUB_CHANGED, nextGithub);
+          dispatchSettingsDataChanged(workspaceId, (current: SettingsPageData) =>
+            updateGithubInSettingsData(current, nextGithub),
+          );
         }}
         setFlashMessage={setMessage}
         workspaceId={workspaceId}
@@ -107,8 +120,15 @@ export function GithubIntegrationIsland({
 }
 
 export function RepositoryIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => replaySettingsDataChanges(initialData, "repository"));
   const { feedback, setMessage } = useIslandFeedback();
+  const updateData: Dispatch<SetStateAction<SettingsPageData>> = (update) => {
+    setData(update);
+    dispatchSettingsDataChanged(initialData.workspace.id, update);
+  };
+  useEffect(() => {
+    return registerSettingsDataReplayConsumer(initialData.workspace.id, "repository");
+  }, [initialData.workspace.id]);
   useEffect(() => {
     const handleGithubChange = (event: Event) => {
       const github = (event as CustomEvent<GithubChangedDetail>).detail;
@@ -120,7 +140,7 @@ export function RepositoryIntegrationIsland({ initialData }: { initialData: Sett
   return (
     <>
       {feedback}
-      <RepositoryAnalysisSection data={data} setData={setData} setFlashMessage={setMessage} />
+      <RepositoryAnalysisSection data={data} setData={updateData} setFlashMessage={setMessage} />
     </>
   );
 }
@@ -136,6 +156,9 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
         onSettingsChange={(settings) => {
           setData((current) => applySandboxSettingsToData(current, settings));
           dispatchSettingsEvent(SETTINGS_SANDBOX_CHANGED, settings);
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+            applySandboxSettingsToData(current, settings),
+          );
         }}
         setFlashMessage={setMessage}
         settings={data.sandboxSettings}
@@ -171,14 +194,22 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
     if (!broadcastSecrets.current) return;
     broadcastSecrets.current = false;
     dispatchSettingsEvent(SETTINGS_SECRETS_CHANGED, secrets);
-  }, [secrets]);
+    dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+      updateSecretsInSettingsData(current, secrets),
+    );
+  }, [initialData.workspace.id, secrets]);
   const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
   return (
     <LinearConfigurationSection
       canManage={initialData.canManage}
       isLoadingSecrets={false}
       linearSecret={linearSecret}
-      onRoutingSaved={setRouting}
+      onRoutingSaved={(nextRouting) => {
+        setRouting(nextRouting);
+        dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+          updateLinearRoutingInSettingsData(current, nextRouting),
+        );
+      }}
       routing={routing}
       setSecrets={updateSecrets}
       stages={pipeline?.stages ?? []}
@@ -220,7 +251,10 @@ export function RuntimeIntegrationIsland({
     if (!broadcastSecrets.current) return;
     broadcastSecrets.current = false;
     dispatchSettingsEvent(SETTINGS_SECRETS_CHANGED, secrets);
-  }, [secrets]);
+    dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+      updateSecretsInSettingsData(current, secrets),
+    );
+  }, [initialData.workspace.id, secrets]);
 
   return (
     <>
@@ -265,6 +299,21 @@ export function RuntimeIntegrationIsland({
           reconnectRequired: initialData.setupHealth.codexConnection.reconnectRequired,
           updatedAt: initialData.setupHealth.codexConnection.updatedAt,
         }}
+        onAgentConfigSaved={(entries) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+            updateAgentConfigInSettingsData(current, entries),
+          )
+        }
+        onClaudeCodeStatusChange={(status) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+            updateClaudeCodeConnectionInSettingsData(current, status),
+          )
+        }
+        onCodexStatusChange={(status) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
+            updateCodexConnectionInSettingsData(current, status),
+          )
+        }
         sandboxConnectionHref="#sandbox"
         sandboxConnectionLabel={
           sandboxData.setupHealth.sandboxConnection?.providerLabel ?? "a sandbox provider"

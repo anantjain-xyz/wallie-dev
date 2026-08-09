@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { MarkdownContent } from "@/components/shared/markdown-content";
-import { renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
+import { renderMarkdown, renderMarkdownToHtml } from "@/components/shared/markdown-content.server";
 import {
   ARTIFACT_FIXTURE_EMPTY,
   ARTIFACT_FIXTURE_FAILED,
@@ -14,7 +14,13 @@ import {
 } from "@/features/sessions/detail/artifact-fixtures";
 
 function render(markdown: string): string {
-  return renderToStaticMarkup(createElement(MarkdownContent, null, markdown));
+  return renderMarkdownToHtml(markdown);
+}
+
+function renderReader(markdown: string): string {
+  return renderToStaticMarkup(
+    createElement(MarkdownContent, { html: renderMarkdown(markdown).bodyHtml }),
+  );
 }
 
 describe("MarkdownContent fixtures", () => {
@@ -72,17 +78,13 @@ describe("MarkdownContent fixtures", () => {
   });
 });
 
-describe("renderMarkdownToHtml fixtures", () => {
-  it("matches client fixture coverage for supported elements and hostile content", async () => {
-    const full = await renderMarkdownToHtml(ARTIFACT_FIXTURE_FULL_MARKDOWN);
-    expect(full).toContain('class="artifact-heading-4"');
-    expect(full).toContain('aria-label="Table"');
-    expect(full).toContain('role="region"');
-    expect(full).toContain("artifact-table-scroll");
-
-    const hostile = await renderMarkdownToHtml(ARTIFACT_FIXTURE_HOSTILE);
-    expect(hostile).not.toContain("<script");
-    expect(hostile).not.toContain("javascript:");
-    expect(hostile).not.toContain("<img");
+describe("renderMarkdownToHtml", () => {
+  it.each([
+    ["supported elements", ARTIFACT_FIXTURE_FULL_MARKDOWN],
+    ["hostile content", ARTIFACT_FIXTURE_HOSTILE],
+    ["plain text", ARTIFACT_FIXTURE_PLAIN_TEXT],
+    ["empty Markdown", ARTIFACT_FIXTURE_EMPTY],
+  ])("serves the same canonical rendering to the reader and API for %s", (_name, markdown) => {
+    expect(renderMarkdownToHtml(markdown)).toBe(renderReader(markdown));
   });
 });

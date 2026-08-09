@@ -30,6 +30,9 @@ const mocked = vi.hoisted(() => ({
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
+  loadSessionAttachmentInputs: vi.fn().mockResolvedValue([]),
+  materializeSessionAttachments: vi.fn().mockResolvedValue([]),
+  formatSessionAttachmentPromptData: vi.fn(() => ""),
   loadWorkspaceAgentConfig: vi.fn(),
   loadRequiredWorkspaceSandboxConnection: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
@@ -68,6 +71,13 @@ vi.mock("./pull-request", () => ({
 
 vi.mock("@/lib/prompt-templates", () => ({
   renderStagePrompt: mocked.renderStagePrompt,
+}));
+
+vi.mock("@/lib/pipeline/session-attachments", () => ({
+  formatSessionAttachmentPromptData: mocked.formatSessionAttachmentPromptData,
+  loadSessionAttachmentInputs: mocked.loadSessionAttachmentInputs,
+  materializeSessionAttachments: mocked.materializeSessionAttachments,
+  SESSION_ATTACHMENT_PROMPT_INSTRUCTIONS: "attachment instructions",
 }));
 
 vi.mock("@/lib/agent-runner", () => ({
@@ -1015,6 +1025,52 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
   });
 
+  it("materializes session images and appends typed attachment context to the task", async () => {
+    const attachment = {
+      contentType: "image/png",
+      fileName: "design.png",
+      id: "attachment-1",
+      position: 1,
+      storagePath: "ws-1/attachment-1.png",
+    };
+    const materialized = {
+      contentType: "image/png",
+      fileName: "design.png",
+      id: "attachment-1",
+      position: 1,
+      sandboxPath: "/tmp/wallie-session-inputs/1-attachment-1.png",
+    };
+    mocked.loadSessionAttachmentInputs.mockResolvedValueOnce([attachment]);
+    mocked.materializeSessionAttachments.mockResolvedValueOnce([materialized]);
+    mocked.formatSessionAttachmentPromptData.mockReturnValueOnce(
+      "1. design.png -> /tmp/wallie-session-inputs/1-attachment-1.png",
+    );
+    const { admin } = buildAdminMock({ session: baseSession() });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(result.result).toBe("success");
+    expect(mocked.materializeSessionAttachments).toHaveBeenCalledWith(
+      admin,
+      expect.objectContaining({ repoPath: "/vercel/sandbox" }),
+      [attachment],
+    );
+    expect(mocked.renderStagePrompt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        sessionAttachmentInstructions: expect.objectContaining({
+          source: "session.attachmentInstructions",
+          trust: "trusted",
+        }),
+        sessionAttachments: expect.objectContaining({
+          source: "session.attachments",
+          trust: "untrusted",
+          value: "1. design.png -> /tmp/wallie-session-inputs/1-attachment-1.png",
+        }),
+      }),
+    );
+  });
+
   it("opens a session pull request after the artifact is persisted", async () => {
     const session = baseSession();
     const job = baseJob();
@@ -1332,7 +1388,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
     expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
-    expect(mocked.renderStagePrompt).toHaveBeenCalledTimes(1);
+    expect(mocked.renderStagePrompt).not.toHaveBeenCalled();
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
       { phase_status: "rejected" },

@@ -2,7 +2,11 @@ import "server-only";
 
 const PROMPT_VALUE_TOKEN: unique symbol = Symbol("wallie.prompt-value");
 
-export type TrustedPromptSource = "pipeline.operatingRules" | "stage.promptTemplate" | "stage.slug";
+export type TrustedPromptSource =
+  | "pipeline.operatingRules"
+  | "session.attachmentInstructions"
+  | "stage.promptTemplate"
+  | "stage.slug";
 
 export type UntrustedPromptSource =
   | "attempt.feedback"
@@ -11,6 +15,7 @@ export type UntrustedPromptSource =
   | "repo.fullName"
   | "repo.name"
   | "session.prompt"
+  | "session.attachments"
   | "session.title";
 
 type PromptTrust = "trusted" | "untrusted";

@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 
 import { MarkdownContent } from "@/components/shared/markdown-content";
+import { renderMarkdown } from "@/components/shared/markdown-content.server";
 import {
   SessionActivity,
   SessionActivityFallback,
@@ -25,7 +26,7 @@ export default async function SessionDetailPage({ params }: SessionDetailPagePro
     : null;
   const initialFormattedArtifact =
     latestArtifact && typeof latestArtifact.payload === "string" ? (
-      <MarkdownContent>{latestArtifact.payload}</MarkdownContent>
+      <MarkdownContent html={renderMarkdown(latestArtifact.payload).bodyHtml} />
     ) : null;
 
   return (

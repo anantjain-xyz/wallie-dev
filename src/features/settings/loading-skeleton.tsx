@@ -2,12 +2,6 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 
 const anchorGroupSizes = [4];
 
-const sectionSkeletons: {
-  rows: number;
-  tone?: "danger";
-  withAvatar?: boolean;
-}[] = [{ rows: 2 }, { rows: 3 }];
-
 function SettingsAnchorSkeleton() {
   return (
     <div className="hidden lg:block" aria-hidden="true">
@@ -110,12 +104,4 @@ export function SettingsLoadingSkeleton() {
       </section>
     </div>
   );
-}
-
-export function SettingsDeferredSectionsSkeleton() {
-  const representativeSection = sectionSkeletons[1];
-
-  return representativeSection ? (
-    <SettingsSectionSkeleton rows={representativeSection.rows} />
-  ) : null;
 }

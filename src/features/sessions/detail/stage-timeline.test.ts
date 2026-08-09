@@ -16,6 +16,7 @@ function makeSession(overrides: Partial<SessionReviewSession> = {}): SessionRevi
   return {
     archivedAt: null,
     artifacts: [],
+    attachments: [],
     createdAt: "2026-06-07T10:00:00.000Z",
     currentArtifactVersion: 1,
     currentStageId: "stage-2",

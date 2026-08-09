@@ -8,8 +8,16 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { MultiSelectField } from "@/components/ui/multi-select-field";
 import { useOptionalRouteProgress } from "@/components/ui/route-progress";
 import { SelectField } from "@/components/ui/select";
-import { createSessionFromClient } from "@/features/sessions/client";
+import {
+  createSessionFromClient,
+  deletePendingSessionAttachmentFromClient,
+  uploadSessionAttachmentFromClient,
+} from "@/features/sessions/client";
 import { extractLinearIssueId } from "@/features/sessions/linear-issue-url";
+import {
+  SessionImageAttachments,
+  type SessionImageDraft,
+} from "@/features/sessions/session-image-attachments";
 import {
   invalidateSessionRepositoryCache,
   preloadSessionRepositories as preloadSessionRepositoryCache,
@@ -19,6 +27,11 @@ import {
   type SessionRepositorySnapshot,
 } from "@/features/sessions/session-repository-cache";
 import { deriveSessionTitleFromPrompt } from "@/features/sessions/types";
+import {
+  allowedSessionAttachmentMimeTypes,
+  maxSessionAttachmentBytes,
+  maxSessionAttachments,
+} from "@/lib/storage/contracts";
 import { finishInteraction } from "@/lib/telemetry/interaction-rum";
 
 type CreateSessionDialogProps = {
@@ -58,11 +71,13 @@ export function isCreateSessionSubmitDisabled(input: {
   prompt: string;
   selectedStageCount: number;
   stageCount: number;
+  hasBlockingAttachments?: boolean;
 }) {
   const hasInvalidLinearUrl = Boolean(getLinearUrlError(input.linearUrl));
 
   return (
     input.isSubmitting ||
+    Boolean(input.hasBlockingAttachments) ||
     hasInvalidLinearUrl ||
     (!input.linearUrl.trim() && !input.prompt.trim()) ||
     !input.hasRepositoryResult ||
@@ -86,12 +101,16 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   const router = useRouter();
   const { startNavigation } = useOptionalRouteProgress();
   const submitInFlightRef = useRef(false);
+  const sessionCommittedRef = useRef(false);
+  const imageDraftsRef = useRef<SessionImageDraft[]>([]);
 
   useEffect(() => {
     finishInteraction("open_create_dialog", "success");
   }, []);
 
   const [prompt, setPrompt] = useState("");
+  const [imageDrafts, setImageDrafts] = useState<SessionImageDraft[]>([]);
+  const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [linearUrl, setLinearUrl] = useState("");
   const [githubRepositoryId, setGithubRepositoryId] = useState("");
@@ -107,6 +126,168 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
   const selectedStageIds = stageOptions
     .filter((stage) => !excludedStageIdSet.has(stage.id))
     .map((stage) => stage.id);
+  const hasBlockingAttachments = imageDrafts.some((image) => image.status !== "ready");
+  const hasActiveAttachmentOperation = imageDrafts.some(
+    (image) => image.status === "uploading" || image.status === "removing",
+  );
+
+  useEffect(() => {
+    return () => {
+      for (const image of imageDraftsRef.current) {
+        URL.revokeObjectURL(image.previewUrl);
+        if (!sessionCommittedRef.current && image.attachmentId) {
+          void deletePendingSessionAttachmentFromClient({
+            attachmentId: image.attachmentId,
+            workspaceId,
+          }).catch(() => undefined);
+        }
+      }
+    };
+  }, [workspaceId]);
+
+  function updateImageDrafts(
+    update: SessionImageDraft[] | ((current: SessionImageDraft[]) => SessionImageDraft[]),
+  ) {
+    const next = typeof update === "function" ? update(imageDraftsRef.current) : update;
+    imageDraftsRef.current = next;
+    setImageDrafts(next);
+  }
+
+  function handleImageFiles(files: File[]) {
+    const availableSlots = maxSessionAttachments - imageDraftsRef.current.length;
+    if (availableSlots <= 0) {
+      setAttachmentMessage("A session may include at most five images.");
+      return;
+    }
+
+    const selectedFiles = files.slice(0, availableSlots);
+    const rejectedFiles = selectedFiles.filter(
+      (file) =>
+        !allowedSessionAttachmentMimeTypes.includes(
+          file.type as (typeof allowedSessionAttachmentMimeTypes)[number],
+        ) ||
+        file.size < 1 ||
+        file.size > maxSessionAttachmentBytes,
+    );
+    const validFiles = selectedFiles.filter((file) => !rejectedFiles.includes(file));
+
+    if (files.length > availableSlots) {
+      setAttachmentMessage("Only the first available images were added; the limit is five.");
+    } else if (rejectedFiles.length > 0) {
+      setAttachmentMessage("Use PNG, JPEG, or WebP images under 4 MB each.");
+    } else {
+      setAttachmentMessage(null);
+    }
+
+    const drafts = validFiles.map((file) => ({
+      clientId: crypto.randomUUID(),
+      file,
+      fileName: file.name || "Pasted image",
+      previewUrl: URL.createObjectURL(file),
+      sizeBytes: file.size,
+      status: "uploading" as const,
+    }));
+    if (drafts.length === 0) return;
+
+    updateImageDrafts((current) => [...current, ...drafts]);
+    for (const draft of drafts) {
+      void uploadImageDraft(draft.clientId, draft.file);
+    }
+  }
+
+  async function uploadImageDraft(clientId: string, file: File) {
+    try {
+      const uploaded = await uploadSessionAttachmentFromClient({ file, workspaceId });
+      updateImageDrafts((current) =>
+        current.map((image) =>
+          image.clientId === clientId
+            ? {
+                ...image,
+                attachmentId: uploaded.id,
+                error: undefined,
+                fileName: uploaded.fileName,
+                sizeBytes: uploaded.sizeBytes,
+                status: "ready",
+              }
+            : image,
+        ),
+      );
+    } catch (error) {
+      updateImageDrafts((current) =>
+        current.map((image) =>
+          image.clientId === clientId
+            ? {
+                ...image,
+                error: error instanceof Error ? error.message : "Image upload failed.",
+                status: "error",
+              }
+            : image,
+        ),
+      );
+    }
+  }
+
+  async function handleRemoveImage(clientId: string) {
+    const image = imageDraftsRef.current.find((candidate) => candidate.clientId === clientId);
+    if (!image) return;
+
+    if (!image.attachmentId) {
+      URL.revokeObjectURL(image.previewUrl);
+      updateImageDrafts((current) =>
+        current.filter((candidate) => candidate.clientId !== clientId),
+      );
+      return;
+    }
+
+    updateImageDrafts((current) =>
+      current.map((candidate) =>
+        candidate.clientId === clientId
+          ? { ...candidate, error: undefined, status: "removing" }
+          : candidate,
+      ),
+    );
+
+    try {
+      await deletePendingSessionAttachmentFromClient({
+        attachmentId: image.attachmentId,
+        workspaceId,
+      });
+      URL.revokeObjectURL(image.previewUrl);
+      updateImageDrafts((current) =>
+        current.filter((candidate) => candidate.clientId !== clientId),
+      );
+    } catch (error) {
+      updateImageDrafts((current) =>
+        current.map((candidate) =>
+          candidate.clientId === clientId
+            ? {
+                ...candidate,
+                error: error instanceof Error ? error.message : "Image removal failed.",
+                status: "error",
+              }
+            : candidate,
+        ),
+      );
+    }
+  }
+
+  function handleRetryImage(clientId: string) {
+    const image = imageDraftsRef.current.find((candidate) => candidate.clientId === clientId);
+    if (!image) return;
+    if (image.attachmentId) {
+      void handleRemoveImage(clientId);
+      return;
+    }
+
+    updateImageDrafts((current) =>
+      current.map((candidate) =>
+        candidate.clientId === clientId
+          ? { ...candidate, error: undefined, status: "uploading" }
+          : candidate,
+      ),
+    );
+    void uploadImageDraft(clientId, image.file);
+  }
 
   function handleLinearBlur() {
     setLinearError(getLinearUrlError(linearUrl));
@@ -165,6 +346,11 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       return;
     }
 
+    if (hasBlockingAttachments) {
+      setErrorMessage("Wait for every image upload to finish or remove failed images.");
+      return;
+    }
+
     const nextLinearError = getLinearUrlError(linearUrl);
     if (nextLinearError) {
       setLinearError(nextLinearError);
@@ -178,6 +364,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
 
     try {
       const result = await createSessionFromClient({
+        attachmentIds: imageDrafts.map((image) => image.attachmentId!),
         githubRepositoryId: selectedGithubRepositoryId || null,
         linearIssueUrl: linearUrl.trim() || null,
         promptMd: prompt.trim(),
@@ -188,6 +375,7 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
       // The dialog now lives in the workspace shell (stays mounted across
       // route changes), so we must explicitly close it on success — the
       // previous page-scoped mounting closed it implicitly on navigation.
+      sessionCommittedRef.current = true;
       onClose();
       startNavigation(result.canonicalUrl);
       router.push(result.canonicalUrl);
@@ -217,13 +405,13 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
     <Dialog
       open
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && !isSubmitting) onClose();
+        if (!nextOpen && !isSubmitting && !hasActiveAttachmentOperation) onClose();
       }}
     >
       <DialogContent
         className="max-w-xl"
         description="Link a Linear issue or describe the work, then choose where Wallie should run."
-        dismissible={!isSubmitting}
+        dismissible={!isSubmitting && !hasActiveAttachmentOperation}
         title="Start a new session"
       >
         <form className="space-y-5" onKeyDown={handleFormKeyDown} onSubmit={handleSubmit}>
@@ -284,12 +472,32 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.items)
+                    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                    .map((item) => item.getAsFile())
+                    .filter((file): file is File => file !== null);
+                  if (files.length > 0) handleImageFiles(files);
+                }}
                 className="ui-textarea min-h-32 leading-6"
                 placeholder="What should Wallie build?"
               />
               <p className="type-annotation text-muted" id="session-prompt-description">
                 Required only when no Linear issue is linked.
               </p>
+              <SessionImageAttachments
+                disabled={isSubmitting}
+                images={imageDrafts}
+                maxImages={maxSessionAttachments}
+                onFiles={handleImageFiles}
+                onRemove={(clientId) => void handleRemoveImage(clientId)}
+                onRetry={handleRetryImage}
+              />
+              {attachmentMessage ? (
+                <p className="text-xs text-warning" role="status">
+                  {attachmentMessage}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -381,13 +589,19 @@ function CreateSessionDialogBody({ onClose, userId, workspaceId }: CreateSession
           ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-3">
-            <button type="button" disabled={isSubmitting} onClick={onClose} className="ui-button">
+            <button
+              type="button"
+              disabled={isSubmitting || hasActiveAttachmentOperation}
+              onClick={onClose}
+              className="ui-button"
+            >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isCreateSessionSubmitDisabled({
                 hasRepositoryResult: repositorySnapshot.data !== null,
+                hasBlockingAttachments,
                 isRepositoryStale: repositorySnapshot.isStale,
                 isSubmitting,
                 linearUrl,

@@ -127,6 +127,7 @@ describe("session review RSC contract", () => {
     expect(Object.keys(review.session)).toEqual([
       "archivedAt",
       "artifacts",
+      "attachments",
       "createdAt",
       "currentArtifactVersion",
       "currentStageId",
@@ -161,6 +162,29 @@ describe("session review RSC contract", () => {
     expect(reviewBytes).not.toBeNull();
     expect(reviewBytes!).toBeLessThanOrEqual(SESSION_REVIEW_PAYLOAD_TARGET_BYTES);
     expect(reviewBytes!).toBeLessThanOrEqual(SEEDED_SESSION_18_BASELINE_RPC_BYTES * 0.75);
+  });
+
+  it("serializes only the private attachment metadata needed by the Run input", () => {
+    const review = serializeSessionReviewData(makeRpcPayload(), [
+      {
+        attachment_position: 1,
+        content_type: "image/png",
+        id: "attachment-1",
+        original_filename: "design.png",
+        size_bytes: 2048,
+      },
+    ]);
+
+    expect(review.session.attachments).toEqual([
+      {
+        contentType: "image/png",
+        fileName: "design.png",
+        id: "attachment-1",
+        position: 1,
+        sizeBytes: 2048,
+      },
+    ]);
+    expect(JSON.stringify(review)).not.toContain("storage_path");
   });
 });
 
@@ -210,7 +234,7 @@ describe("session detail loader", () => {
 
     const loadPromise = loadSessionDetailPageData("acme-corp", "18");
 
-    await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(2));
     resolveUser(null);
 
     await expect(loadPromise).rejects.toThrow(
@@ -234,7 +258,7 @@ describe("session detail loader", () => {
     );
 
     expect(mocked.redirect).toHaveBeenCalledWith("/onboarding/workspace");
-    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(2);
     expect(from).not.toHaveBeenCalled();
   });
 
@@ -252,7 +276,7 @@ describe("session detail loader", () => {
 
     expect(mocked.notFound).toHaveBeenCalledOnce();
     expect(mocked.redirect).not.toHaveBeenCalled();
-    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(2);
     expect(from).not.toHaveBeenCalled();
   });
 
@@ -297,7 +321,13 @@ describe("session detail loader", () => {
       if (table === "agent_runs") return runsQuery;
       throw new Error(`unexpected table ${table}`);
     });
-    const rpc = vi.fn().mockResolvedValue({ data: payload, error: null });
+    const rpc = vi.fn((functionName: string) =>
+      Promise.resolve(
+        functionName === "get_session_prompt_attachments"
+          ? { data: [], error: null }
+          : { data: payload, error: null },
+      ),
+    );
 
     mocked.createSupabaseServerClient.mockResolvedValue({ from, rpc });
     mocked.getSupabaseUserOrNull.mockResolvedValue({ id: "user-1" });

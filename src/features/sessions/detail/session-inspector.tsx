@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
 
 import { TimeDisplay } from "@/components/shared/time-display";
@@ -205,15 +206,43 @@ export function SessionInspector({
               <span className="font-normal text-muted">{runInputOpen ? "Hide" : "Show"}</span>
             </button>
             {runInputOpen ? (
-              <pre
+              <div
                 aria-label="Run input"
                 id={runInputId}
-                className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-[4px] border border-border bg-canvas p-3 text-xs leading-5 text-foreground"
+                className="mt-2 max-h-80 space-y-3 overflow-auto rounded-[4px] border border-border bg-canvas p-3"
                 role="region"
                 tabIndex={0}
               >
-                {session.promptMd || "No run input recorded."}
-              </pre>
+                <pre className="whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
+                  {session.promptMd || "No run input recorded."}
+                </pre>
+                {session.attachments.length > 0 ? (
+                  <ul className="grid grid-cols-2 gap-2">
+                    {session.attachments.map((attachment) => (
+                      <li key={attachment.id} className="min-w-0">
+                        <a
+                          className="block overflow-hidden rounded-[4px] border border-border bg-control-muted"
+                          href={`/api/sessions/${session.id}/attachments/${attachment.id}`}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          <Image
+                            alt={attachment.fileName}
+                            className="h-24 w-full object-cover"
+                            height={96}
+                            src={`/api/sessions/${session.id}/attachments/${attachment.id}`}
+                            unoptimized
+                            width={160}
+                          />
+                          <span className="block truncate px-2 py-1 type-annotation text-foreground">
+                            {attachment.fileName}
+                          </span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             ) : (
               <p className="mt-1 type-annotation text-muted">
                 Collapsed — expand to inspect the original session input.
