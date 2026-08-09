@@ -143,21 +143,24 @@ tick.
 User and reconciler cancellation must call the shared cancellation service.
 Direct status updates do not close sandbox-attachment and late-write races.
 
-Current process shutdown is recovery-based, not draining:
+Graceful process shutdown drains already-claimed work:
 
 1. `SIGINT` or `SIGTERM` sets the shutdown flag.
-2. The worker deregisters its heartbeat row.
-3. The process exits immediately without awaiting in-flight jobs or sending
-   their runners an abort signal.
-4. Stale-heartbeat detection, retries, provider TTLs, and the reaper recover
-   abandoned work.
+2. The scheduler stops claiming new jobs while active jobs continue running.
+3. Heartbeat and maintenance timers remain active until every in-flight job
+   settles, so the stall detector continues to see those jobs as owned.
+4. The worker clears its timers, deregisters its heartbeat row, and exits
+   naturally after the drain completes.
+
+The worker does not impose a separate drain deadline. Sandbox provider timeouts
+bound normal execution, while a shorter application deadline would recreate the
+orphaned-command window that graceful draining is intended to close.
 
 Crash handlers log a stack and exit nonzero; the host restart policy is
 responsible for starting a replacement.
 
-Do not claim that a graceful signal completes in-flight work. A future draining
-policy would need a deadline, runner abort behavior, heartbeat semantics, and
-deployment proof.
+Hard kills, OOM termination, and hosts that do not deliver a graceful signal
+still rely on stale-heartbeat detection, retries, provider TTLs, and the reaper.
 
 ## Deployment and scaling
 
@@ -229,7 +232,6 @@ A healthy deployment should provide:
 
 - No public worker readiness/health endpoint or code/schema compatibility
   marker exists.
-- Shutdown does not drain.
 - Periodic recovery sweeps can overlap.
 - Heartbeat writes are not serialized, so a stale snapshot can overwrite a
   newer in-flight job set.
