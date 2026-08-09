@@ -21,4 +21,10 @@ describe("Supabase Realtime publication", () => {
     expect(migrationSql).toContain("'public.session_phase_completions'");
     expect(migrationSql).toContain("'public.session_pull_requests'");
   });
+
+  it("removes the legacy branch relation from Realtime", () => {
+    expect(migrationSql).toMatch(
+      /alter publication supabase_realtime\s+drop table only public\.github_issue_branches/,
+    );
+  });
 });
