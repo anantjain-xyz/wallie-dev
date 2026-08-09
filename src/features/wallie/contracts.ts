@@ -50,7 +50,6 @@ export type AgentRunActionResponse = {
 export type AgentRunActionErrorResponse = {
   code: WallieActionErrorCode;
   error: string;
-  missingSecretKeys?: string[];
   provider?: "vercel" | "e2b" | "daytona";
 };
 

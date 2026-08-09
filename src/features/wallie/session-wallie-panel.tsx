@@ -584,7 +584,6 @@ export function SessionWalliePanel({
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
-    missingSecretKeys: initialData.missingSecretKeys,
     mode: initialData.mode,
     repository: initialData.repository,
     requiresVercelSandbox: initialData.requiresVercelSandbox,
@@ -770,27 +769,6 @@ export function SessionWalliePanel({
       {connectionAnnouncement ? (
         <div aria-live="polite" className="sr-only" role="status">
           {connectionAnnouncement}
-        </div>
-      ) : null}
-
-      {initialData.requiredSecretKeys.length > 0 ? (
-        <div className="border-y border-border p-4">
-          <p className="ui-label">Required secrets</p>
-          <p className="mt-2 text-sm text-foreground">
-            {initialData.requiredSecretKeys.join(", ")}
-          </p>
-          <p className="mt-2 text-sm text-muted">
-            {initialData.missingSecretKeys.length === 0
-              ? "All required secrets are configured."
-              : `Missing: ${initialData.missingSecretKeys.join(", ")}`}
-          </p>
-          {initialData.missingSecretKeys.length > 0 ? (
-            <div className="mt-3">
-              <Link className={interactiveLinkClass} href={workspaceSettingsPath(workspaceSlug)}>
-                Open Workspace Settings
-              </Link>
-            </div>
-          ) : null}
         </div>
       ) : null}
 

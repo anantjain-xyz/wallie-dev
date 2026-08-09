@@ -7,7 +7,6 @@ export type WallieRunMode = "code" | "project";
 
 export type WallieBlockingCode =
   | "active_run"
-  | "missing_secret"
   | "repository_archived"
   | "repository_unavailable"
   | "sandbox_connection_invalid"
@@ -102,12 +101,10 @@ export type WallieSessionData = {
   blockingReasons: WallieBlockingReason[];
   canEnqueue: boolean;
   loadedMessageRunIds: string[];
-  missingSecretKeys: string[];
   mode: WallieRunMode;
   nextRunCursor: WallieRunCursor | null;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
-  requiredSecretKeys: string[];
   runs: WallieRun[];
   /** Workspace stall timeout used by the worker; UI mirrors it for "No recent activity". */
   stallTimeoutMs: number;

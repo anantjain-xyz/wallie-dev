@@ -4,7 +4,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveSandboxImplementation } from "@/lib/sandbox";
 import { RECOMMENDED_AGENT_CONFIG_DEFAULTS } from "@/lib/agent-config/contracts";
 import type { Tables } from "@/lib/supabase/database.types";
-import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import { buildWallieSessionData } from "@/features/wallie/data";
 import type {
   WallieSessionRepository,
@@ -133,7 +132,6 @@ export async function loadWallieRunPage(input: {
     sessionGithubRepositoryId: null,
     memberIndex: input.memberIndex,
     messages: [],
-    missingSecretKeys: [],
     repository: null,
     requiresVercelSandbox: false,
     runs: pageRows.map((row) => toBuildableRunRow(row, attemptOrdinals.get(row.id) ?? 1)),
@@ -166,24 +164,14 @@ export async function loadWallieSessionData(input: {
     .from("workspace_members")
     .select(memberSelect)
     .eq("workspace_id", input.workspaceId);
-  const secretRowsPromise =
-    WALLIE_REQUIRED_SECRET_KEYS.length > 0
-      ? admin
-          .from("workspace_secrets")
-          .select("key")
-          .eq("workspace_id", input.workspaceId)
-          .in("key", [...WALLIE_REQUIRED_SECRET_KEYS])
-      : Promise.resolve({ data: [], error: null });
   const [
     runPage,
     { data: memberRows, error: memberError },
-    { data: secretRows, error: secretError },
     vercelSandboxConnection,
     stallTimeoutMs,
   ] = await Promise.all([
     runPagePromise,
     memberRowsPromise,
-    secretRowsPromise,
     loadWallieVercelSandboxConnection(admin, input.workspaceId),
     loadWallieStallTimeoutMs(admin, input.workspaceId),
   ]);
@@ -192,14 +180,6 @@ export async function loadWallieSessionData(input: {
     throw memberError;
   }
 
-  if (secretError) {
-    throw secretError;
-  }
-
-  const availableSecretKeys = new Set((secretRows ?? []).map((secret) => secret.key));
-  const missingSecretKeys = [...WALLIE_REQUIRED_SECRET_KEYS].filter(
-    (secretKey) => !availableSecretKeys.has(secretKey),
-  );
   const members = ((memberRows ?? []) as WorkspaceMemberRow[]).map(mapWorkspaceMemberRow);
   const memberIndex = buildWorkspaceMemberIndex(members);
 
@@ -208,7 +188,6 @@ export async function loadWallieSessionData(input: {
     loadedMessageRunIds: [],
     memberIndex,
     messages: [],
-    missingSecretKeys,
     nextRunCursor: runPage.nextCursor,
     repository: input.repository,
     requiresVercelSandbox: resolveSandboxImplementation() !== "fake",

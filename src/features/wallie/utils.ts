@@ -42,7 +42,6 @@ export function canCancelWallieRun(status: Enums<"agent_run_status">) {
 
 export function buildWallieBlockingReasons(input: {
   hasActiveRun: boolean;
-  missingSecretKeys: string[];
   mode: WallieRunMode;
   repository: WallieSessionRepository | null;
   requiresVercelSandbox?: boolean;
@@ -73,13 +72,6 @@ export function buildWallieBlockingReasons(input: {
     reasons.push({
       code: "repository_archived",
       message: "Wallie cannot start a run against an archived repository.",
-    });
-  }
-
-  if (input.missingSecretKeys.length > 0) {
-    reasons.push({
-      code: "missing_secret",
-      message: `Wallie is missing required workspace secrets: ${input.missingSecretKeys.join(", ")}.`,
     });
   }
 

@@ -125,7 +125,7 @@ rotate auth tokens.
 
 The GitHub installation token is placed in the isolated sandbox's credential
 store for clone and push. Arbitrary `workspace_secrets` are not injected into
-the coding-agent process; `WALLIE_REQUIRED_SECRET_KEYS` is currently empty.
+the coding-agent process.
 
 Repository-local `AGENTS.md` files and installed skills are interpreted by the
 selected CLI. Wallie prepares those assets during repository onboarding, but

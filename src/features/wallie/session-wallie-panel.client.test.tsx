@@ -59,7 +59,6 @@ function data(
     blockingReasons: [],
     canEnqueue: true,
     loadedMessageRunIds: [],
-    missingSecretKeys: [],
     mode: "code",
     nextRunCursor: hasOlder
       ? {
@@ -76,7 +75,6 @@ function data(
       isArchived: false,
       isPrivate: true,
     },
-    requiredSecretKeys: [],
     requiresVercelSandbox: false,
     runs,
     stallTimeoutMs: 900_000,

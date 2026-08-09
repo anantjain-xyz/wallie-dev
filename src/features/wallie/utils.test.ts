@@ -39,22 +39,9 @@ describe("canRetryWallieRun", () => {
 });
 
 describe("buildWallieBlockingReasons", () => {
-  it("blocks when missing secret keys", () => {
-    const reasons = buildWallieBlockingReasons({
-      hasActiveRun: false,
-      missingSecretKeys: ["LINEAR_API_KEY"],
-      mode: "project",
-      repository: null,
-      vercelSandboxConnection: connectedVercel,
-    });
-    expect(reasons).toHaveLength(1);
-    expect(reasons[0]!.code).toBe("missing_secret");
-  });
-
   it("blocks code mode without a repository", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
-      missingSecretKeys: [],
       mode: "code",
       repository: null,
       vercelSandboxConnection: connectedVercel,
@@ -66,7 +53,6 @@ describe("buildWallieBlockingReasons", () => {
   it("no reasons when project mode is configured", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
-      missingSecretKeys: [],
       mode: "project",
       repository: null,
       vercelSandboxConnection: connectedVercel,
@@ -77,7 +63,6 @@ describe("buildWallieBlockingReasons", () => {
   it("identifies the selected provider when its sandbox connection is missing", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
-      missingSecretKeys: [],
       mode: "project",
       repository: null,
       vercelSandboxConnection: {
@@ -102,7 +87,6 @@ describe("buildWallieBlockingReasons", () => {
   it("does not block missing Vercel Sandbox when the selected sandbox does not require Vercel", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
-      missingSecretKeys: [],
       mode: "project",
       repository: null,
       requiresVercelSandbox: false,
@@ -122,7 +106,6 @@ describe("buildWallieBlockingReasons", () => {
   it("blocks when Vercel Sandbox is invalid", () => {
     const reasons = buildWallieBlockingReasons({
       hasActiveRun: false,
-      missingSecretKeys: [],
       mode: "project",
       repository: null,
       vercelSandboxConnection: {
