@@ -149,9 +149,9 @@ DECLARE
   gh_inst_id  uuid := '11b2c3d4-0001-4000-8000-000000000001';
   gh_repo1_id uuid := '12b2c3d4-0001-4000-8000-000000000001';
   gh_repo2_id uuid := '12b2c3d4-0002-4000-8000-000000000002';
-  gh_br1_id   uuid := '13b2c3d4-0001-4000-8000-000000000001';
-  gh_br2_id   uuid := '13b2c3d4-0002-4000-8000-000000000002';
-  gh_br3_id   uuid := '13b2c3d4-0003-4000-8000-000000000003';
+  session_pr1_id uuid := '13b2c3d4-0001-4000-8000-000000000001';
+  session_pr2_id uuid := '13b2c3d4-0002-4000-8000-000000000002';
+  session_pr3_id uuid := '13b2c3d4-0003-4000-8000-000000000003';
   repo_setup1_id uuid := '14b2c3d4-0001-4000-8000-000000000001';
   repo_setup2_id uuid := '14b2c3d4-0002-4000-8000-000000000002';
   repo_profile1_id uuid := '15b2c3d4-0001-4000-8000-000000000001';
@@ -937,19 +937,19 @@ BEGIN
   -- -------------------------------------------------------------------------
   -- 9. GitHub branches / PRs (linked to sessions)
   -- -------------------------------------------------------------------------
-  INSERT INTO public.github_issue_branches
+  INSERT INTO public.session_pull_requests
     (id, workspace_id, session_id, github_repository_id, branch_name,
      pull_request_number, pull_request_url, pull_request_state, is_draft, created_at)
   VALUES
-    (gh_br1_id, ws_id, sess6_id, gh_repo1_id,
+    (session_pr1_id, ws_id, sess6_id, gh_repo1_id,
      'feat/ci-cd-pipeline', 1,
      'https://github.com/acme-corp/webapp/pull/1', 'merged', false,
      now() - interval '11 days'),
-    (gh_br2_id, ws_id, sess4_id, gh_repo1_id,
+    (session_pr2_id, ws_id, sess4_id, gh_repo1_id,
      'feat/markdown-editor', 7,
      'https://github.com/acme-corp/webapp/pull/7', 'open', true,
      now() - interval '3 days'),
-    (gh_br3_id, ws_id, sess5_id, gh_repo1_id,
+    (session_pr3_id, ws_id, sess5_id, gh_repo1_id,
      'feat/triage-shortcuts', 12,
      'https://github.com/acme-corp/webapp/pull/12', 'open', false,
      now() - interval '1 day');
