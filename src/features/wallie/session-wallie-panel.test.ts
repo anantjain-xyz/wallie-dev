@@ -61,7 +61,6 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
   return {
     blockingReasons: [],
     canEnqueue: true,
-    missingSecretKeys: [],
     mode: "code",
     repository: {
       defaultBranch: "main",
@@ -73,7 +72,6 @@ function data(overrides: Partial<WallieSessionData> = {}): WallieSessionData {
       isPrivate: true,
     },
     requiresVercelSandbox: true,
-    requiredSecretKeys: [],
     runs,
     stallTimeoutMs: RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms,
     vercelSandboxConnection: {

@@ -134,7 +134,6 @@ describe("wallie service helpers", () => {
     expect(() =>
       assertSessionFirstRunReady({
         agentConfig: { effort: "xhigh", model: "gpt-5.5", provider: "codex" },
-        missingSecretKeys: [],
         repository: {
           defaultBranch: "main",
           defaultProgrammingLanguage: "TypeScript",
@@ -430,19 +429,6 @@ function buildSupabaseMocks(opts: {
             eq: () => ({
               eq: () => ({
                 maybeSingle: async () => ({ data: sessionRow, error: null }),
-              }),
-            }),
-          }),
-        };
-      }
-      if (table === "workspace_secrets") {
-        // No missing required secrets.
-        return {
-          select: () => ({
-            eq: () => ({
-              in: async () => ({
-                data: [],
-                error: null,
               }),
             }),
           }),

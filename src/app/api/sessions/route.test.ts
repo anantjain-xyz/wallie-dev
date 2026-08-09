@@ -229,7 +229,6 @@ describe("POST /api/sessions", () => {
     );
     mocked.loadSessionFirstRunPrerequisites.mockResolvedValue({
       agentConfig: { model: "gpt-5.5", provider: "codex" },
-      missingSecretKeys: [],
       vercelSandboxConnection: {
         connected: true,
         lastValidationError: null,

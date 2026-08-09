@@ -10,7 +10,6 @@ import {
   isWallieRunTerminalStatus,
   parseWallieRunMode,
 } from "@/features/wallie/utils";
-import { WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
 import type {
   WallieSessionData,
   WallieSessionRepository,
@@ -218,7 +217,6 @@ export function buildWallieSessionData(input: {
     Tables<"agent_run_messages">,
     "agent_run_id" | "created_at" | "id" | "kind" | "message_md"
   >[];
-  missingSecretKeys: string[];
   nextRunCursor?: WallieSessionData["nextRunCursor"];
   repository: WallieSessionRepository | null;
   requiresVercelSandbox: boolean;
@@ -269,7 +267,6 @@ export function buildWallieSessionData(input: {
   );
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: runs.some((run) => run.isActive),
-    missingSecretKeys: input.missingSecretKeys,
     mode,
     repository: input.repository,
     requiresVercelSandbox: input.requiresVercelSandbox,
@@ -280,12 +277,10 @@ export function buildWallieSessionData(input: {
     blockingReasons,
     canEnqueue: blockingReasons.length === 0,
     loadedMessageRunIds: [...(input.loadedMessageRunIds ?? messagesByRunId.keys())],
-    missingSecretKeys: input.missingSecretKeys,
     mode,
     nextRunCursor: input.nextRunCursor ?? null,
     repository: input.repository,
     requiresVercelSandbox: input.requiresVercelSandbox,
-    requiredSecretKeys: [...WALLIE_REQUIRED_SECRET_KEYS],
     runs,
     stallTimeoutMs: input.stallTimeoutMs ?? RECOMMENDED_AGENT_CONFIG_DEFAULTS.stall_timeout_ms,
     vercelSandboxConnection: input.vercelSandboxConnection,

@@ -131,11 +131,9 @@ function buildData(state: WallieActivityFixtureState): {
     blockingReasons: [],
     canEnqueue: true,
     loadedMessageRunIds: [],
-    missingSecretKeys: [],
     mode: "code",
     nextRunCursor: null,
     repository,
-    requiredSecretKeys: [],
     requiresVercelSandbox: false,
     runs: [],
     // Keep non-stalled fixtures immune to wall-clock drift after the live ticker starts.

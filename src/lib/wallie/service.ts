@@ -27,7 +27,7 @@ import {
   SandboxCapabilityCheckStaleError,
 } from "@/lib/sandbox-capabilities/readiness";
 import { loadWorkspaceSandboxOverview, providerLabel } from "@/lib/sandbox-connections/server";
-import { buildWallieJobDedupeKey, WALLIE_REQUIRED_SECRET_KEYS } from "@/lib/wallie/constants";
+import { buildWallieJobDedupeKey } from "@/lib/wallie/constants";
 
 type AdminClient = ReturnType<typeof createSupabaseAdminClient>;
 type WorkspaceAccessWorkspace = Pick<Tables<"workspaces">, "id" | "name" | "slug">;
@@ -69,20 +69,17 @@ export type WallieRunLookupRetryOptions = {
 
 export class WallieActionError extends Error {
   readonly code: WallieActionErrorCode;
-  readonly missingSecretKeys?: string[];
   readonly provider?: "vercel" | "e2b" | "daytona";
   readonly statusCode: number;
 
   constructor(input: {
     code: WallieActionErrorCode;
     message: string;
-    missingSecretKeys?: string[];
     provider?: "vercel" | "e2b" | "daytona";
     statusCode: number;
   }) {
     super(input.message);
     this.code = input.code;
-    this.missingSecretKeys = input.missingSecretKeys;
     this.name = "WallieActionError";
     this.provider = input.provider;
     this.statusCode = input.statusCode;
@@ -200,7 +197,7 @@ function isUniqueViolation(error: PostgrestError | null) {
   return error?.code === "23505";
 }
 
-function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKeys: string[]) {
+function toBlockingActionError(reasons: WallieBlockingReason[]) {
   const blockingReason = reasons.find((reason) => reason.code !== "active_run");
 
   if (!blockingReason) {
@@ -210,7 +207,6 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
   return new WallieActionError({
     code: blockingReason.code,
     message: reasons.map((reason) => reason.message).join(" "),
-    missingSecretKeys: blockingReason.code === "missing_secret" ? missingSecretKeys : undefined,
     provider: blockingReason.provider,
     statusCode: 422,
   });
@@ -218,7 +214,6 @@ function toBlockingActionError(reasons: WallieBlockingReason[], missingSecretKey
 
 export type SessionFirstRunPrerequisites = {
   agentConfig: Awaited<ReturnType<typeof loadWorkspaceAgentConfig>>;
-  missingSecretKeys: string[];
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
 };
 
@@ -227,30 +222,27 @@ export async function loadSessionFirstRunPrerequisites(input: {
   workspaceId: string;
 }): Promise<SessionFirstRunPrerequisites> {
   const admin = input.admin ?? createSupabaseAdminClient();
-  const [agentConfig, missingSecretKeys, vercelSandboxConnection] = await Promise.all([
+  const [agentConfig, vercelSandboxConnection] = await Promise.all([
     loadWorkspaceAgentConfig(admin, input.workspaceId),
-    loadMissingSecretKeys(admin, input.workspaceId),
     loadWallieVercelSandboxConnection(admin, input.workspaceId),
   ]);
 
-  return { agentConfig, missingSecretKeys, vercelSandboxConnection };
+  return { agentConfig, vercelSandboxConnection };
 }
 
 export function assertSessionFirstRunReady(input: {
   agentConfig: SessionFirstRunPrerequisites["agentConfig"];
-  missingSecretKeys: string[];
   repository: WallieSessionRepository | null;
   vercelSandboxConnection: WallieVercelSandboxConnectionStatus;
 }) {
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: false,
-    missingSecretKeys: input.missingSecretKeys,
     mode: inferWallieRunMode(input.repository?.id ?? null),
     repository: input.repository,
     requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
     vercelSandboxConnection: input.vercelSandboxConnection,
   });
-  const blockingError = toBlockingActionError(blockingReasons, input.missingSecretKeys);
+  const blockingError = toBlockingActionError(blockingReasons);
 
   if (blockingError) {
     throw blockingError;
@@ -447,26 +439,6 @@ async function loadStageSnapshot(
   }
 
   return data as StageSnapshot | null;
-}
-
-async function loadMissingSecretKeys(admin: AdminClient, workspaceId: string) {
-  if (WALLIE_REQUIRED_SECRET_KEYS.length === 0) {
-    return [];
-  }
-
-  const { data, error } = await admin
-    .from("workspace_secrets")
-    .select("key")
-    .eq("workspace_id", workspaceId)
-    .in("key", [...WALLIE_REQUIRED_SECRET_KEYS]);
-
-  if (error) {
-    throw error;
-  }
-
-  const availableKeys = new Set((data ?? []).map((secret) => secret.key));
-
-  return [...WALLIE_REQUIRED_SECRET_KEYS].filter((secretKey) => !availableKeys.has(secretKey));
 }
 
 async function loadWallieVercelSandboxConnection(
@@ -728,17 +700,15 @@ async function validateQueuedRunRequest(input: {
   }
 
   const workspace = input.workspace;
-  const [repositoryResolution, missingSecretKeys, activeRun, vercelSandboxConnection] =
-    await Promise.all([
-      resolveEffectiveSessionRepository({
-        sessionId: session.id,
-        supabase: input.admin,
-        workspaceId: workspace.id,
-      }),
-      loadMissingSecretKeys(input.admin, workspace.id),
-      loadActiveRunForSession(input.admin, session.id),
-      loadWallieVercelSandboxConnection(input.admin, workspace.id),
-    ]);
+  const [repositoryResolution, activeRun, vercelSandboxConnection] = await Promise.all([
+    resolveEffectiveSessionRepository({
+      sessionId: session.id,
+      supabase: input.admin,
+      workspaceId: workspace.id,
+    }),
+    loadActiveRunForSession(input.admin, session.id),
+    loadWallieVercelSandboxConnection(input.admin, workspace.id),
+  ]);
   const repository: WallieSessionRepository | null = repositoryResolution.repository
     ? {
         defaultBranch: repositoryResolution.repository.defaultBranch,
@@ -764,13 +734,12 @@ async function validateQueuedRunRequest(input: {
 
   const blockingReasons = buildWallieBlockingReasons({
     hasActiveRun: false,
-    missingSecretKeys,
     mode: runType,
     repository,
     requiresVercelSandbox: resolveSandboxImplementation() !== "fake",
     vercelSandboxConnection,
   });
-  const blockingError = toBlockingActionError(blockingReasons, missingSecretKeys);
+  const blockingError = toBlockingActionError(blockingReasons);
 
   if (blockingError) {
     throw blockingError;
