@@ -793,10 +793,6 @@
     background: Highlight;
   }
 
-  .settings-anchor-group {
-    @apply px-3 pb-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-muted;
-  }
-
   .settings-anchor {
     @apply flex items-center justify-between gap-2 rounded-[6px] px-3 py-1.5 text-[13px] font-medium text-muted transition-colors duration-100;
   }
