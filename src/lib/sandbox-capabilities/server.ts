@@ -12,8 +12,7 @@ import { getCodexCredentialForUser } from "@/lib/codex/tokens";
 import { createSessionSandbox } from "@/lib/sandbox";
 import type { AgentProvider, SandboxConnection } from "@/lib/sandbox/types";
 import { loadRequiredWorkspaceSandboxConnection } from "@/lib/sandbox-connections/server";
-import { asLooseSupabaseClient } from "@/lib/supabase/loose";
-import type { Database } from "@/lib/supabase/database.types";
+import type { Database, Json } from "@/lib/supabase/database.types";
 import {
   capabilityReportSucceeded,
   probeSandboxCapabilities,
@@ -160,11 +159,10 @@ async function updateCheck(input: {
     };
   }
 
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
+  const { data, error } = await input.admin
     .from("sandbox_capability_checks")
     .update({
-      capabilities: input.capabilities,
+      capabilities: input.capabilities as Json,
       checked_at: new Date().toISOString(),
       error_text: input.errorText,
       status: input.status,
@@ -189,9 +187,8 @@ async function updateCheckSandbox(input: {
 }): Promise<void> {
   if (!input.checkId) return;
 
-  const loose = asLooseSupabaseClient(input.admin);
   const vercel = input.connection.provider === "vercel" ? input.connection.credentials : null;
-  const { error } = await loose
+  const { error } = await input.admin
     .from("sandbox_capability_checks")
     .update({
       agent_model: input.agentModel,
@@ -243,8 +240,7 @@ export async function getLatestSandboxCapabilityCheck(input: {
   repositoryId: string;
   workspaceId: string;
 }): Promise<SandboxCapabilityCheckState | null> {
-  const loose = asLooseSupabaseClient(input.admin);
-  const { data, error } = await loose
+  const { data, error } = await input.admin
     .from("sandbox_capability_checks")
     .select(
       "id, github_repository_id, status, capabilities, error_text, checked_at, agent_provider, agent_model, sandbox_provider, sandbox_connection_revision, sandbox_vercel_team_id, sandbox_vercel_project_id",
