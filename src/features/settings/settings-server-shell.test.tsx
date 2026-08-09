@@ -88,8 +88,8 @@ describe("Settings server shell", () => {
     expect(html).toContain("Linear integration island");
     expect(html).toContain("Sandbox integration island");
     expect(html).toContain("Runtime integration island");
+    expect(html).toContain("Verify setup island");
     expect(html).not.toContain("Workspace identity island");
-    expect(html).not.toContain("Verify setup island");
   });
 
   it("renders only workspace, members, and danger-zone islands for workspace", async () => {
@@ -102,13 +102,13 @@ describe("Settings server shell", () => {
     expect(html).not.toContain("Verify setup island");
   });
 
-  it("renders only setup, usage, and maintenance content for advanced", async () => {
+  it("renders only usage, maintenance, and rate-limit content for advanced", async () => {
     const html = await renderSettingsCategory("advanced");
 
-    expect(html).toContain("Verify setup island");
     expect(html).toContain("Total runs");
     expect(html).toContain(">3<");
     expect(html).toContain("Maintenance island");
+    expect(html).not.toContain("Verify setup island");
     expect(html).not.toContain("GitHub integration island");
     expect(html).not.toContain("Workspace identity island");
   });

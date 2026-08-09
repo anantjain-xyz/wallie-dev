@@ -52,6 +52,12 @@ vi.mock("@/features/settings/linear-configuration-section", () => ({
   ),
 }));
 
+vi.mock("@/features/settings/repository-analysis-section", () => ({
+  RepositoryAnalysisSection: ({ data }: { data: SettingsPageData }) => (
+    <output>Repository GitHub {data.github.installation?.targetName ?? "missing"}</output>
+  ),
+}));
+
 vi.mock("@/features/settings/sandbox-provider-section", () => ({
   SandboxProviderSection: ({
     vercelConnection,
@@ -112,10 +118,14 @@ vi.mock("@/features/settings/sandbox-provider-section", () => ({
 import {
   GithubIntegrationIsland,
   LinearIntegrationIsland,
+  RepositoryIntegrationIsland,
   RuntimeIntegrationIsland,
   VercelIntegrationIsland,
 } from "@/features/settings/islands/integration-islands";
-import { SETTINGS_PIPELINE_CHANGED } from "@/features/settings/settings-island-events";
+import {
+  dispatchSettingsDataChanged,
+  SETTINGS_PIPELINE_CHANGED,
+} from "@/features/settings/settings-island-events";
 
 function data(): SettingsPageData {
   return {
@@ -159,6 +169,23 @@ function data(): SettingsPageData {
 }
 
 describe("Settings client-island isolation", () => {
+  it("replays GitHub changes when a suspended repository island mounts later", () => {
+    const initialData = data();
+    dispatchSettingsDataChanged(initialData.workspace.id, (current) => ({
+      ...current,
+      github: {
+        ...current.github,
+        installation: {
+          targetName: "updated",
+        } as SettingsPageData["github"]["installation"],
+      },
+    }));
+
+    render(<RepositoryIntegrationIsland initialData={initialData} />);
+
+    expect(screen.getByText("Repository GitHub updated")).not.toBeNull();
+  });
+
   it("refreshes Linear stage options when the pipeline island saves", () => {
     const initialData = {
       ...data(),
