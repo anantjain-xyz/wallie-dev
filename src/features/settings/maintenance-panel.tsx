@@ -3,12 +3,14 @@
 import { useState } from "react";
 
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
-import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
 import type { FlashMessage } from "@/features/settings/settings-types";
 import { useApiAction } from "@/features/settings/use-api-action";
+import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
+import { cn } from "@/lib/utils";
 
 type MaintenancePanelProps = {
   canManage: boolean;
+  className?: string;
   setFlashMessage: (message: FlashMessage) => void;
   workspaceId: string;
 };
@@ -53,6 +55,7 @@ function SummaryCell({ label, value }: { label: string; value: string }) {
 
 export function MaintenancePanel({
   canManage,
+  className,
   setFlashMessage,
   workspaceId,
 }: MaintenancePanelProps) {
@@ -73,7 +76,7 @@ export function MaintenancePanel({
   }
 
   return (
-    <div className="mt-6 rounded-[6px] border border-border bg-sheet px-5 py-4">
+    <div className={cn("mt-6 rounded-[6px] border border-border bg-sheet px-5 py-4", className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-foreground">Maintenance</h3>
