@@ -412,7 +412,7 @@ function PipelinePageContent({
     [initialData.workspace.id],
   );
 
-  const hasAnySession = board.lanes.some((lane) => lane.totalCount > 0);
+  const hasActiveSessions = board.lanes.some((lane) => lane.totalCount > 0);
   const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
   const stageCount = Math.max(board.lanes.length, 1);
   const laneKeys = board.lanes.map((lane) => pipelineLaneKey(lane));
@@ -452,7 +452,7 @@ function PipelinePageContent({
           title="Pipeline"
         />
 
-        {hasAnySession ? (
+        {hasActiveSessions ? (
           <CommandBar aria-label="Pipeline filters" className="mb-5">
             <label className="min-w-[14rem] flex-1 space-y-1.5">
               <span className="text-[13px] font-medium text-foreground">Search</span>
@@ -492,11 +492,12 @@ function PipelinePageContent({
         ) : null}
       </div>
 
-      {!hasAnySession ? (
+      {!hasActiveSessions ? (
         <div className="px-4 pb-12 sm:px-8">
           <div className="mx-auto max-w-2xl">
             <SessionsZeroState
               onboarding={initialData.onboarding}
+              variant={initialData.hasAnySession ? "archived" : "first-run"}
               workspaceSlug={initialData.workspace.slug}
               newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
             />

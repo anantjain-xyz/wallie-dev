@@ -20,8 +20,9 @@ export default async function PipelineBoardFixturePage({
   return (
     <PipelineBoardFixture
       initialTheme={theme === "dark" ? "dark" : "light"}
-      key={`${theme ?? "light"}:${stageCount}`}
+      key={`${theme ?? "light"}:${stageCount}:${state ?? "active"}`}
       stageCount={stageCount as 3 | 5 | 7}
+      state={state === "archived" ? "archived" : "active"}
     />
   );
 }

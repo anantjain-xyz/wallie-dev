@@ -51,6 +51,7 @@ export type PipelineBoardState = {
 };
 
 export type PipelineDashboardData = {
+  hasAnySession: boolean;
   lanes: PipelineDashboardLane[];
   onboarding: OnboardingResumeState | null;
   workspace: { id: string; name: string; slug: string };

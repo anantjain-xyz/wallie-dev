@@ -93,11 +93,14 @@ function fixtureCard(
   };
 }
 
-export function buildPipelineFixtureData(stageCount: 3 | 5 | 7): PipelineDashboardData {
+export function buildPipelineFixtureData(
+  stageCount: 3 | 5 | 7,
+  state: "active" | "archived" = "active",
+): PipelineDashboardData {
   const stages = STAGE_PRESETS[stageCount];
   const lanes: PipelineDashboardLane[] = stages.map((stage, index) => {
     const cards =
-      index === stages.length - 1
+      state === "archived" || index === stages.length - 1
         ? []
         : [
             fixtureCard(index * 3 + 1, index, STATUS_CYCLE[index % STATUS_CYCLE.length]!),
@@ -117,6 +120,7 @@ export function buildPipelineFixtureData(stageCount: 3 | 5 | 7): PipelineDashboa
   });
 
   return {
+    hasAnySession: state === "archived" || lanes.some((lane) => lane.totalCount > 0),
     lanes,
     onboarding: null,
     workspace: { id: WORKSPACE_ID, name: "Wallie", slug: "wallie" },
@@ -126,12 +130,14 @@ export function buildPipelineFixtureData(stageCount: 3 | 5 | 7): PipelineDashboa
 export function PipelineBoardFixture({
   initialTheme = "light",
   stageCount = 3,
+  state = "active",
 }: {
   initialTheme?: "dark" | "light";
   stageCount?: 3 | 5 | 7;
+  state?: "active" | "archived";
 }) {
   const [theme, setTheme] = useState<"dark" | "light">(initialTheme);
-  const data = buildPipelineFixtureData(stageCount);
+  const data = buildPipelineFixtureData(stageCount, state);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

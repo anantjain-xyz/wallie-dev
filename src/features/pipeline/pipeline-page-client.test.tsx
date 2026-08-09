@@ -42,7 +42,9 @@ vi.mock("@/features/sessions/components/session-detail-link", () => ({
 }));
 
 vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
-  SessionsZeroState: () => <p>No sessions</p>,
+  SessionsZeroState: ({ variant }: { variant?: string }) => (
+    <p data-zero-state-variant={variant}>No sessions</p>
+  ),
 }));
 
 import {
@@ -91,6 +93,7 @@ function initialData(
   buildCards = [card(3, BUILD_STAGE_ID)],
 ): PipelineDashboardData {
   return {
+    hasAnySession: planCards.length > 0 || buildCards.length > 0,
     lanes: [
       {
         cards: planCards,
@@ -202,6 +205,32 @@ describe("PipelinePageClient", () => {
     mocked.cardLinkRenders.clear();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("distinguishes an archived-only workspace from first run", () => {
+    installSupabaseMock();
+    const emptyLanes = initialData().lanes.map((lane) => ({
+      ...lane,
+      cards: [],
+      cursor: null,
+      totalCount: 0,
+    }));
+
+    const view = render(
+      <PipelinePageClient
+        enableRealtime={false}
+        initialData={{ ...initialData([], []), hasAnySession: true, lanes: emptyLanes }}
+      />,
+    );
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("archived");
+
+    view.rerender(
+      <PipelinePageClient
+        enableRealtime={false}
+        initialData={{ ...initialData([], []), hasAnySession: false, lanes: emptyLanes }}
+      />,
+    );
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("first-run");
   });
 
   it("renders one semantic card tree with adaptive board geometry and mobile stage tabs", async () => {
