@@ -16,6 +16,7 @@ export type UntrustedPromptSource =
   | "repo.name"
   | "session.prompt"
   | "session.attachments"
+  | "session.pullRequest"
   | "session.title";
 
 type PromptTrust = "trusted" | "untrusted";

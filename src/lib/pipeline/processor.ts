@@ -40,7 +40,12 @@ import {
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest, resumeSessionPullRequestPublication } from "./pull-request";
-import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
+import {
+  loadCompletedStageArtifacts,
+  loadPipelineOperatingRules,
+  loadSessionPullRequestContext,
+  loadStageById,
+} from "./stages";
 import { PIPELINE_JOB_TYPE } from "./types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -206,17 +211,24 @@ async function runStage(input: {
 
   const newVersion = session.current_artifact_version + 1;
 
-  const [config, previousStages, attemptFeedback, operatingRulesMd, sessionAttachments] =
-    await Promise.all([
-      loadWorkspaceAgentConfig(admin, session.workspace_id),
-      loadCompletedStageArtifacts(admin, session.id),
-      loadLatestFeedback(admin, session.id, stage.id),
-      loadPipelineOperatingRules(admin, stage.pipelineId),
-      loadSessionAttachmentInputs(admin, {
-        sessionId: session.id,
-        workspaceId: session.workspace_id,
-      }),
-    ]);
+  const [
+    config,
+    previousStages,
+    attemptFeedback,
+    operatingRulesMd,
+    sessionAttachments,
+    pullRequest,
+  ] = await Promise.all([
+    loadWorkspaceAgentConfig(admin, session.workspace_id),
+    loadCompletedStageArtifacts(admin, session.id),
+    loadLatestFeedback(admin, session.id, stage.id),
+    loadPipelineOperatingRules(admin, stage.pipelineId),
+    loadSessionAttachmentInputs(admin, {
+      sessionId: session.id,
+      workspaceId: session.workspace_id,
+    }),
+    loadSessionPullRequestContext(admin, session.id),
+  ]);
   const provider = normalizeAgentProviderName(config.provider);
   if (!provider) {
     throw new Error(
@@ -387,6 +399,12 @@ async function runStage(input: {
               )
             : undefined,
         sessionPrompt: untrustedPromptValue("session.prompt", session.prompt_md),
+        sessionPullRequest: pullRequest
+          ? untrustedPromptValue(
+              "session.pullRequest",
+              `Pull request #${pullRequest.number}: ${pullRequest.url}`,
+            )
+          : undefined,
         sessionTitle: untrustedPromptValue("session.title", session.title),
       },
     );
@@ -1804,14 +1822,17 @@ async function markPipelineJobError(
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
   if (options.retry !== false && job.attempt_count < maxRetries) {
-    const { error: retryError } = await admin.rpc("schedule_job_retry", {
-      target_job_id: job.id,
-      base_delay_ms: 5000,
-      max_backoff_ms: 300000,
-    });
+    const { data: retriedJobs, error: retryError } = await admin.rpc(
+      "schedule_job_retry_with_error",
+      {
+        target_job_id: job.id,
+        error_message: errorMessage,
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+      },
+    );
 
-    if (!retryError) {
-      await admin.from("agent_jobs").update({ last_error: errorMessage }).eq("id", job.id);
+    if (!retryError && retriedJobs.length > 0) {
       return true;
     }
   }

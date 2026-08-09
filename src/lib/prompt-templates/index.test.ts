@@ -74,6 +74,21 @@ describe("renderStagePrompt", () => {
     expect(result.indexOf("## Session image inputs")).toBeGreaterThan(result.indexOf("Prompt:"));
   });
 
+  it("appends the Wallie-recorded pull request for subsequent stages", () => {
+    const result = renderStagePrompt(stage, {
+      ...baseInput,
+      sessionPullRequest: untrustedPromptValue(
+        "session.pullRequest",
+        "Pull request #42: https://github.com/acme/app/pull/42",
+      ),
+    });
+
+    expect(result).toContain("## Wallie pull request");
+    expect(result).toContain("Source: session.pullRequest");
+    expect(result).toContain("https://github.com/acme/app/pull/42");
+    expect(result.indexOf("## Wallie pull request")).toBeGreaterThan(result.indexOf("Prompt:"));
+  });
+
   it("renders classified template variables inside trusted operating rules", () => {
     const result = renderStagePrompt(stage, {
       ...baseInput,

@@ -14,6 +14,10 @@ const classifiedInput = {
   previousStages: {
     plan: untrustedPromptValue("artifact.previousStages.plan", "Approved plan"),
   },
+  sessionPullRequest: untrustedPromptValue(
+    "session.pullRequest",
+    "Pull request #42: https://github.com/acme/app/pull/42",
+  ),
   sessionPrompt: untrustedPromptValue("session.prompt", "Implement the approved plan"),
   sessionTitle: untrustedPromptValue("session.title", "Typed prompt boundaries"),
 };

@@ -2198,6 +2198,43 @@ export type Database = {
           credential_version: number
         }[]
       }
+      recover_stalled_publication_job: {
+        Args: {
+          base_delay_ms?: number
+          expected_last_error: string
+          expected_updated_at: string
+          max_backoff_ms?: number
+          max_retries: number
+          stall_reason: string
+          target_job_id: string
+        }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          dedupe_key: string | null
+          finished_at: string | null
+          id: string
+          job_type: string
+          last_error: string | null
+          requested_by_member_id: string | null
+          scheduled_at: string | null
+          session_id: string
+          stage_id: string | null
+          stage_name: string | null
+          stage_slug: string | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["agent_job_status"]
+          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+          updated_at: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "agent_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       remove_workspace_member: {
         Args: { expected_workspace_id: string; target_member_id: string }
         Returns: {
@@ -2268,6 +2305,40 @@ export type Database = {
       schedule_job_retry: {
         Args: {
           base_delay_ms?: number
+          max_backoff_ms?: number
+          target_job_id: string
+        }
+        Returns: {
+          attempt_count: number
+          created_at: string
+          dedupe_key: string | null
+          finished_at: string | null
+          id: string
+          job_type: string
+          last_error: string | null
+          requested_by_member_id: string | null
+          scheduled_at: string | null
+          session_id: string
+          stage_id: string | null
+          stage_name: string | null
+          stage_slug: string | null
+          started_at: string | null
+          status: Database["public"]["Enums"]["agent_job_status"]
+          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
+          updated_at: string
+          workspace_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "agent_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      schedule_job_retry_with_error: {
+        Args: {
+          base_delay_ms?: number
+          error_message: string
           max_backoff_ms?: number
           target_job_id: string
         }
@@ -2372,7 +2443,6 @@ export type Database = {
     }
   }
 }
-
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
 type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]

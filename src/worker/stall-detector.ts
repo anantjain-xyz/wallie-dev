@@ -209,8 +209,6 @@ export async function sweepStalledRuns(
       continue;
     }
 
-    await unblockStalledSession(admin, job.session_id);
-
     console.log("[stall-detector] recovered stalled publication job", {
       elapsed: `${Math.round(elapsed / 1000)}s`,
       jobId: job.id,
@@ -434,33 +432,18 @@ async function recoverStalledPublicationJob(input: {
   stallReason: string;
 }): Promise<boolean> {
   const { admin, job, maxRetries, result, stallReason } = input;
-  const retry = job.attempt_count < maxRetries;
-  const patch = retry
-    ? {
-        finished_at: null,
-        scheduled_at: new Date(
-          Date.now() + Math.min(5000 * 2 ** job.attempt_count, 300000),
-        ).toISOString(),
-        status: "queued" as const,
-      }
-    : {
-        finished_at: new Date().toISOString(),
-        last_error: stallReason,
-        status: "error" as const,
-      };
-
-  // The active-job list is only a snapshot. Claim the exact row version before
-  // changing either the job or its session so a publication that completed in
-  // the meantime cannot be requeued or parked by this sweep.
-  const { data: recovered, error } = await admin
-    .from("agent_jobs")
-    .update(patch)
-    .eq("id", job.id)
-    .eq("status", "running")
-    .eq("updated_at", job.updated_at)
-    .eq("last_error", job.last_error)
-    .select("id")
-    .maybeSingle();
+  // Atomically claim the exact snapshot, park the session, and only then make
+  // the job claimable. A direct job update followed by a separate session
+  // update lets another worker claim the retry in between those operations.
+  const { data: recoveredJobs, error } = await admin.rpc("recover_stalled_publication_job", {
+    target_job_id: job.id,
+    expected_updated_at: job.updated_at,
+    expected_last_error: job.last_error,
+    stall_reason: stallReason,
+    max_retries: maxRetries,
+    base_delay_ms: 5000,
+    max_backoff_ms: 300000,
+  });
 
   if (error) {
     console.error("[stall-detector] failed to recover publication retry job", {
@@ -470,24 +453,17 @@ async function recoverStalledPublicationJob(input: {
     return false;
   }
 
+  const recovered = recoveredJobs[0];
   if (!recovered) {
     return false;
   }
 
-  if (retry) {
+  if (recovered.status === "queued") {
     result.retriedJobIds.push(job.id);
   } else {
     result.stalledJobIds.push(job.id);
   }
   return true;
-}
-
-async function unblockStalledSession(admin: AdminClient, sessionId: string): Promise<void> {
-  await admin
-    .from("sessions")
-    .update({ phase_status: "rejected" })
-    .eq("id", sessionId)
-    .eq("phase_status", "in_progress");
 }
 
 /**

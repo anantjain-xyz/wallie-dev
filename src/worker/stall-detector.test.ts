@@ -280,6 +280,34 @@ function buildAdminMock(state: MockState) {
             row.attempt_count += 1;
           }
         }
+        if (name === "recover_stalled_publication_job") {
+          state.beforePublicationRecoveryCas?.();
+          const a = args as {
+            expected_last_error: string | null;
+            expected_updated_at: string;
+            max_retries: number;
+            stall_reason: string;
+            target_job_id: string;
+          };
+          const row = state.jobs.find(
+            (candidate) =>
+              candidate.id === a.target_job_id &&
+              candidate.status === "running" &&
+              candidate.updated_at === a.expected_updated_at &&
+              candidate.last_error === a.expected_last_error,
+          );
+          if (!row) return { data: [], error: null };
+
+          const session = state.sessions.get(row.session_id);
+          if (session?.phase_status === "in_progress") session.phase_status = "rejected";
+          if (row.attempt_count < a.max_retries) {
+            row.status = "queued";
+          } else {
+            row.status = "error";
+            row.last_error = a.stall_reason;
+          }
+          return { data: [row], error: null };
+        }
         return { data: null, error: null };
       }),
     },
@@ -522,25 +550,20 @@ describe("sweepStalledRuns", () => {
       last_error: PUBLICATION_CHECKPOINT,
       status: "queued",
     });
-    expect(jobUpdates).toEqual([
+    expect(jobUpdates).toEqual([]);
+    expect(state.rpcCalls).toEqual([
       {
-        id: "job-1",
-        patch: {
-          finished_at: null,
-          scheduled_at: expect.any(String),
-          status: "queued",
-        },
-        status: "running",
+        args: expect.objectContaining({
+          expected_last_error: PUBLICATION_CHECKPOINT,
+          expected_updated_at: expect.any(String),
+          max_retries: 3,
+          target_job_id: "job-1",
+        }),
+        name: "recover_stalled_publication_job",
       },
     ]);
-    expect(state.rpcCalls).toEqual([]);
-    expect(sessionUpdates).toEqual([
-      {
-        expected: "in_progress",
-        id: "sess-1",
-        patch: { phase_status: "rejected" },
-      },
-    ]);
+    expect(sessionUpdates).toEqual([]);
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("rejected");
   });
 
   it("does not recover or park a publication job that completed after the sweep snapshot", async () => {

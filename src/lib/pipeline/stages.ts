@@ -111,3 +111,26 @@ export async function loadCompletedStageArtifacts(
   }
   return result;
 }
+
+export interface SessionPullRequestContext {
+  number: number;
+  url: string;
+}
+
+export async function loadSessionPullRequestContext(
+  admin: AdminClient,
+  sessionId: string,
+): Promise<SessionPullRequestContext | null> {
+  const { data, error } = await admin
+    .from("session_pull_requests")
+    .select("pull_request_number, pull_request_url")
+    .eq("session_id", sessionId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+
+  return typeof data?.pull_request_number === "number" && data.pull_request_url
+    ? { number: data.pull_request_number, url: data.pull_request_url }
+    : null;
+}

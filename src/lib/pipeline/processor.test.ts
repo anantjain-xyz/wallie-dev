@@ -30,6 +30,7 @@ const mocked = vi.hoisted(() => ({
   loadStageById: vi.fn(),
   loadCompletedStageArtifacts: vi.fn().mockResolvedValue({}),
   loadPipelineOperatingRules: vi.fn().mockResolvedValue(""),
+  loadSessionPullRequestContext: vi.fn().mockResolvedValue(null),
   loadSessionAttachmentInputs: vi.fn().mockResolvedValue([]),
   materializeSessionAttachments: vi.fn().mockResolvedValue([]),
   formatSessionAttachmentPromptData: vi.fn(() => ""),
@@ -62,6 +63,7 @@ vi.mock("./stages", () => ({
   loadStageById: mocked.loadStageById,
   loadCompletedStageArtifacts: mocked.loadCompletedStageArtifacts,
   loadPipelineOperatingRules: mocked.loadPipelineOperatingRules,
+  loadSessionPullRequestContext: mocked.loadSessionPullRequestContext,
 }));
 
 vi.mock("./pull-request", () => ({
@@ -630,7 +632,10 @@ function buildAdminMock(opts: MockOptions) {
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
-  const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
+  const rpc = vi.fn(async (name: string) => ({
+    data: name === "schedule_job_retry_with_error" ? [{ id: "job-1" }] : null,
+    error: null,
+  }));
 
   return {
     admin: createProcessorTestAdminClient({
@@ -706,6 +711,10 @@ describe("processPipelineJob (generic stage runner)", () => {
     mocked.loadPipelineOperatingRules.mockResolvedValueOnce(
       "Keep changes scoped to the approved plan.",
     );
+    mocked.loadSessionPullRequestContext.mockResolvedValueOnce({
+      number: 42,
+      url: "https://github.com/acme/app/pull/42",
+    });
     const { admin, insertedArtifacts, insertedMessages, updatedSessions } = buildAdminMock({
       session,
       agentConfig: [],
@@ -750,6 +759,11 @@ describe("processPipelineJob (generic stage runner)", () => {
           source: "session.prompt",
           trust: "untrusted",
           value: session.prompt_md,
+        }),
+        sessionPullRequest: expect.objectContaining({
+          source: "session.pullRequest",
+          trust: "untrusted",
+          value: "Pull request #42: https://github.com/acme/app/pull/42",
         }),
         sessionTitle: expect.objectContaining({
           source: "session.title",
@@ -1196,12 +1210,13 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
-    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
+    expect(rpc).toHaveBeenCalledWith("schedule_job_retry_with_error", {
       target_job_id: "job-1",
+      error_message: "Wallie pull request publication failed (pr_failed): boom",
       base_delay_ms: 5000,
       max_backoff_ms: 300000,
     });
-    expect(updatedJobs).toContainEqual({
+    expect(updatedJobs).not.toContainEqual({
       last_error: "Wallie pull request publication failed (pr_failed): boom",
     });
     expect(result.result).toBe("error");
@@ -1234,12 +1249,16 @@ describe("processPipelineJob (generic stage runner)", () => {
       { current_artifact_version: 1 },
     ]);
     expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
-    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
-      target_job_id: "job-1",
-      base_delay_ms: 5000,
-      max_backoff_ms: 300000,
-    });
-    expect(updatedJobs.at(-1)?.last_error).toMatch(/^Wallie pull request publication pending: /);
+    expect(rpc).toHaveBeenCalledWith(
+      "schedule_job_retry_with_error",
+      expect.objectContaining({
+        target_job_id: "job-1",
+        error_message: expect.stringMatching(/^Wallie pull request publication pending: /),
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+      }),
+    );
+    expect(updatedJobs.at(-1)?.last_error).toBeUndefined();
     expect(result.result).toBe("error");
   });
 

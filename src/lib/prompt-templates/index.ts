@@ -77,6 +77,7 @@ export function renderStagePrompt(
     repoFullName?: UntrustedPromptValue;
     repoDefaultBranch?: UntrustedPromptValue;
     previousStages?: Record<string, UntrustedPromptValue>;
+    sessionPullRequest?: UntrustedPromptValue;
     sessionAttachments?: UntrustedPromptValue;
     sessionAttachmentInstructions?: TrustedPromptValue;
     // Workspace-editable operating rules (pipelines.operating_rules_md),
@@ -92,6 +93,9 @@ export function renderStagePrompt(
   const stageTemplate = verifyPromptBoundary(stage.promptTemplateMd);
   const source = operatingRules ? `${operatingRules}\n\n${stageTemplate}` : stageTemplate;
   const renderedStage = renderTemplate(source, variables);
+  const pullRequestData = input.sessionPullRequest
+    ? verifyPromptBoundary(input.sessionPullRequest)
+    : "";
   const attachmentData = input.sessionAttachments
     ? verifyPromptBoundary(input.sessionAttachments)
     : "";
@@ -99,7 +103,15 @@ export function renderStagePrompt(
     ? verifyPromptBoundary(input.sessionAttachmentInstructions).trim()
     : "";
 
-  return attachmentData && attachmentInstructions
-    ? `${renderedStage}\n\n${attachmentInstructions}\n${attachmentData}`
-    : renderedStage;
+  const sections = [renderedStage];
+  if (pullRequestData) {
+    sections.push(
+      "## Wallie pull request\nUse this Wallie-recorded pull request for review, checks, and landing:\n" +
+        pullRequestData,
+    );
+  }
+  if (attachmentData && attachmentInstructions) {
+    sections.push(`${attachmentInstructions}\n${attachmentData}`);
+  }
+  return sections.join("\n\n");
 }
