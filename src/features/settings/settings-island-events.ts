@@ -1,8 +1,11 @@
+import type { SetStateAction } from "react";
+
 import type { SettingsPageData } from "@/features/settings/data";
 import type { SandboxSettingsResponse } from "@/lib/sandbox-connections/contracts";
 import type { WorkspaceSecretPreview } from "@/lib/secrets/contracts";
 
 export const SETTINGS_GITHUB_CHANGED = "wallie:settings-github-changed";
+export const SETTINGS_DATA_CHANGED = "wallie:settings-data-changed";
 export const SETTINGS_PIPELINE_CHANGED = "wallie:settings-pipeline-changed";
 export const SETTINGS_SANDBOX_CHANGED = "wallie:settings-sandbox-changed";
 export const SETTINGS_SECRETS_CHANGED = "wallie:settings-secrets-changed";
@@ -13,6 +16,7 @@ export function dispatchSettingsEvent<T>(name: string, detail: T) {
 }
 
 export type GithubChangedDetail = SettingsPageData["github"];
+export type SettingsDataChangedDetail = SetStateAction<SettingsPageData>;
 export type PipelineChangedDetail = NonNullable<SettingsPageData["pipeline"]>;
 export type SandboxChangedDetail = SandboxSettingsResponse;
 export type SecretsChangedDetail = WorkspaceSecretPreview[];

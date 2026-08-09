@@ -140,15 +140,7 @@ function IntegrationsCategory(props: SettingsServerShellProps) {
   );
 }
 
-async function UsageSection({
-  canManage,
-  usage,
-  workspaceId,
-}: {
-  canManage: boolean;
-  usage: Promise<WorkspaceUsageData>;
-  workspaceId: string;
-}) {
+async function UsageSection({ usage }: { usage: Promise<WorkspaceUsageData> }) {
   const result = await settle(usage);
   if (!result.ok) {
     return <SettingsSectionError label="Usage" />;
@@ -160,9 +152,6 @@ async function UsageSection({
       title="Usage"
     >
       <UsageSummary usage={result.value} />
-      <div className="scroll-mt-8" id="maintenance">
-        <MaintenanceIsland canManage={canManage} workspaceId={workspaceId} />
-      </div>
     </Section>
   );
 }
@@ -200,12 +189,12 @@ function AdvancedCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-16">
       <Suspense fallback={<SettingsSectionFallback label="usage" />}>
-        <UsageSection
-          canManage={props.initialData.canManage}
-          usage={props.usage}
-          workspaceId={props.initialData.workspace.id}
-        />
+        <UsageSection usage={props.usage} />
       </Suspense>
+      <MaintenanceIsland
+        canManage={props.initialData.canManage}
+        workspaceId={props.initialData.workspace.id}
+      />
       <Suspense fallback={<SettingsSectionFallback label="rate limits" minHeight="min-h-96" />}>
         <AdvancedDetails {...props} />
       </Suspense>
@@ -267,6 +256,7 @@ export function SettingsServerShell(props: SettingsServerShellProps) {
         <div className="grid grid-cols-1 items-start gap-10 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-12">
           <SettingsCategoryNav
             activeCategory={props.category}
+            canManage={props.initialData.canManage}
             workspaceSlug={props.initialData.workspace.slug}
           />
           <div className="min-w-0">

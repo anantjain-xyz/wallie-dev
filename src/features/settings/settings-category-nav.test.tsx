@@ -85,7 +85,7 @@ describe("SettingsCategoryNav hash routing", () => {
 
   it("sticks below the safe-area-aware shell header", () => {
     const { container, getByRole } = render(
-      <SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />,
+      <SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />,
     );
 
     const nav = getByRole("navigation", { name: "Settings categories" });
@@ -99,7 +99,7 @@ describe("SettingsCategoryNav hash routing", () => {
   it("renders every integration section link as an indented submenu", () => {
     searchParams = new URLSearchParams("category=integrations");
     const { getByRole } = render(
-      <SettingsCategoryNav activeCategory="integrations" workspaceSlug="acme" />,
+      <SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />,
     );
 
     const links = [
@@ -114,7 +114,12 @@ describe("SettingsCategoryNav hash routing", () => {
     for (const [name, href] of links) {
       expect(getByRole("link", { name })).toHaveAttribute("href", href);
     }
-    expect(getByRole("link", { name: "GitHub" }).closest("ul")).toHaveClass("border-l", "pl-2");
+    expect(getByRole("link", { name: "GitHub" }).closest("ul")).toHaveClass(
+      "overflow-x-auto",
+      "lg:border-l",
+      "lg:pl-2",
+    );
+    expect(getByRole("link", { name: "GitHub" }).closest("ul")).not.toHaveClass("hidden");
   });
 
   it.each([
@@ -137,7 +142,7 @@ describe("SettingsCategoryNav hash routing", () => {
   ])("renders the $category section links as a submenu", ({ category, links }) => {
     searchParams = new URLSearchParams(`category=${category}`);
     const { getByRole } = render(
-      <SettingsCategoryNav activeCategory={category} workspaceSlug="acme" />,
+      <SettingsCategoryNav activeCategory={category} canManage workspaceSlug="acme" />,
     );
 
     for (const [name, href] of links) {
@@ -145,8 +150,31 @@ describe("SettingsCategoryNav hash routing", () => {
     }
   });
 
+  it("hides Maintenance when the member cannot manage the workspace", () => {
+    searchParams = new URLSearchParams("category=advanced");
+    const { queryByRole } = render(
+      <SettingsCategoryNav activeCategory="advanced" canManage={false} workspaceSlug="acme" />,
+    );
+
+    expect(queryByRole("link", { name: "Maintenance" })).toBeNull();
+  });
+
+  it("scrolls to a hash target when a suspended section mounts", async () => {
+    searchParams = new URLSearchParams("category=integrations");
+    window.history.replaceState(null, "", "/w/acme/settings?category=integrations#pipeline");
+    render(<SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />);
+
+    const target = document.createElement("section");
+    target.id = "pipeline";
+    target.scrollIntoView = vi.fn();
+    document.body.appendChild(target);
+
+    await waitFor(() => expect(target.scrollIntoView).toHaveBeenCalledWith({ block: "start" }));
+    target.remove();
+  });
+
   it("routes hash-only Open actions to the matching category", async () => {
-    render(<SettingsCategoryNav activeCategory="advanced" workspaceSlug="acme" />);
+    render(<SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />);
 
     window.history.replaceState(null, "", "/w/acme/settings?category=advanced#github");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -158,7 +186,7 @@ describe("SettingsCategoryNav hash routing", () => {
 
   it("rewrites legacy hashes to their current anchors", async () => {
     searchParams = new URLSearchParams("category=integrations");
-    render(<SettingsCategoryNav activeCategory="integrations" workspaceSlug="acme" />);
+    render(<SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />);
 
     window.history.replaceState(null, "", "/w/acme/settings?category=integrations#coding-agent");
     window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -170,7 +198,7 @@ describe("SettingsCategoryNav hash routing", () => {
 
   it("does not navigate when the hash already matches the active category and anchor", async () => {
     window.history.replaceState(null, "", "/w/acme/settings?category=integrations#verify");
-    render(<SettingsCategoryNav activeCategory="integrations" workspaceSlug="acme" />);
+    render(<SettingsCategoryNav activeCategory="integrations" canManage workspaceSlug="acme" />);
 
     await waitFor(() => {
       expect(replace).not.toHaveBeenCalled();

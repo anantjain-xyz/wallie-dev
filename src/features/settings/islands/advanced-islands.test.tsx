@@ -5,8 +5,18 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MaintenanceIsland } from "@/features/settings/islands/advanced-islands";
+import type { SettingsPageData } from "@/features/settings/data";
+import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/islands/advanced-islands";
+import { SETTINGS_DATA_CHANGED } from "@/features/settings/settings-island-events";
 import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
+
+vi.mock("@/features/settings/verify-setup-section", () => ({
+  VerifySetupSection: ({ data }: { data: SettingsPageData }) => (
+    <output>
+      {data.setupHealth.githubInstallation.connected ? "GitHub connected" : "GitHub blocked"}
+    </output>
+  ),
+}));
 
 const delegatedResult: MaintenanceTickResponse = {
   cleanup: {
@@ -47,7 +57,8 @@ describe("MaintenanceIsland", () => {
     );
 
     const island = container.firstElementChild;
-    expect(island).toHaveClass("mt-6");
+    expect(island).toHaveAttribute("id", "maintenance");
+    expect(island).toHaveClass("scroll-mt-8");
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Run maintenance" })).toBeEnabled(),
     );
@@ -57,5 +68,33 @@ describe("MaintenanceIsland", () => {
     const { container } = render(<MaintenanceIsland canManage={false} workspaceId="workspace-1" />);
 
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("VerifySetupIsland", () => {
+  it("applies integration data updates without a page reload", () => {
+    const initialData = {
+      setupHealth: { githubInstallation: { connected: false } },
+    } as SettingsPageData;
+
+    render(<VerifySetupIsland initialData={initialData} />);
+
+    fireEvent(
+      window,
+      new CustomEvent(SETTINGS_DATA_CHANGED, {
+        detail: (current: SettingsPageData) => ({
+          ...current,
+          setupHealth: {
+            ...current.setupHealth,
+            githubInstallation: {
+              ...current.setupHealth.githubInstallation,
+              connected: true,
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(screen.getByText("GitHub connected")).toBeInTheDocument();
   });
 });

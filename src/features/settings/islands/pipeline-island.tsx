@@ -7,8 +7,10 @@ import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import {
   dispatchSettingsEvent,
+  SETTINGS_DATA_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
 } from "@/features/settings/settings-island-events";
+import { updatePipelineInSettingsData } from "@/features/settings/settings-data-updates";
 import { Section } from "@/features/settings/settings-ui";
 
 const loadPipelineEditor = () =>
@@ -38,7 +40,12 @@ export function PipelineIsland({ data }: { data: SettingsPageData }) {
       <PipelineEditor
         canManage={data.canManage}
         onDirtyChange={setPipelineDirty}
-        onPipelineSaved={(pipeline) => dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, pipeline)}
+        onPipelineSaved={(pipeline) => {
+          dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, pipeline);
+          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+            updatePipelineInSettingsData(current, pipeline),
+          );
+        }}
         pipeline={data.pipeline}
         workspaceId={data.workspace.id}
         workspaceMembers={data.workspaceMembers}
