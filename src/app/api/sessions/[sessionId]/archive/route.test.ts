@@ -68,7 +68,7 @@ function buildSupabaseMock(
                 opts.sessionRow === undefined
                   ? {
                       id: SESSION_ID,
-                      phase_status: "agent_generating",
+                      phase_status: "in_progress",
                       workspace_id: WORKSPACE_ID,
                     }
                   : opts.sessionRow,

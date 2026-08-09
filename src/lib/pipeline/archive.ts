@@ -21,7 +21,7 @@ export type SessionArchiveState = {
  *
  * It first reuses {@link cancelSessionWork} to stop any in-flight work — flip
  * active jobs/runs to `canceled`, stop their sandboxes, record a cancel message,
- * and park an `agent_generating` session into `rejected`. `awaiting_review`,
+ * and park an `in_progress` session into `rejected`. `awaiting_review`,
  * `approved`, and already-`rejected` sessions keep their phase, so a later
  * {@link unarchiveSession} restores them where they were.
  *

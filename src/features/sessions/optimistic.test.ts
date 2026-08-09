@@ -128,7 +128,7 @@ describe("optimistic session mutations", () => {
   });
 
   it("rolls back matching optimistic fields after an unrelated timestamp update", () => {
-    const optimistic = { phaseStatus: "agent_generating" as const };
+    const optimistic = { phaseStatus: "in_progress" as const };
     const optimisticSession = applySessionMutationPatch(session, optimistic);
     const concurrentlyUpdated = applySessionMutationPatch(optimisticSession, {
       title: "Newer title",
@@ -151,14 +151,14 @@ describe("optimistic session mutations", () => {
     const next = applySessionMutationPatch(session, {
       currentArtifactVersion: 0,
       currentStageId: "stage-build",
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
     });
 
     expect(next).toMatchObject({
       currentArtifactVersion: 0,
       currentStageName: "Build",
       currentStageSlug: "build",
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
     });
   });
 
@@ -172,12 +172,12 @@ describe("optimistic session mutations", () => {
     const advanced = reconcileSessionMutationPatch(session, {
       currentArtifactVersion: 0,
       currentStageId: "stage-build",
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
       updatedAt: session.updatedAt,
     });
     expect(advanced).toMatchObject({
       currentStageId: "stage-build",
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
     });
 
     expect(

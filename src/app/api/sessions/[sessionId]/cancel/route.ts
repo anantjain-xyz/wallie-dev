@@ -37,7 +37,7 @@ export async function POST(_request: Request, { params }: Params) {
 
   // Only the in-flight generation can be canceled. Anything else (awaiting
   // review, approved, already rejected) has no active run to stop.
-  if (sessionRow.phase_status !== "agent_generating") {
+  if (sessionRow.phase_status !== "in_progress") {
     return NextResponse.json({ error: "Session is not generating." }, { status: 409 });
   }
 

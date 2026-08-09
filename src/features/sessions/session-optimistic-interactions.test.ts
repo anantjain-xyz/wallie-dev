@@ -186,7 +186,7 @@ describe("optimistic session interactions", () => {
                 },
                 currentStageId: "stage-build",
                 id: session.id,
-                phaseStatus: "agent_generating",
+                phaseStatus: "in_progress",
                 rejectionCount: 0,
                 updatedAt: "2026-07-17T12:00:00.000Z",
               }),
@@ -304,7 +304,7 @@ describe("optimistic session interactions", () => {
     data.session = {
       ...data.session,
       currentArtifactVersion: 0,
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
     };
 
     render(

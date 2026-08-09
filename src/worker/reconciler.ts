@@ -21,7 +21,7 @@ type SessionRow = {
 const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql";
 
 /** Session phase states where Wallie may still do more work. */
-const RECONCILABLE_PHASE_STATUSES = ["agent_generating", "awaiting_review", "rejected"] as const;
+const RECONCILABLE_PHASE_STATUSES = ["in_progress", "awaiting_review", "rejected"] as const;
 
 /** Agent job states that are not yet terminal and may still consume work. */
 const ACTIVE_AGENT_JOB_STATUSES = ["queued", "started", "running"] as const;

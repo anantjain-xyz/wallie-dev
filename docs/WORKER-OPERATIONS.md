@@ -98,7 +98,7 @@ The stall sweep:
    marks it terminally errored.
 8. Parks a generating session in `rejected`.
 
-A scheduled retry returns to `agent_generating` only after a worker claims it.
+A scheduled retry returns to `in_progress` only after a worker claims it.
 Because the detector does not verify that step 5 changed the run, a processor
 can complete between the sweep's read and update while the detector continues
 with diagnostics, sandbox stop, retry/error handling, and session parking. This
@@ -182,7 +182,7 @@ no health endpoint.
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | Jobs remain queued                              | Worker startup/fatal logs, latest heartbeat, `scheduled_at`, running count, connection-mutation state | Restore worker/environment/schema; wait if backoff is scheduled                 |
 | Job remains running                             | Fresh heartbeat ownership, run status, `last_activity_at`, messages                                   | Fresh ownership means wait; stale ownership is handled by the stall timeout     |
-| Session remains `agent_generating`              | Latest job/run status and error, provider connection, capability readiness                            | Fix readiness; cancel active work through the session action when needed        |
+| Session remains `in_progress`                   | Latest job/run status and error, provider connection, capability readiness                            | Fix readiness; cancel active work through the session action when needed        |
 | Session is `rejected` without reviewer feedback | Latest run error/cancel message and queued retry                                                      | Distinguish recovery parking from human rejection before rerunning              |
 | Orphan sandbox suspected                        | Recorded provider/revision/ID and reaper/provider logs                                                | Use cancellation or the maintenance path; preserve ownership rows until cleanup |
 | Linear state is stale                           | Reconciler errors/rate-limit messages                                                                 | Run one manager maintenance tick or wait for the next sweep                     |

@@ -30,7 +30,7 @@ Humans approve or reject artifacts from the in-app dashboard. Approval advances 
 ```
 create_session_with_first_job RPC
   -> session created (pinned to workspace's default pipeline)
-  (current_stage_id = first stage, phase_status = agent_generating)
+  (current_stage_id = first stage, phase_status = in_progress)
   -> first agent job + queued run created in the same transaction
   -> worker atomically claims the job, then confirms the session stage is eligible
   -> runStage() renders prompt, runs agent in sandbox,
@@ -80,7 +80,7 @@ Workspace (tenant)
        |-- pipeline_id (pinned at create time; stage rows remain shared, so
        |   edits can change prompts or ordering observed by pinned sessions)
        |-- current_stage_id, current_artifact_version, rejection_count
-       |-- phase_status: agent_generating | awaiting_review
+       |-- phase_status: in_progress | awaiting_review
        |                 | approved | rejected
        |-- optional Linear issue + pinned GitHub repository
        |-- Artifacts (markdown, versioned on
@@ -481,7 +481,7 @@ In a second terminal:
 pnpm worker
 ```
 
-The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `claim_next_agent_job` RPC to fill its bounded scheduler, and runs the generic stage runner. Without it, jobs stay queued and nothing progresses past `agent_generating`.
+The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `claim_next_agent_job` RPC to fill its bounded scheduler, and runs the generic stage runner. Without it, jobs stay queued and nothing progresses past `in_progress`.
 
 ### 9. First run
 
@@ -502,7 +502,7 @@ The worker heartbeats into `worker_heartbeats`, uses the concurrency-aware `clai
 ### Troubleshooting
 
 - **GitHub webhook 401** -- `GITHUB_WEBHOOK_SECRET` in `.env.local` doesn't match the value in the GitHub App. GitHub's Advanced -> Recent Deliveries panel shows the exact error.
-- **Session stays in `agent_generating` forever** -- worker isn't running, the worker cannot reach Supabase, or agent/Sandbox/GitHub credentials are missing or invalid. Check `pnpm worker` logs and the session activity panel.
+- **Session stays in `in_progress` forever** -- worker isn't running, the worker cannot reach Supabase, or agent/Sandbox/GitHub credentials are missing or invalid. Check `pnpm worker` logs and the session activity panel.
 - **RLS errors during local dev** -- confirm `SUPABASE_SECRET_KEY` is the service role key (not the anon key) and that `supabase start` finished applying migrations.
 
 ## Scripts
@@ -538,7 +538,7 @@ Tenant-owned data rows are scoped to a `workspace_id`, and Supabase RLS policies
 
 ### Concurrency
 
-Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `agent_generating` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection CAS-claims the status, version, and rejection count before recording feedback, but its later enqueue and status update are a multi-step workflow rather than one atomic transaction.
+Job claims are atomic and concurrency-aware through `claim_next_agent_job`. Phase approvals use compare-and-swap semantics: `approve_session_stage` only succeeds if the session is in `awaiting_review` at the expected artifact version. The processor's final `in_progress` → `awaiting_review` update is scoped to an unarchived session that is still generating. Rejection CAS-claims the status, version, and rejection count before recording feedback, but its later enqueue and status update are a multi-step workflow rather than one atomic transaction.
 
 ### Deduplication
 

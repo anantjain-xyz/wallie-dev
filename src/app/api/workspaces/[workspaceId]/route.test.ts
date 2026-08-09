@@ -339,7 +339,7 @@ describe("DELETE /api/workspaces/[workspaceId]", () => {
     expect(response.status).toBe(500);
     // The pre-delete teardown already canceled this workspace's jobs/runs; since
     // the delete didn't commit, the route must move any still-generating session
-    // out of `agent_generating` so it isn't stranded with no job.
+    // out of `in_progress` so it isn't stranded with no job.
     expect(calls.from).toHaveBeenCalledWith("sessions");
     expect(calls.sessionsUpdate).toHaveBeenCalledWith({ phase_status: "rejected" });
   });

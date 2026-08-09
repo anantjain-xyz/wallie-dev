@@ -93,7 +93,7 @@ export type CancelSessionWorkResult = {
 /**
  * Cancel all in-flight work for a session: flip its active jobs and runs to
  * `canceled`, stop their sandboxes, and (optionally) park the session out of
- * `agent_generating` so the UI is not stuck "Drafting".
+ * `in_progress` so the UI is not stuck "Drafting".
  *
  * This is the single primitive behind both the user-facing cancel endpoints and
  * the reconciler's Linear-route cancellation. Durability against an in-flight
@@ -193,7 +193,7 @@ export async function cancelSessionWork(
       .from("sessions")
       .update({ phase_status: "rejected" })
       .eq("id", input.sessionId)
-      .eq("phase_status", "agent_generating");
+      .eq("phase_status", "in_progress");
 
     if (sessionError) {
       throw sessionError;

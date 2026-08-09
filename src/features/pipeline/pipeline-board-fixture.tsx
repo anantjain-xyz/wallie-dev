@@ -49,7 +49,7 @@ const STAGE_PRESETS: Record<3 | 5 | 7, { description: string; name: string; slug
 
 const STATUS_CYCLE: SessionPhaseStatus[] = [
   "awaiting_review",
-  "agent_generating",
+  "in_progress",
   "rejected",
   "approved",
 ];

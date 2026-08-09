@@ -71,14 +71,14 @@ const ISOLATED_RENDER_NOW = "1970-01-01T00:00:00.000Z";
 const STATUS_FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All statuses" },
   { key: "awaiting_review", label: STATUS_DEFINITIONS.awaiting_review.label },
-  { key: "agent_generating", label: STATUS_DEFINITIONS.agent_generating.label },
+  { key: "in_progress", label: STATUS_DEFINITIONS.in_progress.label },
   { key: "approved", label: STATUS_DEFINITIONS.approved.label },
   { key: "rejected", label: STATUS_DEFINITIONS.rejected.label },
 ];
 
 const STATUS_SUMMARY_ORDER: SessionPhaseStatus[] = [
   "awaiting_review",
-  "agent_generating",
+  "in_progress",
   "rejected",
   "approved",
 ];

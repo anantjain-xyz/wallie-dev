@@ -24,7 +24,7 @@ import { POST } from "./route";
 
 const session = {
   id: "session-1",
-  phase_status: "agent_generating",
+  phase_status: "in_progress",
   workspace_id: "workspace-1",
 };
 

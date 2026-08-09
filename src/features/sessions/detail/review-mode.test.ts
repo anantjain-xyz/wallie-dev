@@ -31,7 +31,7 @@ describe("resolveReviewMode", () => {
       resolveReviewMode({
         archivedAt: null,
         canApprove: true,
-        phaseStatus: "agent_generating",
+        phaseStatus: "in_progress",
         selectedStageIsCurrent: true,
       }),
     ).toEqual({ kind: "running" });

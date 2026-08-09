@@ -26,7 +26,7 @@ const result = {
   },
   current_stage_id: "stage-new",
   id: "session-1",
-  phase_status: "agent_generating" as const,
+  phase_status: "in_progress" as const,
   rejection_count: 0,
   updated_at: "2026-07-18T16:00:00.000Z",
 };
@@ -60,7 +60,7 @@ describe("GET /api/sessions/[sessionId]/state", () => {
       currentStage: result.currentStage,
       currentStageId: "stage-new",
       id: "session-1",
-      phaseStatus: "agent_generating",
+      phaseStatus: "in_progress",
       rejectionCount: 0,
       updatedAt: "2026-07-18T16:00:00.000Z",
     });

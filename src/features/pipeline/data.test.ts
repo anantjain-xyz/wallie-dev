@@ -42,7 +42,7 @@ function card(index: number, stageId = PLAN_STAGE_ID, pipelineId = DEFAULT_PIPEL
     linearIssueId: null,
     linearIssueUrl: null,
     number: index,
-    phaseStatus: index % 2 === 0 ? "awaiting_review" : "agent_generating",
+    phaseStatus: index % 2 === 0 ? "awaiting_review" : "in_progress",
     pipelineId,
     pullRequests: [],
     rejectionCount: 0,

@@ -28,11 +28,11 @@ definition, not by the copy in the baseline.
 
 ## The three status domains
 
-| Row                    | Active states                                     | Terminal states                | Purpose                                   |
-| ---------------------- | ------------------------------------------------- | ------------------------------ | ----------------------------------------- |
-| Session `phase_status` | `agent_generating`, `awaiting_review`, `rejected` | `approved`                     | Product position within the current stage |
-| Agent job `status`     | `queued`, `started`, `running`                    | `success`, `error`, `canceled` | Durable queue and retry unit              |
-| Agent run `status`     | `queued`, `started`, `running`                    | `success`, `error`, `canceled` | One observable agent execution            |
+| Row                    | Active states                                | Terminal states                | Purpose                                   |
+| ---------------------- | -------------------------------------------- | ------------------------------ | ----------------------------------------- |
+| Session `phase_status` | `in_progress`, `awaiting_review`, `rejected` | `approved`                     | Product position within the current stage |
+| Agent job `status`     | `queued`, `started`, `running`               | `success`, `error`, `canceled` | Durable queue and retry unit              |
+| Agent run `status`     | `queued`, `started`, `running`               | `success`, `error`, `canceled` | One observable agent execution            |
 
 `sessions.archived_at` is an orthogonal freeze marker, not another phase.
 Enqueue preflight rejects a session already observed as archived, and processor
@@ -60,11 +60,11 @@ reroutes can all place a session there.
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | Create session               | `create_session_with_first_job` runs transactionally                                                                             | Session at first stage, queued job, and queued run are inserted together                                 | Worker polling discovers the job              |
 | Claim job                    | `claim_next_agent_job` locks and CAS-updates a ready queued job while enforcing workspace capacity                               | Job becomes running and its attempt count advances                                                       | Scheduler advertises the job in its heartbeat |
-| Claim session for generation | Processor updates only an unarchived, nonterminal session                                                                        | Session becomes or remains `agent_generating`                                                            | Generic stage execution begins                |
-| Complete generation          | Artifact insert followed by `agent_generating` + unarchived CAS                                                                  | Artifact version becomes current and session becomes `awaiting_review`                                   | Run and job finish successfully               |
+| Claim session for generation | Processor updates only an unarchived, nonterminal session                                                                        | Session becomes or remains `in_progress`                                                                 | Generic stage execution begins                |
+| Complete generation          | Artifact insert followed by `in_progress` + unarchived CAS                                                                       | Artifact version becomes current and session becomes `awaiting_review`                                   | Run and job finish successfully               |
 | Fail generation              | Guarded compensation and retry scheduling                                                                                        | Run becomes error; session parks in `rejected`; job is queued with backoff or becomes terminally errored | A later claim may start the retry             |
-| Reject artifact              | Version/status/rejection-count CAS, then feedback insert and enqueue                                                             | Feedback is first-write-wins for that stage version; a new job/run is queued; session becomes `rejected` | Worker claim returns it to `agent_generating` |
-| Approve nonterminal stage    | `approve_session_stage` transaction checks workspace, version, status, and approver; records completion and advances by position | Session points to next stage at version zero and `agent_generating`                                      | TypeScript enqueues the next job/run          |
+| Reject artifact              | Version/status/rejection-count CAS, then feedback insert and enqueue                                                             | Feedback is first-write-wins for that stage version; a new job/run is queued; session becomes `rejected` | Worker claim returns it to `in_progress`      |
+| Approve nonterminal stage    | `approve_session_stage` transaction checks workspace, version, status, and approver; records completion and advances by position | Session points to next stage at version zero and `in_progress`                                           | TypeScript enqueues the next job/run          |
 | Approve terminal stage       | Same approval transaction                                                                                                        | Session remains `approved` and receives `archived_at`                                                    | No further job is created                     |
 
 The artifact insert and session-pointer update are separate operations. If
@@ -87,7 +87,7 @@ Approval is one transactional database operation:
 
 Enqueueing the next stage happens after that transaction. An enqueue failure
 does not roll back an already approved stage; the session remains
-`agent_generating` on the next stage and can be queued again through an
+`in_progress` on the next stage and can be queued again through an
 idempotent interactive or reconciliation path.
 
 Rejection is deliberately a compensated multi-step workflow:
@@ -105,7 +105,7 @@ must test failures between every step.
 Current limitation: approval can land after step 1 while the rejection remains
 in progress. Approval does not check `rejection_count`, and the rejection's
 final `phase_status = rejected` write is unguarded. The rejection can therefore
-enqueue against the now-current stage and change an `agent_generating` or
+enqueue against the now-current stage and change an `in_progress` or
 `approved` phase to `rejected`. A terminal approval remains archived because
 rejection does not clear `archived_at`. Treat approval versus an in-flight
 rejection as an unresolved concurrency bug, not a safe losing-race outcome.
@@ -140,7 +140,7 @@ primitive:
 2. Mark active runs `canceled`.
 3. Stop any recorded sandboxes on a best-effort basis.
 4. Record cancellation messages.
-5. When requested, park an `agent_generating` session in `rejected`.
+5. When requested, park an `in_progress` session in `rejected`.
 
 Terminal job/run writes are guarded so a late worker cannot overwrite
 `canceled` with `success` or `error`. The sandbox-attachment callback also
@@ -166,7 +166,7 @@ does not enqueue work.
   heartbeat is marked errored. Its sandbox is stopped, and its job is either
   rescheduled with backoff or marked terminally errored.
 - Stall recovery parks the session in `rejected`; a retried job returns it to
-  `agent_generating` when claimed.
+  `in_progress` when claimed.
 - Linear reconciliation may keep a current stage queued, reroute a session to a
   configured stage, or archive it. It cancels active work before rerouting.
 - The sandbox reaper stops only provider resources whose IDs Wallie already

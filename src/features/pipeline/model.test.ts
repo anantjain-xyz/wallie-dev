@@ -11,7 +11,7 @@ const BUILD_STAGE_ID = "20000000-0000-4000-8000-000000000002";
 function card(
   number: number,
   stageId = PLAN_STAGE_ID,
-  phaseStatus: PipelineDashboardCard["phaseStatus"] = "agent_generating",
+  phaseStatus: PipelineDashboardCard["phaseStatus"] = "in_progress",
   updatedAt = `2026-07-17T${String(number).padStart(2, "0")}:00:00Z`,
 ): PipelineDashboardCard {
   return {
@@ -212,7 +212,7 @@ describe("pipelineBoardReducer", () => {
       card(
         index + 10,
         BUILD_STAGE_ID,
-        "agent_generating",
+        "in_progress",
         `2026-07-17T00:${String(index).padStart(2, "0")}:00Z`,
       ),
     );
