@@ -264,6 +264,7 @@ describe("PipelinePageClient", () => {
     const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
     const overlay = screen.getByRole("link", { name: "Open session Needs review" });
     const content = reviewLink.closest(".pointer-events-none");
+    expect(overlay.closest("article")?.className).toContain("isolate");
     expect(content?.className).toContain("z-20");
     expect(overlay.className).toContain("z-10");
     expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");

@@ -875,7 +875,7 @@ export const PipelineCard = memo(function PipelineCard({
   return (
     <article
       className={cn(
-        "ui-sheet relative border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover",
+        "ui-sheet relative isolate border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover",
         awaitingReview &&
           "border-accent/50 border-l-[3px] border-l-accent bg-accent-soft shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_18%,transparent)] hover:bg-accent-soft",
         phaseStatus === "rejected" && "border-l-[3px] border-l-warning/50",
