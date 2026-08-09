@@ -7,7 +7,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/islands/advanced-islands";
-import { dispatchSettingsDataChanged } from "@/features/settings/settings-island-events";
+import {
+  dispatchSettingsDataChanged,
+  registerSettingsDataReplayConsumer,
+  replaySettingsDataChanges,
+} from "@/features/settings/settings-island-events";
 import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
 
 vi.mock("@/features/settings/verify-setup-section", () => ({
@@ -120,5 +124,49 @@ describe("VerifySetupIsland", () => {
     );
 
     expect(screen.getByText("GitHub connected")).toBeInTheDocument();
+  });
+
+  it("expires replayed updates after the pending islands consume them", () => {
+    const initialData = {
+      setupHealth: { githubInstallation: { connected: false } },
+      workspace: { id: "workspace-consumed" },
+    } as SettingsPageData;
+    dispatchSettingsDataChanged("workspace-consumed", (current: SettingsPageData) => ({
+      ...current,
+      setupHealth: {
+        ...current.setupHealth,
+        githubInstallation: {
+          ...current.setupHealth.githubInstallation,
+          connected: true,
+        },
+      },
+    }));
+
+    expect(
+      replaySettingsDataChanges(initialData, "repository").setupHealth.githubInstallation.connected,
+    ).toBe(true);
+    expect(
+      replaySettingsDataChanges(initialData, "verify-setup").setupHealth.githubInstallation
+        .connected,
+    ).toBe(true);
+
+    const unregisterRepository = registerSettingsDataReplayConsumer(
+      "workspace-consumed",
+      "repository",
+    );
+    const unregisterVerifySetup = registerSettingsDataReplayConsumer(
+      "workspace-consumed",
+      "verify-setup",
+    );
+    unregisterRepository();
+    unregisterVerifySetup();
+
+    expect(
+      replaySettingsDataChanges(initialData, "repository").setupHealth.githubInstallation.connected,
+    ).toBe(false);
+    expect(
+      replaySettingsDataChanges(initialData, "verify-setup").setupHealth.githubInstallation
+        .connected,
+    ).toBe(false);
   });
 });

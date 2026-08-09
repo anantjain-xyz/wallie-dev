@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { SettingsPageData } from "@/features/settings/data";
 import { useIslandFeedback } from "@/features/settings/islands/island-feedback";
 import {
+  registerSettingsDataReplayConsumer,
   replaySettingsDataChanges,
   SETTINGS_DATA_CHANGED,
   type SettingsDataChangedDetail,
@@ -13,8 +14,11 @@ import { MaintenancePanel } from "@/features/settings/maintenance-panel";
 import { VerifySetupSection } from "@/features/settings/verify-setup-section";
 
 export function VerifySetupIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [data, setData] = useState(() => replaySettingsDataChanges(initialData));
+  const [data, setData] = useState(() => replaySettingsDataChanges(initialData, "verify-setup"));
   const { feedback, setMessage } = useIslandFeedback();
+  useEffect(() => {
+    return registerSettingsDataReplayConsumer(initialData.workspace.id, "verify-setup");
+  }, [initialData.workspace.id]);
   useEffect(() => {
     const handleDataChange = (event: Event) => {
       const { update, workspaceId } = (event as CustomEvent<SettingsDataChangedDetail>).detail;

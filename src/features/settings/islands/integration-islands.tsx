@@ -25,6 +25,7 @@ import {
 import {
   dispatchSettingsDataChanged,
   dispatchSettingsEvent,
+  registerSettingsDataReplayConsumer,
   replaySettingsDataChanges,
   SETTINGS_GITHUB_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
@@ -119,12 +120,15 @@ export function GithubIntegrationIsland({
 }
 
 export function RepositoryIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [data, setData] = useState(() => replaySettingsDataChanges(initialData));
+  const [data, setData] = useState(() => replaySettingsDataChanges(initialData, "repository"));
   const { feedback, setMessage } = useIslandFeedback();
   const updateData: Dispatch<SetStateAction<SettingsPageData>> = (update) => {
     setData(update);
     dispatchSettingsDataChanged(initialData.workspace.id, update);
   };
+  useEffect(() => {
+    return registerSettingsDataReplayConsumer(initialData.workspace.id, "repository");
+  }, [initialData.workspace.id]);
   useEffect(() => {
     const handleGithubChange = (event: Event) => {
       const github = (event as CustomEvent<GithubChangedDetail>).detail;
