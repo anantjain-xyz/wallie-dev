@@ -124,14 +124,18 @@ export async function openSessionPullRequest(
           return { kind: "push_failed", reason: pushError };
         }
       }
-      await updatePullRequest({
-        body: input.body,
-        octokit,
-        owner,
-        prNumber: existing.number,
-        repo,
-        title: input.title,
-      });
+      try {
+        await updatePullRequest({
+          body: input.body,
+          octokit,
+          owner,
+          prNumber: existing.number,
+          repo,
+          title: input.title,
+        });
+      } catch (error) {
+        return publicationFailure(existing.number, error);
+      }
       pr = existing;
     } else if (ahead === "no") {
       // Nothing new to propose. Preserve the link to the most recent PR if one
@@ -177,14 +181,18 @@ export async function openSessionPullRequest(
             `pulls.create returned 422 already_exists for ${input.branch} but pulls.list found nothing`,
           );
         }
-        await updatePullRequest({
-          body: input.body,
-          octokit,
-          owner,
-          prNumber: recovered.number,
-          repo,
-          title: input.title,
-        });
+        try {
+          await updatePullRequest({
+            body: input.body,
+            octokit,
+            owner,
+            prNumber: recovered.number,
+            repo,
+            title: input.title,
+          });
+        } catch (updateError) {
+          return publicationFailure(recovered.number, updateError);
+        }
         pr = recovered;
       }
     }
@@ -196,6 +204,17 @@ export async function openSessionPullRequest(
   }
 
   return finalizeSessionPullRequestPublication(input, pr);
+}
+
+function publicationFailure(
+  pullRequestNumber: number,
+  error: unknown,
+): OpenSessionPullRequestOutcome {
+  return {
+    kind: "publication_failed",
+    pullRequestNumber,
+    reason: error instanceof Error ? error.message : String(error),
+  };
 }
 
 /**

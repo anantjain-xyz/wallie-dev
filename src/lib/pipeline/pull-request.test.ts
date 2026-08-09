@@ -208,6 +208,29 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.row.pull_request_number).toBe(42);
   });
 
+  it("retries only publication when refreshing an existing PR fails after push", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const octokit = makeOctokitWithSequence([[openPr], new Error("GitHub PATCH unavailable")]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      sandbox,
+    });
+
+    expect(outcome).toEqual({
+      kind: "publication_failed",
+      pullRequestNumber: 42,
+      reason: "GitHub PATCH unavailable",
+    });
+    expect(sandbox.calls.some((call) => call.args.join(" ").includes("push --force"))).toBe(true);
+    expect(upserts).toHaveLength(0);
+  });
+
   it("prefers an open PR over a stale closed one for the same branch", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
