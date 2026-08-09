@@ -662,7 +662,7 @@ async function waitForRunByJobId(
 async function validateQueuedRunRequest(input: {
   admin: AdminClient;
   sessionId: string | null;
-  requestedRunType?: WallieRunMode;
+  requestedRunType: WallieRunMode;
   supabase: SupabaseServerClient;
   workspace: WorkspaceAccessWorkspace;
 }) {
@@ -676,9 +676,8 @@ async function validateQueuedRunRequest(input: {
     });
   }
 
-  // An archived session accepts no new work. This guards both the manual run
-  // and the retry-run paths so the run panel cannot resurrect work that archive
-  // just canceled.
+  // An archived session accepts no new work. This keeps the retry path from
+  // resurrecting work that archive just canceled.
   if (session.archived_at) {
     throw new WallieActionError({
       code: "session_archived",
@@ -720,7 +719,7 @@ async function validateQueuedRunRequest(input: {
         isPrivate: repositoryResolution.repository.isPrivate,
       }
     : null;
-  const runType = input.requestedRunType ?? inferWallieRunMode(repositoryResolution.repositoryId);
+  const runType = input.requestedRunType;
 
   if (activeRun) {
     return {
@@ -856,42 +855,6 @@ async function createQueuedRun(input: {
     jobId: job.id,
     run,
   } satisfies EnqueueWallieRunResult;
-}
-
-export async function enqueueWallieRun(input: {
-  admin?: AdminClient;
-  runLookupRetry?: WallieRunLookupRetryOptions;
-  sessionId: string;
-  requestedByMemberId: string;
-  supabase: SupabaseServerClient;
-  triggerType: Enums<"agent_trigger_type">;
-  workspace: WorkspaceAccessWorkspace;
-}) {
-  const admin = input.admin ?? createSupabaseAdminClient();
-  const validated = await validateQueuedRunRequest({
-    admin,
-    sessionId: input.sessionId,
-    supabase: input.supabase,
-    workspace: input.workspace,
-  });
-
-  if (validated.activeRun) {
-    return {
-      created: false,
-      jobId: validated.activeRun.agent_job_id,
-      run: validated.activeRun,
-    } satisfies EnqueueWallieRunResult;
-  }
-
-  return createQueuedRun({
-    admin,
-    runLookupRetry: input.runLookupRetry,
-    session: validated.session,
-    requestedByMemberId: input.requestedByMemberId,
-    runType: validated.runType,
-    triggerType: input.triggerType,
-    workspace: validated.workspace,
-  });
 }
 
 export async function retryWallieRun(input: {

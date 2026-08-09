@@ -19,11 +19,6 @@ export const runHistoryQuerySchema = z
     message: "Run history cursor requires both createdAt and id.",
   });
 
-export const enqueueAgentRunSchema = z.object({
-  sessionId: sessionIdSchema,
-  workspaceId: workspaceIdSchema,
-});
-
 export const retryAgentRunSchema = z.object({
   workspaceId: workspaceIdSchema,
 });
