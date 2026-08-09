@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { enforceRateLimit } from "@/lib/rate-limit";
 import {
   sessionAttachmentWorkspaceParamsSchema,
   type SessionAttachmentMimeType,
@@ -31,6 +32,14 @@ export async function POST(request: Request, context: RouteContext) {
   const access = await requireWorkspaceAccessById(parsedParams.data.workspaceId);
   if (!access.ok) {
     return NextResponse.json({ error: access.error }, { status: access.status });
+  }
+
+  const gated = await enforceRateLimit(
+    "sessionAttachments",
+    `${access.context.workspace.id}:${access.context.currentMember.id}`,
+  );
+  if (gated.response) {
+    return gated.response;
   }
 
   const formData = await request.formData();

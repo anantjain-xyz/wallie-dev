@@ -59,7 +59,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
     .eq("delete_claimed_at", deleteClaimedAt)
     .is("session_id", null);
   if (deleteError) {
-    await restoreReadyStatus(admin, claimed.id, deleteClaimedAt);
+    // The object is already gone. Leave the row leased for expiry cleanup to
+    // retry instead of making a missing image attachable again.
     return NextResponse.json({ error: "Wallie could not remove that image." }, { status: 500 });
   }
 

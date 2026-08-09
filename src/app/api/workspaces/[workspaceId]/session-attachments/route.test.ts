@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
+  enforceRateLimit: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
+}));
+
+vi.mock("@/lib/rate-limit", () => ({
+  enforceRateLimit: mocked.enforceRateLimit,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -18,6 +23,7 @@ import { POST } from "./route";
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 
 function grantAccess() {
+  mocked.enforceRateLimit.mockResolvedValue({ response: null, result: { success: true } });
   mocked.requireWorkspaceAccessById.mockResolvedValue({
     context: {
       currentMember: { id: "00000000-0000-4000-8000-000000000002" },
@@ -117,5 +123,25 @@ describe("POST /api/workspaces/[workspaceId]/session-attachments", () => {
     expect(calls.remove).toHaveBeenCalledWith([
       expect.stringMatching(new RegExp(`^${WORKSPACE_ID}/[0-9a-f-]+\\.png$`)),
     ]);
+  });
+
+  it("returns the configured rate-limit response before reading or storing the image", async () => {
+    grantAccess();
+    const rateLimitResponse = Response.json({ error: "Rate limit exceeded." }, { status: 429 });
+    mocked.enforceRateLimit.mockResolvedValue({
+      response: rateLimitResponse,
+      result: { success: false },
+    });
+
+    const response = await POST(makeRequest(makePngFile()), {
+      params: Promise.resolve({ workspaceId: WORKSPACE_ID }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(mocked.enforceRateLimit).toHaveBeenCalledWith(
+      "sessionAttachments",
+      `${WORKSPACE_ID}:00000000-0000-4000-8000-000000000002`,
+    );
+    expect(mocked.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 });

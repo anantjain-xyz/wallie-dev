@@ -22,7 +22,9 @@ export function createSessionAttachmentIdentity(workspaceId: string, contentType
 export function normalizeSessionAttachmentFileName(fileName: string, contentType: string) {
   const leafName = fileName.split(/[\\/]/).pop() ?? "";
   const normalized = leafName.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
-  return (normalized || `image.${extensionForContentType(contentType)}`).slice(0, 255);
+  return Array.from(normalized || `image.${extensionForContentType(contentType)}`)
+    .slice(0, 255)
+    .join("");
 }
 
 export function validateSessionAttachmentFile(file: File, bytes: Buffer) {

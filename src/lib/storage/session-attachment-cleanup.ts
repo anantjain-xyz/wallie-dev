@@ -41,7 +41,8 @@ export async function cleanupExpiredSessionAttachments(admin: AdminClient, maxCo
     .is("session_id", null);
 
   if (deleteError) {
-    await restoreClaimedAttachments(admin, ids, deleteClaimedAt);
+    // Storage is already gone. Keep the lease non-attachable so a later cleanup
+    // pass retries metadata deletion instead of binding a missing object.
     return { claimed: ids.length, deleted: 0, failed: ids.length };
   }
 

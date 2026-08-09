@@ -84,4 +84,32 @@ describe("cleanupExpiredSessionAttachments", () => {
       }),
     );
   });
+
+  it("keeps the deletion lease when metadata deletion fails after storage succeeds", async () => {
+    const remove = vi.fn().mockResolvedValue({ error: null });
+    const table = makeDeleteBuilder({ message: "database down" });
+    const update = vi.fn();
+    const admin = {
+      from: vi.fn().mockReturnValue({ ...table, update }),
+      rpc: vi.fn().mockResolvedValue({
+        data: [
+          {
+            delete_claimed_at: "2026-08-09T12:00:00.000Z",
+            id: "attachment-1",
+            storage_path: "workspace/one.png",
+          },
+        ],
+        error: null,
+      }),
+      storage: { from: vi.fn().mockReturnValue({ remove }) },
+    };
+
+    await expect(cleanupExpiredSessionAttachments(admin as never)).resolves.toEqual({
+      claimed: 1,
+      deleted: 0,
+      failed: 1,
+    });
+    expect(remove).toHaveBeenCalledOnce();
+    expect(update).not.toHaveBeenCalled();
+  });
 });
