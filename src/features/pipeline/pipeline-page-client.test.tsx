@@ -42,7 +42,9 @@ vi.mock("@/features/sessions/components/session-detail-link", () => ({
 }));
 
 vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
-  SessionsZeroState: () => <p>No sessions</p>,
+  SessionsZeroState: ({ variant }: { variant?: string }) => (
+    <p data-zero-state-variant={variant}>No sessions</p>
+  ),
 }));
 
 import {
@@ -91,6 +93,7 @@ function initialData(
   buildCards = [card(3, BUILD_STAGE_ID)],
 ): PipelineDashboardData {
   return {
+    hasAnySession: planCards.length > 0 || buildCards.length > 0,
     lanes: [
       {
         cards: planCards,
@@ -204,6 +207,65 @@ describe("PipelinePageClient", () => {
     vi.unstubAllGlobals();
   });
 
+  it("distinguishes an archived-only workspace from first run", () => {
+    installSupabaseMock();
+    const emptyLanes = initialData().lanes.map((lane) => ({
+      ...lane,
+      cards: [],
+      cursor: null,
+      totalCount: 0,
+    }));
+
+    const view = render(
+      <PipelinePageClient
+        enableRealtime={false}
+        initialData={{ ...initialData([], []), hasAnySession: true, lanes: emptyLanes }}
+      />,
+    );
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("archived");
+
+    view.unmount();
+    render(
+      <PipelinePageClient
+        enableRealtime={false}
+        initialData={{ ...initialData([], []), hasAnySession: false, lanes: emptyLanes }}
+      />,
+    );
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("first-run");
+  });
+
+  it("remembers a first session observed through realtime after it is archived", async () => {
+    const supabase = installSupabaseMock();
+    const emptyLanes = initialData().lanes.map((lane) => ({
+      ...lane,
+      cards: [],
+      cursor: null,
+      totalCount: 0,
+    }));
+    const firstSession = card(1, PLAN_STAGE_ID);
+
+    render(
+      <PipelinePageClient
+        initialData={{ ...initialData([], []), hasAnySession: false, lanes: emptyLanes }}
+      />,
+    );
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("first-run");
+
+    act(() => {
+      supabase.getSessionsHandler()?.({ eventType: "INSERT", new: sessionRow(firstSession) });
+    });
+    expect(screen.getByText("Session 1")).toBeTruthy();
+
+    act(() => {
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: { ...sessionRow(firstSession), archived_at: "2026-08-09T15:00:00.000Z" },
+      });
+    });
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("archived");
+  });
+
   it("renders one semantic card tree with adaptive board geometry and mobile stage tabs", async () => {
     installSupabaseMock();
     const view = render(<PipelinePageClient initialData={initialData()} />);
@@ -264,6 +326,7 @@ describe("PipelinePageClient", () => {
     const reviewLink = screen.getByRole("link", { name: "Review session Needs review" });
     const overlay = screen.getByRole("link", { name: "Open session Needs review" });
     const content = reviewLink.closest(".pointer-events-none");
+    expect(overlay.closest("article")?.className).toContain("isolate");
     expect(content?.className).toContain("z-20");
     expect(overlay.className).toContain("z-10");
     expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");

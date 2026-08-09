@@ -112,7 +112,7 @@ rejection as an unresolved concurrency bug, not a safe losing-race outcome.
 
 ## Deduplication
 
-Interactive create, run, and retry paths use:
+Session creation, stage transitions, and interactive retry use:
 
 ```text
 session:<session_id>:active

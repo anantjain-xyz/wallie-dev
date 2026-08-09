@@ -6,8 +6,8 @@ import {
   assertSessionFirstRunReady,
   claimQueuedJobCandidate,
   createSessionWithFirstJob,
-  enqueueWallieRun,
   processQueuedAgentJobs,
+  retryWallieRun,
 } from "@/lib/wallie/service";
 import { processPipelineJob } from "@/lib/pipeline/processor";
 import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
@@ -235,10 +235,10 @@ describe("wallie service helpers", () => {
   });
 });
 
-// ---- enqueue path: regression for WAL-3 ---------------------------------
+// ---- retry enqueue path: regression for WAL-3 ---------------------------
 //
 // The queued `agent_runs` row used to be stamped with the literal placeholder
-// "wallie-control-plane-stub". Here we drive the public enqueue path with a
+// "wallie-control-plane-stub". Here we drive the public retry path with a
 // fake admin/server client and assert the row instead carries the model the
 // workspace has configured.
 
@@ -286,7 +286,7 @@ function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     stage_name: null,
     stage_slug: null,
     status: "queued",
-    trigger_type: "manual_run",
+    trigger_type: "manual_retry",
     updated_at: baseTimestamp,
     workspace_id: "ws-1",
     ...overrides,
@@ -359,6 +359,7 @@ function buildSupabaseMocks(opts: {
   insertedJobRow?: AgentJobRow;
   insertedRunRows: Array<Record<string, unknown>>;
   jobInsertError?: PostgrestError | null;
+  existingRun?: AgentRunRow | null;
   primaryRepositoryId?: string | null;
   repositories?: Array<{
     default_branch?: string | null;
@@ -442,6 +443,16 @@ function buildSupabaseMocks(opts: {
               if (filters.has("agent_job_id")) {
                 return {
                   data: opts.loadRunByJobId ? await opts.loadRunByJobId(signal) : null,
+                  error: null,
+                };
+              }
+
+              if (filters.has("id")) {
+                return {
+                  data:
+                    opts.existingRun === undefined
+                      ? buildAgentRunRow({ finished_at: baseTimestamp, status: "error" })
+                      : opts.existingRun,
                   error: null,
                 };
               }
@@ -584,12 +595,12 @@ function buildSupabaseMocks(opts: {
   };
 
   return {
-    admin: admin as unknown as Parameters<typeof enqueueWallieRun>[0]["admin"],
-    supabase: supabase as unknown as Parameters<typeof enqueueWallieRun>[0]["supabase"],
+    admin: admin as unknown as Parameters<typeof retryWallieRun>[0]["admin"],
+    supabase: supabase as unknown as Parameters<typeof retryWallieRun>[0]["supabase"],
   };
 }
 
-describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
+describe("retryWallieRun queued agent_runs row (WAL-3 regression)", () => {
   it("stamps the queued run with the workspace's configured model and provider", async () => {
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
@@ -600,12 +611,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       insertedRunRows,
     });
 
-    const result = await enqueueWallieRun({
+    const result = await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -631,12 +641,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({ code: "session_archived" });
@@ -653,12 +662,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({ code: "session_not_runnable" });
@@ -673,12 +681,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       insertedRunRows,
     });
 
-    await enqueueWallieRun({
+    await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -690,21 +697,25 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     expect((inserted.model_provider as string).length).toBeGreaterThan(0);
   });
 
-  it("uses the effective workspace repository to choose code mode for queued runs", async () => {
+  it("preserves code mode from the original run when retrying", async () => {
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
+      existingRun: buildAgentRunRow({
+        finished_at: baseTimestamp,
+        run_type: "code",
+        status: "error",
+      }),
       insertedRunRows,
       primaryRepositoryId: "repo-1",
       repositories: [{ full_name: "acme/app", id: "repo-1" }],
     });
 
-    await enqueueWallieRun({
+    await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -743,12 +754,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
@@ -763,18 +773,22 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     const insertedRunRows: Array<Record<string, unknown>> = [];
     const { admin, supabase } = buildSupabaseMocks({
       agentConfig: [],
+      existingRun: buildAgentRunRow({
+        finished_at: baseTimestamp,
+        run_type: "code",
+        status: "error",
+      }),
       insertedRunRows,
       primaryRepositoryId: "repo-missing",
       repositories: [],
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
@@ -800,12 +814,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
@@ -845,12 +858,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
@@ -893,12 +905,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
     });
 
     await expect(
-      enqueueWallieRun({
+      retryWallieRun({
         admin,
-        sessionId: "sess-1",
+        runId: "run-1",
         requestedByMemberId: "mem-1",
         supabase,
-        triggerType: "manual_run",
         workspace: { id: "ws-1", name: "Acme", slug: "acme" },
       }),
     ).rejects.toMatchObject({
@@ -925,12 +936,11 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
       insertedRunRows,
     });
 
-    await enqueueWallieRun({
+    await retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -938,7 +948,7 @@ describe("enqueueWallieRun queued agent_runs row (WAL-3 regression)", () => {
   });
 });
 
-describe("enqueueWallieRun duplicate job dedupe", () => {
+describe("retryWallieRun duplicate job dedupe", () => {
   it("returns the existing run when run visibility is delayed beyond the old 200 ms window", async () => {
     vi.useFakeTimers();
     const startTime = Date.parse(baseTimestamp);
@@ -959,12 +969,11 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
       },
     });
 
-    const resultPromise = enqueueWallieRun({
+    const resultPromise = retryWallieRun({
       admin,
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
 
@@ -992,17 +1001,16 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
       loadRunByJobId: () => null,
     });
 
-    const resultPromise = enqueueWallieRun({
+    const resultPromise = retryWallieRun({
       admin,
       runLookupRetry: {
         initialDelayMs: 40,
         maxDelayMs: 80,
         maxElapsedMs: 120,
       },
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
     const rejection = expect(resultPromise).rejects.toMatchObject({
@@ -1048,17 +1056,16 @@ describe("enqueueWallieRun duplicate job dedupe", () => {
       },
     });
 
-    const resultPromise = enqueueWallieRun({
+    const resultPromise = retryWallieRun({
       admin,
       runLookupRetry: {
         initialDelayMs: 40,
         maxDelayMs: 80,
         maxElapsedMs: 120,
       },
-      sessionId: "sess-1",
+      runId: "run-1",
       requestedByMemberId: "mem-1",
       supabase,
-      triggerType: "manual_run",
       workspace: { id: "ws-1", name: "Acme", slug: "acme" },
     });
     const rejection = expect(resultPromise).rejects.toMatchObject({

@@ -3,15 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RATE_LIMITS, clearRateLimitsForTesting } from "@/lib/rate-limit";
 
 const mocked = vi.hoisted(() => ({
-  enqueueWallieRun: vi.fn(),
   loadAttemptOrdinalForRun: vi.fn(),
-  processQueuedAgentJobs: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
+  retryWallieRun: vi.fn(),
 }));
 
 vi.mock("@/lib/wallie/service", () => ({
-  enqueueWallieRun: mocked.enqueueWallieRun,
-  processQueuedAgentJobs: mocked.processQueuedAgentJobs,
+  retryWallieRun: mocked.retryWallieRun,
 }));
 
 vi.mock("@/features/wallie/server", () => ({
@@ -22,30 +20,22 @@ vi.mock("@/lib/workspaces/access", () => ({
   requireWorkspaceAccessById: mocked.requireWorkspaceAccessById,
 }));
 
-vi.mock("next/server", async () => {
-  const actual = await vi.importActual<typeof import("next/server")>("next/server");
-  return {
-    ...actual,
-    after: () => {
-      // Drop deferred work — these tests only assert on the synchronous path.
-    },
-  };
-});
-
 import { POST } from "./route";
 
-function makeRequest(body: Record<string, unknown>) {
-  return new Request("http://localhost:3000/api/agent-runs", {
-    body: JSON.stringify(body),
+const runId = "33333333-3333-4333-8333-333333333333";
+const workspaceId = "22222222-2222-4222-8222-222222222222";
+
+function makeRequest() {
+  return new Request(`http://localhost:3000/api/agent-runs/${runId}/retry`, {
+    body: JSON.stringify({ workspaceId }),
     headers: { "content-type": "application/json" },
     method: "POST",
   });
 }
 
-const validBody = {
-  sessionId: "11111111-1111-1111-1111-111111111111",
-  workspaceId: "22222222-2222-2222-2222-222222222222",
-};
+function routeContext() {
+  return { params: Promise.resolve({ runId }) };
+}
 
 const existingRunRow = {
   created_at: "2026-01-01T00:00:00.000Z",
@@ -54,7 +44,7 @@ const existingRunRow = {
   model_name: "claude-sonnet-4-20250514",
   model_provider: "claude-code",
   run_type: "project",
-  session_id: "11111111-1111-1111-1111-111111111111",
+  session_id: "11111111-1111-4111-8111-111111111111",
   started_at: null,
   stage_id: null,
   stage_name: null,
@@ -63,7 +53,7 @@ const existingRunRow = {
   triggered_by_member_id: "member-1",
 };
 
-describe("POST /api/agent-runs rate limiting", () => {
+describe("POST /api/agent-runs/:runId/retry rate limiting", () => {
   beforeEach(() => {
     clearRateLimitsForTesting();
     vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
@@ -75,16 +65,15 @@ describe("POST /api/agent-runs rate limiting", () => {
         currentMember: { id: "member-1", is_active: true, kind: "human", role: "owner" },
         supabase: {},
         user: { id: "user-1" },
-        workspace: { id: validBody.workspaceId, name: "Acme", slug: "acme" },
+        workspace: { id: workspaceId, name: "Acme", slug: "acme" },
       },
     });
-    mocked.enqueueWallieRun.mockResolvedValue({
+    mocked.retryWallieRun.mockResolvedValue({
       created: true,
       jobId: "job-1",
-      run: { id: "run-1", session_id: validBody.sessionId },
+      run: { id: "run-1", session_id: existingRunRow.session_id },
     });
-    mocked.loadAttemptOrdinalForRun.mockResolvedValue(1);
-    mocked.processQueuedAgentJobs.mockResolvedValue({});
+    mocked.loadAttemptOrdinalForRun.mockResolvedValue(2);
   });
 
   afterEach(() => {
@@ -92,15 +81,15 @@ describe("POST /api/agent-runs rate limiting", () => {
     vi.clearAllMocks();
   });
 
-  it("returns 201 up to the cap, then 429 with Retry-After + X-RateLimit headers", async () => {
+  it("returns 201 up to the cap, then 429 with rate-limit headers", async () => {
     const cap = RATE_LIMITS.agentRuns.max;
 
     for (let i = 0; i < cap; i += 1) {
-      const response = await POST(makeRequest(validBody));
+      const response = await POST(makeRequest(), routeContext());
       expect(response.status).toBe(201);
     }
 
-    const blocked = await POST(makeRequest(validBody));
+    const blocked = await POST(makeRequest(), routeContext());
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get("Retry-After")).not.toBeNull();
     expect(blocked.headers.get("X-RateLimit-Limit")).toBe(String(cap));
@@ -109,52 +98,44 @@ describe("POST /api/agent-runs rate limiting", () => {
     const body = (await blocked.json()) as { error: string; retryAfterSeconds: number };
     expect(body.error).toMatch(/rate limit/i);
     expect(body.retryAfterSeconds).toBeGreaterThan(0);
-
-    expect(mocked.enqueueWallieRun).toHaveBeenCalledTimes(cap);
-    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
+    expect(mocked.retryWallieRun).toHaveBeenCalledTimes(cap);
   });
 
   it("isolates per-(workspace, user) buckets", async () => {
     const cap = RATE_LIMITS.agentRuns.max;
     for (let i = 0; i < cap; i += 1) {
-      await POST(makeRequest(validBody));
+      await POST(makeRequest(), routeContext());
     }
 
-    // Same workspace, different user — should still succeed.
     mocked.requireWorkspaceAccessById.mockResolvedValueOnce({
       ok: true,
       context: {
         currentMember: { id: "member-2", is_active: true, kind: "human", role: "member" },
         supabase: {},
         user: { id: "user-2" },
-        workspace: { id: validBody.workspaceId, name: "Acme", slug: "acme" },
+        workspace: { id: workspaceId, name: "Acme", slug: "acme" },
       },
     });
 
-    const response = await POST(makeRequest(validBody));
+    const response = await POST(makeRequest(), routeContext());
     expect(response.status).toBe(201);
   });
 
-  it("returns 200 when duplicate-enqueue dedupe resolves an existing run", async () => {
-    mocked.enqueueWallieRun.mockResolvedValueOnce({
+  it("returns 200 when active-run dedupe resolves an existing run", async () => {
+    mocked.retryWallieRun.mockResolvedValueOnce({
       created: false,
       jobId: "job-existing",
       run: existingRunRow,
     });
 
-    const response = await POST(makeRequest(validBody));
+    const response = await POST(makeRequest(), routeContext());
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      code?: string;
-      created: boolean;
-      processScheduled: boolean;
-      run: { id: string };
-    };
-    expect(body.code).toBe("active_run");
-    expect(body.created).toBe(false);
-    expect(body.processScheduled).toBe(false);
-    expect(body.run.id).toBe("run-existing");
-    expect(mocked.processQueuedAgentJobs).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      code: "active_run",
+      created: false,
+      processScheduled: false,
+      run: { id: "run-existing" },
+    });
   });
 });
