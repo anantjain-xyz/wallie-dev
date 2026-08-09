@@ -2004,35 +2004,6 @@ export type Database = {
         Args: { target_workspace_id: string }
         Returns: string
       }
-      claim_agent_job: {
-        Args: { default_concurrency_limit?: number; target_job_id: string }
-        Returns: {
-          attempt_count: number
-          created_at: string
-          dedupe_key: string | null
-          finished_at: string | null
-          id: string
-          job_type: string
-          last_error: string | null
-          requested_by_member_id: string | null
-          scheduled_at: string | null
-          session_id: string
-          stage_id: string | null
-          stage_name: string | null
-          stage_slug: string | null
-          started_at: string | null
-          status: Database["public"]["Enums"]["agent_job_status"]
-          trigger_type: Database["public"]["Enums"]["agent_trigger_type"]
-          updated_at: string
-          workspace_id: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "agent_jobs"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
       claim_next_agent_job: {
         Args: { default_concurrency_limit?: number }
         Returns: {
@@ -2162,10 +2133,6 @@ export type Database = {
           target_user_id: string
         }
         Returns: undefined
-      }
-      next_session_number: {
-        Args: { actor_user_id: string; target_workspace_id: string }
-        Returns: number
       }
       persist_codex_auth_json: {
         Args: {

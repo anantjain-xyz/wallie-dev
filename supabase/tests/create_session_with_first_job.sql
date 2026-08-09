@@ -3,8 +3,21 @@ begin;
 create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
 
-select plan(35);
+select plan(37);
 set local "request.jwt.claim.role" = 'service_role';
+
+select hasnt_function(
+  'public',
+  'claim_agent_job',
+  array['uuid', 'integer'],
+  'superseded targeted job-claim RPC is absent'
+);
+select hasnt_function(
+  'public',
+  'next_session_number',
+  array['uuid', 'uuid'],
+  'superseded standalone session-number RPC is absent'
+);
 
 select has_function(
   'public',
