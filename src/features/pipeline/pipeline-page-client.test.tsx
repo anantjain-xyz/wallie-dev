@@ -224,13 +224,46 @@ describe("PipelinePageClient", () => {
     );
     expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("archived");
 
-    view.rerender(
+    view.unmount();
+    render(
       <PipelinePageClient
         enableRealtime={false}
         initialData={{ ...initialData([], []), hasAnySession: false, lanes: emptyLanes }}
       />,
     );
     expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("first-run");
+  });
+
+  it("remembers a first session observed through realtime after it is archived", async () => {
+    const supabase = installSupabaseMock();
+    const emptyLanes = initialData().lanes.map((lane) => ({
+      ...lane,
+      cards: [],
+      cursor: null,
+      totalCount: 0,
+    }));
+    const firstSession = card(1, PLAN_STAGE_ID);
+
+    render(
+      <PipelinePageClient
+        initialData={{ ...initialData([], []), hasAnySession: false, lanes: emptyLanes }}
+      />,
+    );
+    await waitFor(() => expect(supabase.getSessionsHandler()).toBeDefined());
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("first-run");
+
+    act(() => {
+      supabase.getSessionsHandler()?.({ eventType: "INSERT", new: sessionRow(firstSession) });
+    });
+    expect(screen.getByText("Session 1")).toBeTruthy();
+
+    act(() => {
+      supabase.getSessionsHandler()?.({
+        eventType: "UPDATE",
+        new: { ...sessionRow(firstSession), archived_at: "2026-08-09T15:00:00.000Z" },
+      });
+    });
+    expect(screen.getByText("No sessions").dataset.zeroStateVariant).toBe("archived");
   });
 
   it("renders one semantic card tree with adaptive board geometry and mobile stage tabs", async () => {

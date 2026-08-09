@@ -183,6 +183,7 @@ function PipelinePageContent({
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [hasObservedSession, setHasObservedSession] = useState(false);
   const boardRef = useRef<PipelineBoardState>(board);
   const initialLanesRef = useRef(initialData.lanes);
   const invalidatedCardIds = useRef(new Set<string>());
@@ -285,6 +286,7 @@ function PipelinePageContent({
             return;
           }
 
+          setHasObservedSession(true);
           const row = payload.new as Tables<"sessions">;
           if (row.archived_at) {
             dispatch({ cardId: row.id, type: "remove" });
@@ -413,6 +415,7 @@ function PipelinePageContent({
   );
 
   const hasActiveSessions = board.lanes.some((lane) => lane.totalCount > 0);
+  const hasEverHadSession = initialData.hasAnySession || hasObservedSession;
   const filtersActive = searchQuery.trim().length > 0 || statusFilter !== "all";
   const stageCount = Math.max(board.lanes.length, 1);
   const laneKeys = board.lanes.map((lane) => pipelineLaneKey(lane));
@@ -497,7 +500,7 @@ function PipelinePageContent({
           <div className="mx-auto max-w-2xl">
             <SessionsZeroState
               onboarding={initialData.onboarding}
-              variant={initialData.hasAnySession ? "archived" : "first-run"}
+              variant={hasEverHadSession ? "archived" : "first-run"}
               workspaceSlug={initialData.workspace.slug}
               newSessionHref={`${workspaceBasePath(initialData.workspace.slug)}?create=1`}
             />
