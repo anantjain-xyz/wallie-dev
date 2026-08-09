@@ -6,6 +6,7 @@ import { deregisterWorker, registerWorker, sendHeartbeat } from "./heartbeat";
 import { reconcileLinearState } from "./reconciler";
 import { reapOrphanSandboxes } from "./sandbox-reaper";
 import { createScheduler } from "./scheduler";
+import { finishWorkerShutdown } from "./shutdown";
 import { sweepStalledRuns } from "./stall-detector";
 
 async function main() {
@@ -35,18 +36,18 @@ async function main() {
     isShuttingDown: () => shuttingDown,
   });
 
-  // Graceful shutdown handler. We exit immediately and let the stall sweep
-  // reclaim any in-flight jobs (their heartbeat goes stale on exit).
-  async function shutdown(signal: string) {
+  // Stop claiming on a graceful signal. The main flow below keeps heartbeats
+  // active while already-claimed jobs drain, then deregisters and exits.
+  function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[worker] received ${signal}, shutting down…`);
-    await deregisterWorker(admin, config.workerId);
-    process.exit(0);
+    console.log(`[worker] received ${signal}, draining active jobs…`, {
+      activeJobIds: scheduler.getActiveJobIds(),
+    });
   }
 
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   // --- Heartbeat interval ---
   const heartbeatTimer = setInterval(() => {
@@ -113,11 +114,17 @@ async function main() {
   console.log("[worker] entering scheduler loop");
   await scheduler.run();
 
-  // Cleanup (unreachable in normal flow — shutdown handler exits).
-  clearInterval(heartbeatTimer);
-  clearInterval(stallTimer);
-  clearInterval(reconcileTimer);
-  clearInterval(sandboxReapTimer);
+  await finishWorkerShutdown({
+    deregister: () => deregisterWorker(admin, config.workerId),
+    scheduler,
+    stopTimers: () => {
+      clearInterval(heartbeatTimer);
+      clearInterval(stallTimer);
+      clearInterval(reconcileTimer);
+      clearInterval(sandboxReapTimer);
+    },
+  });
+  console.log("[worker] graceful shutdown complete", { workerId: config.workerId });
 }
 
 function runTimerTask(label: string, task: () => Promise<void>): void {
