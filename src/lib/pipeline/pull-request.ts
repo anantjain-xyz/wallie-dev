@@ -4,7 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { resolveGitHubAppConfig } from "@/features/github/config";
+import { attachLinearPullRequest } from "@/lib/linear/client";
 import type { SandboxHandle } from "@/lib/sandbox/types";
+import { decryptSecretValue } from "@/lib/secrets/crypto";
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -26,6 +28,7 @@ interface OpenSessionPullRequestInput {
   /** Override for tests. Defaults to a real `App` from `@octokit/app`. */
   githubAppFactory?: () => MaybePromise<GitHubAppLike>;
   installationId: number;
+  linearIssueId: string | null;
   repoFullName: string;
   /** github_repositories.id (DB UUID, not GitHub's numeric repo id). */
   repoId: string;
@@ -33,6 +36,8 @@ interface OpenSessionPullRequestInput {
   sessionId: string;
   title: string;
   workspaceId: string;
+  /** Override for tests. Defaults to Linear's attachmentCreate mutation. */
+  linearAttachment?: typeof attachLinearPullRequest;
 }
 
 export type OpenSessionPullRequestOutcome =
@@ -50,11 +55,12 @@ export type OpenSessionPullRequestOutcome =
 /**
  * After a stage agent finishes, record its work as a PR:
  *   1. Detect whether the sandbox branch is ahead of base, and look up the
- *      latest PR for the branch (stage agents are instructed to open their own,
- *      so GitHub — not the local sandbox — is the source of truth).
+ *      latest PR for the branch.
  *   2. Push this run's commits to the remote, then reuse the PR only if it is
- *      still open; a closed/merged PR can't carry new work, so open a fresh one.
- *   3. Upsert a `session_pull_requests` row keyed on (workspace, branch).
+ *      still open; refresh its body from the latest artifact, or open a fresh
+ *      PR when a closed/merged one can't carry new work.
+ *   3. Upsert a `session_pull_requests` row keyed on (workspace, branch), then
+ *      attach the PR to the Linear issue when the session came from Linear.
  *
  * Why GitHub-first: the sandbox is a shallow, single-revision clone, so a
  * *local* `<base>` ref frequently does not exist (only `origin/<base>` does
@@ -70,10 +76,8 @@ export type OpenSessionPullRequestOutcome =
  * the branch is genuinely ahead — pushing a not-ahead branch would force-reset
  * the remote back to base.
  *
- * Remote failures are recoverable — the artifact is already persisted and the
- * reviewer can approve it from the dashboard — so this function never throws on
- * remote errors. It returns a tagged outcome so the caller can log without
- * aborting the stage.
+ * This function returns tagged failures so the caller can retry the durable
+ * pipeline job instead of advancing a session to review without its PR.
  */
 export async function openSessionPullRequest(
   input: OpenSessionPullRequestInput,
@@ -108,6 +112,14 @@ export async function openSessionPullRequest(
           return { kind: "push_failed", reason: pushError };
         }
       }
+      await updatePullRequest({
+        body: input.body,
+        octokit,
+        owner,
+        prNumber: existing.number,
+        repo,
+        title: input.title,
+      });
       pr = existing;
     } else if (ahead === "no") {
       // Nothing new to propose. Preserve the link to the most recent PR if one
@@ -153,6 +165,14 @@ export async function openSessionPullRequest(
             `pulls.create returned 422 already_exists for ${input.branch} but pulls.list found nothing`,
           );
         }
+        await updatePullRequest({
+          body: input.body,
+          octokit,
+          owner,
+          prNumber: recovered.number,
+          repo,
+          title: input.title,
+        });
         pr = recovered;
       }
     }
@@ -179,6 +199,22 @@ export async function openSessionPullRequest(
 
   if (error) {
     return { kind: "pr_failed", reason: error.message };
+  }
+
+  if (input.linearIssueId) {
+    try {
+      const apiKey = await loadLinearApiKey(input.admin, input.workspaceId);
+      await (input.linearAttachment ?? attachLinearPullRequest)(apiKey, input.linearIssueId, {
+        pullRequestNumber: pr.number,
+        title: input.title,
+        url: pr.html_url,
+      });
+    } catch (linearError) {
+      return {
+        kind: "pr_failed",
+        reason: `Failed to attach pull request to Linear: ${linearError instanceof Error ? linearError.message : String(linearError)}`,
+      };
+    }
   }
 
   return {
@@ -325,6 +361,39 @@ async function openPullRequest(input: {
     },
   );
   return data;
+}
+
+async function updatePullRequest(input: {
+  body: string;
+  octokit: InstallationOctokit;
+  owner: string;
+  prNumber: number;
+  repo: string;
+  title: string;
+}): Promise<void> {
+  await input.octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+    body: input.body,
+    owner: input.owner,
+    pull_number: input.prNumber,
+    repo: input.repo,
+    title: input.title,
+  });
+}
+
+async function loadLinearApiKey(admin: AdminClient, workspaceId: string): Promise<string> {
+  const { data, error } = await admin
+    .from("workspace_secrets")
+    .select("encrypted_value")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "LINEAR_API_KEY")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) {
+    throw new Error("LINEAR_API_KEY is not configured for this workspace.");
+  }
+
+  return decryptSecretValue(data.encrypted_value);
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

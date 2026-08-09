@@ -4,28 +4,53 @@ import { FakeSandbox } from "@/lib/sandbox/fake";
 
 import { openSessionPullRequest } from "./pull-request";
 
+const mocked = vi.hoisted(() => ({
+  decryptSecretValue: vi.fn(() => "linear-api-key"),
+}));
+
+vi.mock("@/lib/secrets/crypto", () => ({
+  decryptSecretValue: mocked.decryptSecretValue,
+}));
+
 interface UpsertCall {
   row: Record<string, unknown>;
   options: Record<string, unknown> | undefined;
 }
 
-function buildAdminMock(opts: { upsertError?: { message: string } } = {}) {
+function buildAdminMock(
+  opts: {
+    linearSecret?: { encrypted_value: string } | null;
+    linearSecretError?: { message: string } | null;
+    upsertError?: { message: string };
+  } = {},
+) {
   const upserts: UpsertCall[] = [];
   return {
     admin: {
       from: (name: string) => {
-        if (name !== "session_pull_requests") {
-          throw new Error(`Unexpected table: ${name}`);
+        if (name === "workspace_secrets") {
+          const chain = {
+            eq: () => chain,
+            maybeSingle: async () => ({
+              data: opts.linearSecret ?? null,
+              error: opts.linearSecretError ?? null,
+            }),
+            select: () => chain,
+          };
+          return chain;
         }
-        return {
-          upsert: async (
-            row: Record<string, unknown>,
-            options: Record<string, unknown> | undefined,
-          ) => {
-            upserts.push({ row, options });
-            return { error: opts.upsertError ?? null };
-          },
-        };
+        if (name === "session_pull_requests") {
+          return {
+            upsert: async (
+              row: Record<string, unknown>,
+              options: Record<string, unknown> | undefined,
+            ) => {
+              upserts.push({ row, options });
+              return { error: opts.upsertError ?? null };
+            },
+          };
+        }
+        throw new Error(`Unexpected table: ${name}`);
       },
     },
     upserts,
@@ -95,6 +120,7 @@ const baseInput = {
   body: "spec body",
   branch: "wallie/product-sess-1",
   installationId: 123,
+  linearIssueId: null,
   repoFullName: "acme/app",
   repoId: "repo-1",
   sessionId: "sess-1",
@@ -111,7 +137,7 @@ describe("openSessionPullRequest", () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
-    // pulls.list (find existing) returns the agent's PR.
+    // pulls.list (find existing) returns Wallie's PR.
     const octokit = makeOctokitWithSequence([[openPr]]);
     const { admin, upserts } = buildAdminMock();
 
@@ -129,14 +155,24 @@ describe("openSessionPullRequest", () => {
       prState: "open",
       prUrl: "https://github.com/acme/app/pull/42",
     });
-    // Reuses the existing PR (no create), but still pushes this run's commits so
-    // a stage retry doesn't leave the PR pinned to the previous run's commits.
-    expect(octokit.calls.map((c) => c.route)).toEqual(["GET /repos/{owner}/{repo}/pulls"]);
+    // Reuses the existing PR (no create), pushes this run's commits, and
+    // refreshes the PR body from the latest Build artifact.
+    expect(octokit.calls.map((c) => c.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls",
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+    ]);
     expect(octokit.calls[0]!.params).toMatchObject({
       head: "acme:wallie/product-sess-1",
       owner: "acme",
       repo: "app",
       state: "all",
+    });
+    expect(octokit.calls[1]!.params).toEqual({
+      body: "spec body",
+      owner: "acme",
+      pull_number: 42,
+      repo: "app",
+      title: "Product: Add SSO",
     });
     expect(sandbox.calls.some((c) => c.args.join(" ").includes("push --force"))).toBe(true);
     expect(upserts).toHaveLength(1);
@@ -299,6 +335,7 @@ describe("openSessionPullRequest", () => {
       "GET /repos/{owner}/{repo}/pulls",
       "POST /repos/{owner}/{repo}/pulls",
       "GET /repos/{owner}/{repo}/pulls",
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
     ]);
     expect(upserts[0]!.row.pull_request_number).toBe(41);
     expect(upserts[0]!.row.is_draft).toBe(true);
@@ -390,6 +427,58 @@ describe("openSessionPullRequest", () => {
 
     expect(outcome).toEqual({ kind: "pr_failed", reason: "db down" });
     expect(upserts).toHaveLength(1);
+  });
+
+  it("idempotently attaches a published PR to its Linear issue", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const octokit = makeOctokitWithSequence([[], openPr]);
+    const { admin } = buildAdminMock({
+      linearSecret: { encrypted_value: "encrypted-linear-key" },
+    });
+    const linearAttachment = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      linearAttachment,
+      linearIssueId: "TEAM-1",
+      sandbox,
+    });
+
+    expect(outcome.kind).toBe("success");
+    expect(mocked.decryptSecretValue).toHaveBeenCalledWith("encrypted-linear-key");
+    expect(linearAttachment).toHaveBeenCalledWith("linear-api-key", "TEAM-1", {
+      pullRequestNumber: 42,
+      title: "Product: Add SSO",
+      url: "https://github.com/acme/app/pull/42",
+    });
+  });
+
+  it("returns a retryable publication failure when Linear attachment fails", async () => {
+    const sandbox = new FakeSandbox();
+    scriptCommitsAhead(sandbox, "AHEAD");
+    scriptPush(sandbox);
+    const octokit = makeOctokitWithSequence([[], openPr]);
+    const { admin } = buildAdminMock({
+      linearSecret: { encrypted_value: "encrypted-linear-key" },
+    });
+
+    const outcome = await openSessionPullRequest({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      linearAttachment: vi.fn().mockRejectedValue(new Error("Linear unavailable")),
+      linearIssueId: "TEAM-1",
+      sandbox,
+    });
+
+    expect(outcome).toEqual({
+      kind: "pr_failed",
+      reason: "Failed to attach pull request to Linear: Linear unavailable",
+    });
   });
 
   it("returns pr_failed for an invalid repo full_name", async () => {

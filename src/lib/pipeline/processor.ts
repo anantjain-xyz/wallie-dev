@@ -379,6 +379,7 @@ async function runStage(input: {
         body: artifactMarkdown.slice(0, 60000),
         branch,
         installationId: github.installationId,
+        linearIssueId: session.linear_issue_id,
         repoFullName: github.repo.full_name,
         repoId: github.repo.id,
         sandbox,
@@ -387,22 +388,19 @@ async function runStage(input: {
         workspaceId: session.workspace_id,
       });
 
-      // PR plumbing is recoverable — the artifact is durable and the reviewer
-      // can approve the artifact directly — so we never block the stage. But we
-      // always surface the outcome: `no_commits` used to be fully silent, which
-      // is exactly how empty `session_pull_requests` went unnoticed.
+      // Analysis-only stages can legitimately produce no commits. Publication
+      // failures cannot advance to human review: Wallie is now the sole PR
+      // publisher, so the durable job must retry instead of silently leaving a
+      // branch without a recorded and Linear-attached PR.
       if (prOutcome.kind === "no_commits") {
         console.info("Stage produced no pull request (no commits ahead of base)", {
           sessionId: session.id,
           stageSlug: stage.slug,
         });
       } else if (prOutcome.kind !== "success") {
-        console.error("Failed to open session pull request", {
-          kind: prOutcome.kind,
-          reason: prOutcome.reason,
-          sessionId: session.id,
-          stageSlug: stage.slug,
-        });
+        throw new Error(
+          `Wallie pull request publication failed (${prOutcome.kind}): ${prOutcome.reason}`,
+        );
       }
     }
 

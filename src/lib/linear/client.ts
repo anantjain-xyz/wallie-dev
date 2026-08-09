@@ -27,6 +27,16 @@ type LinearIssueResponse = {
   errors?: Array<{ message: string }>;
 };
 
+type LinearAttachmentCreateResponse = {
+  data?: {
+    attachmentCreate?: {
+      attachment?: { id: string } | null;
+      success: boolean;
+    } | null;
+  };
+  errors?: Array<{ message: string }>;
+};
+
 const issueQuery = /* GraphQL */ `
   query Issue($id: String!) {
     issue(id: $id) {
@@ -82,6 +92,57 @@ export async function fetchLinearIssue(
     title: issue.title,
     url: issue.url,
   };
+}
+
+export async function attachLinearPullRequest(
+  apiKey: string,
+  issueIdentifier: string,
+  input: { pullRequestNumber: number; title: string; url: string },
+): Promise<void> {
+  // Session rows store the human-readable identifier (for example TEAM-42),
+  // while attachmentCreate requires the issue UUID.
+  const issue = await fetchLinearIssue(apiKey, issueIdentifier);
+  const response = await fetch(LINEAR_GRAPHQL_ENDPOINT, {
+    body: JSON.stringify({
+      query: /* GraphQL */ `
+        mutation AttachmentCreate($input: AttachmentCreateInput!) {
+          attachmentCreate(input: $input) {
+            success
+            attachment {
+              id
+            }
+          }
+        }
+      `,
+      variables: {
+        input: {
+          issueId: issue.id,
+          subtitle: `Pull request #${input.pullRequestNumber}`,
+          title: input.title,
+          url: input.url,
+        },
+      },
+    }),
+    headers: {
+      Authorization: apiKey,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Linear attachment request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const payload = (await response.json()) as LinearAttachmentCreateResponse;
+
+  if (payload.errors && payload.errors.length > 0) {
+    throw new Error(`Linear API error: ${payload.errors.map((e) => e.message).join("; ")}`);
+  }
+
+  if (!payload.data?.attachmentCreate?.success || !payload.data.attachmentCreate.attachment?.id) {
+    throw new Error(`Linear did not attach pull request #${input.pullRequestNumber}.`);
+  }
 }
 
 export async function verifyLinearApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {

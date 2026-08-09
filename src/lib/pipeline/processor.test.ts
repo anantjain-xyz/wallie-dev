@@ -1012,6 +1012,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(call.repoFullName).toBe("acme/app");
     expect(call.repoId).toBe("repo-1");
     expect(call.installationId).toBe(123);
+    expect(call.linearIssueId).toBe(session.linear_issue_id);
     expect(call.sessionId).toBe(session.id);
     expect(call.workspaceId).toBe(session.workspace_id);
     expect(typeof call.branch).toBe("string");
@@ -1090,25 +1091,35 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
   });
 
-  it("does not abort the stage when opening the pull request fails", async () => {
+  it("retries the durable job when Wallie-owned pull request publication fails", async () => {
     mocked.openSessionPullRequest.mockResolvedValueOnce({
       kind: "pr_failed",
       reason: "boom",
     });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const session = baseSession();
-    const { admin, insertedArtifacts, updatedSessions } = buildAdminMock({ session });
+    const { admin, deletedArtifacts, insertedArtifacts, rpc, updatedJobs, updatedSessions } =
+      buildAdminMock({ session });
 
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(insertedArtifacts).toHaveLength(1);
+    expect(deletedArtifacts).toEqual([
+      { session_id: session.id, stage_slug: productStage.slug, version: 1 },
+    ]);
     expect(updatedSessions).toEqual([
       { phase_status: "in_progress" },
-      { current_artifact_version: 1, phase_status: "awaiting_review" },
+      { phase_status: "rejected" },
     ]);
-    expect(result.result).toBe("success");
-    consoleError.mockRestore();
+    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
+      target_job_id: "job-1",
+      base_delay_ms: 5000,
+      max_backoff_ms: 300000,
+    });
+    expect(updatedJobs).toContainEqual({
+      last_error: "Wallie pull request publication failed (pr_failed): boom",
+    });
+    expect(result.result).toBe("error");
   });
 
   it("does not persist the stage completion message when artifact persistence fails", async () => {
