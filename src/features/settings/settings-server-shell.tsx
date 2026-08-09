@@ -10,7 +10,6 @@ import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/island
 import {
   GithubIntegrationIsland,
   LinearIntegrationIsland,
-  ProviderIntentLink,
   RepositoryIntegrationIsland,
   RuntimeIntegrationIsland,
   VercelIntegrationIsland,
@@ -25,7 +24,6 @@ import { SettingsCategoryNav } from "@/features/settings/settings-category-nav";
 import type { SettingsCategory } from "@/features/settings/settings-categories";
 import { Section, UsageSummary } from "@/features/settings/settings-ui";
 import type { WorkspaceInvitation } from "@/lib/workspace-invitations/contracts";
-import { normalizeAgentProviderName } from "@/lib/agent-config/contracts";
 
 type SettingsServerShellProps = {
   category: SettingsCategory;
@@ -112,29 +110,14 @@ async function IntegrationDetails({
     return <SettingsSectionError label="Integration details" minHeight="min-h-96" />;
   }
   const data = completeSettingsData(initialData, setup.value);
-  const providerValue = data.agentConfig.agent_provider;
-  const provider =
-    normalizeAgentProviderName(typeof providerValue === "string" ? providerValue : undefined) ??
-    "codex";
   return (
     <>
-      <div aria-label="Integration sections" className="flex flex-wrap gap-2">
-        <a className="ui-button" href="#pipeline">
-          Pipeline
-        </a>
-        <a className="ui-button" href="#linear">
-          Linear
-        </a>
-        <a className="ui-button" href="#sandbox">
-          Sandbox
-        </a>
-        <ProviderIntentLink provider={provider} />
-      </div>
       <RepositoryIntegrationIsland initialData={data} />
       <PipelineIsland data={data} />
       <LinearIntegrationIsland initialData={data} />
       <VercelIntegrationIsland initialData={data} />
       <RuntimeIntegrationIsland codexStatus={searchState.codexStatus} initialData={data} />
+      <VerifySetupIsland initialData={data} />
     </>
   );
 }
@@ -177,7 +160,9 @@ async function UsageSection({
       title="Usage"
     >
       <UsageSummary usage={result.value} />
-      <MaintenanceIsland canManage={canManage} workspaceId={workspaceId} />
+      <div className="scroll-mt-8" id="maintenance">
+        <MaintenanceIsland canManage={canManage} workspaceId={workspaceId} />
+      </div>
     </Section>
   );
 }
@@ -185,47 +170,44 @@ async function UsageSection({
 async function AdvancedDetails({ initialData, setupData }: SettingsServerShellProps) {
   const setup = await settle(setupData);
   if (!setup.ok) {
-    return <SettingsSectionError label="Setup health" minHeight="min-h-96" />;
+    return <SettingsSectionError label="Rate limits" minHeight="min-h-96" />;
   }
   const data = completeSettingsData(initialData, setup.value);
   return (
-    <>
-      <VerifySetupIsland initialData={data} />
-      <Section
-        anchorId="rate-limits"
-        tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls."
-        title="Rate limits"
-      >
-        <ul className="ui-sheet divide-y divide-border">
-          {data.rateLimits.map((limit) => (
-            <li className="flex justify-between gap-4 px-5 py-4" key={limit.endpoint}>
-              <div>
-                <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
-                <p className="mt-1 text-xs text-muted">{limit.description}</p>
-              </div>
-              <span className="shrink-0 font-mono type-annotation text-muted">
-                {limit.max} / {Math.round(limit.windowMs / 1000)}s
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Section>
-    </>
+    <Section
+      anchorId="rate-limits"
+      tagline="Per-endpoint caps protecting sandbox spawns and paid LLM calls."
+      title="Rate limits"
+    >
+      <ul className="ui-sheet divide-y divide-border">
+        {data.rateLimits.map((limit) => (
+          <li className="flex justify-between gap-4 px-5 py-4" key={limit.endpoint}>
+            <div>
+              <code className="font-mono text-xs text-foreground">{limit.endpoint}</code>
+              <p className="mt-1 text-xs text-muted">{limit.description}</p>
+            </div>
+            <span className="shrink-0 font-mono type-annotation text-muted">
+              {limit.max} / {Math.round(limit.windowMs / 1000)}s
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 
 function AdvancedCategory(props: SettingsServerShellProps) {
   return (
     <div className="space-y-16">
-      <Suspense fallback={<SettingsSectionFallback label="setup health" minHeight="min-h-96" />}>
-        <AdvancedDetails {...props} />
-      </Suspense>
       <Suspense fallback={<SettingsSectionFallback label="usage" />}>
         <UsageSection
           canManage={props.initialData.canManage}
           usage={props.usage}
           workspaceId={props.initialData.workspace.id}
         />
+      </Suspense>
+      <Suspense fallback={<SettingsSectionFallback label="rate limits" minHeight="min-h-96" />}>
+        <AdvancedDetails {...props} />
       </Suspense>
     </div>
   );
