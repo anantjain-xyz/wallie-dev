@@ -6,7 +6,7 @@ import { deregisterWorker, registerWorker, sendHeartbeat } from "./heartbeat";
 import { reconcileLinearState } from "./reconciler";
 import { reapOrphanSandboxes } from "./sandbox-reaper";
 import { createScheduler } from "./scheduler";
-import { finishWorkerShutdown } from "./shutdown";
+import { createTimerTaskTracker, finishWorkerShutdown } from "./shutdown";
 import { sweepStalledRuns } from "./stall-detector";
 
 async function main() {
@@ -35,6 +35,7 @@ async function main() {
   const scheduler = createScheduler(admin, config, {
     isShuttingDown: () => shuttingDown,
   });
+  const timerTasks = createTimerTaskTracker();
 
   // Stop claiming on a graceful signal. The main flow below keeps heartbeats
   // active while already-claimed jobs drain, then deregisters and exits.
@@ -51,14 +52,14 @@ async function main() {
 
   // --- Heartbeat interval ---
   const heartbeatTimer = setInterval(() => {
-    runTimerTask("heartbeat", () =>
+    timerTasks.run("heartbeat", () =>
       sendHeartbeat(admin, config.workerId, scheduler.getActiveJobIds()),
     );
   }, config.heartbeatIntervalMs);
 
   // --- Stall detection interval ---
   const stallTimer = setInterval(() => {
-    runTimerTask("stall sweep", async () => {
+    timerTasks.run("stall sweep", async () => {
       const result = await sweepStalledRuns(admin, config.defaultStallTimeoutMs);
       if (result.stalledRunIds.length > 0) {
         console.log("[worker] stall sweep results", {
@@ -71,7 +72,7 @@ async function main() {
 
   // --- Reconciliation interval ---
   const reconcileTimer = setInterval(() => {
-    runTimerTask("reconciliation", async () => {
+    timerTasks.run("reconciliation", async () => {
       const [result, attachmentCleanup] = await Promise.all([
         reconcileLinearState(admin),
         cleanupExpiredSessionAttachments(admin),
@@ -99,7 +100,7 @@ async function main() {
   // stall sweep so we still catch sandboxes whose linked run never made it
   // into the DB.
   const sandboxReapTimer = setInterval(() => {
-    runTimerTask("sandbox reap", async () => {
+    timerTasks.run("sandbox reap", async () => {
       const result = await reapOrphanSandboxes(admin);
       if (result.reapedSandboxIds.length > 0) {
         console.log("[worker] sandbox reap results", {
@@ -123,16 +124,9 @@ async function main() {
       clearInterval(reconcileTimer);
       clearInterval(sandboxReapTimer);
     },
+    timerTasks,
   });
   console.log("[worker] graceful shutdown complete", { workerId: config.workerId });
-}
-
-function runTimerTask(label: string, task: () => Promise<void>): void {
-  void task().catch((error) => {
-    console.error(`[worker] ${label} failed`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
 }
 
 // Process-level crash handlers (uncaughtException / unhandledRejection) are

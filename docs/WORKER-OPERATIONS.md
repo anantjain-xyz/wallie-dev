@@ -232,7 +232,6 @@ A healthy deployment should provide:
 
 - No public worker readiness/health endpoint or code/schema compatibility
   marker exists.
-- Shutdown does not drain.
 - Periodic recovery sweeps can overlap.
 - Heartbeat writes are not serialized, so a stale snapshot can overwrite a
   newer in-flight job set.

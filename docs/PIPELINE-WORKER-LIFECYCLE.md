@@ -174,9 +174,12 @@ does not enqueue work.
   check is no longer active. It skips unknown provider sandboxes, including one
   created before a crash that prevented ownership from being recorded; those
   rely on provider TTLs or operator cleanup.
-- Graceful worker shutdown deregisters immediately. Recorded active jobs and
-  runs become eligible for stall recovery after their heartbeat becomes stale;
-  unrecorded provider resources remain outside that recovery path.
+- Graceful worker shutdown stops new claims, keeps heartbeats and maintenance
+  timers active while already-claimed jobs finish, then waits for timer
+  callbacks already in progress before deregistering. Hard termination still
+  makes recorded active jobs and runs eligible for stall recovery after their
+  heartbeat becomes stale; unrecorded provider resources remain outside that
+  recovery path.
 
 ## Race outcomes that are normal
 
