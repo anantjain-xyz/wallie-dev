@@ -61,8 +61,13 @@ async function main() {
   const stallTimer = setInterval(() => {
     timerTasks.run("stall sweep", async () => {
       const result = await sweepStalledRuns(admin, config.defaultStallTimeoutMs);
-      if (result.stalledRunIds.length > 0) {
+      if (
+        result.stalledRunIds.length > 0 ||
+        result.retriedJobIds.length > 0 ||
+        result.stalledJobIds.length > 0
+      ) {
         console.log("[worker] stall sweep results", {
+          retriedJobIds: result.retriedJobIds,
           stalledJobIds: result.stalledJobIds,
           stalledRunIds: result.stalledRunIds,
         });
