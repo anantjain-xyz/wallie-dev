@@ -20,7 +20,7 @@ type GitHubAppLike = {
 
 type MaybePromise<T> = T | Promise<T>;
 
-interface OpenSessionPullRequestInput {
+interface SessionPullRequestPublicationInput {
   admin: AdminClient;
   baseBranch: string;
   body: string;
@@ -32,7 +32,6 @@ interface OpenSessionPullRequestInput {
   repoFullName: string;
   /** github_repositories.id (DB UUID, not GitHub's numeric repo id). */
   repoId: string;
-  sandbox: SandboxHandle;
   sessionId: string;
   title: string;
   workspaceId: string;
@@ -40,10 +39,23 @@ interface OpenSessionPullRequestInput {
   linearAttachment?: typeof attachLinearPullRequest;
 }
 
+interface OpenSessionPullRequestInput extends SessionPullRequestPublicationInput {
+  sandbox: SandboxHandle;
+}
+
+interface ResumeSessionPullRequestPublicationInput extends SessionPullRequestPublicationInput {
+  pullRequestNumber: number;
+}
+
 export type OpenSessionPullRequestOutcome =
   | { kind: "no_commits" }
   | { kind: "push_failed"; reason: string }
   | { kind: "pr_failed"; reason: string }
+  | {
+      kind: "publication_failed";
+      pullRequestNumber: number;
+      reason: string;
+    }
   | {
       kind: "success";
       isDraft: boolean;
@@ -183,6 +195,59 @@ export async function openSessionPullRequest(
     };
   }
 
+  return finalizeSessionPullRequestPublication(input, pr);
+}
+
+/**
+ * Retry only the durable bookkeeping for a PR that GitHub already created.
+ * This deliberately needs no sandbox: a DB or Linear outage after agent work
+ * must not start another coding run or force-push a replacement implementation.
+ */
+export async function resumeSessionPullRequestPublication(
+  input: ResumeSessionPullRequestPublicationInput,
+): Promise<OpenSessionPullRequestOutcome> {
+  const [owner, repo] = input.repoFullName.split("/");
+  if (!owner || !repo) {
+    return { kind: "pr_failed", reason: `Invalid repo full_name: ${input.repoFullName}` };
+  }
+
+  try {
+    const app = await (input.githubAppFactory ?? defaultAppFactory)();
+    const octokit = await app.getInstallationOctokit(input.installationId);
+    const { data: pr } = await octokit.request<GitHubPullRequestResponse>(
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        pull_number: input.pullRequestNumber,
+        repo,
+      },
+    );
+
+    if (pr.state === "open" && !pr.merged_at) {
+      await updatePullRequest({
+        body: input.body,
+        octokit,
+        owner,
+        prNumber: pr.number,
+        repo,
+        title: input.title,
+      });
+    }
+
+    return finalizeSessionPullRequestPublication(input, pr);
+  } catch (error) {
+    return {
+      kind: "publication_failed",
+      pullRequestNumber: input.pullRequestNumber,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function finalizeSessionPullRequestPublication(
+  input: SessionPullRequestPublicationInput,
+  pr: GitHubPullRequestResponse,
+): Promise<OpenSessionPullRequestOutcome> {
   const { error } = await input.admin.from("session_pull_requests").upsert(
     {
       branch_name: input.branch,
@@ -198,7 +263,7 @@ export async function openSessionPullRequest(
   );
 
   if (error) {
-    return { kind: "pr_failed", reason: error.message };
+    return { kind: "publication_failed", pullRequestNumber: pr.number, reason: error.message };
   }
 
   if (input.linearIssueId) {
@@ -211,7 +276,8 @@ export async function openSessionPullRequest(
       });
     } catch (linearError) {
       return {
-        kind: "pr_failed",
+        kind: "publication_failed",
+        pullRequestNumber: pr.number,
         reason: `Failed to attach pull request to Linear: ${linearError instanceof Error ? linearError.message : String(linearError)}`,
       };
     }

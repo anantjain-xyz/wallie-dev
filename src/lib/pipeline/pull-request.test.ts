@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FakeSandbox } from "@/lib/sandbox/fake";
 
-import { openSessionPullRequest } from "./pull-request";
+import { openSessionPullRequest, resumeSessionPullRequestPublication } from "./pull-request";
 
 const mocked = vi.hoisted(() => ({
   decryptSecretValue: vi.fn(() => "linear-api-key"),
@@ -411,7 +411,7 @@ describe("openSessionPullRequest", () => {
     expect(upserts[0]!.row.pull_request_state).toBe("merged");
   });
 
-  it("returns pr_failed when the upsert fails", async () => {
+  it("returns a publication-only retry when the upsert fails after GitHub succeeds", async () => {
     const sandbox = new FakeSandbox();
     scriptCommitsAhead(sandbox, "AHEAD");
     scriptPush(sandbox);
@@ -425,7 +425,11 @@ describe("openSessionPullRequest", () => {
       sandbox,
     });
 
-    expect(outcome).toEqual({ kind: "pr_failed", reason: "db down" });
+    expect(outcome).toEqual({
+      kind: "publication_failed",
+      pullRequestNumber: 42,
+      reason: "db down",
+    });
     expect(upserts).toHaveLength(1);
   });
 
@@ -476,9 +480,38 @@ describe("openSessionPullRequest", () => {
     });
 
     expect(outcome).toEqual({
-      kind: "pr_failed",
+      kind: "publication_failed",
+      pullRequestNumber: 42,
       reason: "Failed to attach pull request to Linear: Linear unavailable",
     });
+  });
+
+  it("resumes durable publication without a sandbox or branch push", async () => {
+    const octokit = makeOctokitWithSequence([
+      openPr,
+      undefined, // refresh title/body
+    ]);
+    const { admin, upserts } = buildAdminMock({
+      linearSecret: { encrypted_value: "encrypted-linear-key" },
+    });
+    const linearAttachment = vi.fn().mockResolvedValue(undefined);
+
+    const outcome = await resumeSessionPullRequestPublication({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      linearAttachment,
+      linearIssueId: "TEAM-1",
+      pullRequestNumber: 42,
+    });
+
+    expect(outcome.kind).toBe("success");
+    expect(octokit.calls.map((call) => call.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+    ]);
+    expect(upserts).toHaveLength(1);
+    expect(linearAttachment).toHaveBeenCalledTimes(1);
   });
 
   it("returns pr_failed for an invalid repo full_name", async () => {

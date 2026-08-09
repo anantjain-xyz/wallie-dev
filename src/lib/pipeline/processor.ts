@@ -33,7 +33,7 @@ import { buildStageBranchName } from "@/lib/pipeline/branch-name";
 import { trustedPromptValue, untrustedPromptValue } from "@/lib/pipeline/prompt-safety";
 import { renderStagePrompt } from "@/lib/prompt-templates";
 
-import { openSessionPullRequest } from "./pull-request";
+import { openSessionPullRequest, resumeSessionPullRequestPublication } from "./pull-request";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
 import { PIPELINE_JOB_TYPE } from "./types";
 
@@ -53,6 +53,26 @@ class MissingReviewableOutputError extends Error {
     this.name = "MissingReviewableOutputError";
   }
 }
+
+class PublicationRetryError extends Error {
+  readonly artifactVersion: number;
+  readonly pullRequestNumber: number;
+
+  constructor(input: { artifactVersion: number; pullRequestNumber: number; reason: string }) {
+    super(input.reason);
+    this.artifactVersion = input.artifactVersion;
+    this.name = "PublicationRetryError";
+    this.pullRequestNumber = input.pullRequestNumber;
+  }
+}
+
+const PUBLICATION_RETRY_PREFIX = "Wallie pull request publication pending: ";
+
+type PublicationRetryState = {
+  artifactVersion: number;
+  pullRequestNumber: number;
+  reason: string;
+};
 
 const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
 const REDACTED_RUN_DIAGNOSTIC_VALUE = "[redacted]";
@@ -134,6 +154,17 @@ export async function processPipelineJob(input: {
       return { jobId: job.id, processed: true, result: "success", runId: null };
     }
 
+    const publicationRetry = parsePublicationRetryState(job.last_error);
+    if (publicationRetry) {
+      return await resumeStagePublication({
+        admin,
+        job,
+        publicationRetry,
+        session,
+        stage,
+      });
+    }
+
     return await runStage({ admin, job, session, signal: input.signal, stage });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Pipeline job failed";
@@ -213,6 +244,7 @@ async function runStage(input: {
   let artifactInserted = false;
   let runFailureMessageRecorded = false;
   let sessionPointerAdvanced = false;
+  let usage: { inputTokens: number; outputTokens: number } | undefined;
   try {
     const resolvedRunner = await resolveAgentRunner({
       admin,
@@ -324,8 +356,6 @@ async function runStage(input: {
       });
     }
 
-    let usage: { inputTokens: number; outputTokens: number } | undefined;
-
     for await (const event of resolvedRunner.runner.start({
       maxTokens: undefined,
       prompt,
@@ -397,6 +427,12 @@ async function runStage(input: {
           sessionId: session.id,
           stageSlug: stage.slug,
         });
+      } else if (prOutcome.kind === "publication_failed") {
+        throw new PublicationRetryError({
+          artifactVersion: newVersion,
+          pullRequestNumber: prOutcome.pullRequestNumber,
+          reason: prOutcome.reason,
+        });
       } else if (prOutcome.kind !== "success") {
         throw new Error(
           `Wallie pull request publication failed (${prOutcome.kind}): ${prOutcome.reason}`,
@@ -446,6 +482,36 @@ async function runStage(input: {
       await markRunSuccess(admin, runId, usage);
     }
   } catch (error) {
+    if (error instanceof PublicationRetryError && artifactInserted) {
+      const preserved = await preserveArtifactForPublicationRetry(admin, {
+        artifactVersion: error.artifactVersion,
+        previousArtifactVersion: session.current_artifact_version,
+        sessionId: session.id,
+      });
+
+      if (preserved) {
+        sessionPointerAdvanced = true;
+        if (runId) {
+          await markRunSuccess(admin, runId, usage);
+        }
+
+        const retryState: PublicationRetryState = {
+          artifactVersion: error.artifactVersion,
+          pullRequestNumber: error.pullRequestNumber,
+          reason: error.message,
+        };
+        const retryScheduled = await markPipelineJobError(
+          admin,
+          job,
+          serializePublicationRetryState(retryState),
+        );
+        if (!retryScheduled) {
+          await updateSessionStatus(admin, session.id, "rejected");
+        }
+        return { jobId: job.id, processed: true, result: "error", runId };
+      }
+    }
+
     runId = runId ?? (await loadActiveRunIdForJob(admin, job.id));
     if (runId) {
       await markRunError(admin, runId);
@@ -497,6 +563,127 @@ async function runStage(input: {
 
   await markPipelineJobSuccess(admin, job);
   return { jobId: job.id, processed: true, result: "success", runId };
+}
+
+async function resumeStagePublication(input: {
+  admin: AdminClient;
+  job: Tables<"agent_jobs">;
+  publicationRetry: PublicationRetryState;
+  session: SessionRow;
+  stage: PipelineStage;
+}): Promise<ProcessPipelineJobResult> {
+  const { admin, job, publicationRetry, session, stage } = input;
+  const fail = async (reason: string) => {
+    const retryScheduled = await markPipelineJobError(
+      admin,
+      job,
+      serializePublicationRetryState({ ...publicationRetry, reason }),
+    );
+    if (!retryScheduled) {
+      await updateSessionStatus(admin, session.id, "rejected");
+    }
+    return {
+      jobId: job.id,
+      processed: true,
+      result: "error" as const,
+      runId: null,
+    };
+  };
+
+  try {
+    if (session.current_artifact_version !== publicationRetry.artifactVersion) {
+      return fail(
+        `Expected pending artifact v${publicationRetry.artifactVersion}, but session points to v${session.current_artifact_version}.`,
+      );
+    }
+
+    const artifact = await loadArtifactVersion(admin, {
+      sessionId: session.id,
+      stageSlug: stage.slug,
+      version: publicationRetry.artifactVersion,
+    });
+    if (!artifact) {
+      return fail(`Pending artifact v${publicationRetry.artifactVersion} was not found.`);
+    }
+
+    const github = await loadGitHubContext(admin, session.workspace_id, session.id);
+    if (!github) {
+      return fail("No GitHub installation or repository found for publication retry.");
+    }
+
+    const outcome = await resumeSessionPullRequestPublication({
+      admin,
+      baseBranch: github.repo.default_branch ?? "main",
+      body: artifact.slice(0, 60000),
+      branch: buildStageBranchName(session.id, stage.slug),
+      installationId: github.installationId,
+      linearIssueId: session.linear_issue_id,
+      pullRequestNumber: publicationRetry.pullRequestNumber,
+      repoFullName: github.repo.full_name,
+      repoId: github.repo.id,
+      sessionId: session.id,
+      title: `${stage.name}: ${session.title}`,
+      workspaceId: session.workspace_id,
+    });
+
+    if (outcome.kind !== "success") {
+      return fail(
+        "reason" in outcome
+          ? outcome.reason
+          : `Unexpected publication retry outcome: ${outcome.kind}`,
+      );
+    }
+
+    const { data: advanced, error: advanceError } = await admin
+      .from("sessions")
+      .update({ phase_status: "awaiting_review" })
+      .eq("id", session.id)
+      .eq("current_artifact_version", publicationRetry.artifactVersion)
+      .eq("phase_status", "in_progress")
+      .is("archived_at", null)
+      .select("id");
+    if (advanceError) {
+      return fail(advanceError.message);
+    }
+
+    if (!advanced || advanced.length === 0) {
+      await markPipelineJobSuccess(admin, job);
+      return { jobId: job.id, processed: true, result: "idle", runId: null };
+    }
+
+    await markPipelineJobSuccess(admin, job);
+    return { jobId: job.id, processed: true, result: "success", runId: null };
+  } catch (error) {
+    return fail(getErrorMessage(error, "Pull request publication retry failed."));
+  }
+}
+
+function serializePublicationRetryState(state: PublicationRetryState): string {
+  return `${PUBLICATION_RETRY_PREFIX}${JSON.stringify(state)}`;
+}
+
+function parsePublicationRetryState(value: string | null): PublicationRetryState | null {
+  if (!value?.startsWith(PUBLICATION_RETRY_PREFIX)) return null;
+
+  try {
+    const parsed = JSON.parse(
+      value.slice(PUBLICATION_RETRY_PREFIX.length),
+    ) as Partial<PublicationRetryState>;
+    if (
+      typeof parsed.artifactVersion !== "number" ||
+      !Number.isInteger(parsed.artifactVersion) ||
+      parsed.artifactVersion < 1 ||
+      typeof parsed.pullRequestNumber !== "number" ||
+      !Number.isInteger(parsed.pullRequestNumber) ||
+      parsed.pullRequestNumber < 1 ||
+      typeof parsed.reason !== "string"
+    ) {
+      return null;
+    }
+    return parsed as PublicationRetryState;
+  } catch {
+    return null;
+  }
 }
 
 // --- Approval + rejection handlers ---
@@ -863,6 +1050,47 @@ async function loadSessionById(admin: AdminClient, id: string): Promise<SessionR
   const { data, error } = await admin.from("sessions").select("*").eq("id", id).maybeSingle();
   if (error) throw error;
   return data;
+}
+
+async function loadArtifactVersion(
+  admin: AdminClient,
+  input: { sessionId: string; stageSlug: string; version: number },
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from("session_artifacts")
+    .select("artifact_json")
+    .eq("session_id", input.sessionId)
+    .eq("stage_slug", input.stageSlug)
+    .eq("version", input.version)
+    .maybeSingle();
+  if (error) throw error;
+  return typeof data?.artifact_json === "string" ? data.artifact_json : null;
+}
+
+async function preserveArtifactForPublicationRetry(
+  admin: AdminClient,
+  input: {
+    artifactVersion: number;
+    previousArtifactVersion: number;
+    sessionId: string;
+  },
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("sessions")
+    .update({ current_artifact_version: input.artifactVersion })
+    .eq("id", input.sessionId)
+    .eq("current_artifact_version", input.previousArtifactVersion)
+    .eq("phase_status", "in_progress")
+    .is("archived_at", null)
+    .select("id");
+  if (error) {
+    console.error("Failed to preserve artifact for pull request publication retry", {
+      error: error.message,
+      sessionId: input.sessionId,
+    });
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
 }
 
 async function loadLatestFeedback(
@@ -1505,6 +1733,7 @@ async function markPipelineJobSuccess(
     .from("agent_jobs")
     .update({
       finished_at: new Date().toISOString(),
+      last_error: null,
       status: "success",
     })
     .eq("id", job.id)
@@ -1531,7 +1760,7 @@ async function markPipelineJobError(
   job: Tables<"agent_jobs">,
   errorMessage: string,
   options: { retry?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
   if (options.retry !== false && job.attempt_count < maxRetries) {
@@ -1543,7 +1772,7 @@ async function markPipelineJobError(
 
     if (!retryError) {
       await admin.from("agent_jobs").update({ last_error: errorMessage }).eq("id", job.id);
-      return;
+      return true;
     }
   }
 
@@ -1558,4 +1787,5 @@ async function markPipelineJobError(
     // A job canceled mid-flight stays canceled — never flip it to error.
     .neq("status", "canceled");
   await markActiveRunsForJobError(admin, job.id);
+  return false;
 }

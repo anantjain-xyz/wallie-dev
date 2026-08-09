@@ -42,6 +42,13 @@ const mocked = vi.hoisted(() => ({
     prState: "open",
     prUrl: "https://github.com/acme/app/pull/42",
   }),
+  resumeSessionPullRequestPublication: vi.fn().mockResolvedValue({
+    kind: "success",
+    isDraft: false,
+    prNumber: 42,
+    prState: "open",
+    prUrl: "https://github.com/acme/app/pull/42",
+  }),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -56,6 +63,7 @@ vi.mock("./stages", () => ({
 
 vi.mock("./pull-request", () => ({
   openSessionPullRequest: mocked.openSessionPullRequest,
+  resumeSessionPullRequestPublication: mocked.resumeSessionPullRequestPublication,
 }));
 
 vi.mock("@/lib/prompt-templates", () => ({
@@ -194,6 +202,7 @@ interface MockOptions {
    * starting the run (isJobCanceled). Defaults to an active status. */
   jobStatus?: string;
   artifactInsertError?: { message: string } | null;
+  pendingArtifact?: { artifact_json: string } | null;
   messageInsertError?: { message: string } | null;
   messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
@@ -316,6 +325,13 @@ function buildAdminMock(opts: MockOptions) {
           deletedArtifacts.push(filters);
           resolve({ error: null });
         },
+      };
+      return chain;
+    },
+    select: () => {
+      const chain = {
+        eq: () => chain,
+        maybeSingle: async () => ({ data: opts.pendingArtifact ?? null, error: null }),
       };
       return chain;
     },
@@ -1120,6 +1136,85 @@ describe("processPipelineJob (generic stage runner)", () => {
       last_error: "Wallie pull request publication failed (pr_failed): boom",
     });
     expect(result.result).toBe("error");
+  });
+
+  it("preserves the completed artifact and agent run for publication-only retries", async () => {
+    mocked.openSessionPullRequest.mockResolvedValueOnce({
+      kind: "publication_failed",
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+    });
+
+    const session = baseSession();
+    const {
+      admin,
+      deletedArtifacts,
+      insertedArtifacts,
+      rpc,
+      updatedJobs,
+      updatedRuns,
+      updatedSessions,
+    } = buildAdminMock({ session });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(insertedArtifacts).toHaveLength(1);
+    expect(deletedArtifacts).toHaveLength(0);
+    expect(updatedSessions).toEqual([
+      { phase_status: "in_progress" },
+      { current_artifact_version: 1 },
+    ]);
+    expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
+    expect(rpc).toHaveBeenCalledWith("schedule_job_retry", {
+      target_job_id: "job-1",
+      base_delay_ms: 5000,
+      max_backoff_ms: 300000,
+    });
+    expect(updatedJobs.at(-1)?.last_error).toMatch(/^Wallie pull request publication pending: /);
+    expect(result.result).toBe("error");
+  });
+
+  it("resumes pending publication without starting another agent or sandbox", async () => {
+    const session = baseSession({ current_artifact_version: 1 });
+    const retryState = {
+      artifactVersion: 1,
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+    };
+    const { admin, updatedJobs, updatedSessions } = buildAdminMock({
+      pendingArtifact: { artifact_json: "Preserved build artifact" },
+      session,
+    });
+
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({
+        attempt_count: 1,
+        last_error: `Wallie pull request publication pending: ${JSON.stringify(retryState)}`,
+      }),
+    });
+
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(mocked.openSessionPullRequest).not.toHaveBeenCalled();
+    expect(mocked.resumeSessionPullRequestPublication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: "Preserved build artifact",
+        pullRequestNumber: 42,
+        sessionId: session.id,
+      }),
+    );
+    expect(updatedSessions).toEqual([
+      { phase_status: "in_progress" },
+      { phase_status: "awaiting_review" },
+    ]);
+    expect(updatedJobs.at(-1)).toMatchObject({ last_error: null, status: "success" });
+    expect(result).toEqual({
+      jobId: "job-1",
+      processed: true,
+      result: "success",
+      runId: null,
+    });
   });
 
   it("does not persist the stage completion message when artifact persistence fails", async () => {
