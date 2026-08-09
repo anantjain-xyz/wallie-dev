@@ -13,6 +13,7 @@ import type { SessionReviewSession } from "@/features/sessions/detail/data";
 const baseSession: SessionReviewSession = {
   archivedAt: null,
   artifacts: [],
+  attachments: [],
   createdAt: "2026-05-21T13:00:00.000Z",
   currentArtifactVersion: 0,
   currentStageId: "stage-product",

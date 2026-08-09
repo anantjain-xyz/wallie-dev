@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -16,7 +16,9 @@ import {
 
 const clientMocks = vi.hoisted(() => ({
   createSessionFromClient: vi.fn(),
+  deletePendingSessionAttachmentFromClient: vi.fn().mockResolvedValue(undefined),
   loadSessionRepositoryOptionsFromClient: vi.fn(),
+  uploadSessionAttachmentFromClient: vi.fn(),
 }));
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 
@@ -49,6 +51,14 @@ beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: () => undefined,
+  });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:session-image"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
   });
 });
 
@@ -186,6 +196,7 @@ describe("CreateSessionDialog accessibility", () => {
 
     await waitFor(() =>
       expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith({
+        attachmentIds: [],
         githubRepositoryId: null,
         linearIssueUrl: "https://linear.app/acme/issue/TEAM-42/title",
         promptMd: "",
@@ -196,6 +207,137 @@ describe("CreateSessionDialog accessibility", () => {
     );
     expect(onClose).toHaveBeenCalledOnce();
     expect(router.push).toHaveBeenCalledWith("/w/acme/sessions/42");
+  });
+
+  it("uploads selected images and submits their ids in display order", async () => {
+    const user = userEvent.setup();
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
+      repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
+    });
+    clientMocks.uploadSessionAttachmentFromClient.mockResolvedValue({
+      contentType: "image/png",
+      fileName: "design.png",
+      id: "00000000-0000-4000-8000-000000000020",
+      sizeBytes: 8,
+    });
+    clientMocks.createSessionFromClient.mockResolvedValue({
+      canonicalUrl: "/w/acme/sessions/42",
+      number: 42,
+    });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    await user.type(await screen.findByLabelText("Prompt"), "Implement the attached design");
+    const image = new File(
+      [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+      "design.png",
+      { type: "image/png" },
+    );
+    await user.upload(screen.getByLabelText("Add images"), image);
+    await screen.findByText(/8 B · Ready/);
+    await user.click(screen.getByRole("button", { name: "Start session" }));
+
+    await waitFor(() =>
+      expect(clientMocks.createSessionFromClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachmentIds: ["00000000-0000-4000-8000-000000000020"],
+          promptMd: "Implement the attached design",
+        }),
+      ),
+    );
+  });
+
+  it("accepts prompt images from clipboard paste and drag-and-drop", async () => {
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+    clientMocks.loadSessionRepositoryOptionsFromClient.mockResolvedValue({
+      defaultGithubRepositoryId: null,
+      pipelineId: "00000000-0000-4000-8000-000000000010",
+      repositoryOptions: [],
+      stageOptions: [
+        {
+          description: "Plan the work",
+          id: "00000000-0000-4000-8000-000000000011",
+          name: "Plan",
+          position: 1,
+        },
+      ],
+    });
+    clientMocks.uploadSessionAttachmentFromClient
+      .mockResolvedValueOnce({
+        contentType: "image/png",
+        fileName: "pasted.png",
+        id: "00000000-0000-4000-8000-000000000020",
+        sizeBytes: 8,
+      })
+      .mockResolvedValueOnce({
+        contentType: "image/png",
+        fileName: "dropped.png",
+        id: "00000000-0000-4000-8000-000000000021",
+        sizeBytes: 8,
+      });
+
+    render(
+      <OverlayProvider>
+        <CreateSessionDialog
+          onClose={vi.fn()}
+          open
+          userId="00000000-0000-4000-8000-000000000002"
+          workspaceId={workspaceId}
+          workspaceSlug="acme"
+        />
+      </OverlayProvider>,
+    );
+
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const pasted = new File([bytes], "pasted.png", { type: "image/png" });
+    const dropped = new File([bytes], "dropped.png", { type: "image/png" });
+    fireEvent.paste(await screen.findByLabelText("Prompt"), {
+      clipboardData: {
+        items: [
+          {
+            getAsFile: () => pasted,
+            kind: "file",
+            type: "image/png",
+          },
+        ],
+      },
+    });
+    fireEvent.drop(screen.getByRole("group", { name: "Session images" }), {
+      dataTransfer: { files: [dropped] },
+    });
+
+    await waitFor(() =>
+      expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenCalledTimes(2),
+    );
+    expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenNthCalledWith(1, {
+      file: pasted,
+      workspaceId,
+    });
+    expect(clientMocks.uploadSessionAttachmentFromClient).toHaveBeenNthCalledWith(2, {
+      file: dropped,
+      workspaceId,
+    });
   });
 
   it("clears a Linear URL error when the URL is corrected", async () => {

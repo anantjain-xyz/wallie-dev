@@ -312,6 +312,7 @@ export async function prepareSessionFirstRun(input: {
 
 export async function createSessionWithFirstJob(input: {
   admin?: AdminClient;
+  attachmentIds?: string[];
   creatorMemberId: string;
   githubRepositoryId: string | null;
   linearIssueId: string | null;
@@ -326,12 +327,13 @@ export async function createSessionWithFirstJob(input: {
 }): Promise<CreateSessionWithFirstJobResult> {
   const admin = input.admin ?? createSupabaseAdminClient();
   const { data, error } = await admin
-    .rpc("create_session_with_first_job", {
+    .rpc("create_session_with_first_job_and_attachments", {
       agent_model_name: input.modelName,
       agent_model_provider: input.modelProvider,
       creator_member_id: input.creatorMemberId,
       selected_pipeline_id: input.pipelineId ?? undefined,
       selected_stage_ids: input.selectedStageIds,
+      session_attachment_ids: input.attachmentIds ?? [],
       session_github_repository_id: input.githubRepositoryId ?? undefined,
       session_linear_issue_id: input.linearIssueId ?? undefined,
       session_linear_issue_url: input.linearIssueUrl ?? undefined,

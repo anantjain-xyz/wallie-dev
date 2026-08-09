@@ -1,4 +1,5 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { cleanupExpiredSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 
 import { parseWorkerConfig } from "./config";
 import { deregisterWorker, registerWorker, sendHeartbeat } from "./heartbeat";
@@ -70,9 +71,18 @@ async function main() {
   // --- Reconciliation interval ---
   const reconcileTimer = setInterval(() => {
     runTimerTask("reconciliation", async () => {
-      const result = await reconcileLinearState(admin);
-      if (result.canceled > 0 || result.rateLimited) {
+      const [result, attachmentCleanup] = await Promise.all([
+        reconcileLinearState(admin),
+        cleanupExpiredSessionAttachments(admin),
+      ]);
+      if (
+        result.canceled > 0 ||
+        result.rateLimited ||
+        attachmentCleanup.deleted > 0 ||
+        attachmentCleanup.failed > 0
+      ) {
         console.log("[worker] reconciliation results", {
+          attachmentCleanup,
           canceled: result.canceled,
           checked: result.checked,
           rateLimited: result.rateLimited,

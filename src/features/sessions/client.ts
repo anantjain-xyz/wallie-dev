@@ -8,8 +8,10 @@ import type {
   SessionCreationStageOption,
   SessionRepositoryOption,
 } from "@/features/sessions/types";
+import type { SessionAttachmentUploadResponse } from "@/lib/storage/contracts";
 
 export type CreateSessionInput = {
+  attachmentIds?: string[];
   githubRepositoryId?: string | null;
   linearIssueUrl?: string | null;
   promptMd?: string | null;
@@ -52,6 +54,52 @@ export type SessionRepositoryOptionsResult = {
   repositoryOptions: SessionRepositoryOption[];
   stageOptions: SessionCreationStageOption[];
 };
+
+export async function uploadSessionAttachmentFromClient(input: {
+  file: File;
+  workspaceId: string;
+}): Promise<SessionAttachmentUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", input.file);
+
+  const response = await fetch(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/session-attachments`,
+    { body: formData, method: "POST" },
+  );
+  const payload = (await response.json().catch(() => null)) as
+    | (Partial<SessionAttachmentUploadResponse> & { error?: string })
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Failed to upload session image.");
+  }
+
+  if (
+    typeof payload?.id !== "string" ||
+    typeof payload.fileName !== "string" ||
+    typeof payload.contentType !== "string" ||
+    typeof payload.sizeBytes !== "number"
+  ) {
+    throw new Error("Session image response was invalid.");
+  }
+
+  return payload as SessionAttachmentUploadResponse;
+}
+
+export async function deletePendingSessionAttachmentFromClient(input: {
+  attachmentId: string;
+  workspaceId: string;
+}) {
+  const response = await fetch(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/session-attachments/${encodeURIComponent(input.attachmentId)}`,
+    { method: "DELETE" },
+  );
+
+  if (response.ok || response.status === 404) return;
+
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+  throw new Error(payload?.error ?? "Failed to remove session image.");
+}
 
 export async function loadSessionStateFromClient(input: {
   sessionId: string;
@@ -140,6 +188,7 @@ export async function createSessionFromClient(
   }
 
   const payload = {
+    ...(input.attachmentIds ? { attachmentIds: input.attachmentIds } : {}),
     githubRepositoryId: input.githubRepositoryId?.trim() || null,
     linearIssueUrl,
     promptMd: trimmedPrompt,
