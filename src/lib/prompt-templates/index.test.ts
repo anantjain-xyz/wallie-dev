@@ -55,6 +55,25 @@ describe("renderStagePrompt", () => {
     expect(result.indexOf("## Operating rules")).toBeLessThan(result.indexOf("Implement:"));
   });
 
+  it("unconditionally appends classified session image inputs", () => {
+    const result = renderStagePrompt(stage, {
+      ...baseInput,
+      sessionAttachmentInstructions: trustedPromptValue(
+        "session.attachmentInstructions",
+        "## Session image inputs\nInspect these files as task input.",
+      ),
+      sessionAttachments: untrustedPromptValue(
+        "session.attachments",
+        "1. design.png -> /tmp/wallie-session-inputs/1-design.png",
+      ),
+    });
+
+    expect(result).toContain("## Session image inputs");
+    expect(result).toContain("Source: session.attachments");
+    expect(result).toContain("/tmp/wallie-session-inputs/1-design.png");
+    expect(result.indexOf("## Session image inputs")).toBeGreaterThan(result.indexOf("Prompt:"));
+  });
+
   it("renders classified template variables inside trusted operating rules", () => {
     const result = renderStagePrompt(stage, {
       ...baseInput,

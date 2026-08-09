@@ -832,6 +832,79 @@ export type Database = {
           },
         ]
       }
+      session_attachments: {
+        Row: {
+          attached_at: string | null
+          content_type: string
+          created_at: string
+          delete_claimed_at: string | null
+          expires_at: string | null
+          id: string
+          original_filename: string
+          position: number | null
+          session_id: string | null
+          size_bytes: number
+          status: string
+          storage_path: string
+          uploaded_by_member_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          attached_at?: string | null
+          content_type: string
+          created_at?: string
+          delete_claimed_at?: string | null
+          expires_at?: string | null
+          id?: string
+          original_filename: string
+          position?: number | null
+          session_id?: string | null
+          size_bytes: number
+          status?: string
+          storage_path: string
+          uploaded_by_member_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          attached_at?: string | null
+          content_type?: string
+          created_at?: string
+          delete_claimed_at?: string | null
+          expires_at?: string | null
+          id?: string
+          original_filename?: string
+          position?: number | null
+          session_id?: string | null
+          size_bytes?: number
+          status?: string
+          storage_path?: string
+          uploaded_by_member_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_attachments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attachments_uploaded_by_member_id_fkey"
+            columns: ["uploaded_by_member_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_attachments_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_phase_completions: {
         Row: {
           completed_at: string
@@ -1940,6 +2013,14 @@ export type Database = {
         Args: { target_workspace_id: string }
         Returns: string
       }
+      claim_expired_session_attachments: {
+        Args: { max_count?: number }
+        Returns: {
+          delete_claimed_at: string
+          id: string
+          storage_path: string
+        }[]
+      }
       claim_next_agent_job: {
         Args: { default_concurrency_limit?: number }
         Returns: {
@@ -1976,6 +2057,29 @@ export type Database = {
           creator_member_id: string
           selected_pipeline_id?: string
           selected_stage_ids?: string[]
+          session_github_repository_id?: string
+          session_linear_issue_id?: string
+          session_linear_issue_url?: string
+          session_prompt_md: string
+          session_title: string
+          target_workspace_id: string
+        }
+        Returns: {
+          job_id: string
+          run_id: string
+          session_id: string
+          session_number: number
+          workspace_slug: string
+        }[]
+      }
+      create_session_with_first_job_and_attachments: {
+        Args: {
+          agent_model_name: string
+          agent_model_provider: string
+          creator_member_id: string
+          selected_pipeline_id?: string
+          selected_stage_ids?: string[]
+          session_attachment_ids: string[]
           session_github_repository_id?: string
           session_linear_issue_id?: string
           session_linear_issue_url?: string
@@ -2043,6 +2147,16 @@ export type Database = {
           target_workspace_slug: string
         }
         Returns: Json
+      }
+      get_session_prompt_attachments: {
+        Args: { target_session_number: number; target_workspace_slug: string }
+        Returns: {
+          attachment_position: number
+          content_type: string
+          id: string
+          original_filename: string
+          size_bytes: number
+        }[]
       }
       get_workspace_usage: {
         Args: { target_workspace_id: string }

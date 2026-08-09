@@ -87,6 +87,7 @@ function makeDetailData(): SessionReviewData {
     session: {
       archivedAt: session.archivedAt,
       artifacts: [],
+      attachments: [],
       createdAt: session.createdAt,
       currentArtifactVersion: session.currentArtifactVersion,
       currentStageId: session.currentStageId,

@@ -77,6 +77,8 @@ export function renderStagePrompt(
     repoFullName?: UntrustedPromptValue;
     repoDefaultBranch?: UntrustedPromptValue;
     previousStages?: Record<string, UntrustedPromptValue>;
+    sessionAttachments?: UntrustedPromptValue;
+    sessionAttachmentInstructions?: TrustedPromptValue;
     // Workspace-editable operating rules (pipelines.operating_rules_md),
     // prepended to every stage prompt. Empty/whitespace-only → no preamble.
     operatingRulesMd?: TrustedPromptValue;
@@ -89,5 +91,15 @@ export function renderStagePrompt(
   const operatingRules = operatingRulesValue.trim();
   const stageTemplate = verifyPromptBoundary(stage.promptTemplateMd);
   const source = operatingRules ? `${operatingRules}\n\n${stageTemplate}` : stageTemplate;
-  return renderTemplate(source, variables);
+  const renderedStage = renderTemplate(source, variables);
+  const attachmentData = input.sessionAttachments
+    ? verifyPromptBoundary(input.sessionAttachments)
+    : "";
+  const attachmentInstructions = input.sessionAttachmentInstructions
+    ? verifyPromptBoundary(input.sessionAttachmentInstructions).trim()
+    : "";
+
+  return attachmentData && attachmentInstructions
+    ? `${renderedStage}\n\n${attachmentInstructions}\n${attachmentData}`
+    : renderedStage;
 }

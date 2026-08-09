@@ -108,12 +108,13 @@ describe("wallie service helpers", () => {
     });
 
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith("create_session_with_first_job", {
+    expect(rpc).toHaveBeenCalledWith("create_session_with_first_job_and_attachments", {
       agent_model_name: "gpt-5.5",
       agent_model_provider: "codex",
       creator_member_id: "member-1",
       selected_pipeline_id: undefined,
       selected_stage_ids: ["stage-build", "stage-land"],
+      session_attachment_ids: [],
       session_github_repository_id: undefined,
       session_linear_issue_id: undefined,
       session_linear_issue_url: undefined,

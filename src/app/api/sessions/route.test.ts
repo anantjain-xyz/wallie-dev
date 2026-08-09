@@ -48,6 +48,7 @@ const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
 const REPOSITORY_ID = "44444444-4444-4444-8444-444444444444";
 const ARCHIVED_REPOSITORY_ID = "55555555-5555-4555-8555-555555555555";
 const STAGE_ID = "88888888-8888-4888-8888-888888888888";
+const ATTACHMENT_ID = "99999999-9999-4999-8999-999999999999";
 
 type RepositoryRow = {
   default_branch: string | null;
@@ -261,6 +262,7 @@ describe("POST /api/sessions", () => {
   it("creates the session and first job through one transactional service mutation", async () => {
     const response = await POST(
       makeRequest({
+        attachmentIds: [ATTACHMENT_ID],
         linearIssueUrl: "https://linear.app/team/issue/TEAM-42/some-slug",
         promptMd: "Add SSO",
         selectedStageIds: [STAGE_ID],
@@ -290,6 +292,7 @@ describe("POST /api/sessions", () => {
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledTimes(1);
     expect(mocked.createSessionWithFirstJob).toHaveBeenCalledWith(
       expect.objectContaining({
+        attachmentIds: [ATTACHMENT_ID],
         creatorMemberId: MEMBER_ID,
         githubRepositoryId: REPOSITORY_ID,
         linearIssueId: "TEAM-42",

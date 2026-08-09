@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { resolveAuthenticatedHomePath } from "@/lib/auth";
 import { workspaceAvatarBucket } from "@/lib/storage/workspace-avatar";
+import { removeWorkspaceSessionAttachments } from "@/lib/storage/session-attachment-cleanup";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { stopWorkspaceProviderSandboxes } from "@/lib/vercel-sandbox/teardown";
 import {
@@ -108,6 +109,7 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
+  const attachmentPaths = await loadWorkspaceAttachmentPaths(admin, access.context.workspace.id);
 
   // Stop any provider sandbox an active run or capability check still owns
   // BEFORE the delete. The cascade below drops the run records AND the Vercel
@@ -144,7 +146,12 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   // leave older objects behind, so list rather than relying on avatar_path) so a
   // deleted workspace's avatar isn't left publicly fetchable. Storage failures
   // must not surface as a delete error: the workspace is already gone.
-  await removeWorkspaceAvatars(admin, access.context.workspace.id);
+  await Promise.all([
+    removeWorkspaceAvatars(admin, access.context.workspace.id),
+    removeWorkspaceSessionAttachments(admin, access.context.workspace.id, attachmentPaths).catch(
+      () => undefined,
+    ),
+  ]);
 
   // Resolve where the now-workspaceless (or fewer-workspace) user should land.
   // The RLS-scoped server client no longer sees the deleted workspace, so this
@@ -152,6 +159,21 @@ export async function DELETE(request: Request, context: WorkspaceRouteContext) {
   const redirectTo = await resolveAuthenticatedHomePath(access.context.supabase);
 
   return NextResponse.json({ deleted: true, redirectTo }, { status: 200 });
+}
+
+async function loadWorkspaceAttachmentPaths(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  workspaceId: string,
+) {
+  try {
+    const { data } = await admin
+      .from("session_attachments")
+      .select("storage_path")
+      .eq("workspace_id", workspaceId);
+    return data?.map((attachment) => attachment.storage_path) ?? [];
+  } catch {
+    return [];
+  }
 }
 
 async function parkGeneratingSessions(
