@@ -99,6 +99,61 @@ Preferred flow:
 - Update the PR description to use those commit-SHA raw URLs, then immediately run \`git revert <screenshot-commit-sha>\` and push the revert before final review.
 
 Do not rely on a Playwright MCP server being present in Wallie cloud runs.
+  `,
+);
+
+const WALLIE_COMMIT_SKILL_V4 = skill(
+  "commit",
+  "Create a well-scoped git commit from the intended changes.",
+  `
+# Commit
+
+Steps:
+- Inspect \`git status\`, \`git diff\`, and \`git diff --staged\`.
+- Stage only intended paths by name.
+- Keep generated artifacts, logs, credentials, and screenshots out of normal commits and the final PR diff.
+- Match the repository's commit-message style.
+- Use \`git commit -F <file>\` for multi-line messages.
+- Do not bypass hooks unless a separate screenshot skill explicitly creates a temporary screenshot-only commit.
+`,
+);
+
+const WALLIE_PUSH_SKILL_V4 = skill(
+  "push",
+  "Push the branch and ensure a GitHub pull request exists.",
+  `
+# Push
+
+Steps:
+- Confirm validation passed on the latest commit.
+- Push with upstream tracking: \`git push -u origin HEAD\`.
+- If push is rejected, merge the remote/base branch intentionally and rerun validation.
+- Create or update a PR whose title/body describe the total branch scope.
+- Attach the PR URL to the Linear issue.
+- Do not post duplicate completion comments.
+`,
+);
+
+const WALLIE_SCREENSHOT_SKILL_V4 = skill(
+  "screenshot",
+  "Capture Playwright proof screenshots for user-facing changes.",
+  `
+# Screenshot
+
+Use repo-local Playwright or install it in the working copy when the repo does not provide it.
+
+Preferred flow:
+- Start the app locally using the repo's normal dev or preview command.
+- If Playwright is missing, install it in the sandbox working copy with \`npm install --no-save playwright\` and \`npx playwright install chromium\`.
+- Capture full-page screenshots for every reviewer-relevant state: happy path, loading, error, empty, mobile, and hover when applicable.
+- Store temporary captures under \`.wallie/screenshots/\`.
+- Screenshots are proof artifacts only and must never be part of the final PR diff.
+- If the PR description needs screenshot proof, create a screenshot-only commit and push it so the screenshots are reviewable in one commit.
+- Add one \`Screenshot proof\` link to the PR description using \`https://github.com/<owner>/<repo>/commit/<screenshot-commit-sha>\`. Do not list or embed each screenshot file.
+- Do not embed \`raw.githubusercontent.com\` or \`media.githubusercontent.com\` URLs from repo commits in private-repo PR descriptions. They require an auth header or expiring token and render as broken images in GitHub markdown.
+- After updating the PR description, immediately run \`git revert <screenshot-commit-sha>\` and push the revert before final review.
+
+Do not rely on a Playwright MCP server being present in Wallie cloud runs.
 `,
 );
 
@@ -117,9 +172,12 @@ const WALLIE_AGENTS_INSTRUCTIONS_V1 = [
 
 export const UPGRADABLE_WALLIE_LEGACY_FILES = [
   { content: WALLIE_COMMIT_SKILL_V1.content, path: WALLIE_COMMIT_SKILL_V1.path },
+  { content: WALLIE_COMMIT_SKILL_V4.content, path: WALLIE_COMMIT_SKILL_V4.path },
+  { content: WALLIE_PUSH_SKILL_V4.content, path: WALLIE_PUSH_SKILL_V4.path },
   { content: WALLIE_PR_FEEDBACK_SKILL_V2.content, path: WALLIE_PR_FEEDBACK_SKILL_V2.path },
   { content: WALLIE_SCREENSHOT_SKILL_V1.content, path: WALLIE_SCREENSHOT_SKILL_V1.path },
   { content: WALLIE_SCREENSHOT_SKILL_V2.content, path: WALLIE_SCREENSHOT_SKILL_V2.path },
+  { content: WALLIE_SCREENSHOT_SKILL_V4.content, path: WALLIE_SCREENSHOT_SKILL_V4.path },
   { content: WALLIE_AGENTS_INSTRUCTIONS_V1, path: WALLIE_AGENTS_INSTRUCTIONS_PATH },
 ] as const;
 
@@ -174,12 +232,13 @@ Steps:
 - Keep generated artifacts, logs, credentials, and screenshots out of normal commits and the final PR diff.
 - Match the repository's commit-message style.
 - Use \`git commit -F <file>\` for multi-line messages.
+- Preserve Wallie's configured Git identity. Do not change \`user.name\` or \`user.email\`, set author/committer environment overrides, or pass \`--author\`.
 - Do not bypass hooks unless a separate screenshot skill explicitly creates a temporary screenshot-only commit.
 `,
   ),
   skill(
     "push",
-    "Push the branch and ensure a GitHub pull request exists.",
+    "Push the branch for Wallie-managed pull request publication.",
     `
 # Push
 
@@ -187,9 +246,8 @@ Steps:
 - Confirm validation passed on the latest commit.
 - Push with upstream tracking: \`git push -u origin HEAD\`.
 - If push is rejected, merge the remote/base branch intentionally and rerun validation.
-- Create or update a PR whose title/body describe the total branch scope.
-- Attach the PR URL to the Linear issue.
-- Do not post duplicate completion comments.
+- Do not create or update a pull request through the GitHub CLI, a connected GitHub integration, an MCP/app tool, or any other path.
+- Do not attach a PR URL to Linear. Wallie creates and records the pull request after the run completes.
 `,
   ),
   skill(
@@ -236,9 +294,9 @@ Preferred flow:
 - Store temporary captures under \`.wallie/screenshots/\`.
 - Screenshots are proof artifacts only and must never be part of the final PR diff.
 - If the PR description needs screenshot proof, create a screenshot-only commit and push it so the screenshots are reviewable in one commit.
-- Add one \`Screenshot proof\` link to the PR description using \`https://github.com/<owner>/<repo>/commit/<screenshot-commit-sha>\`. Do not list or embed each screenshot file.
+- Include one \`Screenshot proof\` link in the final Build output using \`https://github.com/<owner>/<repo>/commit/<screenshot-commit-sha>\`. Wallie uses that output as the PR description. Do not list or embed each screenshot file.
 - Do not embed \`raw.githubusercontent.com\` or \`media.githubusercontent.com\` URLs from repo commits in private-repo PR descriptions. They require an auth header or expiring token and render as broken images in GitHub markdown.
-- After updating the PR description, immediately run \`git revert <screenshot-commit-sha>\` and push the revert before final review.
+- After recording the proof link, immediately run \`git revert <screenshot-commit-sha>\` and push the revert before final review.
 
 Do not rely on a Playwright MCP server being present in Wallie cloud runs.
 `,

@@ -59,7 +59,7 @@ describe("repository onboarding planner", () => {
   });
 
   it("upgrades exact legacy Wallie-owned files without treating them as user edits", () => {
-    const changedSkillNames = new Set(["commit", "pr-feedback", "screenshot"]);
+    const changedSkillNames = new Set(["commit", "pr-feedback", "push", "screenshot"]);
     const changedSkills = DEFAULT_WALLIE_SKILLS.filter((skill) =>
       changedSkillNames.has(skill.name),
     );
@@ -139,5 +139,18 @@ describe("repository onboarding planner", () => {
     expect(content).toContain("failed check-run annotations");
     expect(content).toContain("check-runs/<check_run_id>/annotations");
     expect(content).toContain("repeat the sweep");
+  });
+
+  it("reserves commit and pull request identity for Wallie", () => {
+    const commitSkill = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "commit");
+    const pushSkill = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "push");
+    const screenshotSkill = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "screenshot");
+
+    expect(commitSkill?.content).toContain("Preserve Wallie's configured Git identity");
+    expect(commitSkill?.content).toContain("pass `--author`");
+    expect(pushSkill?.content).toContain("Do not create or update a pull request");
+    expect(pushSkill?.content).toContain("Wallie creates and records the pull request");
+    expect(screenshotSkill?.content).toContain("final Build output");
+    expect(screenshotSkill?.content).not.toContain("After updating the PR description");
   });
 });
