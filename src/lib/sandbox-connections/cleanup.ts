@@ -24,9 +24,8 @@ const activeJobStatuses = ["queued", "started", "running"] as const;
  *
  * Vercel's list API is project-scoped rather than metadata-scoped, so this
  * helper also checks for active references from every workspace sharing the
- * project. Both the compatibility and provider-neutral connection APIs use
- * this exact path, preventing credential rotation from having endpoint-specific
- * cleanup behavior.
+ * project. The provider-neutral connection API uses this path for Vercel
+ * credential rotation and disconnection.
  */
 export async function stopVercelWorkspaceOwnedSandboxes(input: {
   admin: AdminClient;
