@@ -2,12 +2,12 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SettingsPageData } from "@/features/settings/data";
 import { MaintenanceIsland, VerifySetupIsland } from "@/features/settings/islands/advanced-islands";
-import { SETTINGS_DATA_CHANGED } from "@/features/settings/settings-island-events";
+import { dispatchSettingsDataChanged } from "@/features/settings/settings-island-events";
 import type { MaintenanceTickResponse } from "@/lib/maintenance/service";
 
 vi.mock("@/features/settings/verify-setup-section", () => ({
@@ -75,24 +75,48 @@ describe("VerifySetupIsland", () => {
   it("applies integration data updates without a page reload", () => {
     const initialData = {
       setupHealth: { githubInstallation: { connected: false } },
+      workspace: { id: "workspace-live" },
     } as SettingsPageData;
 
     render(<VerifySetupIsland initialData={initialData} />);
 
-    fireEvent(
-      window,
-      new CustomEvent(SETTINGS_DATA_CHANGED, {
-        detail: (current: SettingsPageData) => ({
-          ...current,
-          setupHealth: {
-            ...current.setupHealth,
-            githubInstallation: {
-              ...current.setupHealth.githubInstallation,
-              connected: true,
-            },
+    act(() => {
+      dispatchSettingsDataChanged("workspace-live", (current: SettingsPageData) => ({
+        ...current,
+        setupHealth: {
+          ...current.setupHealth,
+          githubInstallation: {
+            ...current.setupHealth.githubInstallation,
+            connected: true,
           },
-        }),
-      }),
+        },
+      }));
+    });
+
+    expect(screen.getByText("GitHub connected")).toBeInTheDocument();
+  });
+
+  it("replays integration updates that happen before the island mounts", () => {
+    dispatchSettingsDataChanged("workspace-late", (current: SettingsPageData) => ({
+      ...current,
+      setupHealth: {
+        ...current.setupHealth,
+        githubInstallation: {
+          ...current.setupHealth.githubInstallation,
+          connected: true,
+        },
+      },
+    }));
+
+    render(
+      <VerifySetupIsland
+        initialData={
+          {
+            setupHealth: { githubInstallation: { connected: false } },
+            workspace: { id: "workspace-late" },
+          } as SettingsPageData
+        }
+      />,
     );
 
     expect(screen.getByText("GitHub connected")).toBeInTheDocument();

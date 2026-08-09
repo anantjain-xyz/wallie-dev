@@ -6,8 +6,8 @@ import { useState } from "react";
 import { Status } from "@/components/ui/status";
 import type { SettingsPageData } from "@/features/settings/data";
 import {
+  dispatchSettingsDataChanged,
   dispatchSettingsEvent,
-  SETTINGS_DATA_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
 } from "@/features/settings/settings-island-events";
 import { updatePipelineInSettingsData } from "@/features/settings/settings-data-updates";
@@ -42,7 +42,7 @@ export function PipelineIsland({ data }: { data: SettingsPageData }) {
         onDirtyChange={setPipelineDirty}
         onPipelineSaved={(pipeline) => {
           dispatchSettingsEvent(SETTINGS_PIPELINE_CHANGED, pipeline);
-          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+          dispatchSettingsDataChanged(data.workspace.id, (current: SettingsPageData) =>
             updatePipelineInSettingsData(current, pipeline),
           );
         }}

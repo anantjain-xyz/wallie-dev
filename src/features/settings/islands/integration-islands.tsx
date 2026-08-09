@@ -23,8 +23,9 @@ import {
   updateSecretsInSettingsData,
 } from "@/features/settings/settings-data-updates";
 import {
+  dispatchSettingsDataChanged,
   dispatchSettingsEvent,
-  SETTINGS_DATA_CHANGED,
+  replaySettingsDataChanges,
   SETTINGS_GITHUB_CHANGED,
   SETTINGS_PIPELINE_CHANGED,
   SETTINGS_SANDBOX_CHANGED,
@@ -106,7 +107,7 @@ export function GithubIntegrationIsland({
         onGithubChange={(nextGithub) => {
           setGithub(nextGithub);
           dispatchSettingsEvent(SETTINGS_GITHUB_CHANGED, nextGithub);
-          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+          dispatchSettingsDataChanged(workspaceId, (current: SettingsPageData) =>
             updateGithubInSettingsData(current, nextGithub),
           );
         }}
@@ -118,11 +119,11 @@ export function GithubIntegrationIsland({
 }
 
 export function RepositoryIntegrationIsland({ initialData }: { initialData: SettingsPageData }) {
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => replaySettingsDataChanges(initialData));
   const { feedback, setMessage } = useIslandFeedback();
   const updateData: Dispatch<SetStateAction<SettingsPageData>> = (update) => {
     setData(update);
-    dispatchSettingsEvent(SETTINGS_DATA_CHANGED, update);
+    dispatchSettingsDataChanged(initialData.workspace.id, update);
   };
   useEffect(() => {
     const handleGithubChange = (event: Event) => {
@@ -151,7 +152,7 @@ export function VercelIntegrationIsland({ initialData }: { initialData: Settings
         onSettingsChange={(settings) => {
           setData((current) => applySandboxSettingsToData(current, settings));
           dispatchSettingsEvent(SETTINGS_SANDBOX_CHANGED, settings);
-          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             applySandboxSettingsToData(current, settings),
           );
         }}
@@ -189,10 +190,10 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
     if (!broadcastSecrets.current) return;
     broadcastSecrets.current = false;
     dispatchSettingsEvent(SETTINGS_SECRETS_CHANGED, secrets);
-    dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+    dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
       updateSecretsInSettingsData(current, secrets),
     );
-  }, [secrets]);
+  }, [initialData.workspace.id, secrets]);
   const linearSecret = secrets.find((secret) => secret.key === "LINEAR_API_KEY") ?? null;
   return (
     <LinearConfigurationSection
@@ -201,7 +202,7 @@ export function LinearIntegrationIsland({ initialData }: { initialData: Settings
       linearSecret={linearSecret}
       onRoutingSaved={(nextRouting) => {
         setRouting(nextRouting);
-        dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+        dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
           updateLinearRoutingInSettingsData(current, nextRouting),
         );
       }}
@@ -246,10 +247,10 @@ export function RuntimeIntegrationIsland({
     if (!broadcastSecrets.current) return;
     broadcastSecrets.current = false;
     dispatchSettingsEvent(SETTINGS_SECRETS_CHANGED, secrets);
-    dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+    dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
       updateSecretsInSettingsData(current, secrets),
     );
-  }, [secrets]);
+  }, [initialData.workspace.id, secrets]);
 
   return (
     <>
@@ -295,17 +296,17 @@ export function RuntimeIntegrationIsland({
           updatedAt: initialData.setupHealth.codexConnection.updatedAt,
         }}
         onAgentConfigSaved={(entries) =>
-          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateAgentConfigInSettingsData(current, entries),
           )
         }
         onClaudeCodeStatusChange={(status) =>
-          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateClaudeCodeConnectionInSettingsData(current, status),
           )
         }
         onCodexStatusChange={(status) =>
-          dispatchSettingsEvent(SETTINGS_DATA_CHANGED, (current: SettingsPageData) =>
+          dispatchSettingsDataChanged(initialData.workspace.id, (current: SettingsPageData) =>
             updateCodexConnectionInSettingsData(current, status),
           )
         }

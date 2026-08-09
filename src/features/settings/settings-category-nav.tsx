@@ -191,7 +191,7 @@ export function SettingsCategoryNav({
   return (
     <nav
       aria-label="Settings categories"
-      className="self-start sticky top-[calc(var(--shell-scroll-padding)+16px)] max-h-[calc(100dvh-var(--shell-scroll-padding)-16px)] overflow-y-auto"
+      className="self-start lg:sticky lg:top-[calc(var(--shell-scroll-padding)+16px)] lg:max-h-[calc(100dvh-var(--shell-scroll-padding)-16px)] lg:overflow-y-auto"
     >
       <ul className="grid grid-cols-2 gap-2 pb-2 lg:flex lg:flex-col lg:pb-0">
         {SETTINGS_CATEGORY_LINKS.map((category) => {

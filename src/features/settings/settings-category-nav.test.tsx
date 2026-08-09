@@ -83,14 +83,15 @@ describe("SettingsCategoryNav hash routing", () => {
     expect(SETTINGS_CATEGORY_LINKS.at(-1)?.description).toBe("Usage, Maintenence, and Rate Limits");
   });
 
-  it("sticks below the safe-area-aware shell header", () => {
+  it("sticks below the shell header on desktop without covering mobile anchors", () => {
     const { container, getByRole } = render(
       <SettingsCategoryNav activeCategory="advanced" canManage workspaceSlug="acme" />,
     );
 
     const nav = getByRole("navigation", { name: "Settings categories" });
-    expect(nav.className).toContain("sticky");
-    expect(nav.className).toContain("top-[calc(var(--shell-scroll-padding)+16px)]");
+    expect(nav).not.toHaveClass("sticky");
+    expect(nav.className).toContain("lg:sticky");
+    expect(nav.className).toContain("lg:top-[calc(var(--shell-scroll-padding)+16px)]");
     expect(nav).toHaveClass("self-start");
     expect(container.querySelector("ul")).toHaveClass("grid", "grid-cols-2");
     expect(container.querySelector("ul")).not.toHaveClass("overflow-x-auto");
