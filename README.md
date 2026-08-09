@@ -170,7 +170,7 @@ The default `plan → build → land` seed lives in the `internal.default_pipeli
 #### API Routes (`src/app/api/`)
 
 ```
-agent-runs/ + agent-runs/[runId]/{retry,cancel}/                <- enqueue, retry, or cancel runs
+agent-runs/[runId]/{retry,cancel}/                              <- retry or cancel runs
 sessions/                                                       <- create a session + its first job/run atomically
 sessions/[sessionId]/                                           <- title/state, archive/cancel, artifacts, runs
 sessions/[sessionId]/phase-action/                              <- in-app approve / reject
@@ -296,7 +296,7 @@ Everything else is UI glue or integration plumbing.
 src/
   app/                          # Next.js App Router
     api/                        # Route handlers (webhooks, jobs, auth, secrets)
-      agent-runs/               # Enqueue, retry, and cancel pipeline jobs
+      agent-runs/               # Retry and cancel pipeline jobs
       sessions/                 # Atomic create + session review/activity routes
       agent-config/             # workspace_agent_config CRUD
       codex/, claude-code/      # Provider connection / token flows

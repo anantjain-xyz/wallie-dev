@@ -53,20 +53,20 @@ not edit it by hand.
 
 ## Semantic ownership
 
-| Concept                                   | Semantic owner                                         | Important projections and consumers                  |
-| ----------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| Workspace membership and tenant isolation | Postgres schema and RLS policies                       | Server/browser Supabase clients, route authorization |
-| Pipeline and stage definitions            | `pipelines` and `pipeline_stages`                      | Settings editor, session loaders, prompt rendering   |
-| Session pinning and current stage         | `sessions.pipeline_id` and `sessions.current_stage_id` | Dashboard, worker, review route                      |
-| Atomic session creation                   | `create_session_with_first_job` RPC                    | Session creation service and initial run UI          |
-| Approval and stage advancement            | `approve_session_stage` RPC                            | Phase-action route and pipeline processor            |
-| Rejection and rerun orchestration         | Pipeline processor                                     | Artifact feedback, job/run rows, review UI           |
-| Active-job deduplication                  | Database partial unique index plus key builders        | Interactive enqueue and Linear reconciliation        |
-| Worker capacity and claims                | `claim_next_agent_job` RPC plus worker scheduler       | Heartbeats and stall detector                        |
-| Sandbox lifecycle                         | Sandbox interface and provider adapters                | Pipeline processor, cancellation, reaper, settings   |
-| Agent prompt and execution                | Prompt templates, pipeline processor, agent runners    | Workspace stage templates and versioned artifacts    |
-| Workspace secrets                         | Secret crypto and encrypted database rows              | Privileged server services and worker                |
-| Environment configuration                 | `src/env/` plus documented runtime-only exceptions     | Web deployment and worker deployment                 |
+| Concept                                   | Semantic owner                                         | Important projections and consumers                     |
+| ----------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| Workspace membership and tenant isolation | Postgres schema and RLS policies                       | Server/browser Supabase clients, route authorization    |
+| Pipeline and stage definitions            | `pipelines` and `pipeline_stages`                      | Settings editor, session loaders, prompt rendering      |
+| Session pinning and current stage         | `sessions.pipeline_id` and `sessions.current_stage_id` | Dashboard, worker, review route                         |
+| Atomic session creation                   | `create_session_with_first_job` RPC                    | Session creation service and initial run UI             |
+| Approval and stage advancement            | `approve_session_stage` RPC                            | Phase-action route and pipeline processor               |
+| Rejection and rerun orchestration         | Pipeline processor                                     | Artifact feedback, job/run rows, review UI              |
+| Active-job deduplication                  | Database partial unique index plus key builders        | Session/stage enqueue, retry, and Linear reconciliation |
+| Worker capacity and claims                | `claim_next_agent_job` RPC plus worker scheduler       | Heartbeats and stall detector                           |
+| Sandbox lifecycle                         | Sandbox interface and provider adapters                | Pipeline processor, cancellation, reaper, settings      |
+| Agent prompt and execution                | Prompt templates, pipeline processor, agent runners    | Workspace stage templates and versioned artifacts       |
+| Workspace secrets                         | Secret crypto and encrypted database rows              | Privileged server services and worker                   |
+| Environment configuration                 | `src/env/` plus documented runtime-only exceptions     | Web deployment and worker deployment                    |
 
 When a fact appears in several surfaces, change its semantic owner first and
 derive or verify the projections. Do not solve drift by adding another copied
