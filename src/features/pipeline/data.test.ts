@@ -145,15 +145,19 @@ describe("Pipeline dashboard data", () => {
     expect(decoded).toEqual(cursor());
   });
 
-  it("starts onboarding and the board RPC concurrently after auth", async () => {
+  it("starts onboarding, board, and session-history queries concurrently after auth", async () => {
     const starts: string[] = [];
     let resolveOnboarding!: (value: unknown) => void;
     let resolveDashboard!: (value: unknown) => void;
+    let resolveAnySession!: (value: unknown) => void;
     const onboardingPromise = new Promise((resolve) => {
       resolveOnboarding = resolve;
     });
     const dashboardPromise = new Promise((resolve) => {
       resolveDashboard = resolve;
+    });
+    const anySessionPromise = new Promise((resolve) => {
+      resolveAnySession = resolve;
     });
     const onboardingQuery = {
       eq: () => onboardingQuery,
@@ -163,8 +167,16 @@ describe("Pipeline dashboard data", () => {
       },
       select: () => onboardingQuery,
     };
+    const anySessionQuery = {
+      eq: () => anySessionQuery,
+      limit: () => {
+        starts.push("any-session");
+        return anySessionPromise;
+      },
+      select: () => anySessionQuery,
+    };
     const supabase = {
-      from: () => onboardingQuery,
+      from: (table: string) => (table === "sessions" ? anySessionQuery : onboardingQuery),
       rpc(this: unknown) {
         expect(this).toBe(supabase);
         starts.push("dashboard");
@@ -178,12 +190,14 @@ describe("Pipeline dashboard data", () => {
     });
 
     const resultPromise = loadPipelineDashboardData("wallie");
-    await vi.waitFor(() => expect(starts).toEqual(["onboarding", "dashboard"]));
+    await vi.waitFor(() => expect(starts).toEqual(["onboarding", "dashboard", "any-session"]));
 
     resolveOnboarding({ data: { current_step: "verify", status: "completed" }, error: null });
     resolveDashboard({ data: { lanes: [lane()] }, error: null });
+    resolveAnySession({ data: [{ id: "session-1" }], error: null });
 
     await expect(resultPromise).resolves.toMatchObject({
+      hasAnySession: true,
       lanes: [{ cards: [], id: PLAN_STAGE_ID }],
     });
   });

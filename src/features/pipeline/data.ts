@@ -137,7 +137,7 @@ export async function loadPipelineDashboardData(
 ): Promise<PipelineDashboardData> {
   return withServerTiming(
     "pipeline.dashboard",
-    { pageSize: PIPELINE_DASHBOARD_PAGE_SIZE, queryCount: 2, workspaceSlug },
+    { pageSize: PIPELINE_DASHBOARD_PAGE_SIZE, queryCount: 3, workspaceSlug },
     async (timing) => {
       const { supabase, workspace } = await timing.segment(
         "auth-workspace-context",
@@ -145,7 +145,7 @@ export async function loadPipelineDashboardData(
         (context) => ({ rows: 1, workspaceId: context.workspace.id }),
       );
 
-      const [onboardingResult, dashboardResult] = await Promise.all([
+      const [onboardingResult, dashboardResult, anySessionResult] = await Promise.all([
         timing.segment(
           "pipeline.onboarding",
           () =>
@@ -174,13 +174,23 @@ export async function loadPipelineDashboardData(
             ),
           }),
         ),
+        timing.segment(
+          "pipeline.any-session",
+          () => supabase.from("sessions").select("id").eq("workspace_id", workspace.id).limit(1),
+          (result) => ({
+            payloadBytes: approximatePayloadSizeBytes(result.data),
+            rows: result.data?.length ?? 0,
+          }),
+        ),
       ]);
 
       if (onboardingResult.error) throw onboardingResult.error;
       if (dashboardResult.error) throw dashboardResult.error;
+      if (anySessionResult.error) throw anySessionResult.error;
 
       const dashboard = normalizePipelineDashboardRpcPayload(dashboardResult.data);
       const result: PipelineDashboardData = {
+        hasAnySession: (anySessionResult.data?.length ?? 0) > 0,
         lanes: dashboard.lanes,
         onboarding: mapOnboardingResumeState(onboardingResult.data),
         workspace: {

@@ -12,22 +12,25 @@ type SessionsZeroStateProps = {
   className?: string;
   newSessionHref: string;
   onboarding: OnboardingResumeState | null;
+  variant?: "archived" | "first-run";
   workspaceSlug: string;
 };
 
 /**
- * First-run zero-state for surfaces that list sessions (the board and the
- * sessions list). Unlike a no-filter-match message, this tells a new user what
- * the page will hold and hands them the next action as a button: "Resume setup"
- * while onboarding is incomplete, otherwise "New session".
+ * Zero-state for surfaces that list sessions (the board and the sessions
+ * list). The archived variant avoids presenting an experienced workspace as a
+ * first-time user. The next action is "Resume setup" while onboarding is
+ * incomplete, otherwise "New session".
  */
 export function SessionsZeroState({
   className,
   newSessionHref,
   onboarding,
+  variant = "first-run",
   workspaceSlug,
 }: SessionsZeroStateProps) {
   const shouldResumeSetup = shouldShowOnboardingResumeCta(onboarding);
+  const hasArchivedSessions = variant === "archived";
 
   return (
     <div
@@ -36,11 +39,17 @@ export function SessionsZeroState({
         className,
       )}
     >
-      <p className="text-[14px] font-semibold text-foreground">No sessions yet</p>
+      <p className="text-[14px] font-semibold text-foreground">
+        {hasArchivedSessions ? "No active sessions" : "No sessions yet"}
+      </p>
       <p className="mt-2 max-w-sm text-[13px] leading-5 text-muted">
-        {shouldResumeSetup
-          ? "Finish workspace setup before starting the first session."
-          : "Turn a Linear issue into a session and Wallie drives it through your pipeline, one approval at a time."}
+        {hasArchivedSessions
+          ? shouldResumeSetup
+            ? "All sessions have been archived. Finish workspace setup before starting another session."
+            : "All sessions have been archived. Start a new session to move more work through your pipeline."
+          : shouldResumeSetup
+            ? "Finish workspace setup before starting the first session."
+            : "Turn a Linear issue into a session and Wallie drives it through your pipeline, one approval at a time."}
       </p>
       <div className="mt-5">
         {shouldResumeSetup ? (
