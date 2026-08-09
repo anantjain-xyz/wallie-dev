@@ -127,6 +127,12 @@ Service-role RPCs such as atomic session creation or job claim do not replace
 route authorization. They own atomicity after a trusted caller has established
 who may request the operation.
 
+For these flows, the supported service-role surface is deliberately narrow:
+`claim_next_agent_job(integer)` owns worker scheduling and workspace-capacity
+enforcement, while `create_session_with_first_job(...)` allocates the workspace
+session number in the same transaction that creates the session, first job, and
+first run.
+
 ## Forward migration workflow
 
 1. Never edit, delete, or rename the baseline or an applied migration.
