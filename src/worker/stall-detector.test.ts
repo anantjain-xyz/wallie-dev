@@ -37,7 +37,10 @@ interface AgentJobRow {
   id: string;
   session_id: string;
   attempt_count: number;
+  last_error: string | null;
   status: "queued" | "running" | "success" | "error" | "canceled";
+  updated_at: string;
+  workspace_id: string;
 }
 
 interface AgentConfigRow {
@@ -117,29 +120,52 @@ function buildAdminMock(state: MockState) {
   });
 
   const fromAgentJobs = () => ({
-    select: (cols: string) => ({
-      eq: (_col: string, id: string) => ({
-        maybeSingle: async () => {
-          const row = state.jobs.find((j) => j.id === id);
-          if (!row) return { data: null, error: null };
-          if (cols.includes("session_id")) {
-            return { data: { session_id: row.session_id }, error: null };
-          }
-          if (cols.includes("attempt_count")) {
-            return { data: { attempt_count: row.attempt_count }, error: null };
-          }
-          return { data: row, error: null };
+    select: () => {
+      const equals = new Map<string, unknown>();
+      const inclusions = new Map<string, unknown[]>();
+      const prefixes = new Map<string, string>();
+      const matchingRows = () =>
+        state.jobs
+          .filter((row) =>
+            [...equals].every(([column, value]) =>
+              Object.is(row[column as keyof AgentJobRow], value),
+            ),
+          )
+          .filter((row) =>
+            [...inclusions].every(([column, values]) =>
+              values.includes(row[column as keyof AgentJobRow]),
+            ),
+          )
+          .filter((row) =>
+            [...prefixes].every(([column, prefix]) =>
+              String(row[column as keyof AgentJobRow] ?? "").startsWith(prefix),
+            ),
+          );
+      const builder = {
+        eq: (column: string, value: unknown) => {
+          equals.set(column, value);
+          return builder;
         },
-      }),
-      in: (_col: string, ids: string[]) => ({
-        eq: async (_col2: string, expectedStatus: string) => ({
-          data: state.jobs
-            .filter((row) => ids.includes(row.id) && row.status === expectedStatus)
-            .map((row) => ({ id: row.id })),
+        in: (column: string, values: unknown[]) => {
+          inclusions.set(column, values);
+          return builder;
+        },
+        like: (column: string, pattern: string) => {
+          prefixes.set(column, pattern.endsWith("%") ? pattern.slice(0, -1) : pattern);
+          return builder;
+        },
+        maybeSingle: async () => ({ data: matchingRows()[0] ?? null, error: null }),
+        order: () => builder,
+        range: async (from: number, to: number) => ({
+          data: matchingRows().slice(from, to + 1),
           error: null,
         }),
-      }),
-    }),
+        then: (resolve: (value: { data: AgentJobRow[]; error: null }) => void) => {
+          resolve({ data: matchingRows(), error: null });
+        },
+      };
+      return builder;
+    },
     update: (patch: Record<string, unknown>) => ({
       // Stall-detector calls update(...).eq("id", jobId) (single-eq, awaited)
       // for the retry-path last_error stamp, and update(...).eq("id", jobId)
@@ -258,6 +284,8 @@ function buildAdminMock(state: MockState) {
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const TEN_MIN_MS = 10 * 60 * 1000;
+const PUBLICATION_CHECKPOINT =
+  'Wallie pull request publication pending: {"artifactVersion":1,"pullRequestNumber":42,"reason":"Linear unavailable"}';
 
 function activeRun(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
   return {
@@ -280,7 +308,10 @@ function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     id: "job-1",
     session_id: "sess-1",
     attempt_count: 0,
+    last_error: null,
     status: "running",
+    updated_at: new Date(Date.now() - TEN_MIN_MS).toISOString(),
+    workspace_id: "ws-1",
     ...overrides,
   };
 }
@@ -463,6 +494,76 @@ describe("sweepStalledRuns", () => {
     expect(result.stalledRunIds).toEqual([]);
     expect(runUpdates).toEqual([]);
     expect(mocked.stopSandboxById).not.toHaveBeenCalled();
+  });
+
+  it("recovers a stalled publication-only job without losing its checkpoint", async () => {
+    const state: MockState = {
+      runs: [],
+      jobs: [job({ last_error: PUBLICATION_CHECKPOINT })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin, jobUpdates, sessionUpdates } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.stalledRunIds).toEqual([]);
+    expect(result.retriedJobIds).toEqual(["job-1"]);
+    expect(state.jobs[0]).toMatchObject({
+      last_error: PUBLICATION_CHECKPOINT,
+      status: "queued",
+    });
+    expect(jobUpdates).toEqual([]);
+    expect(state.rpcCalls).toContainEqual({
+      args: {
+        base_delay_ms: 5000,
+        max_backoff_ms: 300000,
+        target_job_id: "job-1",
+      },
+      name: "schedule_job_retry",
+    });
+    expect(sessionUpdates).toEqual([
+      {
+        expected: "in_progress",
+        id: "sess-1",
+        patch: { phase_status: "rejected" },
+      },
+    ]);
+  });
+
+  it("does not recover a publication-only job owned by a live worker", async () => {
+    const state: MockState = {
+      runs: [],
+      jobs: [job({ last_error: PUBLICATION_CHECKPOINT })],
+      configs: [],
+      heartbeats: [{ active_job_ids: ["job-1"], last_heartbeat_at: new Date().toISOString() }],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin, sessionUpdates } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(state.jobs[0]?.status).toBe("running");
+    expect(sessionUpdates).toEqual([]);
+  });
+
+  it("ignores malformed publication retry markers", async () => {
+    const state: MockState = {
+      runs: [],
+      jobs: [job({ last_error: "Wallie pull request publication pending: not-json" })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    const { admin } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(state.jobs[0]?.status).toBe("running");
   });
 
   it("does not stall a queued run before its job is claimed by a worker", async () => {

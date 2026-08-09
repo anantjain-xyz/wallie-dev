@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/supabase/database.types";
 import { stopRunSandbox } from "@/lib/pipeline/cancel";
+import { isPublicationRetryState } from "@/lib/pipeline/processor";
 import type { SandboxConnection } from "@/lib/sandbox/types";
 
 type AdminClient = SupabaseClient<Database>;
@@ -23,6 +24,14 @@ type ActiveRunRow = {
   workspace_id: string;
 };
 
+type ActivePublicationJobRow = {
+  id: string;
+  last_error: string | null;
+  session_id: string;
+  updated_at: string;
+  workspace_id: string;
+};
+
 export interface StallSweepResult {
   stalledRunIds: string[];
   stalledJobIds: string[];
@@ -35,11 +44,11 @@ export interface StallSweepOptions {
 }
 
 /**
- * Sweep for stalled agent runs — runs in active status whose
- * last_activity_at is older than the workspace's stall_timeout_ms (or the
- * provided default). Marks them as errored, stops their orphaned sandbox,
- * and either reschedules the parent job for retry (attempts remaining) or
- * marks it terminally errored (attempts exhausted).
+ * Sweep for stalled work. Normal agent work is tracked by an active run;
+ * publication-only retries have no active run because their coding run is
+ * already complete, so they are tracked directly by the running job's
+ * updated_at timestamp. Both paths honor live worker heartbeats and either
+ * reschedule the job (attempts remaining) or mark it terminally errored.
  */
 export async function sweepStalledRuns(
   admin: AdminClient,
@@ -53,14 +62,22 @@ export async function sweepStalledRuns(
     retriedJobIds: [],
   };
 
-  const activeRuns = await loadActiveRuns(admin, options);
+  const [activeRuns, activePublicationJobs] = await Promise.all([
+    loadActiveRuns(admin, options),
+    loadActivePublicationJobs(admin, options),
+  ]);
 
-  if (activeRuns.length === 0) {
+  if (activeRuns.length === 0 && activePublicationJobs.length === 0) {
     return result;
   }
 
   // Load per-workspace stall timeouts and retry caps in bulk.
-  const workspaceIds = [...new Set(activeRuns.map((r) => r.workspace_id))];
+  const workspaceIds = [
+    ...new Set([
+      ...activeRuns.map((run) => run.workspace_id),
+      ...activePublicationJobs.map((job) => job.workspace_id),
+    ]),
+  ];
   const runningJobIdsForQueuedRuns = await loadRunningJobIds(
     admin,
     activeRuns
@@ -171,6 +188,33 @@ export async function sweepStalledRuns(
     });
   }
 
+  for (const job of activePublicationJobs) {
+    const timeoutMs = stallTimeouts.get(job.workspace_id) ?? defaultStallTimeoutMs;
+    const elapsed = now - new Date(job.updated_at).getTime();
+
+    if (elapsed < timeoutMs || freshWorkerJobIds.has(job.id)) {
+      continue;
+    }
+
+    const stallReason = formatStallReason(elapsed, timeoutMs);
+    await resolveStalledJob({
+      admin,
+      jobId: job.id,
+      maxRetries: maxRetries.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
+      preserveLastErrorOnRetry: true,
+      result,
+      stallReason,
+    });
+    await unblockStalledSession(admin, job.session_id);
+
+    console.log("[stall-detector] recovered stalled publication job", {
+      elapsed: `${Math.round(elapsed / 1000)}s`,
+      jobId: job.id,
+      timeoutMs,
+      workspaceId: job.workspace_id,
+    });
+  }
+
   return result;
 }
 
@@ -213,6 +257,48 @@ async function loadActiveRuns(
 
     if (data.length < ACTIVE_RUN_PAGE_SIZE) {
       return runs;
+    }
+  }
+}
+
+async function loadActivePublicationJobs(
+  admin: AdminClient,
+  options: StallSweepOptions,
+): Promise<ActivePublicationJobRow[]> {
+  const jobs: ActivePublicationJobRow[] = [];
+
+  for (let offset = 0; ; offset += ACTIVE_RUN_PAGE_SIZE) {
+    const activeJobQuery = admin
+      .from("agent_jobs")
+      .select("id, workspace_id, session_id, last_error, updated_at")
+      .eq("status", "running")
+      .like("last_error", "Wallie pull request publication pending: %");
+    const scopedActiveJobQuery = options.workspaceId
+      ? activeJobQuery.eq("workspace_id", options.workspaceId)
+      : activeJobQuery;
+    const { data, error } = await scopedActiveJobQuery
+      .order("updated_at", { ascending: true })
+      .range(offset, offset + ACTIVE_RUN_PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("[stall-detector] failed to fetch publication retry jobs", {
+        error: error.message,
+      });
+      return jobs;
+    }
+
+    if (!data || data.length === 0) {
+      return jobs;
+    }
+
+    jobs.push(
+      ...(data as ActivePublicationJobRow[]).filter((job) =>
+        isPublicationRetryState(job.last_error),
+      ),
+    );
+
+    if (data.length < ACTIVE_RUN_PAGE_SIZE) {
+      return jobs;
     }
   }
 }
@@ -288,10 +374,11 @@ async function resolveStalledJob(input: {
   admin: AdminClient;
   jobId: string;
   maxRetries: number;
+  preserveLastErrorOnRetry?: boolean;
   result: StallSweepResult;
   stallReason: string;
 }): Promise<void> {
-  const { admin, jobId, maxRetries, result, stallReason } = input;
+  const { admin, jobId, maxRetries, preserveLastErrorOnRetry, result, stallReason } = input;
 
   // Read the current attempt count to decide retry vs terminal.
   const { data: jobRow } = await admin
@@ -310,9 +397,12 @@ async function resolveStalledJob(input: {
     });
 
     if (!retryError) {
-      // Record the stall reason on the row so operators see why it was
-      // rescheduled. schedule_job_retry leaves last_error untouched.
-      await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
+      // Publication-only retries store their recovery checkpoint in
+      // last_error. Preserve it so the next claim resumes publication instead
+      // of rerunning the coding agent. Normal jobs retain the stall diagnostic.
+      if (!preserveLastErrorOnRetry) {
+        await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
+      }
       result.retriedJobIds.push(jobId);
       return;
     }
@@ -336,6 +426,14 @@ async function resolveStalledJob(input: {
   if (!jobError) {
     result.stalledJobIds.push(jobId);
   }
+}
+
+async function unblockStalledSession(admin: AdminClient, sessionId: string): Promise<void> {
+  await admin
+    .from("sessions")
+    .update({ phase_status: "rejected" })
+    .eq("id", sessionId)
+    .eq("phase_status", "in_progress");
 }
 
 /**
