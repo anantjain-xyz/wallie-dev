@@ -25,8 +25,9 @@ type ActiveRunRow = {
 };
 
 type ActivePublicationJobRow = {
+  attempt_count: number;
   id: string;
-  last_error: string | null;
+  last_error: string;
   session_id: string;
   updated_at: string;
   workspace_id: string;
@@ -197,14 +198,17 @@ export async function sweepStalledRuns(
     }
 
     const stallReason = formatStallReason(elapsed, timeoutMs);
-    await resolveStalledJob({
+    const recovered = await recoverStalledPublicationJob({
       admin,
-      jobId: job.id,
+      job,
       maxRetries: maxRetries.get(job.workspace_id) ?? DEFAULT_MAX_RETRIES,
-      preserveLastErrorOnRetry: true,
       result,
       stallReason,
     });
+    if (!recovered) {
+      continue;
+    }
+
     await unblockStalledSession(admin, job.session_id);
 
     console.log("[stall-detector] recovered stalled publication job", {
@@ -270,7 +274,7 @@ async function loadActivePublicationJobs(
   for (let offset = 0; ; offset += ACTIVE_RUN_PAGE_SIZE) {
     const activeJobQuery = admin
       .from("agent_jobs")
-      .select("id, workspace_id, session_id, last_error, updated_at")
+      .select("id, workspace_id, session_id, attempt_count, last_error, updated_at")
       .eq("status", "running")
       .like("last_error", "Wallie pull request publication pending: %");
     const scopedActiveJobQuery = options.workspaceId
@@ -374,11 +378,10 @@ async function resolveStalledJob(input: {
   admin: AdminClient;
   jobId: string;
   maxRetries: number;
-  preserveLastErrorOnRetry?: boolean;
   result: StallSweepResult;
   stallReason: string;
 }): Promise<void> {
-  const { admin, jobId, maxRetries, preserveLastErrorOnRetry, result, stallReason } = input;
+  const { admin, jobId, maxRetries, result, stallReason } = input;
 
   // Read the current attempt count to decide retry vs terminal.
   const { data: jobRow } = await admin
@@ -397,12 +400,7 @@ async function resolveStalledJob(input: {
     });
 
     if (!retryError) {
-      // Publication-only retries store their recovery checkpoint in
-      // last_error. Preserve it so the next claim resumes publication instead
-      // of rerunning the coding agent. Normal jobs retain the stall diagnostic.
-      if (!preserveLastErrorOnRetry) {
-        await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
-      }
+      await admin.from("agent_jobs").update({ last_error: stallReason }).eq("id", jobId);
       result.retriedJobIds.push(jobId);
       return;
     }
@@ -426,6 +424,62 @@ async function resolveStalledJob(input: {
   if (!jobError) {
     result.stalledJobIds.push(jobId);
   }
+}
+
+async function recoverStalledPublicationJob(input: {
+  admin: AdminClient;
+  job: ActivePublicationJobRow;
+  maxRetries: number;
+  result: StallSweepResult;
+  stallReason: string;
+}): Promise<boolean> {
+  const { admin, job, maxRetries, result, stallReason } = input;
+  const retry = job.attempt_count < maxRetries;
+  const patch = retry
+    ? {
+        finished_at: null,
+        scheduled_at: new Date(
+          Date.now() + Math.min(5000 * 2 ** job.attempt_count, 300000),
+        ).toISOString(),
+        status: "queued" as const,
+      }
+    : {
+        finished_at: new Date().toISOString(),
+        last_error: stallReason,
+        status: "error" as const,
+      };
+
+  // The active-job list is only a snapshot. Claim the exact row version before
+  // changing either the job or its session so a publication that completed in
+  // the meantime cannot be requeued or parked by this sweep.
+  const { data: recovered, error } = await admin
+    .from("agent_jobs")
+    .update(patch)
+    .eq("id", job.id)
+    .eq("status", "running")
+    .eq("updated_at", job.updated_at)
+    .eq("last_error", job.last_error)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[stall-detector] failed to recover publication retry job", {
+      error: error.message,
+      jobId: job.id,
+    });
+    return false;
+  }
+
+  if (!recovered) {
+    return false;
+  }
+
+  if (retry) {
+    result.retriedJobIds.push(job.id);
+  } else {
+    result.stalledJobIds.push(job.id);
+  }
+  return true;
 }
 
 async function unblockStalledSession(admin: AdminClient, sessionId: string): Promise<void> {

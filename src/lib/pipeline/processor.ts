@@ -162,6 +162,15 @@ export async function processPipelineJob(input: {
 
     const publicationRetry = parsePublicationRetryState(job.last_error);
     if (publicationRetry) {
+      // Cancellation can win after the session claim above. Publication-only
+      // retries do not enter runStage(), so repeat its pre-side-effect guard
+      // here and restore the parked phase that the claim may have revived.
+      if (await isJobCanceled(admin, job.id)) {
+        await cancelQueuedRunsForJob(admin, job.id);
+        await updateSessionStatus(admin, session.id, "rejected");
+        return { jobId: job.id, processed: true, result: "idle", runId: null };
+      }
+
       return await resumeStagePublication({
         admin,
         job,
@@ -1766,8 +1775,10 @@ async function markPipelineJobSuccess(
       status: "success",
     })
     .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to success.
-    .neq("status", "canceled");
+    // A job canceled or CAS-recovered mid-flight stays in that state. This is
+    // especially important for publication-only retries, whose stall recovery
+    // can requeue the job while an old worker is finishing external side effects.
+    .eq("status", "running");
 }
 
 async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<number> {

@@ -152,7 +152,7 @@ pr=$(gh pr view --json number -q .number)
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
 gh pr checks "$pr" --json name,state,bucket,link
-gh api --paginate "repos/\${repo}/commits/\${sha}/check-runs" \\
+gh api --paginate "repos/\${repo}/commits/\${sha}/check-runs" \
   --jq '.check_runs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | [.id, .name, .conclusion, .details_url] | @tsv'
 gh api --paginate "repos/\${repo}/check-runs/<check_run_id>/annotations"
 \`\`\`

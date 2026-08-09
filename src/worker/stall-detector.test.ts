@@ -69,6 +69,7 @@ interface MockState {
   sessions: Map<string, { phase_status: string }>;
   rpcCalls: Array<{ name: string; args: unknown }>;
   retryRpcShouldFail?: boolean;
+  beforePublicationRecoveryCas?: () => void;
 }
 
 function buildAdminMock(state: MockState) {
@@ -166,39 +167,46 @@ function buildAdminMock(state: MockState) {
       };
       return builder;
     },
-    update: (patch: Record<string, unknown>) => ({
-      // Stall-detector calls update(...).eq("id", jobId) (single-eq, awaited)
-      // for the retry-path last_error stamp, and update(...).eq("id", jobId)
-      // .eq("status", "running") (chained, awaited) for the terminal path.
-      // The returned thenable resolves immediately for the single-eq case;
-      // the chained .eq filters by status before applying.
-      eq: (_col: string, jobId: string) => {
-        let recorded = false;
-        const recordSingle = () => {
-          if (recorded) return;
-          recorded = true;
-          jobUpdates.push({ id: jobId, patch });
-          const row = state.jobs.find((j) => j.id === jobId);
-          if (row) Object.assign(row, patch);
-        };
-        const thenable = {
-          // The chained `.eq("status", "running")` path. Skip the single-
-          // record so we don't double-count.
-          eq: async (_col2: string, expectedStatus: string) => {
-            recorded = true;
-            jobUpdates.push({ id: jobId, patch, status: expectedStatus });
-            const row = state.jobs.find((j) => j.id === jobId);
-            if (row && row.status === expectedStatus) Object.assign(row, patch);
-            return { error: null };
-          },
-          then: (resolve: (v: { error: null }) => void) => {
-            recordSingle();
-            resolve({ error: null });
-          },
-        };
-        return thenable;
-      },
-    }),
+    update: (patch: Record<string, unknown>) => {
+      const equals = new Map<string, unknown>();
+      let executed = false;
+      let matchedRows: AgentJobRow[] = [];
+      const execute = () => {
+        if (executed) return matchedRows;
+        executed = true;
+        if (equals.has("updated_at")) {
+          state.beforePublicationRecoveryCas?.();
+        }
+        matchedRows = state.jobs.filter((row) =>
+          [...equals].every(([column, value]) =>
+            Object.is(row[column as keyof AgentJobRow], value),
+          ),
+        );
+        for (const row of matchedRows) {
+          const expectedStatus = equals.get("status");
+          jobUpdates.push({
+            id: row.id,
+            patch,
+            ...(typeof expectedStatus === "string" ? { status: expectedStatus } : {}),
+          });
+          Object.assign(row, patch);
+        }
+        return matchedRows;
+      };
+      const builder = {
+        eq: (column: string, value: unknown) => {
+          equals.set(column, value);
+          return builder;
+        },
+        maybeSingle: async () => ({ data: execute()[0] ?? null, error: null }),
+        select: () => builder,
+        then: (resolve: (value: { error: null }) => void) => {
+          execute();
+          resolve({ error: null });
+        },
+      };
+      return builder;
+    },
   });
 
   const fromConfig = () => ({
@@ -514,15 +522,18 @@ describe("sweepStalledRuns", () => {
       last_error: PUBLICATION_CHECKPOINT,
       status: "queued",
     });
-    expect(jobUpdates).toEqual([]);
-    expect(state.rpcCalls).toContainEqual({
-      args: {
-        base_delay_ms: 5000,
-        max_backoff_ms: 300000,
-        target_job_id: "job-1",
+    expect(jobUpdates).toEqual([
+      {
+        id: "job-1",
+        patch: {
+          finished_at: null,
+          scheduled_at: expect.any(String),
+          status: "queued",
+        },
+        status: "running",
       },
-      name: "schedule_job_retry",
-    });
+    ]);
+    expect(state.rpcCalls).toEqual([]);
     expect(sessionUpdates).toEqual([
       {
         expected: "in_progress",
@@ -530,6 +541,34 @@ describe("sweepStalledRuns", () => {
         patch: { phase_status: "rejected" },
       },
     ]);
+  });
+
+  it("does not recover or park a publication job that completed after the sweep snapshot", async () => {
+    const state: MockState = {
+      runs: [],
+      jobs: [job({ last_error: PUBLICATION_CHECKPOINT })],
+      configs: [],
+      sessions: new Map([["sess-1", { phase_status: "in_progress" }]]),
+      rpcCalls: [],
+    };
+    state.beforePublicationRecoveryCas = () => {
+      Object.assign(state.jobs[0]!, {
+        last_error: null,
+        status: "success",
+        updated_at: new Date().toISOString(),
+      });
+      state.sessions.get("sess-1")!.phase_status = "awaiting_review";
+    };
+    const { admin, jobUpdates, sessionUpdates } = buildAdminMock(state);
+
+    const result = await sweepStalledRuns(admin as never, FIVE_MIN_MS);
+
+    expect(result.retriedJobIds).toEqual([]);
+    expect(result.stalledJobIds).toEqual([]);
+    expect(jobUpdates).toEqual([]);
+    expect(sessionUpdates).toEqual([]);
+    expect(state.jobs[0]?.status).toBe("success");
+    expect(state.sessions.get("sess-1")?.phase_status).toBe("awaiting_review");
   });
 
   it("does not recover a publication-only job owned by a live worker", async () => {

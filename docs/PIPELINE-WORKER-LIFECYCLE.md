@@ -167,8 +167,10 @@ does not enqueue work.
   rescheduled with backoff or marked terminally errored.
 - A publication-only retry has no active run because its coding run and artifact
   are already complete. The stall sweep therefore tracks a running publication
-  job by `agent_jobs.updated_at`; recovery preserves its publication checkpoint
-  so the next claim resumes publication instead of rerunning the agent.
+  job by `agent_jobs.updated_at`; recovery CAS-claims the observed running state,
+  timestamp, and publication checkpoint before changing the job or session. The
+  checkpoint survives a retry so the next claim resumes publication instead of
+  rerunning the agent.
 - Stall recovery parks the session in `rejected`; a retried job returns it to
   `in_progress` when claimed.
 - Linear reconciliation may keep a current stage queued, reroute a session to a

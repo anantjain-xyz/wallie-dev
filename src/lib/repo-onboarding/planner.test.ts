@@ -88,6 +88,20 @@ describe("repository onboarding planner", () => {
     );
   });
 
+  it("preserves the exact v4 PR feedback bytes for legacy upgrade matching", () => {
+    const legacyPrFeedback = UPGRADABLE_WALLIE_LEGACY_FILES.find(
+      (file) =>
+        file.path === ".agents/skills/pr-feedback/SKILL.md" &&
+        file.content.includes("failed check annotations"),
+    );
+
+    expect(legacyPrFeedback).toBeDefined();
+    expect(legacyPrFeedback!.content).toContain(
+      'gh api --paginate "repos/${repo}/commits/${sha}/check-runs"   --jq',
+    );
+    expect(legacyPrFeedback!.content).not.toContain('check-runs" \\\n');
+  });
+
   it("surfaces AGENTS.md read failures as onboarding conflicts", () => {
     const skill = DEFAULT_WALLIE_SKILLS[0]!;
     const plan = buildRepositoryOnboardingPlan({

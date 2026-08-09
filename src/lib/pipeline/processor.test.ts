@@ -265,6 +265,10 @@ function buildAdminMock(opts: MockOptions) {
   const insertedRuns: Array<Record<string, unknown>> = [];
   const insertedMessages: Array<Record<string, unknown>> = [];
   const updatedJobs: Array<Record<string, unknown>> = [];
+  const jobUpdateFilters: Array<{
+    eq: Record<string, unknown>;
+    neq: Record<string, unknown>;
+  }> = [];
   const updatedRuns: Array<Record<string, unknown>> = [];
   const updatedSessions: Array<Record<string, unknown>> = [];
   const deletedArtifacts: Array<Record<string, unknown>> = [];
@@ -442,11 +446,19 @@ function buildAdminMock(opts: MockOptions) {
       }),
     }),
     update: (patch: Record<string, unknown>) => {
+      const filters = { eq: {} as Record<string, unknown>, neq: {} as Record<string, unknown> };
       const chain = {
-        eq: () => chain,
-        neq: () => chain,
+        eq: (column: string, value: unknown) => {
+          filters.eq[column] = value;
+          return chain;
+        },
+        neq: (column: string, value: unknown) => {
+          filters.neq[column] = value;
+          return chain;
+        },
         then: (resolve: (value: { error: { message: string } | null }) => void) => {
           updatedJobs.push(patch);
+          jobUpdateFilters.push(filters);
           resolve({ error: null });
         },
       };
@@ -629,6 +641,7 @@ function buildAdminMock(opts: MockOptions) {
     insertedMessages,
     insertedRuns,
     insertedFeedback,
+    jobUpdateFilters,
     updatedJobs,
     updatedRuns,
     updatedSessions,
@@ -1237,7 +1250,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       pullRequestNumber: 42,
       reason: "Linear unavailable",
     };
-    const { admin, updatedJobs, updatedSessions } = buildAdminMock({
+    const { admin, jobUpdateFilters, updatedJobs, updatedSessions } = buildAdminMock({
       pendingArtifact: { artifact_json: "Preserved build artifact" },
       session,
     });
@@ -1265,10 +1278,49 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "awaiting_review" },
     ]);
     expect(updatedJobs.at(-1)).toMatchObject({ last_error: null, status: "success" });
+    expect(jobUpdateFilters.at(-1)?.eq).toEqual({ id: "job-1", status: "running" });
     expect(result).toEqual({
       jobId: "job-1",
       processed: true,
       result: "success",
+      runId: null,
+    });
+  });
+
+  it("does not resume pending publication after cancellation wins", async () => {
+    const session = baseSession({ current_artifact_version: 1, phase_status: "rejected" });
+    const retryState = {
+      artifactVersion: 1,
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+    };
+    const { admin, updatedJobs, updatedRuns, updatedSessions } = buildAdminMock({
+      jobStatus: "canceled",
+      pendingArtifact: { artifact_json: "Preserved build artifact" },
+      session,
+    });
+
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({
+        attempt_count: 1,
+        last_error: `Wallie pull request publication pending: ${JSON.stringify(retryState)}`,
+      }),
+    });
+
+    expect(mocked.resumeSessionPullRequestPublication).not.toHaveBeenCalled();
+    expect(mocked.createAgentRunner).not.toHaveBeenCalled();
+    expect(mocked.createSessionSandbox).not.toHaveBeenCalled();
+    expect(updatedRuns).toContainEqual(expect.objectContaining({ status: "canceled" }));
+    expect(updatedSessions).toEqual([
+      { phase_status: "in_progress" },
+      { phase_status: "rejected" },
+    ]);
+    expect(updatedJobs).toEqual([]);
+    expect(result).toEqual({
+      jobId: "job-1",
+      processed: true,
+      result: "idle",
       runId: null,
     });
   });
