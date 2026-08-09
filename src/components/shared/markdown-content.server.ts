@@ -7,6 +7,8 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 
+import type { SanitizedMarkdownHtml } from "@/components/shared/markdown-content";
+
 type HtmlNode = {
   children?: HtmlNode[];
   properties?: Record<string, unknown>;
@@ -73,8 +75,8 @@ function styleNode(node: HtmlNode, parent?: HtmlNode, index = -1) {
     node.properties.tabIndex = 0;
   }
 
-  // Preserve the existing click-only image policy: no untrusted remote resource
-  // is fetched until the reviewer explicitly opens the sanitized link.
+  // Never auto-load agent-controlled image URLs. Images become explicit links
+  // that a reviewer can choose to open.
   if (node.tagName === "img" && parent?.children && index >= 0) {
     const href = typeof node.properties.src === "string" ? node.properties.src : undefined;
     const alt = typeof node.properties.alt === "string" ? node.properties.alt.trim() : "";
@@ -115,15 +117,30 @@ function styleMarkdownHtml() {
   return (tree: unknown) => styleNode(tree as HtmlNode);
 }
 
-export async function renderMarkdownToHtml(markdown: string): Promise<string> {
-  const rendered = await unified()
+export type RenderedMarkdown = Readonly<{
+  bodyHtml: SanitizedMarkdownHtml;
+  html: string;
+}>;
+
+/** The only parsing, GFM, sanitization, and styling pipeline for artifact Markdown. */
+export function renderMarkdown(markdown: string): RenderedMarkdown {
+  const rendered = unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkRehype)
     .use(rehypeSanitize)
     .use(styleMarkdownHtml)
     .use(rehypeStringify)
-    .process(markdown);
+    .processSync(markdown);
+  const bodyHtml = String(rendered) as SanitizedMarkdownHtml;
 
-  return `<div class="artifact-content">${String(rendered)}</div>`;
+  return {
+    bodyHtml,
+    html: `<div class="artifact-content">${bodyHtml}</div>`,
+  };
+}
+
+/** Preserve the artifact API's existing full-document-fragment contract. */
+export function renderMarkdownToHtml(markdown: string): string {
+  return renderMarkdown(markdown).html;
 }
