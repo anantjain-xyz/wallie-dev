@@ -24,9 +24,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const admin = createSupabaseAdminClient();
+  const deleteClaimedAt = new Date().toISOString();
   const { data: claimed, error: claimError } = await admin
     .from("session_attachments")
-    .update({ status: "deleting" })
+    .update({ delete_claimed_at: deleteClaimedAt, status: "deleting" })
     .eq("id", parsedParams.data.attachmentId)
     .eq("workspace_id", access.context.workspace.id)
     .eq("uploaded_by_member_id", access.context.currentMember.id)
@@ -46,7 +47,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     .from(sessionAttachmentBucket)
     .remove([claimed.storage_path]);
   if (storageError) {
-    await restoreReadyStatus(admin, claimed.id);
+    await restoreReadyStatus(admin, claimed.id, deleteClaimedAt);
     return NextResponse.json({ error: "Wallie could not remove that image." }, { status: 500 });
   }
 
@@ -55,9 +56,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
     .delete()
     .eq("id", claimed.id)
     .eq("status", "deleting")
+    .eq("delete_claimed_at", deleteClaimedAt)
     .is("session_id", null);
   if (deleteError) {
-    await restoreReadyStatus(admin, claimed.id);
+    await restoreReadyStatus(admin, claimed.id, deleteClaimedAt);
     return NextResponse.json({ error: "Wallie could not remove that image." }, { status: 500 });
   }
 
@@ -67,11 +69,13 @@ export async function DELETE(_request: Request, context: RouteContext) {
 async function restoreReadyStatus(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   attachmentId: string,
+  deleteClaimedAt: string,
 ) {
   await admin
     .from("session_attachments")
-    .update({ status: "ready" })
+    .update({ delete_claimed_at: null, status: "ready" })
     .eq("id", attachmentId)
     .eq("status", "deleting")
+    .eq("delete_claimed_at", deleteClaimedAt)
     .is("session_id", null);
 }

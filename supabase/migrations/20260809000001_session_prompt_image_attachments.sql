@@ -33,6 +33,7 @@ create table public.session_attachments (
   position smallint,
   status text not null default 'ready',
   expires_at timestamptz,
+  delete_claimed_at timestamptz,
   attached_at timestamptz,
   created_at timestamptz not null default now(),
   constraint session_attachments_storage_path_unique unique (storage_path),
@@ -53,6 +54,10 @@ create table public.session_attachments (
       and position is null
       and expires_at is not null
       and attached_at is null
+      and (
+        (status = 'ready' and delete_claimed_at is null)
+        or (status = 'deleting' and delete_claimed_at is not null)
+      )
     )
     or
     (
@@ -60,6 +65,7 @@ create table public.session_attachments (
       and session_id is not null
       and position is not null
       and expires_at is null
+      and delete_claimed_at is null
       and attached_at is not null
     )
   )
@@ -69,9 +75,9 @@ create unique index session_attachments_session_position_unique
   on public.session_attachments (session_id, position)
   where session_id is not null;
 
-create index session_attachments_ready_expiry_idx
-  on public.session_attachments (expires_at, id)
-  where status = 'ready' and session_id is null;
+create index session_attachments_cleanup_claim_idx
+  on public.session_attachments (expires_at, delete_claimed_at, id)
+  where status in ('ready', 'deleting') and session_id is null;
 
 create index session_attachments_workspace_session_idx
   on public.session_attachments (workspace_id, session_id, position)
@@ -208,6 +214,7 @@ begin
         position = requested.ordinality,
         status = 'attached',
         expires_at = null,
+        delete_claimed_at = null,
         attached_at = now()
     from unnest(session_attachment_ids) with ordinality as requested(attachment_id, ordinality)
     where attachment.id = requested.attachment_id
@@ -242,13 +249,16 @@ grant execute on function public.create_session_with_first_job_and_attachments(
 ) to service_role;
 
 -- Claim expired pending uploads before deleting objects. `skip locked` plus the
--- status transition prevents cleanup from racing the creation wrapper.
+-- status transition prevents cleanup from racing the creation wrapper. Stale
+-- deletion leases are reclaimable after 15 minutes so interrupted workers do
+-- not strand private objects indefinitely.
 create or replace function public.claim_expired_session_attachments(
   max_count integer default 100
 )
 returns table (
   id uuid,
-  storage_path text
+  storage_path text,
+  delete_claimed_at timestamptz
 )
 language sql
 security definer
@@ -257,18 +267,28 @@ as $$
   with candidates as (
     select attachment.id
     from public.session_attachments attachment
-    where attachment.status = 'ready'
-      and attachment.session_id is null
-      and attachment.expires_at <= now()
-    order by attachment.expires_at, attachment.id
-    limit greatest(1, least(max_count, 500))
+    where attachment.session_id is null
+      and (
+        (
+          attachment.status = 'ready'
+          and attachment.expires_at <= now()
+        )
+        or
+        (
+          attachment.status = 'deleting'
+          and attachment.delete_claimed_at <= now() - interval '15 minutes'
+        )
+      )
+    order by coalesce(attachment.delete_claimed_at, attachment.expires_at), attachment.id
+    limit greatest(1, least(coalesce(max_count, 100), 500))
     for update skip locked
   )
   update public.session_attachments attachment
-  set status = 'deleting'
+  set status = 'deleting',
+      delete_claimed_at = now()
   from candidates
   where attachment.id = candidates.id
-  returning attachment.id, attachment.storage_path
+  returning attachment.id, attachment.storage_path, attachment.delete_claimed_at
 $$;
 
 revoke all on function public.claim_expired_session_attachments(integer)

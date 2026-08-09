@@ -20,10 +20,15 @@ export async function cleanupExpiredSessionAttachments(admin: AdminClient, maxCo
 
   const ids = claimed.map((attachment) => attachment.id);
   const paths = claimed.map((attachment) => attachment.storage_path);
+  const claimTimestamps = new Set(claimed.map((attachment) => attachment.delete_claimed_at));
+  const deleteClaimedAt = claimed[0]?.delete_claimed_at;
+  if (!deleteClaimedAt || claimTimestamps.size !== 1) {
+    throw new Error("Attachment cleanup returned an invalid deletion lease.");
+  }
   const { error: storageError } = await admin.storage.from(sessionAttachmentBucket).remove(paths);
 
   if (storageError) {
-    await restoreClaimedAttachments(admin, ids);
+    await restoreClaimedAttachments(admin, ids, deleteClaimedAt);
     return { claimed: ids.length, deleted: 0, failed: ids.length };
   }
 
@@ -32,10 +37,11 @@ export async function cleanupExpiredSessionAttachments(admin: AdminClient, maxCo
     .delete()
     .in("id", ids)
     .eq("status", "deleting")
+    .eq("delete_claimed_at", deleteClaimedAt)
     .is("session_id", null);
 
   if (deleteError) {
-    await restoreClaimedAttachments(admin, ids);
+    await restoreClaimedAttachments(admin, ids, deleteClaimedAt);
     return { claimed: ids.length, deleted: 0, failed: ids.length };
   }
 
@@ -72,15 +78,21 @@ export async function removeWorkspaceSessionAttachments(
   }
 }
 
-async function restoreClaimedAttachments(admin: AdminClient, ids: string[]) {
+async function restoreClaimedAttachments(
+  admin: AdminClient,
+  ids: string[],
+  deleteClaimedAt: string,
+) {
   const { error } = await admin
     .from("session_attachments")
     .update({
+      delete_claimed_at: null,
       expires_at: new Date(Date.now() + CLEANUP_RETRY_MS).toISOString(),
       status: "ready",
     })
     .in("id", ids)
     .eq("status", "deleting")
+    .eq("delete_claimed_at", deleteClaimedAt)
     .is("session_id", null);
 
   if (error) {

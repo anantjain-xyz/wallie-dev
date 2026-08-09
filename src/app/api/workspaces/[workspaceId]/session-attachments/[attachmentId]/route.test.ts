@@ -59,6 +59,10 @@ describe("DELETE pending session attachment", () => {
     });
 
     expect(response.status).toBe(204);
+    expect(calls.update).toHaveBeenCalledWith({
+      delete_claimed_at: expect.any(String),
+      status: "deleting",
+    });
     expect(calls.remove).toHaveBeenCalledWith([`${WORKSPACE_ID}/image.png`]);
     expect(calls.del).toHaveBeenCalledOnce();
   });

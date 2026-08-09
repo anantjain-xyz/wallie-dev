@@ -20,8 +20,16 @@ describe("cleanupExpiredSessionAttachments", () => {
       from: vi.fn().mockReturnValue(table),
       rpc: vi.fn().mockResolvedValue({
         data: [
-          { id: "attachment-1", storage_path: "workspace/one.png" },
-          { id: "attachment-2", storage_path: "workspace/two.png" },
+          {
+            delete_claimed_at: "2026-08-09T12:00:00.000Z",
+            id: "attachment-1",
+            storage_path: "workspace/one.png",
+          },
+          {
+            delete_claimed_at: "2026-08-09T12:00:00.000Z",
+            id: "attachment-2",
+            storage_path: "workspace/two.png",
+          },
         ],
         error: null,
       }),
@@ -51,7 +59,13 @@ describe("cleanupExpiredSessionAttachments", () => {
     const admin = {
       from: vi.fn().mockReturnValue({ update }),
       rpc: vi.fn().mockResolvedValue({
-        data: [{ id: "attachment-1", storage_path: "workspace/one.png" }],
+        data: [
+          {
+            delete_claimed_at: "2026-08-09T12:00:00.000Z",
+            id: "attachment-1",
+            storage_path: "workspace/one.png",
+          },
+        ],
         error: null,
       }),
       storage: { from: vi.fn().mockReturnValue({ remove }) },
@@ -63,7 +77,11 @@ describe("cleanupExpiredSessionAttachments", () => {
       failed: 1,
     });
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "ready", expires_at: expect.any(String) }),
+      expect.objectContaining({
+        delete_claimed_at: null,
+        status: "ready",
+        expires_at: expect.any(String),
+      }),
     );
   });
 });

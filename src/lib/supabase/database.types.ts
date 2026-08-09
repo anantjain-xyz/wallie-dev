@@ -837,6 +837,7 @@ export type Database = {
           attached_at: string | null
           content_type: string
           created_at: string
+          delete_claimed_at: string | null
           expires_at: string | null
           id: string
           original_filename: string
@@ -852,6 +853,7 @@ export type Database = {
           attached_at?: string | null
           content_type: string
           created_at?: string
+          delete_claimed_at?: string | null
           expires_at?: string | null
           id?: string
           original_filename: string
@@ -867,6 +869,7 @@ export type Database = {
           attached_at?: string | null
           content_type?: string
           created_at?: string
+          delete_claimed_at?: string | null
           expires_at?: string | null
           id?: string
           original_filename?: string
@@ -2042,6 +2045,7 @@ export type Database = {
       claim_expired_session_attachments: {
         Args: { max_count?: number }
         Returns: {
+          delete_claimed_at: string
           id: string
           storage_path: string
         }[]

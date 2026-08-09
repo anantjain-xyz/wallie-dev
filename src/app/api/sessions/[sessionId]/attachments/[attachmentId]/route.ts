@@ -62,7 +62,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return new NextResponse(await image.arrayBuffer(), {
     headers: {
-      "cache-control": "private, max-age=3600",
+      "cache-control": "private, no-store",
       "content-disposition": contentDisposition(attachment.original_filename),
       "content-type": attachment.content_type,
       "x-content-type-options": "nosniff",

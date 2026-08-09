@@ -2,10 +2,16 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(14);
+select plan(19);
 set local "request.jwt.claim.role" = 'service_role';
 
 select has_table('public', 'session_attachments', 'session attachment metadata table exists');
+select has_column(
+  'public',
+  'session_attachments',
+  'delete_claimed_at',
+  'attachment cleanup claims have a recoverable lease timestamp'
+);
 select ok(
   (select relrowsecurity from pg_catalog.pg_class where oid = 'public.session_attachments'::regclass),
   'session attachments have RLS enabled'
@@ -162,6 +168,78 @@ select is(
   ),
   0,
   'failed attachment validation leaves no session or job behind'
+);
+
+insert into public.session_attachments (
+  id,
+  workspace_id,
+  uploaded_by_member_id,
+  original_filename,
+  content_type,
+  size_bytes,
+  storage_path,
+  status,
+  expires_at,
+  delete_claimed_at
+)
+values
+  (
+    'a0000000-0000-4000-8000-000000000003',
+    'b1b2c3d4-0001-4000-8000-000000000001',
+    'c1b2c3d4-0001-4000-8000-000000000001',
+    'stale-deletion.png',
+    'image/png',
+    1024,
+    'b1b2c3d4-0001-4000-8000-000000000001/stale-deletion.png',
+    'deleting',
+    now() - interval '1 hour',
+    now() - interval '16 minutes'
+  ),
+  (
+    'a0000000-0000-4000-8000-000000000004',
+    'b1b2c3d4-0001-4000-8000-000000000001',
+    'c1b2c3d4-0001-4000-8000-000000000001',
+    'active-deletion.png',
+    'image/png',
+    1024,
+    'b1b2c3d4-0001-4000-8000-000000000001/active-deletion.png',
+    'deleting',
+    now() - interval '1 hour',
+    now()
+  );
+
+create temp table attachment_cleanup_claims as
+select * from public.claim_expired_session_attachments(10);
+
+select is(
+  (select count(*)::integer from attachment_cleanup_claims),
+  2,
+  'cleanup claims expired ready uploads and stale deletion leases'
+);
+select ok(
+  exists (
+    select 1
+    from attachment_cleanup_claims
+    where id = 'a0000000-0000-4000-8000-000000000002'
+  ),
+  'cleanup claims a newly expired pending upload'
+);
+select ok(
+  exists (
+    select 1
+    from attachment_cleanup_claims
+    where id = 'a0000000-0000-4000-8000-000000000003'
+      and delete_claimed_at > now() - interval '1 minute'
+  ),
+  'cleanup renews and reclaims an interrupted deletion lease'
+);
+select ok(
+  not exists (
+    select 1
+    from attachment_cleanup_claims
+    where id = 'a0000000-0000-4000-8000-000000000004'
+  ),
+  'cleanup does not steal an active deletion lease'
 );
 
 select * from finish();
