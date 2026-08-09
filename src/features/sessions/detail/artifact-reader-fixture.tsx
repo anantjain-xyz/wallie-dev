@@ -2,15 +2,13 @@
 
 import { useEffect, useState } from "react";
 
-import { MarkdownContent } from "@/components/shared/markdown-content";
+import { MarkdownContent, type SanitizedMarkdownHtml } from "@/components/shared/markdown-content";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { useOptionalToast } from "@/components/ui/toast";
 import {
   ARTIFACT_FIXTURE_EMPTY,
   ARTIFACT_FIXTURE_FAILED,
   ARTIFACT_FIXTURE_FULL_MARKDOWN,
-  ARTIFACT_FIXTURE_HOSTILE,
-  ARTIFACT_FIXTURE_PLAIN_TEXT,
   ARTIFACT_FIXTURE_RAW_JSON,
 } from "@/features/sessions/detail/artifact-fixtures";
 import { cn } from "@/lib/utils";
@@ -53,10 +51,12 @@ export function ArtifactReaderFixture({
   displayMode = "desktop",
   initialTheme = "light",
   initialView = "rendered",
+  renderedHtmlByView,
 }: {
   displayMode?: "desktop" | "mobile";
   initialTheme?: "light" | "dark";
   initialView?: FixtureView;
+  renderedHtmlByView: Record<"hostile" | "plain" | "rendered", SanitizedMarkdownHtml>;
 }) {
   return (
     <OverlayProvider>
@@ -64,6 +64,7 @@ export function ArtifactReaderFixture({
         displayMode={displayMode}
         initialTheme={initialTheme}
         initialView={initialView}
+        renderedHtmlByView={renderedHtmlByView}
       />
     </OverlayProvider>
   );
@@ -73,10 +74,12 @@ function ArtifactReaderFixtureInner({
   displayMode,
   initialTheme,
   initialView,
+  renderedHtmlByView,
 }: {
   displayMode: "desktop" | "mobile";
   initialTheme: "light" | "dark";
   initialView: FixtureView;
+  renderedHtmlByView: Record<"hostile" | "plain" | "rendered", SanitizedMarkdownHtml>;
 }) {
   const { pushToast } = useOptionalToast();
   const [theme, setTheme] = useState(initialTheme);
@@ -270,13 +273,13 @@ function ArtifactReaderFixtureInner({
                 <p className="mb-2 type-annotation uppercase tracking-wide text-muted">
                   v3 · Latest · just now
                 </p>
-                <MarkdownContent>
-                  {view === "hostile"
-                    ? ARTIFACT_FIXTURE_HOSTILE
-                    : view === "plain"
-                      ? ARTIFACT_FIXTURE_PLAIN_TEXT
-                      : ARTIFACT_FIXTURE_FULL_MARKDOWN}
-                </MarkdownContent>
+                <MarkdownContent
+                  html={
+                    renderedHtmlByView[
+                      view === "hostile" ? "hostile" : view === "plain" ? "plain" : "rendered"
+                    ]
+                  }
+                />
               </div>
             ) : null}
 
