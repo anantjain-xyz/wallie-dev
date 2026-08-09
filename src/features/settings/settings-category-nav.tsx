@@ -200,9 +200,7 @@ export function SettingsCategoryNav({
             <li className={isActive ? "col-span-2 lg:col-auto" : undefined} key={category.id}>
               <Link
                 aria-current={isActive ? "page" : undefined}
-                className={`settings-anchor block min-w-0 ${
-                  isActive ? "settings-anchor-active" : ""
-                }`}
+                className="settings-anchor block min-w-0"
                 href={`/w/${workspaceSlug}/settings?category=${category.id}`}
                 onFocus={() => preloadSettingsCategory(category.id)}
                 onPointerEnter={() => preloadSettingsCategory(category.id)}

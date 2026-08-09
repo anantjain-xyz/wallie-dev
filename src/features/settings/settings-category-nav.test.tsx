@@ -123,6 +123,24 @@ describe("SettingsCategoryNav hash routing", () => {
     expect(getByRole("link", { name: "GitHub" }).closest("ul")).not.toHaveClass("hidden");
   });
 
+  it("highlights only the active subsection, not its parent category", async () => {
+    searchParams = new URLSearchParams("category=workspace");
+    window.history.replaceState(null, "", "/w/acme/settings?category=workspace#workspace");
+    const { container } = render(
+      <SettingsCategoryNav activeCategory="workspace" canManage workspaceSlug="acme" />,
+    );
+
+    const category = container.querySelector('a[href="/w/acme/settings?category=workspace"]');
+    const subsection = container.querySelector('a[href="#workspace"]');
+
+    expect(category).toHaveAttribute("aria-current", "page");
+    expect(category).not.toHaveClass("settings-anchor-active");
+    await waitFor(() => {
+      expect(subsection).toHaveAttribute("aria-current", "location");
+      expect(subsection).toHaveClass("settings-anchor-active");
+    });
+  });
+
   it.each([
     {
       category: "workspace" as const,
