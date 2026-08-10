@@ -219,6 +219,7 @@ interface MockOptions {
   messageInsertErrorOnMessage?: string;
   pointerUpdateError?: { message: string } | null;
   pointerCasMiss?: boolean;
+  terminalJobUpdateMiss?: boolean;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
   runSandboxUpdateError?: { message: string } | null;
@@ -449,6 +450,10 @@ function buildAdminMock(opts: MockOptions) {
     }),
     update: (patch: Record<string, unknown>) => {
       const filters = { eq: {} as Record<string, unknown>, neq: {} as Record<string, unknown> };
+      const recordUpdate = () => {
+        updatedJobs.push(patch);
+        jobUpdateFilters.push(filters);
+      };
       const chain = {
         eq: (column: string, value: unknown) => {
           filters.eq[column] = value;
@@ -458,9 +463,15 @@ function buildAdminMock(opts: MockOptions) {
           filters.neq[column] = value;
           return chain;
         },
+        select: async () => {
+          recordUpdate();
+          return {
+            data: opts.terminalJobUpdateMiss ? [] : [{ id: "job-1" }],
+            error: null,
+          };
+        },
         then: (resolve: (value: { error: { message: string } | null }) => void) => {
-          updatedJobs.push(patch);
-          jobUpdateFilters.push(filters);
+          recordUpdate();
           resolve({ error: null });
         },
       };
@@ -1213,6 +1224,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(rpc).toHaveBeenCalledWith("schedule_job_retry_with_error", {
       target_job_id: "job-1",
       error_message: "Wallie pull request publication failed (pr_failed): boom",
+      expected_attempt_count: 0,
       base_delay_ms: 5000,
       max_backoff_ms: 300000,
     });
@@ -1254,6 +1266,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       expect.objectContaining({
         target_job_id: "job-1",
         error_message: expect.stringMatching(/^Wallie pull request publication pending: /),
+        expected_attempt_count: 0,
         base_delay_ms: 5000,
         max_backoff_ms: 300000,
       }),
@@ -1297,7 +1310,11 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "awaiting_review" },
     ]);
     expect(updatedJobs.at(-1)).toMatchObject({ last_error: null, status: "success" });
-    expect(jobUpdateFilters.at(-1)?.eq).toEqual({ id: "job-1", status: "running" });
+    expect(jobUpdateFilters.at(-1)?.eq).toEqual({
+      attempt_count: 1,
+      id: "job-1",
+      status: "running",
+    });
     expect(result).toEqual({
       jobId: "job-1",
       processed: true,
@@ -1378,6 +1395,25 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "in_progress" },
       { phase_status: "rejected" },
     ]);
+  });
+
+  it("does not overwrite a retry claimed after the original attempt lost its terminal CAS", async () => {
+    const session = baseSession();
+    const { admin, jobUpdateFilters, updatedRuns } = buildAdminMock({
+      session,
+      artifactInsertError: { message: "artifact insert failed" },
+      terminalJobUpdateMiss: true,
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(result.result).toBe("error");
+    expect(jobUpdateFilters.at(-1)?.eq).toEqual({
+      attempt_count: 3,
+      id: "job-1",
+      status: "running",
+    });
+    expect(updatedRuns.filter((patch) => patch.status === "error")).toHaveLength(1);
   });
 
   it("rolls back the artifact pointer when the stage completion message fails", async () => {

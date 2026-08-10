@@ -537,6 +537,41 @@ describe("openSessionPullRequest", () => {
     expect(linearAttachment).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a fresh PR when the checkpointed PR was closed without merging", async () => {
+    const closedPr = { ...openPr, merged_at: null, state: "closed" as const };
+    const replacementPr = {
+      ...openPr,
+      html_url: "https://github.com/acme/app/pull/43",
+      number: 43,
+    };
+    const octokit = makeOctokitWithSequence([closedPr, replacementPr]);
+    const { admin, upserts } = buildAdminMock();
+
+    const outcome = await resumeSessionPullRequestPublication({
+      ...baseInput,
+      admin: admin as never,
+      githubAppFactory: makeAppFactory(octokit),
+      pullRequestNumber: 42,
+    });
+
+    expect(outcome).toMatchObject({ kind: "success", prNumber: 43 });
+    expect(octokit.calls.map((call) => call.route)).toEqual([
+      "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+      "POST /repos/{owner}/{repo}/pulls",
+    ]);
+    expect(octokit.calls[1]?.params).toMatchObject({
+      base: "main",
+      body: "spec body",
+      head: "wallie/product-sess-1",
+      title: "Product: Add SSO",
+    });
+    expect(upserts[0]?.row).toMatchObject({
+      pull_request_number: 43,
+      pull_request_state: "open",
+      pull_request_url: "https://github.com/acme/app/pull/43",
+    });
+  });
+
   it("returns pr_failed for an invalid repo full_name", async () => {
     const sandbox = new FakeSandbox();
     const octokit = makeOctokitWithSequence([]);

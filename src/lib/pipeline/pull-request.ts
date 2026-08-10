@@ -233,7 +233,7 @@ export async function resumeSessionPullRequestPublication(
   try {
     const app = await (input.githubAppFactory ?? defaultAppFactory)();
     const octokit = await app.getInstallationOctokit(input.installationId);
-    const { data: pr } = await octokit.request<GitHubPullRequestResponse>(
+    const { data: checkpointedPr } = await octokit.request<GitHubPullRequestResponse>(
       "GET /repos/{owner}/{repo}/pulls/{pull_number}",
       {
         owner,
@@ -242,6 +242,7 @@ export async function resumeSessionPullRequestPublication(
       },
     );
 
+    let pr = checkpointedPr;
     if (pr.state === "open" && !pr.merged_at) {
       await updatePullRequest({
         body: input.body,
@@ -251,6 +252,35 @@ export async function resumeSessionPullRequestPublication(
         repo,
         title: input.title,
       });
+    } else if (!pr.merged_at) {
+      // The checkpoint points to a closed, unmerged PR. The branch is already
+      // durable, so publish it again without starting another sandbox/agent.
+      // If another retry opened one concurrently, recover that open PR.
+      try {
+        pr = await openPullRequest({
+          base: input.baseBranch,
+          body: input.body,
+          head: input.branch,
+          octokit,
+          owner,
+          repo,
+          title: input.title,
+        });
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) throw error;
+        const recovered = await findPullRequestForHead({
+          head: input.branch,
+          octokit,
+          owner,
+          repo,
+        });
+        if (!recovered || recovered.state !== "open" || recovered.merged_at) {
+          throw new Error(
+            `pulls.create returned 422 already_exists for ${input.branch} but no open PR was found`,
+          );
+        }
+        pr = recovered;
+      }
     }
 
     return finalizeSessionPullRequestPublication(input, pr);

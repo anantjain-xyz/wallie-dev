@@ -2339,6 +2339,7 @@ export type Database = {
         Args: {
           base_delay_ms?: number
           error_message: string
+          expected_attempt_count: number
           max_backoff_ms?: number
           target_job_id: string
         }

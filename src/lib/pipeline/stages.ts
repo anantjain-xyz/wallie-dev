@@ -125,7 +125,10 @@ export async function loadSessionPullRequestContext(
     .from("session_pull_requests")
     .select("pull_request_number, pull_request_url")
     .eq("session_id", sessionId)
-    .order("updated_at", { ascending: false })
+    // Webhooks mutate updated_at on older PRs. Creation chronology identifies
+    // the latest PR produced by this workflow independently of later activity.
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;

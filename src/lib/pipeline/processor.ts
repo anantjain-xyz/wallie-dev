@@ -1796,7 +1796,8 @@ async function markPipelineJobSuccess(
     // A job canceled or CAS-recovered mid-flight stays in that state. This is
     // especially important for publication-only retries, whose stall recovery
     // can requeue the job while an old worker is finishing external side effects.
-    .eq("status", "running");
+    .eq("status", "running")
+    .eq("attempt_count", job.attempt_count);
 }
 
 async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<number> {
@@ -1827,6 +1828,7 @@ async function markPipelineJobError(
       {
         target_job_id: job.id,
         error_message: errorMessage,
+        expected_attempt_count: job.attempt_count,
         base_delay_ms: 5000,
         max_backoff_ms: 300000,
       },
@@ -1837,7 +1839,7 @@ async function markPipelineJobError(
     }
   }
 
-  await admin
+  const { data: erroredJobs } = await admin
     .from("agent_jobs")
     .update({
       finished_at: new Date().toISOString(),
@@ -1845,8 +1847,11 @@ async function markPipelineJobError(
       status: "error",
     })
     .eq("id", job.id)
-    // A job canceled mid-flight stays canceled — never flip it to error.
-    .neq("status", "canceled");
-  await markActiveRunsForJobError(admin, job.id);
+    .eq("status", "running")
+    .eq("attempt_count", job.attempt_count)
+    .select("id");
+  if ((erroredJobs?.length ?? 0) > 0) {
+    await markActiveRunsForJobError(admin, job.id);
+  }
   return false;
 }
