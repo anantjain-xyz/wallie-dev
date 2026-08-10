@@ -3,7 +3,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyLinearStatus, type LinearRoutingConfig } from "@/lib/linear-routing/contracts";
 import { loadLinearRoutingConfig } from "@/lib/linear-routing/server";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
-import { PIPELINE_JOB_TYPE } from "@/lib/pipeline/types";
 import type { Database } from "@/lib/supabase/database.types";
 import { decryptSecretValue } from "@/lib/secrets/crypto";
 
@@ -423,7 +422,6 @@ async function hasActivePipelineJob(admin: AdminClient, sessionId: string): Prom
     .from("agent_jobs")
     .select("id")
     .eq("session_id", sessionId)
-    .eq("job_type", PIPELINE_JOB_TYPE)
     .in("status", ACTIVE_AGENT_JOB_STATUSES)
     .limit(1)
     .maybeSingle();
@@ -441,7 +439,6 @@ async function ensurePipelineJobQueued(
     dedupe_key: session.linear_issue_id
       ? `pipeline:${session.linear_issue_id}:active`
       : `pipeline:session:${session.id}:active`,
-    job_type: PIPELINE_JOB_TYPE,
     requested_by_member_id: null,
     session_id: session.id,
     trigger_type: "assignment",

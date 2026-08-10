@@ -41,7 +41,6 @@ import { renderStagePrompt } from "@/lib/prompt-templates";
 
 import { openSessionPullRequest } from "./pull-request";
 import { loadCompletedStageArtifacts, loadPipelineOperatingRules, loadStageById } from "./stages";
-import { PIPELINE_JOB_TYPE } from "./types";
 
 type AdminClient = SupabaseClient<Database>;
 type SessionRow = Tables<"sessions">;
@@ -618,7 +617,6 @@ async function enqueueSessionJobWithRun(input: {
     .from("agent_jobs")
     .insert({
       dedupe_key: dedupeKey,
-      job_type: PIPELINE_JOB_TYPE,
       requested_by_member_id: input.requestedByMemberId,
       session_id: input.sessionId,
       stage_id: stage?.id ?? null,

@@ -276,7 +276,6 @@ function buildAgentJobRow(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
     dedupe_key: "session:sess-1:active",
     finished_at: null,
     id: "job-1",
-    job_type: "session",
     last_error: null,
     requested_by_member_id: "mem-1",
     scheduled_at: null,
