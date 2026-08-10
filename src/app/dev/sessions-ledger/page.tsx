@@ -13,6 +13,10 @@ const INITIAL_NOW = "2026-07-18T12:00:00.000Z";
 function makeSession(index: number): SessionListItem {
   const padded = String(index).padStart(3, "0");
   const awaiting = index % 3 === 0;
+  const title =
+    index === 1
+      ? "Delete the superseded Settings client architecture and replace the remaining legacy configuration paths with the current workspace settings flow"
+      : `Seeded ledger session ${index}`;
   return {
     archivedAt: null,
     createdAt: "2026-07-18T10:00:00.000Z",
@@ -46,7 +50,7 @@ function makeSession(index: number): SessionListItem {
         : [],
     rejectionCount: 0,
     repositoryFullName: index % 4 === 0 ? "acme/wallie" : index % 5 === 0 ? "example/repo" : null,
-    title: `Seeded ledger session ${index}`,
+    title,
     updatedAt: "2026-07-18T11:30:00.000Z",
     workspaceId: "workspace-fixture",
   };

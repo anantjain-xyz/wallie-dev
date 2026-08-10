@@ -193,11 +193,21 @@ describe("SessionsPageClient", () => {
   });
 
   it("renders a real title link instead of an absolute overlay around row controls", () => {
-    const html = renderPage(makeSessionListData());
+    const html = renderPage(
+      makeSessionListData([
+        makeSession({
+          title:
+            "A long session title that should remain readable across three lines before it is truncated",
+        }),
+      ]),
+    );
 
     expect(html).toContain('href="/w/acme/sessions/7"');
     expect(html).not.toContain("absolute inset-0");
-    expect(html).toContain("Editable Session");
+    expect(html).toContain("A long session title");
+    expect(html).toContain("items-baseline");
+    expect(html).toContain("line-clamp-3");
+    expect(html).not.toContain("md:truncate");
   });
 });
 
