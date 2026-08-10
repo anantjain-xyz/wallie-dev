@@ -204,22 +204,6 @@ async function updateCheckSandbox(input: {
   if (error) throw error;
 }
 
-export async function runAndRecordSandboxCapabilityCheck(input: {
-  admin: AdminClient;
-  repositoryId?: string;
-  userId: string;
-  workspaceId: string;
-}): Promise<SandboxCapabilityCheckState> {
-  const started = await startSandboxCapabilityCheck(input);
-  return completeSandboxCapabilityCheck({
-    admin: input.admin,
-    checkId: started.check.id,
-    repository: started.repository,
-    userId: input.userId,
-    workspaceId: input.workspaceId,
-  });
-}
-
 export async function startSandboxCapabilityCheck(input: {
   admin: AdminClient;
   repositoryId?: string;

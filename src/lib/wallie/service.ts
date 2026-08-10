@@ -290,26 +290,6 @@ export async function assertSessionSandboxCapabilityReady(input: {
   }
 }
 
-export async function prepareSessionFirstRun(input: {
-  admin?: AdminClient;
-  repository: WallieSessionRepository | null;
-  workspaceId: string;
-}) {
-  const prerequisites = await loadSessionFirstRunPrerequisites(input);
-  const agentConfig = assertSessionFirstRunReady({
-    ...prerequisites,
-    repository: input.repository,
-  });
-  await assertSessionSandboxCapabilityReady({
-    admin: input.admin,
-    agentConfig,
-    repository: input.repository,
-    sandboxConnection: prerequisites.vercelSandboxConnection,
-    workspaceId: input.workspaceId,
-  });
-  return agentConfig;
-}
-
 export async function createSessionWithFirstJob(input: {
   admin?: AdminClient;
   attachmentIds?: string[];
