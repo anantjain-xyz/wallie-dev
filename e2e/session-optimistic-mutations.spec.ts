@@ -29,14 +29,14 @@ test("title and archive state render before their delayed responses", async ({ p
     });
   });
 
-  await page.getByRole("button", { name: "Edit title for session #1" }).click();
+  await page.getByRole("button", { name: "Add SSO login via Google Workspace" }).click();
   await page.getByRole("textbox", { name: "Session #1 title" }).fill("Optimistic SSO title");
-  await page.getByRole("button", { name: "Save title for session #1" }).click();
+  await page.getByRole("textbox", { name: "Session #1 title" }).blur();
 
   await expect(page.getByRole("heading", { name: "Optimistic SSO title" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Saving title for session #1" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Optimistic SSO title" })).toBeDisabled();
   titleGate.release();
-  await expect(page.getByRole("button", { name: "Edit title for session #1" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Optimistic SSO title" })).toBeEnabled();
 
   const archiveGate = delayedResponse();
   await page.route("**/api/sessions/*/archive", async (route) => {

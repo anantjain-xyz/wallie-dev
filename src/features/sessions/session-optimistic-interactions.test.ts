@@ -645,6 +645,44 @@ describe("optimistic session interactions", () => {
     });
   });
 
+  it("edits a detail title on click and saves it on blur without save controls", async () => {
+    mocked.fetch.mockResolvedValue(
+      Response.json({
+        id: session.id,
+        title: "Blur-saved title",
+        updatedAt: "2026-07-17T12:00:00.000Z",
+      }),
+    );
+
+    render(
+      createElement(SessionDetailPageClient, {
+        activity: null,
+        initialData: makeDetailData(),
+        initialFormattedArtifact: null,
+        initialFormattedArtifactKey: null,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Optimistic session" }));
+    const input = screen.getByRole("textbox", { name: "Session #1 title" });
+    fireEvent.change(input, { target: { value: "Blur-saved title" } });
+    expect(screen.queryByRole("button", { name: /Save title/ })).toBeNull();
+    fireEvent.blur(input);
+
+    expect(screen.getByRole("heading", { name: "Blur-saved title" })).toBeTruthy();
+    await waitFor(() => expect(mocked.fetch).toHaveBeenCalledTimes(1));
+    expect(mocked.fetch).toHaveBeenCalledWith(`/api/sessions/${session.id}`, {
+      body: JSON.stringify({ title: "Blur-saved title" }),
+      headers: { "content-type": "application/json" },
+      method: "PATCH",
+    });
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Blur-saved title" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+  });
+
   it("refreshes the active destination after a detail archive Undo survives navigation", async () => {
     const archivedAt = "2026-07-17T12:00:00.000Z";
     mocked.fetch

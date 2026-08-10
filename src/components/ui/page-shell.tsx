@@ -25,6 +25,11 @@ export const PAGE_HEADER_TITLE_CLASS = "type-page-title break-words";
 
 type PageHeaderProps = {
   actions?: ReactNode;
+  /**
+   * Keep actions in a dedicated right-hand column instead of allowing them to
+   * wrap beneath long title content.
+   */
+  actionsAlwaysRight?: boolean;
   description?: ReactNode;
   eyebrow?: ReactNode;
   /**
@@ -44,30 +49,62 @@ type PageHeaderProps = {
 
 export function PageHeader({
   actions,
+  actionsAlwaysRight = false,
   description,
   eyebrow,
   eyebrowAsPlain = false,
   title,
   titleAsChild = false,
 }: PageHeaderProps) {
+  const eyebrowContent = eyebrow ? (
+    <div
+      className={cn(
+        eyebrowAsPlain
+          ? "type-label text-muted"
+          : "type-label uppercase tracking-[0.08em] text-muted",
+        actionsAlwaysRight && "col-span-2",
+      )}
+    >
+      {eyebrow}
+    </div>
+  ) : null;
+  const titleContent = (
+    <>
+      {titleAsChild ? title : <h1 className={PAGE_HEADER_TITLE_CLASS}>{title}</h1>}
+      {description ? <p className="type-body max-w-2xl text-muted">{description}</p> : null}
+    </>
+  );
+
   return (
-    <header className="mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sm:mb-10">
-      <div className="min-w-0 space-y-2">
-        {eyebrow ? (
-          <div
-            className={
-              eyebrowAsPlain
-                ? "type-label text-muted"
-                : "type-label uppercase tracking-[0.08em] text-muted"
-            }
-          >
-            {eyebrow}
-          </div>
-        ) : null}
-        {titleAsChild ? title : <h1 className={PAGE_HEADER_TITLE_CLASS}>{title}</h1>}
-        {description ? <p className="type-body max-w-2xl text-muted">{description}</p> : null}
-      </div>
-      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+    <header
+      className={cn(
+        "mb-8 items-start gap-x-6 gap-y-3 sm:mb-10",
+        actionsAlwaysRight
+          ? "grid grid-cols-[minmax(0,1fr)_auto]"
+          : "flex flex-wrap justify-between",
+      )}
+    >
+      {actionsAlwaysRight ? (
+        <>
+          {eyebrowContent}
+          <div className="min-w-0 space-y-2">{titleContent}</div>
+        </>
+      ) : (
+        <div className="min-w-0 space-y-2">
+          {eyebrowContent}
+          {titleContent}
+        </div>
+      )}
+      {actions ? (
+        <div
+          className={cn(
+            "flex shrink-0 flex-wrap items-center gap-2",
+            actionsAlwaysRight && "justify-self-end",
+          )}
+        >
+          {actions}
+        </div>
+      ) : null}
     </header>
   );
 }
