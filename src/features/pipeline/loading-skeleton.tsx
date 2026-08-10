@@ -48,9 +48,14 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
   const lanes = Math.max(1, stageCount);
 
   return (
-    <div className="min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas">
-      <section aria-busy="true" aria-label="Loading pipeline" role="status">
-        <div className="px-4 pb-4 pt-8 sm:px-8 sm:pt-10">
+    <div className="flex h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
+      <section
+        aria-busy="true"
+        aria-label="Loading pipeline"
+        className="flex min-h-0 flex-1 flex-col"
+        role="status"
+      >
+        <div className="shrink-0 px-4 pb-4 pt-8 sm:px-8 sm:pt-10">
           <div className="mb-8 space-y-3 sm:mb-10">
             <SkeletonBlock className="h-8 w-32" />
             <SkeletonBlock className="h-4 w-full max-w-[520px]" />
@@ -65,7 +70,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
           </div>
         </div>
 
-        <div aria-hidden="true" className="px-4 pb-4 md:hidden">
+        <div aria-hidden="true" className="shrink-0 px-4 pb-4 md:hidden">
           <SkeletonBlock className="h-4 w-28" />
           <div className="mt-2 flex gap-2 overflow-hidden">
             <SkeletonBlock className="h-8 w-24 shrink-0" />
@@ -76,7 +81,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
 
         <div
           aria-hidden="true"
-          className="overflow-x-auto overscroll-x-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
+          className="min-h-0 flex-1 overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
         >
           <div
             className="pipeline-board grid w-full grid-cols-1 md:[grid-template-columns:repeat(var(--pipeline-stage-count),minmax(280px,1fr))]"

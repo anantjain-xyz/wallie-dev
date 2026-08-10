@@ -448,8 +448,8 @@ function PipelinePageContent({
   }
 
   return (
-    <div className="min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas">
-      <div className="px-4 pb-4 pt-8 sm:px-8 sm:pt-10">
+    <div className="flex h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas lg:h-[calc(100svh-3rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
+      <div className="shrink-0 px-4 pb-4 pt-8 sm:px-8 sm:pt-10">
         <PageHeader
           description="Sessions move through these stages in order, gated by approval at each step."
           title="Pipeline"
@@ -508,7 +508,7 @@ function PipelinePageContent({
         </div>
       ) : (
         <>
-          <div className="px-4 pb-4 md:hidden">
+          <div className="shrink-0 px-4 pb-4 md:hidden">
             <p className="text-[13px] font-medium text-foreground" id="pipeline-stage-label">
               Pipeline stage
             </p>
@@ -548,7 +548,7 @@ function PipelinePageContent({
 
           <div
             aria-label="Pipeline board"
-            className="overflow-x-auto overscroll-x-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
+            className="min-h-0 flex-1 overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
             role="region"
             tabIndex={0}
           >
