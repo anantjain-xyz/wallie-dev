@@ -221,6 +221,7 @@ interface MockOptions {
   pointerCasMiss?: boolean;
   terminalJobUpdateMiss?: boolean;
   finalizePublicationRetryError?: { message: string } | null;
+  failPublicationRetryRows?: Array<{ id: string; status: "error" | "queued" }>;
   completePublicationRetryResult?: boolean;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
@@ -645,20 +646,32 @@ function buildAdminMock(opts: MockOptions) {
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
-  const rpc = vi.fn(async (name: string, _args?: unknown) => {
-    void _args;
+  const rpc = vi.fn(async (name: string, args?: unknown) => {
     if (name === "finalize_publication_retry_attempt" && opts.finalizePublicationRetryError) {
       return { data: null, error: opts.finalizePublicationRetryError };
     }
+    const rpcArgs = args as { expected_attempt_count?: number } | undefined;
     return {
       data:
         name === "schedule_job_retry_with_error"
           ? [{ id: "job-1" }]
           : name === "finalize_publication_retry_attempt"
-            ? [{ id: "job-1", status: "queued" }]
-            : name === "complete_publication_retry_attempt"
-              ? (opts.completePublicationRetryResult ?? true)
-              : null,
+            ? [
+                {
+                  id: "job-1",
+                  status: (rpcArgs?.expected_attempt_count ?? 0) >= 3 ? "error" : "queued",
+                },
+              ]
+            : name === "fail_publication_retry_attempt"
+              ? (opts.failPublicationRetryRows ?? [
+                  {
+                    id: "job-1",
+                    status: (rpcArgs?.expected_attempt_count ?? 0) >= 3 ? "error" : "queued",
+                  },
+                ])
+              : name === "complete_publication_retry_attempt"
+                ? (opts.completePublicationRetryResult ?? true)
+                : null,
       error: null,
     };
   });
@@ -1297,6 +1310,27 @@ describe("processPipelineJob (generic stage runner)", () => {
     expect(result.result).toBe("error");
   });
 
+  it("delegates exhausted publication retry parking to the atomic finalizer", async () => {
+    mocked.openSessionPullRequest.mockResolvedValueOnce({
+      kind: "publication_failed",
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+    });
+    const { admin, rpc, updatedSessions } = buildAdminMock({ session: baseSession() });
+
+    const result = await processPipelineJob({ admin, job: baseJob({ attempt_count: 3 }) });
+
+    expect(rpc).toHaveBeenCalledWith(
+      "finalize_publication_retry_attempt",
+      expect.objectContaining({ expected_attempt_count: 3, target_job_id: "job-1" }),
+    );
+    expect(updatedSessions).toEqual([
+      { phase_status: "in_progress" },
+      { current_artifact_version: 1 },
+    ]);
+    expect(result.result).toBe("error");
+  });
+
   it("persists the publication checkpoint when atomic finalization fails", async () => {
     mocked.openSessionPullRequest.mockResolvedValueOnce({
       kind: "publication_failed",
@@ -1311,7 +1345,7 @@ describe("processPipelineJob (generic stage runner)", () => {
     const result = await processPipelineJob({ admin, job: baseJob() });
 
     expect(rpc).toHaveBeenCalledWith(
-      "schedule_job_retry_with_error",
+      "fail_publication_retry_attempt",
       expect.objectContaining({
         error_message: expect.stringMatching(/^Wallie pull request publication pending: /),
         target_job_id: "job-1",
@@ -1403,7 +1437,7 @@ describe("processPipelineJob (generic stage runner)", () => {
 
     expect(mocked.resumeSessionPullRequestPublication).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenCalledWith(
-      "schedule_job_retry_with_error",
+      "fail_publication_retry_attempt",
       expect.objectContaining({
         error_message: expect.stringContaining("Original GitHub repository acme/original"),
       }),
@@ -1432,6 +1466,7 @@ describe("processPipelineJob (generic stage runner)", () => {
       onboardingRepositoryId: "repo-fallback",
       pendingArtifact: { artifact_json: "Preserved build artifact" },
       session,
+      failPublicationRetryRows: [],
       terminalJobUpdateMiss: true,
     });
 

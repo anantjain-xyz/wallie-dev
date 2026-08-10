@@ -97,8 +97,6 @@ type PublicationRetryState = {
   repositoryId: string;
 };
 
-type PipelineJobErrorResult = "ownership_lost" | "retry_scheduled" | "terminalized";
-
 const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
 const REDACTED_RUN_DIAGNOSTIC_VALUE = "[redacted]";
 const RUN_FAILURE_SECRET_KEY_SOURCE = String.raw`(?:access[_-]?key|access[_-]?token|api[_-]?key|client[_-]?secret|credential|password|private[_-]?key|secret|token)`;
@@ -568,16 +566,15 @@ async function runStage(input: {
           repositoryId: error.repositoryId,
         };
         const serializedRetryState = serializePublicationRetryState(retryState);
-        const jobErrorResult = runId
-          ? await finalizePublicationRetryAttempt(admin, {
-              errorMessage: serializedRetryState,
-              job,
-              runId,
-              usage,
-            })
-          : await markPipelineJobError(admin, job, serializedRetryState);
-        if (jobErrorResult === "terminalized") {
-          await updateSessionStatus(admin, session.id, "rejected");
+        if (runId) {
+          await finalizePublicationRetryAttempt(admin, {
+            errorMessage: serializedRetryState,
+            job,
+            runId,
+            usage,
+          });
+        } else {
+          await markPublicationJobError(admin, job, serializedRetryState);
         }
         return { jobId: job.id, processed: true, result: "error", runId };
       }
@@ -645,14 +642,11 @@ async function resumeStagePublication(input: {
 }): Promise<ProcessPipelineJobResult> {
   const { admin, job, publicationRetry, session, stage } = input;
   const fail = async (reason: string) => {
-    const jobErrorResult = await markPipelineJobError(
+    await markPublicationJobError(
       admin,
       job,
       serializePublicationRetryState({ ...publicationRetry, reason }),
     );
-    if (jobErrorResult === "terminalized") {
-      await updateSessionStatus(admin, session.id, "rejected");
-    }
     return {
       jobId: job.id,
       processed: true,
@@ -1846,9 +1840,9 @@ async function finalizePublicationRetryAttempt(
     runId: string;
     usage?: { inputTokens: number; outputTokens: number };
   },
-): Promise<PipelineJobErrorResult> {
+): Promise<void> {
   const maxRetries = await loadMaxRetries(admin, input.job.workspace_id);
-  const { data, error } = await admin.rpc("finalize_publication_retry_attempt", {
+  const { error } = await admin.rpc("finalize_publication_retry_attempt", {
     target_job_id: input.job.id,
     expected_attempt_count: input.job.attempt_count,
     successful_run_id: input.runId,
@@ -1863,15 +1857,10 @@ async function finalizePublicationRetryAttempt(
     // If the all-in-one RPC itself is unavailable, persist the structured
     // checkpoint before terminalizing the successful coding run. A subsequent
     // claim can then resume publication instead of rerunning the agent.
-    const jobErrorResult = await markPipelineJobError(admin, input.job, input.errorMessage, {
-      markRunsError: false,
-    });
+    await markPublicationJobError(admin, input.job, input.errorMessage);
     await markRunSuccess(admin, input.runId, input.usage);
-    return jobErrorResult;
+    return;
   }
-  if (data[0]?.status === "queued") return "retry_scheduled";
-  if (data[0]?.status === "error") return "terminalized";
-  return "ownership_lost";
 }
 
 async function completePublicationRetryAttempt(
@@ -1896,12 +1885,43 @@ async function completePublicationRetryAttempt(
   return data;
 }
 
+async function markPublicationJobError(
+  admin: AdminClient,
+  job: Tables<"agent_jobs">,
+  errorMessage: string,
+): Promise<void> {
+  const maxRetries = await loadMaxRetries(admin, job.workspace_id);
+  const { error } = await admin.rpc("fail_publication_retry_attempt", {
+    target_job_id: job.id,
+    expected_attempt_count: job.attempt_count,
+    error_message: errorMessage,
+    max_retries: maxRetries,
+    base_delay_ms: 5000,
+    max_backoff_ms: 300000,
+  });
+
+  if (!error) {
+    return;
+  }
+
+  // A failed RPC request has unknown commit state. Preserve the exact
+  // publication checkpoint on a still-owned running attempt, but leave its
+  // status untouched; direct stalled-publication recovery will then either
+  // retry it or atomically terminalize both job and session.
+  await admin
+    .from("agent_jobs")
+    .update({ last_error: errorMessage })
+    .eq("id", job.id)
+    .eq("status", "running")
+    .eq("attempt_count", job.attempt_count);
+}
+
 async function markPipelineJobError(
   admin: AdminClient,
   job: Tables<"agent_jobs">,
   errorMessage: string,
-  options: { markRunsError?: boolean; retry?: boolean } = {},
-): Promise<PipelineJobErrorResult> {
+  options: { retry?: boolean } = {},
+): Promise<void> {
   const maxRetries = await loadMaxRetries(admin, job.workspace_id);
 
   if (options.retry !== false && job.attempt_count < maxRetries) {
@@ -1917,7 +1937,7 @@ async function markPipelineJobError(
     );
 
     if (!retryError && retriedJobs.length > 0) {
-      return "retry_scheduled";
+      return;
     }
   }
 
@@ -1933,10 +1953,6 @@ async function markPipelineJobError(
     .eq("attempt_count", job.attempt_count)
     .select("id");
   if ((erroredJobs?.length ?? 0) > 0) {
-    if (options.markRunsError !== false) {
-      await markActiveRunsForJobError(admin, job.id);
-    }
-    return "terminalized";
+    await markActiveRunsForJobError(admin, job.id);
   }
-  return "ownership_lost";
 }
