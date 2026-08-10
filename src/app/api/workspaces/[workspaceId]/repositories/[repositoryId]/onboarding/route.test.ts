@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   createSupabaseAdminClient: vi.fn(),
-  getRepositoryOnboardingState: vi.fn(),
   markRepositoryOnboardingReady: vi.fn(),
   requireWorkspaceAccessById: vi.fn(),
   startRepositoryOnboarding: vi.fn(),
@@ -17,12 +16,12 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 vi.mock("@/lib/repo-onboarding/server", () => ({
-  getRepositoryOnboardingState: mocked.getRepositoryOnboardingState,
   markRepositoryOnboardingReady: mocked.markRepositoryOnboardingReady,
   startRepositoryOnboarding: mocked.startRepositoryOnboarding,
 }));
 
-import { GET, PATCH, POST } from "./route";
+import * as repositoryOnboardingRoute from "./route";
+import { PATCH, POST } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const REPOSITORY_ID = "11111111-1111-4111-8111-111111111111";
@@ -63,21 +62,8 @@ describe("repository onboarding route", () => {
     vi.clearAllMocks();
   });
 
-  it("returns stored onboarding state", async () => {
-    grantAccess();
-    const admin = {};
-    mocked.createSupabaseAdminClient.mockReturnValue(admin);
-    mocked.getRepositoryOnboardingState.mockResolvedValue(onboarding);
-
-    const response = await GET(new Request("http://localhost"), routeContext());
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ onboarding });
-    expect(mocked.getRepositoryOnboardingState).toHaveBeenCalledWith({
-      admin,
-      repositoryId: REPOSITORY_ID,
-      workspaceId: WORKSPACE_ID,
-    });
+  it("exposes only mutation handlers", () => {
+    expect(Object.keys(repositoryOnboardingRoute).sort()).toEqual(["PATCH", "POST"]);
   });
 
   it("starts onboarding for the repository", async () => {

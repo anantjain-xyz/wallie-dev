@@ -162,15 +162,6 @@ async function loadRepository(
   };
 }
 
-export async function getRepositoryOnboardingState(input: {
-  admin: AdminClient;
-  repositoryId: string;
-  workspaceId: string;
-}): Promise<RepositoryOnboardingState> {
-  const row = await loadOnboardingRow(input);
-  return mapOnboardingRow(row, input.repositoryId);
-}
-
 export async function markRepositoryOnboardingReady(input: {
   admin: AdminClient;
   repositoryId: string;

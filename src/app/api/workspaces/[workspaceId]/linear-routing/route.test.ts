@@ -18,11 +18,11 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 vi.mock("@/lib/linear-routing/server", () => ({
-  loadLinearRoutingConfig: vi.fn(),
   upsertLinearRoutingConfig: mocked.upsertLinearRoutingConfig,
   validateLinearRoutingStages: mocked.validateLinearRoutingStages,
 }));
 
+import * as linearRoutingRoute from "./route";
 import { PUT } from "./route";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -54,6 +54,10 @@ function grantAccess() {
 describe("PUT /api/workspaces/[workspaceId]/linear-routing", () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("exposes only the PUT mutation handler", () => {
+    expect(Object.keys(linearRoutingRoute).sort()).toEqual(["PUT"]);
   });
 
   it("validates stages before saving routing config", async () => {

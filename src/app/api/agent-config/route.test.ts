@@ -14,11 +14,18 @@ vi.mock("@/lib/workspaces/access", () => ({
 }));
 
 import { PATCH, POST } from "./route";
+import * as agentConfigRoute from "./route";
 
 const WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("agent-config route method surface", () => {
+  it("exposes only mutation handlers", () => {
+    expect(Object.keys(agentConfigRoute).sort()).toEqual(["PATCH", "POST"]);
+  });
 });
 
 function postWith(body: unknown) {
