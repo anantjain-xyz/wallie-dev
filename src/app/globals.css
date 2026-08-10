@@ -1224,12 +1224,6 @@
   min-height: 32px;
 }
 
-/* Keep development chrome out of fixture proof captures. */
-html:has([data-precision-console-fixture]) nextjs-portal,
-html:has([data-app-shell-fixture]) nextjs-portal {
-  display: none;
-}
-
 .email-code-grid {
   grid-template-columns: repeat(6, minmax(2.75rem, 1fr));
 }

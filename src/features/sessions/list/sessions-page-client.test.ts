@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
+import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import {
   commitListArchive,
   commitListTitle,
   reconcileListMutations,
-  SessionsPageClient,
-} from "@/features/sessions/list/sessions-page-client";
+} from "@/features/sessions/list/sessions-list-mutations";
 import type { SessionListPageData, SessionStageFacet } from "@/features/sessions/list/data";
 import type { SessionSummary } from "@/features/sessions/types";
 
@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
 
 function renderPage(initialData: SessionListPageData) {
   return renderToStaticMarkup(
-    createElement(OverlayProvider, null, createElement(SessionsPageClient, { initialData })),
+    createElement(OverlayProvider, null, createElement(SessionsPage, { initialData })),
   );
 }
 
@@ -107,7 +107,7 @@ function makeSessionListData(
   };
 }
 
-describe("SessionsPageClient", () => {
+describe("SessionsPage", () => {
   it("renders an accessible title edit affordance without removing row navigation", () => {
     const html = renderPage(makeSessionListData());
 

@@ -139,7 +139,6 @@ function baseJob(overrides: Partial<Tables<"agent_jobs">> = {}): Tables<"agent_j
     id: "job-1",
     workspace_id: "ws-1",
     session_id: "sess-1",
-    job_type: "session",
     status: "queued",
     created_at: new Date().toISOString(),
     dedupe_key: "pipeline:TEAM-1:active",

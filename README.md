@@ -149,7 +149,6 @@ The whole module is stage-agnostic. There are no per-phase files; one generic ru
 
 - [processor.ts](src/lib/pipeline/processor.ts) -- generic stage runner. The public entry is `processPipelineJob()`; its internal `runStage()` helper renders operating rules plus the stage prompt, spins a sandbox, runs the agent, writes the markdown artifact, and invokes best-effort PR synchronization. Also exports `handleApproval` / `handleRejection`.
 - [stages.ts](src/lib/pipeline/stages.ts) -- loaders for `pipelines` / `pipeline_stages`, pipeline operating rules, and the prior-stage artifact map used by the prompt template.
-- [state-machine.ts](src/lib/pipeline/state-machine.ts) -- status checks (`canApprove`, `canReject`, `isTerminal`). Stage ordering itself lives on `pipeline_stages.position` and is enumerated by the `approve_session_stage` RPC.
 - [pull-request.ts](src/lib/pipeline/pull-request.ts), [archive.ts](src/lib/pipeline/archive.ts), and [cancel.ts](src/lib/pipeline/cancel.ts) -- remote PR synchronization and terminal session controls.
 - [prompt-safety.ts](src/lib/pipeline/prompt-safety.ts) -- sanitizes untrusted Linear text (prompt injection defense).
 - [types.ts](src/lib/pipeline/types.ts) -- shared pipeline status and job constants. Active-job dedupe keys live in [src/lib/wallie/constants.ts](src/lib/wallie/constants.ts).
@@ -241,14 +240,13 @@ workspaces/[workspaceId]/maintenance/tick/                      <- privileged ma
 ```
 app/
 |-- layout.tsx, page.tsx              (root)
-|-- login/, signup/, auth/            (public)
+|-- login/, auth/                    (public)
 |-- onboarding/workspace/             (first-run: create a workspace)
 `-- w/[workspaceSlug]/                (protected workspace shell)
     |-- onboarding/                   (GitHub, repositories, pipeline, Linear, runtime, verify)
     `-- (app)/                        (route group with the real product UI)
         |-- (pipeline)/               review-focused dashboard at the workspace root
         |-- sessions/                 list + /[sessionNumber] detail
-        |-- pipeline/                 legacy redirect to the workspace root
         `-- settings/                 integrations, pipeline editor, advanced, workspace
 
 components/
@@ -304,7 +302,7 @@ src/
       secrets/                  # Encrypted credential CRUD
       workspaces/[workspaceId]/ # Pipeline, repositories, onboarding, sandbox check, ...
     auth/                       # Auth flows (callback, email, signout, confirm)
-    login/, signup/             # Public auth pages
+    login/                      # Public auth page
     onboarding/workspace/       # First-run: create a workspace
     w/[workspaceSlug]/          # Protected workspace shell
       onboarding/               # Post-workspace setup

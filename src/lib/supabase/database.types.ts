@@ -16,7 +16,6 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -36,7 +35,6 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -56,7 +54,6 @@ export type Database = {
           dedupe_key?: string | null
           finished_at?: string | null
           id?: string
-          job_type?: string
           last_error?: string | null
           requested_by_member_id?: string | null
           scheduled_at?: string | null
@@ -2029,7 +2026,6 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null
@@ -2277,7 +2273,6 @@ export type Database = {
           dedupe_key: string | null
           finished_at: string | null
           id: string
-          job_type: string
           last_error: string | null
           requested_by_member_id: string | null
           scheduled_at: string | null

@@ -7,7 +7,7 @@ import axe from "axe-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OverlayProvider } from "@/components/ui/overlay-provider";
-import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
+import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 
 const mocked = vi.hoisted(() => ({
@@ -86,13 +86,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("SessionsPageClient accessibility", () => {
+describe("SessionsPage accessibility", () => {
   it("labels Search, Status, Stage, Sort, and Clear with selected semantics", async () => {
     const user = userEvent.setup();
     render(
       <OverlayProvider>
         <main>
-          <SessionsPageClient initialData={initialData} />
+          <SessionsPage initialData={initialData} />
         </main>
       </OverlayProvider>,
     );
@@ -133,7 +133,7 @@ describe("SessionsPageClient accessibility", () => {
     render(
       <OverlayProvider>
         <main>
-          <SessionsPageClient
+          <SessionsPage
             initialData={{
               ...initialData,
               queryState: { ...initialData.queryState, stageSlug: null },
@@ -156,7 +156,7 @@ describe("SessionsPageClient accessibility", () => {
     const { rerender } = render(
       <OverlayProvider>
         <main>
-          <SessionsPageClient initialData={dataWithQuery} />
+          <SessionsPage initialData={dataWithQuery} />
         </main>
       </OverlayProvider>,
     );
@@ -167,7 +167,7 @@ describe("SessionsPageClient accessibility", () => {
     rerender(
       <OverlayProvider>
         <main>
-          <SessionsPageClient
+          <SessionsPage
             initialData={{
               ...dataWithQuery,
               queryState: {
@@ -194,7 +194,7 @@ describe("SessionsPageClient accessibility", () => {
     render(
       <OverlayProvider>
         <main>
-          <SessionsPageClient
+          <SessionsPage
             initialData={{
               ...initialData,
               queryState: {
@@ -235,7 +235,7 @@ describe("SessionsPageClient accessibility", () => {
     render(
       <OverlayProvider>
         <main>
-          <SessionsPageClient initialData={initialData} />
+          <SessionsPage initialData={initialData} />
         </main>
       </OverlayProvider>,
     );
@@ -259,7 +259,7 @@ describe("SessionsPageClient accessibility", () => {
     render(
       <OverlayProvider>
         <main>
-          <SessionsPageClient initialData={initialData} />
+          <SessionsPage initialData={initialData} />
         </main>
       </OverlayProvider>,
     );

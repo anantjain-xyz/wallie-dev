@@ -19,4 +19,13 @@ describe("telemetry route privacy", () => {
       "https://wallie.dev/redacted",
     );
   });
+
+  it("redacts retired compatibility routes", () => {
+    expect(routeTemplateForPath("/signup")).toBe("/redacted");
+    expect(routeTemplateForPath("/w/acme-corp/pipeline")).toBe("/redacted");
+    expect(routeTemplateForPath("/auth/oauth")).toBe("/redacted");
+    expect(sanitizeTelemetryUrl("https://wallie.dev/signup?next=%2Fw%2Facme")).toBe(
+      "https://wallie.dev/redacted",
+    );
+  });
 });
