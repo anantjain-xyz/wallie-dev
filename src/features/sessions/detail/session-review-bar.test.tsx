@@ -141,6 +141,18 @@ describe("SessionReviewBar", () => {
     expect(container.innerHTML).toContain("sticky bottom-0");
   });
 
+  it.each([
+    { canApprove: true, kind: "reviewable" } as const,
+    {
+      kind: "completed",
+      reason: "This session is complete. Review controls are closed.",
+    } as const,
+  ])("keeps the bottom section borderless for $kind mode", (mode) => {
+    const { container } = renderBar({ mode });
+
+    expect(container.firstElementChild).not.toHaveClass("border-t");
+  });
+
   it("restores focus to Request changes when the dialog closes", async () => {
     renderBar();
     const trigger = screen.getByRole("button", { name: "Request changes" });
