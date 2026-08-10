@@ -4,22 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tables } from "@/lib/supabase/database.types";
 import {
   assertSessionFirstRunReady,
-  claimQueuedJobCandidate,
   createSessionWithFirstJob,
-  processQueuedAgentJobs,
   retryWallieRun,
 } from "@/lib/wallie/service";
-import { processPipelineJob } from "@/lib/pipeline/processor";
 import { SandboxCapabilityCheckStaleError } from "@/lib/sandbox-capabilities/readiness";
 
 const mocks = vi.hoisted(() => ({
   assertCurrentSandboxCapabilityCheck: vi.fn(),
   loadWorkspaceSandboxOverview: vi.fn(),
   resolveSandboxImplementation: vi.fn(() => "vercel"),
-}));
-
-vi.mock("@/lib/pipeline/processor", () => ({
-  processPipelineJob: vi.fn(),
 }));
 
 vi.mock("@/lib/sandbox-connections/server", () => ({
@@ -154,84 +147,6 @@ describe("wallie service helpers", () => {
         },
       }),
     ).toThrow(/archived repository/i);
-  });
-
-  it("claims the first candidate that wins the race", async () => {
-    const candidates = [
-      { id: "job-1", status: "queued" },
-      { id: "job-2", status: "queued" },
-      { id: "job-3", status: "queued" },
-    ] as const;
-    const attempts: string[] = [];
-
-    const claimed = await claimQueuedJobCandidate(candidates, async (job) => {
-      attempts.push(job.id);
-
-      if (job.id === "job-1") {
-        return null;
-      }
-
-      return job;
-    });
-
-    expect(attempts).toEqual(["job-1", "job-2"]);
-    expect(claimed?.id).toBe("job-2");
-  });
-
-  it("passes an abort signal into claimed pipeline job processing", async () => {
-    const signal = new AbortController().signal;
-    const queuedJob = buildAgentJobRow();
-    const claimedJob = buildAgentJobRow({
-      attempt_count: 1,
-      last_error: null,
-      started_at: baseTimestamp,
-      status: "running",
-    });
-    vi.mocked(processPipelineJob).mockResolvedValue({
-      jobId: "job-1",
-      processed: true,
-      result: "success",
-      runId: "run-1",
-    });
-    const admin = {
-      from: (table: string) => {
-        if (table !== "agent_jobs") throw new Error(`unexpected table: ${table}`);
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({ data: queuedJob, error: null }),
-            }),
-          }),
-          update: () => ({
-            eq: () => ({
-              eq: () => ({
-                select: () => ({
-                  maybeSingle: async () => ({ data: claimedJob, error: null }),
-                }),
-              }),
-            }),
-          }),
-        };
-      },
-    };
-
-    const result = await processQueuedAgentJobs({
-      admin: admin as never,
-      requestedJobId: "job-1",
-      signal,
-    });
-
-    expect(result).toEqual({
-      jobId: "job-1",
-      processed: true,
-      result: "success",
-      runId: "run-1",
-    });
-    expect(processPipelineJob).toHaveBeenCalledWith({
-      admin,
-      job: claimedJob,
-      signal,
-    });
   });
 });
 

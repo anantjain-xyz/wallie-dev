@@ -7,7 +7,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Enums, Tables, TablesInsert } from "@/lib/supabase/database.types";
 import { resolveEffectiveSessionRepository } from "@/features/sessions/effective-repository";
 import { cancelSessionWork } from "@/lib/pipeline/cancel";
-import { processPipelineJob } from "@/lib/pipeline/processor";
 import {
   buildWallieBlockingReasons,
   inferWallieRunMode,
@@ -118,13 +117,6 @@ export type CreateSessionWithFirstJobResult = {
   runId: string;
   sessionId: string;
   workspaceSlug: string;
-};
-
-export type ProcessQueuedJobsResult = {
-  jobId: string | null;
-  processed: boolean;
-  result: "error" | "idle" | "success";
-  runId: string | null;
 };
 
 function toAbortError(signal: AbortSignal) {
@@ -517,20 +509,6 @@ async function loadActiveRunForSession(admin: AdminClient, sessionId: string) {
   }
 
   return data as AgentRunRow | null;
-}
-
-async function loadJobById(admin: AdminClient, jobId: string) {
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .select(jobSelect)
-    .eq("id", jobId)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data as AgentJobRow | null;
 }
 
 async function loadActiveJobByDedupeKey(
@@ -956,131 +934,4 @@ export async function cancelWallieRun(input: {
 
   const updatedRun = (await loadRunById(admin, input.runId)) ?? existingRun;
   return { canceled: true, run: updatedRun } satisfies CancelWallieRunResult;
-}
-
-async function claimJobIfQueued(admin: AdminClient, job: AgentJobRow) {
-  if (job.status === "running") {
-    return job;
-  }
-
-  const { data, error } = await admin
-    .from("agent_jobs")
-    .update({
-      attempt_count: job.attempt_count + 1,
-      last_error: null,
-      started_at: job.started_at ?? new Date().toISOString(),
-      status: "running",
-    })
-    .eq("id", job.id)
-    .eq("status", "queued")
-    .select(jobSelect)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return (data as AgentJobRow | null) ?? null;
-}
-
-export async function claimQueuedJobCandidate<TJob extends { id: string }>(
-  candidates: readonly TJob[],
-  claim: (job: TJob) => Promise<TJob | null>,
-) {
-  for (const candidate of candidates) {
-    const claimed = await claim(candidate);
-
-    if (claimed) {
-      return claimed;
-    }
-  }
-
-  return null;
-}
-
-async function loadProcessTargetJob(input: {
-  admin: AdminClient;
-  requestedJobId?: string;
-  workspaceId?: string;
-}) {
-  if (input.requestedJobId) {
-    const job = await loadJobById(input.admin, input.requestedJobId);
-
-    if (!job || (job.status !== "queued" && job.status !== "running")) {
-      return null;
-    }
-
-    if (input.workspaceId && job.workspace_id !== input.workspaceId) {
-      return null;
-    }
-
-    if (job.status === "running") {
-      // Pipeline jobs are one-shot and not designed to be re-entered
-      // concurrently — the processor would regenerate the artifact. Refuse to
-      // re-dispatch a running job. Stuck rows (processor crash mid-flight) are
-      // recovered manually for now.
-      return null;
-    }
-
-    return claimJobIfQueued(input.admin, job);
-  }
-
-  // Only claim jobs that are either not scheduled or whose scheduled_at is
-  // in the past (exponential backoff — jobs re-queued with a future
-  // scheduled_at must wait until that time elapses).
-  const now = new Date().toISOString();
-  const query = input.admin
-    .from("agent_jobs")
-    .select(jobSelect)
-    .eq("status", "queued")
-    .or(`scheduled_at.is.null,scheduled_at.lte.${now}`)
-    .order("created_at", { ascending: true })
-    .limit(10);
-  const scopedQuery = input.workspaceId ? query.eq("workspace_id", input.workspaceId) : query;
-  const { data, error } = await scopedQuery;
-
-  if (error) {
-    throw error;
-  }
-
-  return claimQueuedJobCandidate((data ?? []) as AgentJobRow[], async (job) =>
-    claimJobIfQueued(input.admin, job),
-  );
-}
-
-async function processClaimedJob(input: {
-  admin: AdminClient;
-  job: AgentJobRow;
-  signal?: AbortSignal;
-}) {
-  return processPipelineJob({ admin: input.admin, job: input.job, signal: input.signal });
-}
-
-export async function processQueuedAgentJobs(input?: {
-  admin?: AdminClient;
-  requestedJobId?: string;
-  signal?: AbortSignal;
-  workspaceId?: string;
-}) {
-  const admin = input?.admin ?? createSupabaseAdminClient();
-  const claimedJob = await loadProcessTargetJob({
-    admin,
-    requestedJobId: input?.requestedJobId,
-    workspaceId: input?.workspaceId,
-  });
-
-  if (!claimedJob) {
-    return {
-      jobId: null,
-      processed: false,
-      result: "idle",
-      runId: null,
-    } satisfies ProcessQueuedJobsResult;
-  }
-
-  return processClaimedJob({
-    admin,
-    job: claimedJob,
-    signal: input?.signal,
-  });
 }

@@ -37,8 +37,7 @@ The code is authoritative for defaults:
 
 Workspace `concurrency_limit`, `stall_timeout_ms`, and `max_retries` live in
 database configuration. Runtime workspace concurrency is enforced by the
-current `claim_next_agent_job` SQL, not by the unused TypeScript
-`worker/concurrency.ts` helper.
+`claim_next_agent_job` SQL.
 
 ## Claim and scheduling loop
 
