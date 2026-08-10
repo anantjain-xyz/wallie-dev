@@ -7,6 +7,7 @@ import {
 import type { AgentEvent, AgentRunner, AgentRunnerStartInput } from "./types";
 import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from "./types";
 import type { AgentEffort } from "@/lib/agent-config/contracts";
+import { WALLIE_GIT_IDENTITY_ENV } from "@/lib/sandbox/commit-author";
 
 const PROMPT_FILE_NAME = ".wallie-prompt.txt";
 const CODEX_HOME_DIR = ".codex";
@@ -78,7 +79,12 @@ export class CodexRunner implements AgentRunner {
 
     const proc = await sandbox.exec("bash", ["-lc", shellCmd], {
       cwd: sandbox.repoPath,
-      env: { CI: "1", CODEX_HOME: codexHome, ...codexCredentialEnv(this.options.credential) },
+      env: {
+        CI: "1",
+        CODEX_HOME: codexHome,
+        ...WALLIE_GIT_IDENTITY_ENV,
+        ...codexCredentialEnv(this.options.credential),
+      },
       signal: input.signal,
     });
 
@@ -163,7 +169,7 @@ export class CodexRunner implements AgentRunner {
       ["-lc", codexExecCommand(model, effort, promptFile, sandbox.repoPath)],
       {
         cwd: sandbox.repoPath,
-        env: { CI: "1", CODEX_HOME: codexHome },
+        env: { CI: "1", CODEX_HOME: codexHome, ...WALLIE_GIT_IDENTITY_ENV },
         signal: input.signal,
       },
     );
@@ -435,6 +441,11 @@ export function codexExecArgs(
     `model_reasoning_effort="${effort}"`,
     "-c",
     `cli_auth_credentials_store="file"`,
+    "-c",
+    "mcp_servers={}",
+    "-c",
+    "apps.github.enabled=false",
+    "--ignore-user-config",
     CODEX_EXTERNAL_SANDBOX_FLAG,
     "--cd",
     sandboxRepoPath,

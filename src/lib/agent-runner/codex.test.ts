@@ -66,6 +66,11 @@ describe("CodexRunner", () => {
       'model_reasoning_effort="xhigh"',
       "-c",
       'cli_auth_credentials_store="file"',
+      "-c",
+      "mcp_servers={}",
+      "-c",
+      "apps.github.enabled=false",
+      "--ignore-user-config",
       CODEX_EXTERNAL_SANDBOX_FLAG,
       "--cd",
       "/vercel/sandbox",
@@ -144,11 +149,18 @@ describe("CodexRunner", () => {
     expect(call.args[1]).toContain("codex 'exec' '--model' 'gpt-5.6-sol'");
     expect(call.args[1]).toContain(`'-c' 'model_reasoning_effort="max"'`);
     expect(call.args[1]).toContain(`'-c' 'cli_auth_credentials_store="file"'`);
+    expect(call.args[1]).toContain(`'-c' 'mcp_servers={}'`);
+    expect(call.args[1]).toContain(`'-c' 'apps.github.enabled=false'`);
+    expect(call.args[1]).not.toContain("'--disable' 'apps'");
     expectExternalSandboxMode(call.args[1]!);
     expect(call.args[1]).toContain("< '/vercel/sandbox/.wallie-prompt.txt'");
     expect(call.opts.env).toMatchObject({
       CODEX_ACCESS_TOKEN: "tok",
       CODEX_HOME: "/vercel/sandbox/.codex",
+      GIT_AUTHOR_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
+      GIT_AUTHOR_NAME: "wallie-dev[bot]",
+      GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
+      GIT_COMMITTER_NAME: "wallie-dev[bot]",
     });
     expect(call.opts.env).not.toHaveProperty("OPENAI_API_KEY");
   });
@@ -273,7 +285,14 @@ describe("CodexRunner", () => {
     });
     expect(sandbox.calls[0]?.args[1]).toBe("mkdir -p '/vercel/sandbox/.codex'");
     expectExternalSandboxMode(sandbox.calls[1]?.args[1] ?? "");
-    expect(sandbox.calls[1]?.opts.env).toEqual({ CI: "1", CODEX_HOME: "/vercel/sandbox/.codex" });
+    expect(sandbox.calls[1]?.opts.env).toMatchObject({
+      CI: "1",
+      CODEX_HOME: "/vercel/sandbox/.codex",
+      GIT_AUTHOR_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
+      GIT_AUTHOR_NAME: "wallie-dev[bot]",
+      GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
+      GIT_COMMITTER_NAME: "wallie-dev[bot]",
+    });
   });
 
   it("does not mark ChatGPT auth reconnect required for token-limit failures", async () => {
