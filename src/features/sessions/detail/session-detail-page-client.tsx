@@ -602,7 +602,7 @@ export function SessionDetailPageClient({
   }
 
   async function handleStopRun() {
-    if (phaseActionPending !== null || stopPending) return;
+    if (archivePending !== null || phaseActionPending !== null || stopPending) return;
     setStopPending(true);
     const optimisticPatch: SessionMutationPatch = { phaseStatus: "rejected" };
     const previousPatch: SessionMutationPatch = {
@@ -647,7 +647,7 @@ export function SessionDetailPageClient({
   }
 
   async function handleArchive() {
-    if (archivePending !== null || phaseActionPending !== null) return;
+    if (archivePending !== null || phaseActionPending !== null || stopPending) return;
     archiveUndoVersionRef.current = null;
     setArchiveError(null);
     setArchivePending("archive");
@@ -796,19 +796,31 @@ export function SessionDetailPageClient({
     </div>
   ) : (
     <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        className="ui-button gap-1.5"
-        disabled={archivePending !== null || phaseActionPending !== null}
-        onClick={() => void handleArchive()}
-      >
-        <ArchiveIcon className="h-3.5 w-3.5" />
-        <ActionButtonLabel
-          idle="Archive"
-          pending={archivePending === "archive"}
-          pendingLabel="Archiving…"
-        />
-      </button>
+      <div className="flex items-center gap-2">
+        {session.phaseStatus === "in_progress" && phaseActionPending === null ? (
+          <button
+            type="button"
+            className="ui-button-danger"
+            disabled={stopPending || archivePending !== null || phaseActionPending !== null}
+            onClick={() => void handleStopRun()}
+          >
+            <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="ui-button gap-1.5"
+          disabled={archivePending !== null || phaseActionPending !== null || stopPending}
+          onClick={() => void handleArchive()}
+        >
+          <ArchiveIcon className="h-3.5 w-3.5" />
+          <ActionButtonLabel
+            idle="Archive"
+            pending={archivePending === "archive"}
+            pendingLabel="Archiving…"
+          />
+        </button>
+      </div>
       {archiveError ? <span className="text-xs text-danger">{archiveError}</span> : null}
     </div>
   );
@@ -919,11 +931,7 @@ export function SessionDetailPageClient({
           void handlePhaseAction("approve");
         }}
         onReject={(feedback) => handlePhaseAction("reject", feedback)}
-        onStopRun={() => {
-          void handleStopRun();
-        }}
         phaseActionPending={phaseActionPending}
-        stopPending={stopPending}
       />
     </PageContainer>
   );

@@ -14,9 +14,7 @@ type SessionReviewBarProps = {
   mode: ReviewMode;
   onApprove: () => void;
   onReject: (feedback: string) => Promise<boolean>;
-  onStopRun: () => void;
   phaseActionPending: "approve" | "reject" | null;
-  stopPending: boolean;
 };
 
 export function SessionReviewBar({
@@ -24,9 +22,7 @@ export function SessionReviewBar({
   mode,
   onApprove,
   onReject,
-  onStopRun,
   phaseActionPending,
-  stopPending,
 }: SessionReviewBarProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
@@ -70,26 +66,7 @@ export function SessionReviewBar({
   }
 
   if (mode.kind === "running") {
-    return (
-      <div
-        className={cn(
-          "sticky bottom-0 z-20 border-t border-border bg-sheet/95 py-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] backdrop-blur",
-          "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
-        )}
-      >
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-muted">Wallie is generating this stage’s artifact.</p>
-          <button
-            type="button"
-            className="ui-button-danger"
-            disabled={stopPending || phaseActionBusy}
-            onClick={() => void onStopRun()}
-          >
-            <ActionButtonLabel idle="Stop run" pending={stopPending} pendingLabel="Stopping…" />
-          </button>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   async function submitReject() {
