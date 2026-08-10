@@ -9,7 +9,6 @@ import {
   acquireSandboxConnectionMutationLock,
   getEnabledSandboxProviders,
   loadWorkspaceSandboxConnection,
-  loadWorkspaceSandboxOverview,
   loadWorkspaceSandboxSettings,
   SandboxConnectionActiveWorkError,
   SandboxConnectionInvalidError,
@@ -28,18 +27,6 @@ import { saveVercelSandboxConnection } from "@/lib/vercel-sandbox/server";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type RouteContext = { params: Promise<{ provider: string; workspaceId: string }> };
-
-export async function GET(_request: Request, context: RouteContext) {
-  const params = await parseContext(context);
-  if (params.response) return params.response;
-  const access = await requireWorkspaceAccessById(params.workspaceId);
-  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
-  const overview = await loadWorkspaceSandboxOverview(
-    createSupabaseAdminClient(),
-    access.context.workspace.id,
-  );
-  return NextResponse.json({ connection: overview.connections[params.provider] });
-}
 
 export async function PUT(request: Request, context: RouteContext) {
   const params = await parseContext(context);

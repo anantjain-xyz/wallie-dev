@@ -27,10 +27,6 @@ export type WorkspaceSecretPreview = {
   workspaceId: string;
 };
 
-export type ListWorkspaceSecretsResponse = {
-  secrets: WorkspaceSecretPreview[];
-};
-
 export type UpsertWorkspaceSecretResponse = {
   secret: WorkspaceSecretPreview;
 };

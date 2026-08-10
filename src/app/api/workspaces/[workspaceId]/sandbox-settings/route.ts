@@ -14,17 +14,6 @@ import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
 
 type RouteContext = { params: Promise<{ workspaceId: string }> };
 
-export async function GET(_request: Request, context: RouteContext) {
-  const { workspaceId } = await context.params;
-  const access = await requireWorkspaceAccessById(workspaceId);
-  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
-  const settings = await loadWorkspaceSandboxOverview(
-    createSupabaseAdminClient(),
-    access.context.workspace.id,
-  );
-  return NextResponse.json(settings);
-}
-
 export async function PATCH(request: Request, context: RouteContext) {
   const { workspaceId } = await context.params;
   const access = await requireWorkspaceAccessById(workspaceId, { requireManager: true });

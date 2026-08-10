@@ -174,25 +174,25 @@ sessions/                                                       <- create a sess
 sessions/[sessionId]/                                           <- title/state, archive/cancel, artifacts, runs
 sessions/[sessionId]/phase-action/                              <- in-app approve / reject
 sessions/[sessionId]/review-capabilities/                       <- current reviewer authorization/failure state
-agent-config/                                                   <- workspace_agent_config CRUD (provider + model)
+agent-config/                                                   <- workspace_agent_config mutations (POST/PATCH; RSC reads)
 codex/connection/                                               <- Codex device-auth flow + token verify
 claude-code/connection/                                         <- Anthropic API key verify
 github/install/ + github/callback/                              <- GitHub App install redirect + signed state
 github/webhooks/                                                <- PR + install events
 github/refresh-repositories/                                    <- re-sync the installation's repo list
 linear/test-connection/                                         <- verify Linear API key
-secrets/ + secrets/[key]/                                       <- encrypted workspace creds
+secrets/ + secrets/[key]/                                       <- encrypted workspace creds (POST/DELETE; RSC reads)
 workspaces/[workspaceId]/avatar/                                <- storage upload
 workspaces/[workspaceId]/members/ + invitations/ + leave/       <- workspace membership lifecycle
 workspaces/[workspaceId]/pipeline-dashboard/                    <- bounded dashboard refresh payload
 workspaces/[workspaceId]/pipeline/                              <- pipeline + stage editor
 workspaces/[workspaceId]/repositories/[repositoryId]/inference/ <- run repo inference
-workspaces/[workspaceId]/repositories/[repositoryId]/onboarding/<- per-repo onboarding state
+workspaces/[workspaceId]/repositories/[repositoryId]/onboarding/<- per-repo onboarding mutations (POST/PATCH; RSC reads)
 workspaces/[workspaceId]/repository-profile/                    <- workspace_repository_profiles editor
 workspaces/[workspaceId]/sandbox-capability-check/              <- probe active sandbox-provider readiness
-workspaces/[workspaceId]/sandbox-settings/                      <- active provider + optimistic switching
-workspaces/[workspaceId]/sandbox-connections/[provider]/        <- encrypted Vercel/E2B/Daytona connections
-workspaces/[workspaceId]/linear-routing/                        <- workspace_linear_routing rules
+workspaces/[workspaceId]/sandbox-settings/                      <- active provider switch (PATCH; RSC reads)
+workspaces/[workspaceId]/sandbox-connections/[provider]/        <- encrypted Vercel/E2B/Daytona connections (PUT/DELETE; RSC reads)
+workspaces/[workspaceId]/linear-routing/                        <- workspace_linear_routing mutations (PUT; RSC reads)
 workspaces/[workspaceId]/onboarding/ + onboarding/complete/     <- per-workspace setup state
 workspaces/[workspaceId]/maintenance/tick/                      <- privileged maintenance trigger
 ```

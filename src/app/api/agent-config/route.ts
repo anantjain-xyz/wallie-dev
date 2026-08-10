@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 import { z } from "zod";
 
@@ -14,10 +14,6 @@ import {
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireWorkspaceAccessById } from "@/lib/workspaces/access";
-
-const listQuerySchema = z.object({
-  workspaceId: z.string().uuid("Workspace id is invalid."),
-});
 
 const batchUpsertEnvelopeSchema = z
   .object({
@@ -63,10 +59,6 @@ export type AgentConfigEntry = {
   value: unknown;
 };
 
-export type ListAgentConfigResponse = {
-  config: AgentConfigEntry[];
-};
-
 export type BatchUpsertAgentConfigRequest = {
   config: Partial<Record<AgentConfigKey, unknown>>;
   workspaceId: string;
@@ -87,52 +79,6 @@ export type ApplyAgentConfigDefaultsResponse = {
   applied: AgentConfigEntry[];
   skippedKeys: AgentConfigKey[];
 };
-
-export async function GET(request: NextRequest) {
-  const parsed = listQuerySchema.safeParse({
-    workspaceId: request.nextUrl.searchParams.get("workspaceId"),
-  });
-
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid request." },
-      { status: 400 },
-    );
-  }
-
-  const access = await requireWorkspaceAccessById(parsed.data.workspaceId, {
-    requireManager: true,
-  });
-
-  if (!access.ok) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
-  }
-
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
-    .from("workspace_agent_config")
-    .select("key, value_json")
-    .eq("workspace_id", access.context.workspace.id)
-    .order("key", { ascending: true });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const response: ListAgentConfigResponse = {
-    config: (data ?? [])
-      .filter((row): row is typeof row & { key: AgentConfigKey } => isAgentConfigKey(row.key))
-      .map((row) => ({
-        key: row.key,
-        value:
-          row.key === "agent_provider" && typeof row.value_json === "string"
-            ? (normalizeAgentProviderName(row.value_json) ?? row.value_json)
-            : row.value_json,
-      })),
-  };
-
-  return NextResponse.json(response, { status: 200 });
-}
 
 export async function POST(request: Request) {
   let body: unknown;

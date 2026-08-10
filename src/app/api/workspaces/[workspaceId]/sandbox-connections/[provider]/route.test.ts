@@ -67,7 +67,8 @@ import {
   SandboxConnectionInvalidError,
   SandboxConnectionMutationInProgressError,
 } from "@/lib/sandbox-connections/server";
-import { DELETE, GET, PUT } from "./route";
+import * as sandboxConnectionRoute from "./route";
+import { DELETE, PUT } from "./route";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const memberId = "22222222-2222-4222-8222-222222222222";
@@ -322,15 +323,8 @@ beforeEach(() => {
 });
 
 describe("/api/workspaces/[workspaceId]/sandbox-connections/[provider]", () => {
-  it("returns preview-only Vercel connection data", async () => {
-    const response = await GET(new Request("http://localhost"), context("vercel"));
-
-    await expect(response.json()).resolves.toEqual({ connection: vercelPreview });
-    expect(response.status).toBe(200);
-    expect(mocked.loadWorkspaceSandboxOverview).toHaveBeenCalledWith(
-      expect.anything(),
-      workspaceId,
-    );
+  it("exposes only mutation handlers", () => {
+    expect(Object.keys(sandboxConnectionRoute).sort()).toEqual(["DELETE", "PUT"]);
   });
 
   it("requires manager access to save a Vercel connection", async () => {
