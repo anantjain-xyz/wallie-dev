@@ -23,7 +23,7 @@ type SessionRow = {
 };
 
 type SecretRow = { workspace_id: string; encrypted_value: string };
-type AgentJobRow = { id: string; job_type?: string; session_id: string; status?: string };
+type AgentJobRow = { id: string; session_id: string; status?: string };
 type PipelineStageRow = { id: string; pipeline_id: string; position: number; slug: string };
 type RoutingRow = {
   land_stage_slug: string;
@@ -169,11 +169,9 @@ function buildAdmin(fixture: Fixture) {
 
       if (op === "select" && table === "agent_jobs") {
         const sessionId = filters["eq.session_id"] as string | undefined;
-        const jobType = filters["eq.job_type"] as string | undefined;
         const statuses = filters["in.status"] as string[] | undefined;
         let rows = (fixture.agentJobs ?? [])
           .filter((j) => !sessionId || j.session_id === sessionId)
-          .filter((j) => !jobType || (j.job_type ?? "session") === jobType)
           .filter((j) => !statuses || statuses.includes(j.status ?? "queued"));
         rows = rows.slice(0, limit);
         const data = single ? (rows[0] ?? null) : rows.map((j) => ({ id: j.id }));
@@ -692,7 +690,6 @@ describe("reconcileLinearState", () => {
         table: "agent_jobs",
         update: expect.objectContaining({
           dedupe_key: "pipeline:iRework:active",
-          job_type: "session",
           session_id: "sRework",
           trigger_type: "assignment",
           workspace_id: "wA",
@@ -1068,9 +1065,7 @@ describe("reconcileLinearState", () => {
 
   it("treats started pipeline jobs as active before queueing new work", async () => {
     const fixture: Fixture = {
-      agentJobs: [
-        { id: "jobStarted", job_type: "session", session_id: "sStarted", status: "started" },
-      ],
+      agentJobs: [{ id: "jobStarted", session_id: "sStarted", status: "started" }],
       secrets: [{ workspace_id: "wA", encrypted_value: "keyA" }],
       sessions: [
         {
