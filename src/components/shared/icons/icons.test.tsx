@@ -1,13 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
 import { ChevronDownIcon } from "@/components/shared/icons/chevron-down-icon";
 import { GitHubIcon } from "@/components/shared/icons/github-icon";
-import { PriorityBarIcon } from "@/components/shared/icons/priority-bar-icon";
 import { XIcon } from "@/components/shared/icons/x-icon";
 
 const decorativeIcons = {
-  "composed icon": <PriorityBarIcon priority="urgent" />,
+  "multi-path stroke icon": <ArchiveIcon />,
   "fill icon": <GitHubIcon />,
   "single-letter icon": <XIcon />,
   "stroke icon": <ChevronDownIcon />,
