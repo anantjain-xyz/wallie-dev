@@ -270,8 +270,9 @@ describe("PipelinePageClient", () => {
     installSupabaseMock();
     const view = render(<PipelinePageClient initialData={initialData()} />);
 
+    expect(view.container.firstElementChild?.classList).toContain("flex");
     expect(view.container.firstElementChild?.classList).toContain(
-      "min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
+      "h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]",
     );
     expect(view.container.querySelector("[data-pipeline-board]")?.getAttribute("style")).toContain(
       "--pipeline-stage-count: 2",
@@ -280,7 +281,10 @@ describe("PipelinePageClient", () => {
       "minmax(280px,1fr)",
     );
     const boardRegion = screen.getByRole("region", { name: "Pipeline board" });
+    expect(boardRegion.className).toContain("min-h-0");
+    expect(boardRegion.className).toContain("flex-1");
     expect(boardRegion.className).toContain("overflow-auto");
+    expect(boardRegion.className).not.toContain("max-h-");
     expect(boardRegion.getAttribute("tabindex")).toBe("0");
 
     expect(screen.getAllByText("Session 1")).toHaveLength(1);

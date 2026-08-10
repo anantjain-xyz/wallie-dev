@@ -11,11 +11,12 @@ describe("PipelineLoadingSkeleton", () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('aria-label="Loading pipeline"');
     expect(html).toContain(
-      "min-h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] bg-canvas",
+      "h-[calc(100svh-3.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col bg-canvas",
     );
     expect(html).toContain("minmax(280px,1fr)");
     expect(html).toContain("--pipeline-stage-count");
-    expect(html).toContain("overflow-auto");
+    expect(html).toContain("min-h-0 flex-1 overflow-auto");
+    expect(html).not.toContain("max-h-");
     expect((html.match(/<article/g) ?? []).length).toBe(3);
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
     expect(html).not.toMatch(/<(?:a|button|input|select|textarea)\b/);
