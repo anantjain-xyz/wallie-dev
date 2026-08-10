@@ -175,12 +175,10 @@ describe("Sessions ledger server render", () => {
     const commandBarSource = readFileSync(join(listDir, "sessions-command-bar.tsx"), "utf8");
     const rowIslandSource = readFileSync(join(listDir, "session-row-actions.tsx"), "utf8");
     const rowShellSource = readFileSync(join(listDir, "session-ledger-row.tsx"), "utf8");
-    const legacyClientSource = readFileSync(join(listDir, "sessions-page-client.tsx"), "utf8");
 
     expect(pageSource).not.toMatch(/^["']use client["']/m);
     expect(commandBarSource).toMatch(/^["']use client["']/m);
     expect(rowIslandSource).toMatch(/^["']use client["']/m);
-    expect(legacyClientSource).not.toContain("function SessionRow");
     expect(rowIslandSource).not.toContain("previousSessionTitleRef");
     expect(rowIslandSource).toContain("resolveOptimisticTitle");
     expect(rowIslandSource).toContain("resolveOptimisticArchive");
