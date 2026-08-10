@@ -94,12 +94,14 @@ command:
 These scripts build first. Other specs in [`e2e/`](../e2e/) may be run directly
 with Playwright when their journey is affected.
 
-The checked-in development visual-proof surfaces are the referenced `/dev/*`
+The checked-in development visual-proof surfaces are the retained `/dev/*`
 routes: `/dev/content-visibility` for the rendering benchmark,
-`/dev/sessions-ledger` for hydration coverage, and `/dev/ui-primitives` for
-the accessibility-primitives walkthrough. For other user-facing changes,
-capture the affected production route at the relevant states and viewports;
-there is no separate unreferenced fixture-lab route to keep in sync.
+`/dev/sessions-ledger` for hydration coverage, `/dev/ui-primitives` for the
+accessibility-primitives walkthrough, `/dev/pipeline-editor` for pipeline
+editor accessibility and UX captures, and `/dev/statuses` for the responsive
+status showcase. For other user-facing changes, capture the affected
+production route at the relevant states and viewports; there is no separate
+unreferenced fixture-lab route to keep in sync.
 
 To run the complete checked-in Playwright inventory after building:
 
