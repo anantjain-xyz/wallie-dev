@@ -9,7 +9,7 @@ import { renderTemplate, type TemplateVariables } from "./render";
 
 export { renderTemplate, type TemplateVariables } from "./render";
 
-const BUILD_GIT_PUBLICATION_POLICY = trustedPromptValue(
+const GIT_PUBLICATION_POLICY = trustedPromptValue(
   "wallie.buildGitPublicationPolicy",
   `## Wallie-controlled Git publication policy
 
@@ -115,7 +115,5 @@ export function renderStagePrompt(
       ? `${renderedStage}\n\n${attachmentInstructions}\n${attachmentData}`
       : renderedStage;
 
-  return verifyPromptBoundary(stage.slug) === "build"
-    ? `${renderedPrompt}\n\n${verifyPromptBoundary(BUILD_GIT_PUBLICATION_POLICY)}`
-    : renderedPrompt;
+  return `${renderedPrompt}\n\n${verifyPromptBoundary(GIT_PUBLICATION_POLICY)}`;
 }

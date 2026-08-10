@@ -74,11 +74,11 @@ function scriptBranchDelete(sandbox: FakeSandbox) {
   sandbox.scriptExec((call) => call.cmd === "bash" && call.args.join(" ").includes("--delete"), []);
 }
 
-function scriptCreatePr(sandbox: FakeSandbox, error?: string) {
+function scriptCreatePr(sandbox: FakeSandbox, error?: string, forwardOnlyLogs = false) {
   sandbox.scriptExec(
     (call) => call.cmd === "gh" && call.args[0] === "pr" && call.args[1] === "create",
-    error ? [{ stream: "stderr", data: `${error}\n` }] : [],
-    error ? { exitCode: 1 } : {},
+    error && !forwardOnlyLogs ? [{ stream: "stderr", data: `${error}\n` }] : [],
+    error ? { exitCode: 1, output: { stderr: `${error}\n`, stdout: "" } } : {},
   );
 }
 
@@ -315,7 +315,7 @@ describe("openSessionPullRequest", () => {
     // commit probe can't decide (shallow boundary) → fall through to GitHub.
     scriptCommitsAhead(sandbox, "UNKNOWN");
     scriptPush(sandbox);
-    scriptCreatePr(sandbox, "GraphQL: No commits between main and wallie/product-sess-1");
+    scriptCreatePr(sandbox, "GraphQL: No commits between main and wallie/product-sess-1", true);
     scriptBranchDelete(sandbox);
     const octokit = makeOctokitWithSequence([[]]); // no existing PR
     const { admin, upserts } = buildAdminMock();

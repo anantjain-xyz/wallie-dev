@@ -55,7 +55,7 @@ describe("renderStagePrompt", () => {
     expect(result.indexOf("## Operating rules")).toBeLessThan(result.indexOf("Implement:"));
   });
 
-  it("appends Wallie's fixed Git publication policy to customized Build prompts", () => {
+  it("appends Wallie's fixed Git publication policy to customized prompts", () => {
     const result = renderStagePrompt(stage, baseInput);
 
     expect(result).toContain("## Wallie-controlled Git publication policy");
@@ -69,13 +69,13 @@ describe("renderStagePrompt", () => {
     );
   });
 
-  it("does not add Build publication instructions to other stages", () => {
+  it("appends the invariant publication policy independent of the stage slug", () => {
     const result = renderStagePrompt(
       { ...stage, slug: trustedPromptValue("stage.slug", "plan") },
       baseInput,
     );
 
-    expect(result).not.toContain("Wallie-controlled Git publication policy");
+    expect(result).toContain("Wallie-controlled Git publication policy");
   });
 
   it("unconditionally appends classified session image inputs", () => {

@@ -47,6 +47,52 @@ describe("prepareSessionSandbox", () => {
     );
   });
 
+  it.each([
+    ["vercel", "sudo dnf install -y gh"],
+    ["e2b", "sudo apt-get update && sudo apt-get install -y gh"],
+    ["daytona", "sudo apt-get update && sudo apt-get install -y gh"],
+  ] as const)("installs and verifies gh for the %s provider", async (provider, installCommand) => {
+    const exec = vi.fn(async () => ({
+      exitCode: Promise.resolve(0),
+      kill: vi.fn(),
+      logs: async function* () {},
+      output: async () => ({ stderr: "", stdout: "" }),
+    }));
+    const handle = {
+      exec,
+      id: "sandbox-1",
+      readFile: vi.fn(),
+      repoPath: "/home/user/wallie/repo",
+      stop: vi.fn(),
+      writeFile: vi.fn(),
+    } satisfies SandboxHandle;
+
+    await prepareSessionSandbox({
+      handle,
+      provider,
+      repoAlreadyCloned: true,
+      request: {
+        agentProvider: "codex",
+        baseBranch: "main",
+        branch: "wallie/test",
+        installationToken: "gh-secret",
+        repoFullName: "acme/app",
+        sessionId: "session-1",
+      },
+    });
+
+    expect(exec).toHaveBeenCalledWith(
+      "bash",
+      ["-lc", expect.stringContaining(installCommand)],
+      expect.anything(),
+    );
+    expect(exec).toHaveBeenCalledWith(
+      "bash",
+      ["-lc", expect.stringContaining("gh --version >/dev/null")],
+      expect.anything(),
+    );
+  });
+
   it("includes stdout when setup fails without useful stderr", async () => {
     const exec = vi.fn(async () => ({
       exitCode: Promise.resolve(1),

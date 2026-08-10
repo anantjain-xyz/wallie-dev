@@ -321,12 +321,8 @@ async function createPullRequestWithGh(input: {
     "--body",
     input.body,
   ]);
-  let stderr = "";
-  for await (const log of proc.logs()) {
-    if (log.stream === "stderr") stderr += log.data;
-  }
-  const code = await proc.exitCode;
-  return code === 0 ? null : stderr.trim().slice(0, 500) || `gh pr create exited ${code}`;
+  const [output, code] = await Promise.all([proc.output(), proc.exitCode]);
+  return code === 0 ? null : output.stderr.trim().slice(0, 500) || `gh pr create exited ${code}`;
 }
 
 function pullRequestState(pr: GitHubPullRequestResponse): string {

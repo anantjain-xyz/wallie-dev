@@ -58,6 +58,7 @@ export async function prepareSessionSandbox(input: {
     `git -C ${shellQuote(handle.repoPath)} ${checkoutArgs}`,
     resolveMemoryBootstrap(provider),
     resolveNodeBootstrap(provider),
+    resolveGitHubCliBootstrap(provider),
     resolveAgentCliInstall(request.agentProvider),
     resolveBrowserBootstrap(provider),
   ].join(" && ");
@@ -103,6 +104,23 @@ function resolveNodeBootstrap(provider: SandboxProvider): string {
       ${NODE_VERSION_CHECK}
     )
   )`;
+}
+
+function resolveGitHubCliBootstrap(provider: SandboxProvider): string {
+  const install =
+    provider === "vercel"
+      ? "sudo dnf install -y gh"
+      : `(
+        if command -v sudo >/dev/null 2>&1; then
+          sudo apt-get update && sudo apt-get install -y gh
+        else
+          apt-get update && apt-get install -y gh
+        fi
+      )`;
+
+  return `(
+    command -v gh >/dev/null 2>&1 || ${install}
+  ) && gh --version >/dev/null`;
 }
 
 function formatFailureOutput(output: { stderr: string; stdout: string }): string {
