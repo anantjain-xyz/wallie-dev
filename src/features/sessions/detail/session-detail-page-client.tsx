@@ -7,15 +7,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PAGE_HEADER_TITLE_CLASS, PageContainer, PageHeader } from "@/components/ui/page-shell";
 import { ArchiveIcon } from "@/components/shared/icons/archive-icon";
-import { CheckIcon } from "@/components/shared/icons/check-icon";
-import { PencilIcon } from "@/components/shared/icons/pencil-icon";
-import { XIcon } from "@/components/shared/icons/x-icon";
 import { Spinner } from "@/components/shared/spinner";
 import { VisibleInteractionBoundary } from "@/components/telemetry/visible-interaction-boundary";
 import { ActionButtonLabel } from "@/components/ui/action-feedback";
 import { Status } from "@/components/ui/status";
 import { useOptionalToast } from "@/components/ui/toast";
-import { Tooltip } from "@/components/ui/tooltip";
 import {
   archiveSessionFromClient,
   isSessionPhaseMutationResult,
@@ -825,6 +821,7 @@ export function SessionDetailPageClient({
     <PageContainer className="pb-4">
       <VisibleInteractionBoundary action="sessions_to_detail" />
       <PageHeader
+        actionsAlwaysRight
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             <Link
@@ -949,6 +946,7 @@ function EditableSessionTitle({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+  const skipNextBlurSaveRef = useRef(false);
 
   useEffect(() => {
     if (!isEditing) return;
@@ -961,12 +959,14 @@ function EditableSessionTitle({
   }, [isEditing]);
 
   function startEditing() {
+    skipNextBlurSaveRef.current = false;
     setDraftTitle(title);
     setError(null);
     setIsEditing(true);
   }
 
   function cancelEditing() {
+    skipNextBlurSaveRef.current = true;
     setDraftTitle(title);
     setError(null);
     setIsEditing(false);
@@ -1022,9 +1022,16 @@ function EditableSessionTitle({
             ref={editInputRef}
             aria-label={`Session #${sessionNumber} title`}
             aria-describedby={error ? `session-${sessionNumber}-title-error` : undefined}
-            className="ui-input h-11 min-w-0 flex-1 px-3 py-1.5 text-[20px] font-semibold sm:text-[22px]"
+            className="ui-input h-11 min-w-0 w-full px-3 py-1.5 text-[20px] font-semibold sm:text-[22px]"
             disabled={isSaving}
             value={draftTitle}
+            onBlur={() => {
+              if (skipNextBlurSaveRef.current) {
+                skipNextBlurSaveRef.current = false;
+                return;
+              }
+              void saveTitle();
+            }}
             onChange={(event) => {
               setDraftTitle(event.target.value);
               if (error) setError(null);
@@ -1032,41 +1039,13 @@ function EditableSessionTitle({
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                void saveTitle();
+                event.currentTarget.blur();
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 cancelEditing();
               }
             }}
           />
-          <div className="flex items-center gap-1">
-            <Tooltip content="Save title">
-              <button
-                type="button"
-                className="ui-icon-button h-9 w-9 text-accent"
-                aria-label={`Save title for session #${sessionNumber}`}
-                disabled={isSaving}
-                onClick={() => void saveTitle()}
-              >
-                {isSaving ? (
-                  <Spinner className="h-4 w-4" label="Saving title" />
-                ) : (
-                  <CheckIcon className="h-4 w-4" />
-                )}
-              </button>
-            </Tooltip>
-            <Tooltip content="Cancel title edit">
-              <button
-                type="button"
-                className="ui-icon-button h-9 w-9"
-                aria-label={`Cancel title edit for session #${sessionNumber}`}
-                disabled={isSaving}
-                onClick={cancelEditing}
-              >
-                <XIcon className="h-4 w-4" />
-              </button>
-            </Tooltip>
-          </div>
         </div>
         {error ? (
           <p
@@ -1082,27 +1061,17 @@ function EditableSessionTitle({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>{title}</h1>
-      <Tooltip content={isSaving ? "Saving title" : "Edit title"}>
-        <button
-          type="button"
-          className="ui-icon-button h-8 w-8 shrink-0"
-          aria-label={
-            isSaving
-              ? `Saving title for session #${sessionNumber}`
-              : `Edit title for session #${sessionNumber}`
-          }
-          disabled={isSaving}
-          onClick={startEditing}
-        >
-          {isSaving ? (
-            <Spinner className="h-4 w-4" label="Saving title" />
-          ) : (
-            <PencilIcon className="h-4 w-4" />
-          )}
-        </button>
-      </Tooltip>
-    </div>
+    <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "min-w-0")}>
+      <button
+        type="button"
+        aria-busy={isSaving}
+        className="max-w-full cursor-text rounded-[4px] text-left text-inherit outline-none transition-colors hover:text-accent focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-wait disabled:opacity-70"
+        disabled={isSaving}
+        onClick={startEditing}
+      >
+        {title}
+        {isSaving ? <Spinner className="ml-2 align-middle text-muted" /> : null}
+      </button>
+    </h1>
   );
 }
