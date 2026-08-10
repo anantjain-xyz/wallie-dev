@@ -202,6 +202,8 @@ describe("Sessions ledger server render", () => {
     expect(stylesheet).toContain("container-type: inline-size");
     expect(stylesheet).toContain("@container sessions-ledger (max-width: 50rem)");
     expect(stylesheet).toContain(".sessions-ledger-cell-label");
+    expect(stylesheet).toContain(".sessions-ledger-session-summary");
+    expect(stylesheet).toMatch(/\.sessions-ledger-connections,[\s\S]*grid-column: 2/);
     expect(stylesheet).not.toContain(".sessions-ledger-cell-stage::before");
   });
 });

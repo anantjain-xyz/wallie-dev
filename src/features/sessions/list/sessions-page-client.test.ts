@@ -205,7 +205,7 @@ describe("SessionsPageClient", () => {
     expect(html).toContain('href="/w/acme/sessions/7"');
     expect(html).not.toContain("absolute inset-0");
     expect(html).toContain("A long session title");
-    expect(html).toContain("items-baseline");
+    expect(html).toContain("sessions-ledger-session-summary");
     expect(html).toContain("line-clamp-3");
     expect(html).not.toContain("md:truncate");
   });
