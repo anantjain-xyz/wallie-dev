@@ -256,6 +256,9 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Product artifact");
     expect(html).toContain("Wallie is drafting the artifact for this stage.");
     expect(html).toContain("Stop run");
+    expect(html.indexOf("Stop run")).toBeLessThan(html.indexOf("Archive"));
+    expect(html).not.toContain("Wallie is generating this stage’s artifact.");
+    expect(html).not.toContain("sticky bottom-0");
     expect(html).not.toContain("Request changes");
     expect(html).not.toContain("data-status=");
     expect(html).not.toMatch(/In progress|Complete|Upcoming/);
