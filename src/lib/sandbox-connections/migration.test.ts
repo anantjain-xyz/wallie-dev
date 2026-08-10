@@ -8,6 +8,14 @@ const migration = readFileSync(
   "utf8",
 );
 
+const dropLegacyMutationLockMigration = readFileSync(
+  join(
+    process.cwd(),
+    "supabase/migrations/20260810220000_drop_legacy_vercel_sandbox_mutation_lock.sql",
+  ),
+  "utf8",
+);
+
 describe("sandbox provider migration", () => {
   it("defaults and backfills workspace selection to Vercel", () => {
     expect(migration).toContain("active_provider text not null default 'vercel'");
@@ -63,5 +71,30 @@ describe("sandbox provider migration", () => {
     expect(migration).toContain("and sandbox_id is null");
     expect(migration).toContain("and sandbox_vercel_team_id is null");
     expect(migration).toContain("and sandbox_vercel_project_id is null");
+  });
+
+  it("drops the legacy Vercel mutation-lock dual-lock protocol", () => {
+    expect(dropLegacyMutationLockMigration).toContain(
+      "create or replace function public.begin_sandbox_connection_mutation",
+    );
+    expect(dropLegacyMutationLockMigration).toContain(
+      "delete from public.workspace_sandbox_connection_mutations where expires_at <= now()",
+    );
+    expect(dropLegacyMutationLockMigration).not.toContain(
+      "delete from public.workspace_vercel_sandbox_connection_mutations",
+    );
+    expect(dropLegacyMutationLockMigration).not.toContain(
+      "from public.workspace_vercel_sandbox_connection_mutations",
+    );
+    expect(dropLegacyMutationLockMigration).toContain(
+      "drop function public.begin_vercel_sandbox_connection_mutation(uuid)",
+    );
+    expect(dropLegacyMutationLockMigration).toContain(
+      "drop table if exists public.workspace_vercel_sandbox_connection_mutations",
+    );
+    expect(dropLegacyMutationLockMigration).toContain(
+      "and status in ('queued', 'started', 'running')",
+    );
+    expect(dropLegacyMutationLockMigration).toContain("status in ('starting', 'prompted')");
   });
 });

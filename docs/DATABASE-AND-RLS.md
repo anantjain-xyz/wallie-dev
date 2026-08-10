@@ -156,6 +156,15 @@ Dropping an old overload and creating a new one in one migration is acceptable
 only when no deployed caller still requires the old signature and grants are
 reapplied explicitly.
 
+Sandbox connection mutations follow that rule for the retired Vercel lock:
+`workspace_sandbox_connection_mutations` plus
+`begin_sandbox_connection_mutation(workspace_id, provider)` is the only
+mutation-lock mechanism. The dual-lock compatibility window with
+`workspace_vercel_sandbox_connection_mutations` /
+`begin_vercel_sandbox_connection_mutation` ended after the legacy endpoint was
+retired; deploy application code that no longer calls the legacy RPC before
+applying the schema drop so no old instance races the removal.
+
 ## Generated bindings
 
 Generate against local Supabase:

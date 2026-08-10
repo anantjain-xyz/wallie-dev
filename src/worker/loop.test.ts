@@ -181,4 +181,30 @@ describe("claim_next_agent_job migration", () => {
     expect(migrationSql).toContain("from public.workspace_vercel_sandbox_connection_mutations");
     expect(migrationSql).toContain("where workspace_id = candidate.workspace_id");
   });
+
+  it("claims jobs against the provider-neutral mutation lock only", () => {
+    const migrationSql = readFileSync(
+      "supabase/migrations/20260810220000_drop_legacy_vercel_sandbox_mutation_lock.sql",
+      "utf8",
+    );
+
+    expect(migrationSql).toContain("create or replace function public.claim_next_agent_job");
+    expect(migrationSql).toContain(
+      "delete from public.workspace_sandbox_connection_mutations where expires_at <= now()",
+    );
+    expect(migrationSql).toContain("from public.workspace_sandbox_connection_mutations");
+    expect(migrationSql).toContain("and provider = selected_provider");
+    expect(migrationSql).toContain("pg_advisory_xact_lock");
+    expect(migrationSql).toContain("where workspace_id = candidate.workspace_id");
+    expect(migrationSql).not.toContain(
+      "delete from public.workspace_vercel_sandbox_connection_mutations",
+    );
+    expect(migrationSql).not.toContain("from public.workspace_vercel_sandbox_connection_mutations");
+    expect(migrationSql).toContain(
+      "drop function public.begin_vercel_sandbox_connection_mutation(uuid)",
+    );
+    expect(migrationSql).toContain(
+      "drop table if exists public.workspace_vercel_sandbox_connection_mutations",
+    );
+  });
 });
