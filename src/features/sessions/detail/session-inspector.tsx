@@ -84,7 +84,7 @@ export function SessionInspector({
   }
 
   return (
-    <section className="flex min-h-0 flex-col border-border lg:border-l lg:pl-5">
+    <section className="flex min-h-0 flex-col lg:pl-5">
       <div aria-label="Inspector" className="mb-3 flex gap-1" role="tablist">
         {(
           [
