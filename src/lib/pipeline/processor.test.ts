@@ -644,7 +644,12 @@ function buildAdminMock(opts: MockOptions) {
   };
 
   const rpc = vi.fn(async (name: string) => ({
-    data: name === "schedule_job_retry_with_error" ? [{ id: "job-1" }] : null,
+    data:
+      name === "schedule_job_retry_with_error"
+        ? [{ id: "job-1" }]
+        : name === "finalize_publication_retry_attempt"
+          ? [{ id: "job-1", status: "queued" }]
+          : null,
     error: null,
   }));
 
@@ -1260,13 +1265,14 @@ describe("processPipelineJob (generic stage runner)", () => {
       { phase_status: "in_progress" },
       { current_artifact_version: 1 },
     ]);
-    expect(updatedRuns.at(-1)).toMatchObject({ status: "success" });
+    expect(updatedRuns).not.toContainEqual(expect.objectContaining({ status: "success" }));
     expect(rpc).toHaveBeenCalledWith(
-      "schedule_job_retry_with_error",
+      "finalize_publication_retry_attempt",
       expect.objectContaining({
         target_job_id: "job-1",
         error_message: expect.stringMatching(/^Wallie pull request publication pending: /),
         expected_attempt_count: 0,
+        successful_run_id: "run-1",
         base_delay_ms: 5000,
         max_backoff_ms: 300000,
       }),

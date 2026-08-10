@@ -543,20 +543,21 @@ async function runStage(input: {
 
       if (preserved) {
         sessionPointerAdvanced = true;
-        if (runId) {
-          await markRunSuccess(admin, runId, usage);
-        }
 
         const retryState: PublicationRetryState = {
           artifactVersion: error.artifactVersion,
           pullRequestNumber: error.pullRequestNumber,
           reason: error.message,
         };
-        const retryScheduled = await markPipelineJobError(
-          admin,
-          job,
-          serializePublicationRetryState(retryState),
-        );
+        const serializedRetryState = serializePublicationRetryState(retryState);
+        const retryScheduled = runId
+          ? await finalizePublicationRetryAttempt(admin, {
+              errorMessage: serializedRetryState,
+              job,
+              runId,
+              usage,
+            })
+          : await markPipelineJobError(admin, job, serializedRetryState);
         if (!retryScheduled) {
           await updateSessionStatus(admin, session.id, "rejected");
         }
@@ -1812,6 +1813,31 @@ async function loadMaxRetries(admin: AdminClient, workspaceId: string): Promise<
     return data.value_json;
   }
   return 3;
+}
+
+async function finalizePublicationRetryAttempt(
+  admin: AdminClient,
+  input: {
+    errorMessage: string;
+    job: Tables<"agent_jobs">;
+    runId: string;
+    usage?: { inputTokens: number; outputTokens: number };
+  },
+): Promise<boolean> {
+  const maxRetries = await loadMaxRetries(admin, input.job.workspace_id);
+  const { data, error } = await admin.rpc("finalize_publication_retry_attempt", {
+    target_job_id: input.job.id,
+    expected_attempt_count: input.job.attempt_count,
+    successful_run_id: input.runId,
+    error_message: input.errorMessage,
+    max_retries: maxRetries,
+    successful_input_tokens: input.usage?.inputTokens,
+    successful_output_tokens: input.usage?.outputTokens,
+    base_delay_ms: 5000,
+    max_backoff_ms: 300000,
+  });
+  if (error) throw error;
+  return data[0]?.status === "queued";
 }
 
 async function markPipelineJobError(
