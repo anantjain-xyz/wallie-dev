@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OverlayProvider } from "@/components/ui/overlay-provider";
 import { SessionDetailPageClient } from "@/features/sessions/detail/session-detail-page-client";
 import type { SessionReviewData } from "@/features/sessions/detail/data";
-import { SessionsPageClient } from "@/features/sessions/list/sessions-page-client";
+import { SessionsPage } from "@/features/sessions/list/sessions-page";
 import type { SessionListPageData } from "@/features/sessions/list/data";
 import type { SessionSummary } from "@/features/sessions/types";
 
@@ -141,7 +141,7 @@ function makeListData(summary: SessionSummary, scope: "all" | "archived"): Sessi
 }
 
 function listView(initialData: SessionListPageData) {
-  return createElement(OverlayProvider, null, createElement(SessionsPageClient, { initialData }));
+  return createElement(OverlayProvider, null, createElement(SessionsPage, { initialData }));
 }
 
 describe("optimistic session interactions", () => {
@@ -393,7 +393,7 @@ describe("optimistic session interactions", () => {
       createElement(
         OverlayProvider,
         null,
-        createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
+        createElement(SessionsPage, { initialData: makeListData(session, "all") }),
       ),
     );
 
@@ -501,7 +501,7 @@ describe("optimistic session interactions", () => {
       createElement(
         OverlayProvider,
         null,
-        createElement(SessionsPageClient, { initialData: makeListData(session, "all") }),
+        createElement(SessionsPage, { initialData: makeListData(session, "all") }),
       ),
     );
 
@@ -516,7 +516,7 @@ describe("optimistic session interactions", () => {
       createElement(
         OverlayProvider,
         null,
-        createElement(SessionsPageClient, {
+        createElement(SessionsPage, {
           initialData: makeListData({ ...session, archivedAt, updatedAt: archivedAt }, "archived"),
         }),
       ),
@@ -722,7 +722,7 @@ describe("optimistic session interactions", () => {
       createElement(
         OverlayProvider,
         null,
-        createElement(SessionsPageClient, {
+        createElement(SessionsPage, {
           initialData: makeListData({ ...session, archivedAt, updatedAt: archivedAt }, "archived"),
         }),
       ),
