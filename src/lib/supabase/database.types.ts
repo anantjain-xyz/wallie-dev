@@ -1839,35 +1839,6 @@ export type Database = {
           },
         ]
       }
-      workspace_vercel_sandbox_connection_mutations: {
-        Row: {
-          created_at: string
-          expires_at: string
-          lock_id: string
-          workspace_id: string
-        }
-        Insert: {
-          created_at?: string
-          expires_at?: string
-          lock_id?: string
-          workspace_id: string
-        }
-        Update: {
-          created_at?: string
-          expires_at?: string
-          lock_id?: string
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_vercel_sandbox_connection_mutations_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: true
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       workspace_vercel_sandbox_connections: {
         Row: {
           connection_revision: string
@@ -2007,10 +1978,6 @@ export type Database = {
       }
       begin_sandbox_connection_mutation: {
         Args: { target_provider: string; target_workspace_id: string }
-        Returns: string
-      }
-      begin_vercel_sandbox_connection_mutation: {
-        Args: { target_workspace_id: string }
         Returns: string
       }
       claim_expired_session_attachments: {
@@ -2527,3 +2494,4 @@ export const Constants = {
     },
   },
 } as const
+

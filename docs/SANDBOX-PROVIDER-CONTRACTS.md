@@ -70,8 +70,14 @@ It relies on provider TTL or operator cleanup.
   in server code.
 - Execution fails closed when the selected provider is disabled, missing,
   disconnected, or does not match the requested implementation.
-- Connection mutation is rejected while related jobs, runs, capability checks,
-  or device-auth flows are active.
+- Connection mutation uses the provider-keyed
+  `workspace_sandbox_connection_mutations` lock exclusively. Concurrent
+  mutations for the same workspace/provider are mutually exclusive; active
+  jobs, runs, capability checks, and Codex device-auth flows also block unsafe
+  connection changes. The legacy Vercel-only lock table and
+  `begin_vercel_sandbox_connection_mutation` RPC were removed after the
+  provider-neutral API became the sole caller (deploy app instances that no
+  longer call the legacy RPC before applying that schema drop).
 - Saving rotated credentials normally cleans up owned sandboxes from the
   previous revision first. If a stored Daytona custom endpoint no longer passes
   the current allowlist or URL policy, the cleanup loader returns no usable
