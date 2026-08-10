@@ -321,7 +321,7 @@ function buildAdminMock(state: MockState) {
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const TEN_MIN_MS = 10 * 60 * 1000;
 const PUBLICATION_CHECKPOINT =
-  'Wallie pull request publication pending: {"artifactVersion":1,"pullRequestNumber":42,"reason":"Linear unavailable"}';
+  'Wallie pull request publication pending: {"artifactVersion":1,"pullRequestNumber":42,"reason":"Linear unavailable","repositoryFullName":"acme/app","repositoryId":"repo-1"}';
 
 function activeRun(overrides: Partial<AgentRunRow> = {}): AgentRunRow {
   return {

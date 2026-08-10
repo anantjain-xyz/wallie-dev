@@ -220,6 +220,8 @@ interface MockOptions {
   pointerUpdateError?: { message: string } | null;
   pointerCasMiss?: boolean;
   terminalJobUpdateMiss?: boolean;
+  finalizePublicationRetryError?: { message: string } | null;
+  completePublicationRetryResult?: boolean;
   feedbackInsertError?: { message: string } | null;
   latestFeedback?: { feedback_text: string } | null;
   runSandboxUpdateError?: { message: string } | null;
@@ -643,15 +645,23 @@ function buildAdminMock(opts: MockOptions) {
     workspace_repository_profiles: workspaceRepositoryProfilesTable,
   };
 
-  const rpc = vi.fn(async (name: string) => ({
-    data:
-      name === "schedule_job_retry_with_error"
-        ? [{ id: "job-1" }]
-        : name === "finalize_publication_retry_attempt"
-          ? [{ id: "job-1", status: "queued" }]
-          : null,
-    error: null,
-  }));
+  const rpc = vi.fn(async (name: string, _args?: unknown) => {
+    void _args;
+    if (name === "finalize_publication_retry_attempt" && opts.finalizePublicationRetryError) {
+      return { data: null, error: opts.finalizePublicationRetryError };
+    }
+    return {
+      data:
+        name === "schedule_job_retry_with_error"
+          ? [{ id: "job-1" }]
+          : name === "finalize_publication_retry_attempt"
+            ? [{ id: "job-1", status: "queued" }]
+            : name === "complete_publication_retry_attempt"
+              ? (opts.completePublicationRetryResult ?? true)
+              : null,
+      error: null,
+    };
+  });
 
   return {
     admin: createProcessorTestAdminClient({
@@ -1277,7 +1287,37 @@ describe("processPipelineJob (generic stage runner)", () => {
         max_backoff_ms: 300000,
       }),
     );
+    const checkpointArgs = rpc.mock.calls.find(
+      ([name]) => name === "finalize_publication_retry_attempt",
+    )?.[1] as { error_message?: string } | undefined;
+    const checkpoint = checkpointArgs?.error_message;
+    expect(checkpoint).toContain('"repositoryFullName":"acme/app"');
+    expect(checkpoint).toContain('"repositoryId":"repo-1"');
     expect(updatedJobs.at(-1)?.last_error).toBeUndefined();
+    expect(result.result).toBe("error");
+  });
+
+  it("persists the publication checkpoint when atomic finalization fails", async () => {
+    mocked.openSessionPullRequest.mockResolvedValueOnce({
+      kind: "publication_failed",
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+    });
+    const { admin, rpc, updatedRuns } = buildAdminMock({
+      finalizePublicationRetryError: { message: "RPC unavailable" },
+      session: baseSession(),
+    });
+
+    const result = await processPipelineJob({ admin, job: baseJob() });
+
+    expect(rpc).toHaveBeenCalledWith(
+      "schedule_job_retry_with_error",
+      expect.objectContaining({
+        error_message: expect.stringMatching(/^Wallie pull request publication pending: /),
+        target_job_id: "job-1",
+      }),
+    );
+    expect(updatedRuns).toContainEqual(expect.objectContaining({ status: "success" }));
     expect(result.result).toBe("error");
   });
 
@@ -1287,8 +1327,10 @@ describe("processPipelineJob (generic stage runner)", () => {
       artifactVersion: 1,
       pullRequestNumber: 42,
       reason: "Linear unavailable",
+      repositoryFullName: "acme/app",
+      repositoryId: "repo-1",
     };
-    const { admin, jobUpdateFilters, updatedJobs, updatedSessions } = buildAdminMock({
+    const { admin, rpc, updatedJobs, updatedSessions } = buildAdminMock({
       pendingArtifact: { artifact_json: "Preserved build artifact" },
       session,
     });
@@ -1311,15 +1353,14 @@ describe("processPipelineJob (generic stage runner)", () => {
         sessionId: session.id,
       }),
     );
-    expect(updatedSessions).toEqual([
-      { phase_status: "in_progress" },
-      { phase_status: "awaiting_review" },
-    ]);
-    expect(updatedJobs.at(-1)).toMatchObject({ last_error: null, status: "success" });
-    expect(jobUpdateFilters.at(-1)?.eq).toEqual({
-      attempt_count: 1,
-      id: "job-1",
-      status: "running",
+    expect(updatedSessions).toEqual([{ phase_status: "in_progress" }]);
+    expect(updatedJobs).toEqual([]);
+    expect(rpc).toHaveBeenCalledWith("complete_publication_retry_attempt", {
+      expected_artifact_version: 1,
+      expected_attempt_count: 1,
+      expected_last_error: `Wallie pull request publication pending: ${JSON.stringify(retryState)}`,
+      target_job_id: "job-1",
+      target_session_id: "sess-1",
     });
     expect(result).toEqual({
       jobId: "job-1",
@@ -1329,12 +1370,55 @@ describe("processPipelineJob (generic stage runner)", () => {
     });
   });
 
+  it("does not publish a checkpoint against a fallback repository", async () => {
+    const session = baseSession({ current_artifact_version: 1 });
+    const retryState = {
+      artifactVersion: 1,
+      pullRequestNumber: 42,
+      reason: "Linear unavailable",
+      repositoryFullName: "acme/original",
+      repositoryId: "repo-original",
+    };
+    const { admin, rpc } = buildAdminMock({
+      githubRepositories: [
+        {
+          default_branch: "main",
+          full_name: "acme/fallback",
+          github_installation_id: "ghi-1",
+          id: "repo-fallback",
+        },
+      ],
+      onboardingRepositoryId: "repo-fallback",
+      pendingArtifact: { artifact_json: "Preserved build artifact" },
+      session,
+    });
+
+    const result = await processPipelineJob({
+      admin,
+      job: baseJob({
+        attempt_count: 1,
+        last_error: `Wallie pull request publication pending: ${JSON.stringify(retryState)}`,
+      }),
+    });
+
+    expect(mocked.resumeSessionPullRequestPublication).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith(
+      "schedule_job_retry_with_error",
+      expect.objectContaining({
+        error_message: expect.stringContaining("Original GitHub repository acme/original"),
+      }),
+    );
+    expect(result.result).toBe("error");
+  });
+
   it("does not resume pending publication after cancellation wins", async () => {
     const session = baseSession({ current_artifact_version: 1, phase_status: "rejected" });
     const retryState = {
       artifactVersion: 1,
       pullRequestNumber: 42,
       reason: "Linear unavailable",
+      repositoryFullName: "acme/app",
+      repositoryId: "repo-1",
     };
     const { admin, updatedJobs, updatedRuns, updatedSessions } = buildAdminMock({
       jobStatus: "canceled",

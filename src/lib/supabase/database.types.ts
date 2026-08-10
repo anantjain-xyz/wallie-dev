@@ -2050,6 +2050,16 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      complete_publication_retry_attempt: {
+        Args: {
+          expected_artifact_version: number
+          expected_attempt_count: number
+          expected_last_error: string
+          target_job_id: string
+          target_session_id: string
+        }
+        Returns: boolean
+      }
       create_session_with_first_job: {
         Args: {
           agent_model_name: string
@@ -2483,6 +2493,7 @@ export type Database = {
     }
   }
 }
+
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
 type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]

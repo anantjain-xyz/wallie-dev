@@ -68,12 +68,22 @@ class MissingReviewableOutputError extends Error {
 class PublicationRetryError extends Error {
   readonly artifactVersion: number;
   readonly pullRequestNumber: number;
+  readonly repositoryFullName: string;
+  readonly repositoryId: string;
 
-  constructor(input: { artifactVersion: number; pullRequestNumber: number; reason: string }) {
+  constructor(input: {
+    artifactVersion: number;
+    pullRequestNumber: number;
+    reason: string;
+    repositoryFullName: string;
+    repositoryId: string;
+  }) {
     super(input.reason);
     this.artifactVersion = input.artifactVersion;
     this.name = "PublicationRetryError";
     this.pullRequestNumber = input.pullRequestNumber;
+    this.repositoryFullName = input.repositoryFullName;
+    this.repositoryId = input.repositoryId;
   }
 }
 
@@ -83,6 +93,8 @@ type PublicationRetryState = {
   artifactVersion: number;
   pullRequestNumber: number;
   reason: string;
+  repositoryFullName: string;
+  repositoryId: string;
 };
 
 const RUN_FAILURE_DIAGNOSTIC_MAX_LENGTH = 1000;
@@ -484,6 +496,8 @@ async function runStage(input: {
           artifactVersion: newVersion,
           pullRequestNumber: prOutcome.pullRequestNumber,
           reason: prOutcome.reason,
+          repositoryFullName: github.repo.full_name,
+          repositoryId: github.repo.id,
         });
       } else if (prOutcome.kind !== "success") {
         throw new Error(
@@ -548,6 +562,8 @@ async function runStage(input: {
           artifactVersion: error.artifactVersion,
           pullRequestNumber: error.pullRequestNumber,
           reason: error.message,
+          repositoryFullName: error.repositoryFullName,
+          repositoryId: error.repositoryId,
         };
         const serializedRetryState = serializePublicationRetryState(retryState);
         const retryScheduled = runId
@@ -663,6 +679,14 @@ async function resumeStagePublication(input: {
     if (!github) {
       return fail("No GitHub installation or repository found for publication retry.");
     }
+    if (
+      github.repo.id !== publicationRetry.repositoryId ||
+      github.repo.full_name !== publicationRetry.repositoryFullName
+    ) {
+      return fail(
+        `Original GitHub repository ${publicationRetry.repositoryFullName} is unavailable for publication retry.`,
+      );
+    }
 
     const outcome = await resumeSessionPullRequestPublication({
       admin,
@@ -687,24 +711,17 @@ async function resumeStagePublication(input: {
       );
     }
 
-    const { data: advanced, error: advanceError } = await admin
-      .from("sessions")
-      .update({ phase_status: "awaiting_review" })
-      .eq("id", session.id)
-      .eq("current_artifact_version", publicationRetry.artifactVersion)
-      .eq("phase_status", "in_progress")
-      .is("archived_at", null)
-      .select("id");
-    if (advanceError) {
-      return fail(advanceError.message);
-    }
-
-    if (!advanced || advanced.length === 0) {
+    const completed = await completePublicationRetryAttempt(admin, {
+      expectedLastError: job.last_error,
+      job,
+      sessionId: session.id,
+      artifactVersion: publicationRetry.artifactVersion,
+    });
+    if (!completed) {
       await markPipelineJobSuccess(admin, job);
       return { jobId: job.id, processed: true, result: "idle", runId: null };
     }
 
-    await markPipelineJobSuccess(admin, job);
     return { jobId: job.id, processed: true, result: "success", runId: null };
   } catch (error) {
     return fail(getErrorMessage(error, "Pull request publication retry failed."));
@@ -733,7 +750,11 @@ function parsePublicationRetryState(value: string | null): PublicationRetryState
       typeof parsed.pullRequestNumber !== "number" ||
       !Number.isInteger(parsed.pullRequestNumber) ||
       parsed.pullRequestNumber < 1 ||
-      typeof parsed.reason !== "string"
+      typeof parsed.reason !== "string" ||
+      typeof parsed.repositoryFullName !== "string" ||
+      parsed.repositoryFullName.length === 0 ||
+      typeof parsed.repositoryId !== "string" ||
+      parsed.repositoryId.length === 0
     ) {
       return null;
     }
@@ -1836,8 +1857,37 @@ async function finalizePublicationRetryAttempt(
     base_delay_ms: 5000,
     max_backoff_ms: 300000,
   });
-  if (error) throw error;
+  if (error) {
+    // If the all-in-one RPC itself is unavailable, persist the structured
+    // checkpoint before terminalizing the successful coding run. A subsequent
+    // claim can then resume publication instead of rerunning the agent.
+    const retryScheduled = await markPipelineJobError(admin, input.job, input.errorMessage);
+    await markRunSuccess(admin, input.runId, input.usage);
+    return retryScheduled;
+  }
   return data[0]?.status === "queued";
+}
+
+async function completePublicationRetryAttempt(
+  admin: AdminClient,
+  input: {
+    artifactVersion: number;
+    expectedLastError: string | null;
+    job: Tables<"agent_jobs">;
+    sessionId: string;
+  },
+): Promise<boolean> {
+  if (!input.expectedLastError) return false;
+
+  const { data, error } = await admin.rpc("complete_publication_retry_attempt", {
+    expected_artifact_version: input.artifactVersion,
+    expected_attempt_count: input.job.attempt_count,
+    expected_last_error: input.expectedLastError,
+    target_job_id: input.job.id,
+    target_session_id: input.sessionId,
+  });
+  if (error) throw error;
+  return data;
 }
 
 async function markPipelineJobError(
