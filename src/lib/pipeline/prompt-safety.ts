@@ -6,7 +6,8 @@ export type TrustedPromptSource =
   | "pipeline.operatingRules"
   | "session.attachmentInstructions"
   | "stage.promptTemplate"
-  | "stage.slug";
+  | "stage.slug"
+  | "wallie.buildGitPublicationPolicy";
 
 export type UntrustedPromptSource =
   | "attempt.feedback"

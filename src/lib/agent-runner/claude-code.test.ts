@@ -73,6 +73,11 @@ describe("ClaudeCodeRunner", () => {
     expect(call.args[0]).toBe("-lc");
     expect(call.args[1]).toContain("'--model' 'claude-opus-4-8[1m]'");
     expect(call.args[1]).toContain("'--effort' 'max'");
+    expect(call.args[1]).toContain("'--bare'");
+    expect(call.args[1]).toContain("'--add-dir' '/vercel/sandbox'");
+    expect(call.args[1]).toContain("'--no-chrome'");
+    expect(call.args[1]).toContain("'--strict-mcp-config'");
+    expect(call.args[1]).toContain(`'--mcp-config' '{"mcpServers":{}}'`);
     expect(call.args[1]).toContain("'--permission-mode' 'bypassPermissions'");
     expect(call.args[1]).toContain("'--resume' 'prev-session'");
     expect(call.args[1]).not.toContain("'--stdin'");
@@ -80,6 +85,10 @@ describe("ClaudeCodeRunner", () => {
     expect(call.opts.env).toMatchObject({
       ANTHROPIC_API_KEY: "sk-ant-test",
       CI: "1",
+      GIT_AUTHOR_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
+      GIT_AUTHOR_NAME: "wallie-dev[bot]",
+      GIT_COMMITTER_EMAIL: "287554934+wallie-dev[bot]@users.noreply.github.com",
+      GIT_COMMITTER_NAME: "wallie-dev[bot]",
     });
   });
 

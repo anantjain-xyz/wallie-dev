@@ -59,7 +59,7 @@ describe("repository onboarding planner", () => {
   });
 
   it("upgrades exact legacy Wallie-owned files without treating them as user edits", () => {
-    const changedSkillNames = new Set(["commit", "pr-feedback", "screenshot"]);
+    const changedSkillNames = new Set(["commit", "pr-feedback", "push", "screenshot"]);
     const changedSkills = DEFAULT_WALLIE_SKILLS.filter((skill) =>
       changedSkillNames.has(skill.name),
     );
@@ -139,5 +139,19 @@ describe("repository onboarding planner", () => {
     expect(content).toContain("failed check-run annotations");
     expect(content).toContain("check-runs/<check_run_id>/annotations");
     expect(content).toContain("repeat the sweep");
+  });
+
+  it("keeps commit and PR publication under Wallie's sandbox identity", () => {
+    const commit = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "commit")!.content;
+    const push = DEFAULT_WALLIE_SKILLS.find((skill) => skill.name === "push")!.content;
+
+    expect(commit).toContain("configured Git author and committer");
+    expect(commit).toContain("`--author`");
+    expect(commit).toContain("`GIT_AUTHOR_*`");
+    expect(commit).toContain("`GIT_COMMITTER_*`");
+    expect(commit).toContain("`Co-authored-by`");
+    expect(push).toContain("sandbox `gh` CLI");
+    expect(push).toContain("`GH_TOKEN`");
+    expect(push).toContain("connected GitHub app, MCP server, plugin");
   });
 });

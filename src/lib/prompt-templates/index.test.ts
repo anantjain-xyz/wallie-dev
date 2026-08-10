@@ -55,6 +55,29 @@ describe("renderStagePrompt", () => {
     expect(result.indexOf("## Operating rules")).toBeLessThan(result.indexOf("Implement:"));
   });
 
+  it("appends Wallie's fixed Git publication policy to customized prompts", () => {
+    const result = renderStagePrompt(stage, baseInput);
+
+    expect(result).toContain("## Wallie-controlled Git publication policy");
+    expect(result).toContain("sandbox `gh` CLI");
+    expect(result).toContain("existing `GH_TOKEN` unchanged");
+    expect(result).toContain("`GIT_AUTHOR_*`");
+    expect(result).toContain("`GIT_COMMITTER_*`");
+    expect(result).toContain("`Co-authored-by` trailers");
+    expect(result.indexOf("## Wallie-controlled Git publication policy")).toBeGreaterThan(
+      result.indexOf("Implement:"),
+    );
+  });
+
+  it("appends the invariant publication policy independent of the stage slug", () => {
+    const result = renderStagePrompt(
+      { ...stage, slug: trustedPromptValue("stage.slug", "plan") },
+      baseInput,
+    );
+
+    expect(result).toContain("Wallie-controlled Git publication policy");
+  });
+
   it("unconditionally appends classified session image inputs", () => {
     const result = renderStagePrompt(stage, {
       ...baseInput,

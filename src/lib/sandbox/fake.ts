@@ -76,6 +76,7 @@ interface ExecScript {
   matches: (call: FakeExecCall) => boolean;
   logs: LogProducer;
   exitCode: number;
+  output?: { stdout: string; stderr: string };
 }
 
 export interface FakeSandboxOptions {
@@ -129,13 +130,13 @@ export class FakeSandbox implements SandboxHandle {
   scriptExec(
     matcher: string | ((call: FakeExecCall) => boolean),
     logs: LogProducer,
-    opts: { exitCode?: number } = {},
+    opts: { exitCode?: number; output?: { stdout: string; stderr: string } } = {},
   ): void {
     const matches =
       typeof matcher === "function"
         ? matcher
         : (call: FakeExecCall) => call.cmd === matcher || call.args.includes(matcher);
-    this.scripts.push({ matches, logs, exitCode: opts.exitCode ?? 0 });
+    this.scripts.push({ matches, logs, exitCode: opts.exitCode ?? 0, output: opts.output });
   }
 
   async exec(
@@ -156,7 +157,7 @@ export class FakeSandbox implements SandboxHandle {
     const script =
       idx >= 0
         ? this.scripts.splice(idx, 1)[0]
-        : { logs: [] as SandboxLogEntry[], exitCode: 0, matches: () => true };
+        : { logs: [] as SandboxLogEntry[], exitCode: 0, matches: () => true, output: undefined };
 
     const entries = typeof script.logs === "function" ? script.logs(call) : script.logs;
 
@@ -167,6 +168,7 @@ export class FakeSandbox implements SandboxHandle {
     return {
       logs: logsIter,
       output: async () => {
+        if (script.output) return script.output;
         let stdout = "";
         let stderr = "";
         for (const entry of entries) {
