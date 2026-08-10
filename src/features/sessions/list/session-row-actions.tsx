@@ -462,14 +462,14 @@ export function SessionRowIsland({
           </form>
         ) : (
           <div className="min-w-0 space-y-1.5">
-            <div className="flex min-w-0 items-start gap-2">
+            <div className="flex min-w-0 items-baseline gap-2">
               <span className="font-mono type-annotation text-muted">#{session.number}</span>
               <Tooltip content={displayTitle}>
                 <SessionDetailLink
                   href={detailHref}
                   trackSessionsToDetail
                   aria-label={`Open session #${session.number}: ${displayTitle}`}
-                  className="line-clamp-2 min-w-0 text-[14px] font-medium text-foreground hover:text-accent md:truncate"
+                  className="line-clamp-3 min-w-0 break-words text-[14px] font-medium text-foreground hover:text-accent"
                 >
                   {displayTitle}
                 </SessionDetailLink>
