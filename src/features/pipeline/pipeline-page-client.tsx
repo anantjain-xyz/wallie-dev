@@ -61,7 +61,8 @@ type PendingCardFocus = {
   targetLaneKey: string;
 };
 
-type StatusFilter = SessionPhaseStatus | "all";
+type DashboardCardStatus = SessionPhaseStatus | "failed";
+type StatusFilter = DashboardCardStatus | "all";
 
 const CARD_FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -74,14 +75,22 @@ const STATUS_FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
   { key: "in_progress", label: STATUS_DEFINITIONS.in_progress.label },
   { key: "approved", label: STATUS_DEFINITIONS.approved.label },
   { key: "rejected", label: STATUS_DEFINITIONS.rejected.label },
+  { key: "failed", label: STATUS_DEFINITIONS.failed.label },
 ];
 
-const STATUS_SUMMARY_ORDER: SessionPhaseStatus[] = [
+const STATUS_SUMMARY_ORDER: DashboardCardStatus[] = [
   "awaiting_review",
   "in_progress",
+  "failed",
   "rejected",
   "approved",
 ];
+
+export function pipelineDashboardCardStatus(
+  card: Pick<PipelineDashboardCard, "latestRunStatus" | "phaseStatus">,
+): DashboardCardStatus {
+  return card.latestRunStatus === "error" ? "failed" : card.phaseStatus;
+}
 
 function captureCardFocus(cardId: string, targetLaneKey: string): PendingCardFocus | null {
   const activeElement = document.activeElement;
@@ -102,7 +111,7 @@ export function cardMatchesPipelineFilters(
   searchQuery: string,
   statusFilter: StatusFilter,
 ) {
-  if (statusFilter !== "all" && card.phaseStatus !== statusFilter) return false;
+  if (statusFilter !== "all" && pipelineDashboardCardStatus(card) !== statusFilter) return false;
 
   const normalized = searchQuery.trim().toLowerCase();
   if (!normalized) return true;
@@ -124,15 +133,16 @@ export function cardMatchesPipelineFilters(
 export function summarizeLaneStatuses(
   cards: readonly PipelineDashboardCard[],
 ): { count: number; label: string; value: StatusValue }[] {
-  const counts = new Map<SessionPhaseStatus, number>();
+  const counts = new Map<DashboardCardStatus, number>();
   for (const card of cards) {
-    counts.set(card.phaseStatus, (counts.get(card.phaseStatus) ?? 0) + 1);
+    const status = pipelineDashboardCardStatus(card);
+    counts.set(status, (counts.get(status) ?? 0) + 1);
   }
 
   return STATUS_SUMMARY_ORDER.flatMap((status) => {
     const count = counts.get(status) ?? 0;
     if (count === 0) return [];
-    const value = sessionPhaseStatusValue(status);
+    const value = status === "failed" ? status : sessionPhaseStatusValue(status);
     return [{ count, label: STATUS_DEFINITIONS[value].label.toLowerCase(), value }];
   });
 }
@@ -299,6 +309,8 @@ function PipelinePageContent({
             createdAt: row.created_at,
             currentStageId: row.current_stage_id,
             id: row.id,
+            latestRunId: existing?.latestRunId ?? null,
+            latestRunStatus: existing?.latestRunStatus ?? null,
             linearIssueId: row.linear_issue_id,
             linearIssueUrl: row.linear_issue_url,
             number: row.number,
@@ -339,6 +351,34 @@ function PipelinePageContent({
           }
 
           dispatch({ card: next, isInsert: payload.eventType === "INSERT", type: "upsert" });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          filter: `workspace_id=eq.${initialData.workspace.id}`,
+          schema: "public",
+          table: "agent_runs",
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const deletedRun = payload.old as { id?: string; session_id?: string } | null;
+            const card = deletedRun?.session_id
+              ? boardRef.current.cardsById[deletedRun.session_id]
+              : null;
+            if (card?.latestRunId === deletedRun?.id) router.refresh();
+            return;
+          }
+
+          const run = payload.new as Pick<Tables<"agent_runs">, "id" | "session_id" | "status">;
+          dispatch({
+            isInsert: payload.eventType === "INSERT",
+            runId: run.id,
+            runStatus: run.status,
+            sessionId: run.session_id,
+            type: "update-run",
+          });
         },
       )
       .on(
@@ -694,6 +734,7 @@ const PipelineLane = memo(
               initialNow={initialNow}
               linearIssueId={card.linearIssueId}
               linearIssueUrl={card.linearIssueUrl}
+              latestRunStatus={card.latestRunStatus}
               number={card.number}
               phaseStatus={card.phaseStatus}
               pullRequestsJson={JSON.stringify(card.pullRequests ?? [])}
@@ -849,6 +890,7 @@ export const PipelineCard = memo(function PipelineCard({
   initialNow,
   linearIssueId,
   linearIssueUrl,
+  latestRunStatus,
   number,
   phaseStatus,
   pullRequestsJson,
@@ -861,6 +903,7 @@ export const PipelineCard = memo(function PipelineCard({
   initialNow: string;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
+  latestRunStatus: PipelineDashboardCard["latestRunStatus"];
   number: number;
   phaseStatus: SessionPhaseStatus;
   pullRequestsJson: string;
@@ -874,7 +917,8 @@ export const PipelineCard = memo(function PipelineCard({
     [pullRequestsJson],
   );
   const sessionHref = workspaceSessionDetailPath(workspaceSlug, number);
-  const awaitingReview = phaseStatus === "awaiting_review";
+  const displayStatus = pipelineDashboardCardStatus({ latestRunStatus, phaseStatus });
+  const awaitingReview = displayStatus === "awaiting_review";
 
   return (
     <article
@@ -882,7 +926,8 @@ export const PipelineCard = memo(function PipelineCard({
         "ui-sheet relative isolate border-border/80 p-3 transition-colors duration-150 hover:bg-control-hover",
         awaitingReview &&
           "border-accent/50 border-l-[3px] border-l-accent bg-accent-soft shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--accent)_18%,transparent)] hover:bg-accent-soft",
-        phaseStatus === "rejected" && "border-l-[3px] border-l-warning/50",
+        displayStatus === "rejected" && "border-l-[3px] border-l-warning/50",
+        displayStatus === "failed" && "border-l-[3px] border-l-danger/50",
       )}
       data-session-id={id}
     >
@@ -896,7 +941,7 @@ export const PipelineCard = memo(function PipelineCard({
           <span className="line-clamp-3 break-words">{title}</span>
         </h3>
 
-        <Status compact value={sessionPhaseStatusValue(phaseStatus)} />
+        <Status compact value={displayStatus} />
 
         <CardReferenceLine
           linearIssueId={linearIssueId}

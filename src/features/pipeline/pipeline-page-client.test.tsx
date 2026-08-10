@@ -50,6 +50,7 @@ vi.mock("@/features/sessions/components/sessions-zero-state", () => ({
 import {
   cardMatchesPipelineFilters,
   formatLaneStateSummary,
+  pipelineDashboardCardStatus,
   PipelinePageClient,
 } from "@/features/pipeline/pipeline-page-client";
 import { formatUtcTimestamp } from "@/components/shared/time-display";
@@ -74,6 +75,8 @@ function card(
     createdAt: updatedAt,
     currentStageId: stageId,
     id: `40000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
+    latestRunId: null,
+    latestRunStatus: null,
     linearIssueId: null,
     linearIssueUrl: null,
     number,
@@ -148,6 +151,7 @@ function sessionRow(session: PipelineDashboardCard) {
 }
 
 function installSupabaseMock() {
+  let agentRunsHandler: ((payload: RealtimePayload) => void) | undefined;
   let sessionsHandler: ((payload: RealtimePayload) => void) | undefined;
   const channel = {
     on: vi.fn(),
@@ -156,6 +160,7 @@ function installSupabaseMock() {
   channel.on.mockImplementation(
     (_event: string, filter: { table: string }, handler: (payload: RealtimePayload) => void) => {
       if (filter.table === "sessions") sessionsHandler = handler;
+      if (filter.table === "agent_runs") agentRunsHandler = handler;
       return channel;
     },
   );
@@ -166,6 +171,7 @@ function installSupabaseMock() {
   });
 
   return {
+    getAgentRunsHandler: () => agentRunsHandler,
     getSessionsHandler: () => sessionsHandler,
   };
 }
@@ -196,6 +202,19 @@ describe("pipeline filter helpers", () => {
         isPartial: true,
       }),
     ).toBe("Loaded: 1 awaiting review");
+  });
+
+  it("treats a rejected session whose latest run errored as failed", () => {
+    const failed = card(4, BUILD_STAGE_ID, {
+      latestRunId: "run-4",
+      latestRunStatus: "error",
+      phaseStatus: "rejected",
+    });
+
+    expect(pipelineDashboardCardStatus(failed)).toBe("failed");
+    expect(formatLaneStateSummary([failed])).toBe("1 failed");
+    expect(cardMatchesPipelineFilters(failed, "", "failed")).toBe(true);
+    expect(cardMatchesPipelineFilters(failed, "", "rejected")).toBe(false);
   });
 });
 
@@ -334,6 +353,31 @@ describe("PipelinePageClient", () => {
     expect(content?.className).toContain("z-20");
     expect(overlay.className).toContain("z-10");
     expect(reviewLink.parentElement?.className).toContain("pointer-events-auto");
+  });
+
+  it("renders and live-updates an errored latest run as Failed", async () => {
+    const supabase = installSupabaseMock();
+    const failedCard = card(4, BUILD_STAGE_ID, {
+      latestRunId: "run-4",
+      latestRunStatus: "running",
+      phaseStatus: "rejected",
+      title: "Broken build",
+    });
+    render(<PipelinePageClient initialData={initialData([], [failedCard])} />);
+    await waitFor(() => expect(supabase.getAgentRunsHandler()).toBeDefined());
+
+    const article = screen.getByRole("article");
+    expect(within(article).getByText("Changes requested")).toBeTruthy();
+    act(() => {
+      supabase.getAgentRunsHandler()?.({
+        eventType: "UPDATE",
+        new: { id: "run-4", session_id: failedCard.id, status: "error" },
+      });
+    });
+
+    expect(within(article).getByText("Failed")).toBeTruthy();
+    expect(within(article).queryByText("Changes requested")).toBeNull();
+    expect(screen.getByText("1 failed")).toBeTruthy();
   });
 
   it("exposes Linear and pull-request destinations as interactive references", () => {

@@ -18,6 +18,8 @@ function card(
     createdAt: updatedAt,
     currentStageId: stageId,
     id: `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
+    latestRunId: null,
+    latestRunStatus: null,
     linearIssueId: null,
     linearIssueUrl: null,
     number,
@@ -252,5 +254,35 @@ describe("pipelineBoardReducer", () => {
 
     expect(next.cardsById[session.id]?.title).toBe("Updated title");
     expect(next.cardsById[session.id]?.pullRequests).toBe(pullRequests);
+  });
+
+  it("merges run fields into reducer-current card state after a stage move", () => {
+    const initial = board();
+    const session = initial.cardsById[card(1).id]!;
+    const moved = pipelineBoardReducer(initial, {
+      card: {
+        ...session,
+        currentStageId: BUILD_STAGE_ID,
+        title: "Moved session",
+      },
+      isInsert: false,
+      type: "upsert",
+    });
+    const next = pipelineBoardReducer(moved, {
+      isInsert: true,
+      runId: "run-after-move",
+      runStatus: "queued",
+      sessionId: session.id,
+      type: "update-run",
+    });
+
+    expect(next.cardsById[session.id]).toMatchObject({
+      currentStageId: BUILD_STAGE_ID,
+      latestRunId: "run-after-move",
+      latestRunStatus: "queued",
+      title: "Moved session",
+    });
+    expect(next.lanes[0]?.cardIds).not.toContain(session.id);
+    expect(next.lanes[1]?.cardIds).toContain(session.id);
   });
 });

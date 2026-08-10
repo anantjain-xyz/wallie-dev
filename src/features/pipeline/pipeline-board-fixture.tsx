@@ -68,6 +68,8 @@ function fixtureCard(
     createdAt: updatedAt,
     currentStageId: stageId(stageIndex),
     id: `40000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
+    latestRunId: null,
+    latestRunStatus: null,
     linearIssueId: number % 2 === 0 ? `OP-${300 + number}` : null,
     linearIssueUrl: number % 2 === 0 ? `https://linear.app/issue/OP-${300 + number}` : null,
     number,

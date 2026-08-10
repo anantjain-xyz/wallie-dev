@@ -7,6 +7,13 @@ const migration = readFileSync(
   join(process.cwd(), "supabase/migrations/20260717000002_pipeline_dashboard_page.sql"),
   "utf8",
 );
+const latestRunStatusMigration = readFileSync(
+  join(
+    process.cwd(),
+    "supabase/migrations/20260810071300_pipeline_dashboard_latest_run_status.sql",
+  ),
+  "utf8",
+);
 
 describe("Pipeline dashboard migration", () => {
   it("bounds pages and ranks attention before stable update/id keys", () => {
@@ -30,5 +37,12 @@ describe("Pipeline dashboard migration", () => {
     expect(migration).toContain("and p.is_default");
     expect(migration).toContain("left join lane_counts lc");
     expect(migration).toContain("coalesce(lc.total_count, 0)");
+  });
+
+  it("includes the latest run identity and status on every dashboard card", () => {
+    expect(latestRunStatusMigration).toContain("from public.agent_runs ar");
+    expect(latestRunStatusMigration).toContain("order by ar.created_at desc, ar.id desc");
+    expect(latestRunStatusMigration).toContain("'latestRunId', cr.latest_run_id");
+    expect(latestRunStatusMigration).toContain("'latestRunStatus', cr.latest_run_status");
   });
 });

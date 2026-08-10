@@ -1,5 +1,6 @@
 import type { OnboardingResumeState } from "@/features/onboarding/flow";
 import type { SessionPhaseStatus, SessionPullRequest } from "@/features/sessions/types";
+import type { Enums } from "@/lib/supabase/database.types";
 
 export const PIPELINE_DASHBOARD_PAGE_SIZE = 25;
 
@@ -12,6 +13,8 @@ export type PipelineDashboardCard = {
   createdAt: string;
   currentStageId: string;
   id: string;
+  latestRunId: string | null;
+  latestRunStatus: Enums<"agent_run_status"> | null;
   linearIssueId: string | null;
   linearIssueUrl: string | null;
   number: number;
