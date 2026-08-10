@@ -31,8 +31,6 @@ export type {
   SandboxProviderDriver,
   VercelSandboxCredentials,
 } from "./types";
-export { FakeSandbox } from "./fake";
-
 const IMPLEMENTATIONS = [...listSandboxProviders(), "fake"] as const;
 
 async function loadProviderDriver<Connection extends SandboxConnection>(
@@ -126,19 +124,9 @@ export async function stopSandboxById(
   options: {
     connection?: SandboxConnection;
     throwOnError?: boolean;
-    /** @deprecated Compatibility input while callers migrate to `connection`. */
-    vercelCredentials?: Extract<SandboxConnection, { provider: "vercel" }>["credentials"];
   } = {},
 ): Promise<void> {
-  const connection =
-    options.connection ??
-    (options.vercelCredentials
-      ? ({
-          credentials: options.vercelCredentials,
-          provider: "vercel",
-          revision: "legacy",
-        } satisfies SandboxConnection)
-      : undefined);
+  const connection = options.connection;
   if (!connection) {
     if (resolveSandboxImplementation() === "fake") {
       const { stopFakeSandboxById } = await import("./fake");
@@ -174,19 +162,9 @@ export async function listRunningSandboxes(
     connection?: SandboxConnection;
     throwOnError?: boolean;
     workspaceId?: string;
-    /** @deprecated Compatibility input while callers migrate to `connection`. */
-    vercelCredentials?: Extract<SandboxConnection, { provider: "vercel" }>["credentials"];
   } = {},
 ): Promise<RunningSandboxSummary[]> {
-  const connection =
-    options.connection ??
-    (options.vercelCredentials
-      ? ({
-          credentials: options.vercelCredentials,
-          provider: "vercel",
-          revision: "legacy",
-        } satisfies SandboxConnection)
-      : undefined);
+  const connection = options.connection;
   if (!connection) {
     if (resolveSandboxImplementation() === "fake") {
       const { listRunningFakeSandboxes } = await import("./fake");

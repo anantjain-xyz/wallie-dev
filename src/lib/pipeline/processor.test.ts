@@ -1288,9 +1288,9 @@ describe("processPipelineJob (generic stage runner)", () => {
     ]);
   });
 
-  it("aborts before sandbox creation when Vercel Sandbox is not connected", async () => {
+  it("aborts before sandbox creation when the sandbox connection is not connected", async () => {
     const error = new Error("Connect a Vercel Sandbox account before starting Wallie runs.");
-    error.name = "VercelSandboxConnectionMissingError";
+    error.name = "SandboxConnectionMissingError";
     mocked.loadRequiredWorkspaceSandboxConnection.mockRejectedValueOnce(error);
     const session = baseSession();
     const { admin, insertedArtifacts, insertedMessages, rpc, updatedJobs, updatedSessions } =

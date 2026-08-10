@@ -19,20 +19,6 @@ const previewSelect =
   "workspace_id, token_preview, team_id, project_id, project_name, status, connection_revision, last_validated_at, last_validation_error, updated_at";
 const secretSelect = `${previewSelect}, encrypted_token`;
 
-export class VercelSandboxConnectionMissingError extends Error {
-  constructor() {
-    super("Connect a Vercel Sandbox account before starting Wallie runs.");
-    this.name = "VercelSandboxConnectionMissingError";
-  }
-}
-
-export class VercelSandboxConnectionInvalidError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "VercelSandboxConnectionInvalidError";
-  }
-}
-
 export function mapVercelSandboxConnectionPreview(
   row: Pick<
     ConnectionRow,
@@ -199,29 +185,6 @@ export async function loadVercelSandboxConnection(
     },
     preview: mapVercelSandboxConnectionPreview(row),
   };
-}
-
-export async function loadRequiredVercelSandboxConnection(
-  admin: AdminClient,
-  workspaceId: string,
-): Promise<{
-  credentials: VercelSandboxCredentials;
-  preview: VercelSandboxConnectionPreview;
-}> {
-  const connection = await loadVercelSandboxConnection(admin, workspaceId);
-
-  if (!connection) {
-    throw new VercelSandboxConnectionMissingError();
-  }
-
-  if (connection.preview.status !== "connected") {
-    throw new VercelSandboxConnectionInvalidError(
-      connection.preview.lastValidationError ??
-        "Saved Vercel Sandbox connection is not valid. Reconnect it in workspace settings.",
-    );
-  }
-
-  return connection;
 }
 
 export async function loadConnectedVercelSandboxConnections(admin: AdminClient): Promise<

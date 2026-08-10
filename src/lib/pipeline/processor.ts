@@ -557,9 +557,7 @@ function isSandboxConnectionSetupError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "SandboxConnectionMissingError" ||
       error.name === "SandboxConnectionInvalidError" ||
-      error.name === "SandboxCapabilityCheckStaleError" ||
-      error.name === "VercelSandboxConnectionMissingError" ||
-      error.name === "VercelSandboxConnectionInvalidError")
+      error.name === "SandboxCapabilityCheckStaleError")
   );
 }
 
