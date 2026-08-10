@@ -165,7 +165,7 @@ The default `plan → build → land` seed lives in the `internal.default_pipeli
 - [stall-detector.ts](src/worker/stall-detector.ts) -- resets runs stuck past timeout.
 - [reconciler.ts](src/worker/reconciler.ts) -- cancels jobs if Linear issue closed.
 - [sandbox-reaper.ts](src/worker/sandbox-reaper.ts) -- shuts down sandboxes whose owning run has ended.
-- [concurrency.ts](src/worker/concurrency.ts), [config.ts](src/worker/config.ts) -- per-workspace and per-process limits.
+- [config.ts](src/worker/config.ts) -- process concurrency and worker defaults; workspace concurrency is enforced by `claim_next_agent_job`.
 
 #### API Routes (`src/app/api/`)
 
