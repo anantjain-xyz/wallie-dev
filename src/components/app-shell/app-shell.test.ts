@@ -35,4 +35,11 @@ describe("AppShell", () => {
     expect(toastRule).toContain("var(--wallie-visual-viewport-bottom-offset)");
     expect(toastRule).toContain("var(--overlay-gutter-block-end)");
   });
+
+  it("centers toast content within the available vertical space", () => {
+    const toastRule = stylesheet.match(/\.ui-toast\s*\{([^}]*)\}/u)?.[1];
+
+    expect(toastRule).toContain("items-center");
+    expect(toastRule).not.toContain("items-start");
+  });
 });

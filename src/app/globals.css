@@ -696,7 +696,7 @@
   }
 
   .ui-toast {
-    @apply grid grid-cols-[1fr_auto] items-start gap-3 border border-border bg-overlay p-4 text-foreground;
+    @apply grid grid-cols-[1fr_auto] items-center gap-3 border border-border bg-overlay p-4 text-foreground;
     border-radius: var(--overlay-radius);
     box-shadow: var(--shadow-elevated);
     animation: wallie-toast-enter var(--overlay-motion-duration) var(--overlay-motion-easing);
