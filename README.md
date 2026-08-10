@@ -240,14 +240,13 @@ workspaces/[workspaceId]/maintenance/tick/                      <- privileged ma
 ```
 app/
 |-- layout.tsx, page.tsx              (root)
-|-- login/, signup/, auth/            (public)
+|-- login/, auth/                    (public)
 |-- onboarding/workspace/             (first-run: create a workspace)
 `-- w/[workspaceSlug]/                (protected workspace shell)
     |-- onboarding/                   (GitHub, repositories, pipeline, Linear, runtime, verify)
     `-- (app)/                        (route group with the real product UI)
         |-- (pipeline)/               review-focused dashboard at the workspace root
         |-- sessions/                 list + /[sessionNumber] detail
-        |-- pipeline/                 legacy redirect to the workspace root
         `-- settings/                 integrations, pipeline editor, advanced, workspace
 
 components/
@@ -303,7 +302,7 @@ src/
       secrets/                  # Encrypted credential CRUD
       workspaces/[workspaceId]/ # Pipeline, repositories, onboarding, sandbox check, ...
     auth/                       # Auth flows (callback, email, signout, confirm)
-    login/, signup/             # Public auth pages
+    login/                      # Public auth page
     onboarding/workspace/       # First-run: create a workspace
     w/[workspaceSlug]/          # Protected workspace shell
       onboarding/               # Post-workspace setup
