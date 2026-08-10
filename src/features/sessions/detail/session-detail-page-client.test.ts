@@ -145,21 +145,32 @@ describe("SessionDetailPageClient", () => {
     );
   });
 
-  it("renders an accessible title edit affordance alongside the session title", () => {
-    const html = renderDetail();
-
-    expect(html).toContain("Editable Session");
-    expect(html).toContain('aria-label="Edit title for session #7"');
-    expect(html).not.toContain('title="Edit title"');
-    expect(html).not.toContain('aria-label="Session #7 title"');
-  });
-
-  it("keeps the edit control outside the heading so the heading name is only the title", () => {
+  it("uses the full title itself as the edit affordance", () => {
     const html = renderDetail();
     const headingMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/);
 
     expect(headingMatch).not.toBeNull();
-    expect(headingMatch?.[1]).toBe("Editable Session");
+    expect(headingMatch?.[1]).toContain("<button");
+    expect(headingMatch?.[1]).toContain("Editable Session</button>");
+    expect(html).not.toContain('aria-label="Edit title for session #7"');
+    expect(html).not.toContain('aria-label="Session #7 title"');
+    expect(html).not.toContain("Save title");
+    expect(html).not.toContain("Cancel title edit");
+  });
+
+  it("keeps a long title untruncated while actions stay in a right-hand column", () => {
+    const data = makeSessionDetailData();
+    data.session.title =
+      "A deliberately long session title that must wrap in full without displacing archive actions";
+    const html = renderDetail({ data });
+    const headerMatch = html.match(/<header class="([^"]+)">([\s\S]*?)<\/header>/);
+
+    expect(headerMatch).not.toBeNull();
+    expect(headerMatch?.[1]).toContain("grid-cols-[minmax(0,1fr)_auto]");
+    expect(headerMatch?.[2]).toContain("col-span-2");
+    expect(headerMatch?.[2]).toContain(data.session.title);
+    expect(headerMatch?.[2]).toContain("Archive");
+    expect(headerMatch?.[2]).not.toMatch(/line-clamp|overflow-hidden|truncate/);
   });
 
   it("folds the session number into the breadcrumb instead of an orphaned row", () => {
@@ -256,6 +267,9 @@ describe("SessionDetailPageClient", () => {
     expect(html).toContain("Product artifact");
     expect(html).toContain("Wallie is drafting the artifact for this stage.");
     expect(html).toContain("Stop run");
+    expect(html.indexOf("Stop run")).toBeLessThan(html.indexOf("Archive"));
+    expect(html).not.toContain("Wallie is generating this stage’s artifact.");
+    expect(html).not.toContain("sticky bottom-0");
     expect(html).not.toContain("Request changes");
     expect(html).not.toContain("data-status=");
     expect(html).not.toMatch(/In progress|Complete|Upcoming/);

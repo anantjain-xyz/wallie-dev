@@ -12,7 +12,6 @@ import { SessionReviewBar } from "@/features/sessions/detail/session-review-bar"
 function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = {}) {
   const onApprove = vi.fn();
   const onReject = vi.fn().mockResolvedValue(true);
-  const onStopRun = vi.fn();
 
   const view = render(
     createElement(
@@ -23,15 +22,13 @@ function renderBar(overrides: Partial<Parameters<typeof SessionReviewBar>[0]> = 
         mode: { canApprove: true, kind: "reviewable" },
         onApprove,
         onReject,
-        onStopRun,
         phaseActionPending: null,
-        stopPending: false,
         ...overrides,
       }),
     ),
   );
 
-  return { ...view, onApprove, onReject, onStopRun };
+  return { ...view, onApprove, onReject };
 }
 
 describe("SessionReviewBar", () => {
@@ -130,10 +127,10 @@ describe("SessionReviewBar", () => {
     expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
   });
 
-  it("shows stop controls while running", () => {
-    const { onStopRun } = renderBar({ mode: { kind: "running" } });
-    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
-    expect(onStopRun).toHaveBeenCalledTimes(1);
+  it("does not render a bottom review bar while running", () => {
+    const { container } = renderBar({ mode: { kind: "running" } });
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+    expect(container.innerHTML).not.toContain("sticky bottom-0");
   });
 
   it("uses safe-area-aware sticky padding", () => {
