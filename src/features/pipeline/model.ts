@@ -19,6 +19,13 @@ export type PipelineBoardAction =
   | { cardId: string; type: "remove" }
   | { page: PipelineDashboardLanePage; type: "append-page" }
   | {
+      isInsert: boolean;
+      runId: string;
+      runStatus: PipelineDashboardCard["latestRunStatus"];
+      sessionId: string;
+      type: "update-run";
+    }
+  | {
       pullRequests: PipelineDashboardPullRequest[];
       sessionId: string;
       type: "update-pull-requests";
@@ -384,6 +391,32 @@ function updatePipelineCardPullRequests(
   };
 }
 
+function updatePipelineCardRun(
+  state: PipelineBoardState,
+  input: {
+    isInsert: boolean;
+    runId: string;
+    runStatus: PipelineDashboardCard["latestRunStatus"];
+    sessionId: string;
+  },
+): PipelineBoardState {
+  const card = state.cardsById[input.sessionId];
+  if (!card || (!input.isInsert && card.latestRunId !== input.runId)) return state;
+  if (card.latestRunId === input.runId && card.latestRunStatus === input.runStatus) return state;
+
+  return {
+    ...state,
+    cardsById: {
+      ...state.cardsById,
+      [input.sessionId]: {
+        ...card,
+        latestRunId: input.runId,
+        latestRunStatus: input.runStatus,
+      },
+    },
+  };
+}
+
 export function pipelineBoardReducer(
   state: PipelineBoardState,
   action: PipelineBoardAction,
@@ -397,6 +430,8 @@ export function pipelineBoardReducer(
       return removePipelineCard(state, action.cardId);
     case "update-pull-requests":
       return updatePipelineCardPullRequests(state, action.sessionId, action.pullRequests);
+    case "update-run":
+      return updatePipelineCardRun(state, action);
     case "upsert":
       return upsertPipelineCard(state, action.card, action.isInsert);
   }

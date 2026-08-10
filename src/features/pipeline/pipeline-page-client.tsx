@@ -372,14 +372,12 @@ function PipelinePageContent({
           }
 
           const run = payload.new as Pick<Tables<"agent_runs">, "id" | "session_id" | "status">;
-          const card = boardRef.current.cardsById[run.session_id];
-          if (!card) return;
-          if (payload.eventType !== "INSERT" && card.latestRunId !== run.id) return;
-
           dispatch({
-            card: { ...card, latestRunId: run.id, latestRunStatus: run.status },
-            isInsert: false,
-            type: "upsert",
+            isInsert: payload.eventType === "INSERT",
+            runId: run.id,
+            runStatus: run.status,
+            sessionId: run.session_id,
+            type: "update-run",
           });
         },
       )
