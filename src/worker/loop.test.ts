@@ -31,7 +31,6 @@ const baseJob = {
   dedupe_key: null,
   finished_at: null,
   id: "job-1",
-  job_type: "session",
   last_error: null,
   requested_by_member_id: "member-1",
   scheduled_at: null,
