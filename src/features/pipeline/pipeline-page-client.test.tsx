@@ -280,7 +280,8 @@ describe("PipelinePageClient", () => {
       "minmax(280px,1fr)",
     );
     const boardRegion = screen.getByRole("region", { name: "Pipeline board" });
-    expect(boardRegion.className).toContain("overflow-auto");
+    expect(boardRegion.className).toContain("overflow-x-auto");
+    expect(boardRegion.className).not.toContain("max-h-");
     expect(boardRegion.getAttribute("tabindex")).toBe("0");
 
     expect(screen.getAllByText("Session 1")).toHaveLength(1);

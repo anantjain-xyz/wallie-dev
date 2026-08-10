@@ -548,7 +548,7 @@ function PipelinePageContent({
 
           <div
             aria-label="Pipeline board"
-            className="max-h-[calc(100svh-12.5rem)] overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:max-h-[calc(100svh-11rem)] md:px-6 md:pb-12"
+            className="overflow-x-auto overscroll-x-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
             role="region"
             tabIndex={0}
           >

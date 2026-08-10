@@ -15,7 +15,8 @@ describe("PipelineLoadingSkeleton", () => {
     );
     expect(html).toContain("minmax(280px,1fr)");
     expect(html).toContain("--pipeline-stage-count");
-    expect(html).toContain("overflow-auto");
+    expect(html).toContain("overflow-x-auto");
+    expect(html).not.toContain("max-h-");
     expect((html.match(/<article/g) ?? []).length).toBe(3);
     expect((html.match(/animate-pulse/g) ?? []).length).toBeLessThan(40);
     expect(html).not.toMatch(/<(?:a|button|input|select|textarea)\b/);

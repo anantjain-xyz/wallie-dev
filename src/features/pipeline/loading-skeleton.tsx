@@ -76,7 +76,7 @@ export function PipelineLoadingSkeleton({ stageCount = 3 }: { stageCount?: numbe
 
         <div
           aria-hidden="true"
-          className="max-h-[calc(100svh-12.5rem)] overflow-auto overscroll-contain px-4 pb-10 sm:px-8 md:max-h-[calc(100svh-11rem)] md:px-6 md:pb-12"
+          className="overflow-x-auto overscroll-x-contain px-4 pb-10 sm:px-8 md:px-6 md:pb-12"
         >
           <div
             className="pipeline-board grid w-full grid-cols-1 md:[grid-template-columns:repeat(var(--pipeline-stage-count),minmax(280px,1fr))]"
