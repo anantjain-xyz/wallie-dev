@@ -39,6 +39,8 @@ function card(index: number, stageId = PLAN_STAGE_ID, pipelineId = DEFAULT_PIPEL
     createdAt: "2026-07-17T00:00:00.000Z",
     currentStageId: stageId,
     id: `50000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    latestRunId: null,
+    latestRunStatus: null,
     linearIssueId: null,
     linearIssueUrl: null,
     number: index,

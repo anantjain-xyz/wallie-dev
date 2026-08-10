@@ -71,6 +71,8 @@ function sameCard(left: PipelineDashboardCard, right: PipelineDashboardCard) {
     left.createdAt === right.createdAt &&
     left.currentStageId === right.currentStageId &&
     left.id === right.id &&
+    left.latestRunId === right.latestRunId &&
+    left.latestRunStatus === right.latestRunStatus &&
     left.linearIssueId === right.linearIssueId &&
     left.linearIssueUrl === right.linearIssueUrl &&
     left.number === right.number &&

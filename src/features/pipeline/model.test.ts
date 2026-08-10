@@ -18,6 +18,8 @@ function card(
     createdAt: updatedAt,
     currentStageId: stageId,
     id: `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
+    latestRunId: null,
+    latestRunStatus: null,
     linearIssueId: null,
     linearIssueUrl: null,
     number,
