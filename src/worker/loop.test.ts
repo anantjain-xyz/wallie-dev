@@ -184,7 +184,7 @@ describe("claim_next_agent_job migration", () => {
 
   it("claims jobs against the provider-neutral mutation lock only", () => {
     const migrationSql = readFileSync(
-      "supabase/migrations/20260810150000_drop_legacy_vercel_sandbox_mutation_lock.sql",
+      "supabase/migrations/20260810220000_drop_legacy_vercel_sandbox_mutation_lock.sql",
       "utf8",
     );
 

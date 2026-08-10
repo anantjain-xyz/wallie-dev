@@ -11,7 +11,7 @@ const migration = readFileSync(
 const dropLegacyMutationLockMigration = readFileSync(
   join(
     process.cwd(),
-    "supabase/migrations/20260810150000_drop_legacy_vercel_sandbox_mutation_lock.sql",
+    "supabase/migrations/20260810220000_drop_legacy_vercel_sandbox_mutation_lock.sql",
   ),
   "utf8",
 );
